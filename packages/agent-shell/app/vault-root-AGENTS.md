@@ -13,15 +13,16 @@ Start with `tangent goal list <area>` and `tangent area show <area>`. Informatio
 - `tangent goal list <area>`, `tangent goal show <slug>`: what is open and its state.
 - `tangent goal create --area <area> --title "<t>" --start --path <dir> [--launch <harness[/model[/effort]]>] [--verify] [--instruction "<i>"] [--source <vault-file>]`: create a Goal and start a worker in `<dir>`. Take `<dir>` from your Area's Knowledge. No `--launch` lends your own harness.
 - `tangent goal append <slug> --step "<instruction>"`: add a step, for example a review.
-- `tangent goal done <slug>`, `tangent goal wont-do <slug> --reason "<r>"`: finish a Goal after a worker's done note. A Goal Julian flagged `verify` waits for him instead.
+- `tangent goal done <slug>`, `tangent goal wont-do <slug> --reason "<r>"`, `tangent goal park <slug>`: finish or park a Goal after a worker's done note. A Goal Julian flagged `verify` waits for him instead.
 - `tangent send <session|area> "<text>"`: message a worker or another Area's brain.
 - `tangent area show <area>`: the Area's note, skills, and processes.
+- `tangent process list`, `tangent process show <slug>`: the Area's repeatable work and when it runs next.
 - `tangent vault commit <paths> -m "<update|add|note|remove>: <area> <summary>"`: commit your note edits.
 
 ## How work flows
 
 Workers have one command, `tangent send brain`. Their notes arrive here as messages: a plain note, `done`, `blocked`, or `question`. Read the note, then decide: mark the Goal done, append a step, answer the worker with `tangent send`, or start another worker. Messages from Julian arrive the same way. Only Julian's words change what a Goal is for or close an Area. Julian flags what he checks. Never ask him to test.
 
-Workers do not read this vault. Give a worker everything it needs in the instruction and with `--source`. Skills are `skill-<slug>.md` files in an Area folder, with `name:` and `description:` in their frontmatter. Repeatable work is `process-<slug>.md`. Its `launch:` is a harness ref, `harness[/model[/effort]]`, not a command line. Write them when Julian asks.
+Workers do not read this vault. Give a worker everything it needs in the instruction and with `--source`. Skills are `skill-<slug>.md` files in an Area folder, with `name:` and `description:` in their frontmatter. Repeatable work is `process-<slug>.md` with `schedule:` (calendar words) or `when:` (a shell probe) with `every:`. Its `launch:` is a harness ref, `harness[/model[/effort]]`, not a command line. Write them when Julian asks.
 
 Keep your Area's `AGENTS.md` current: rewrite, do not append. Harvest a durable fact into Knowledge, then delete the narrative. Commit with `tangent vault commit`.

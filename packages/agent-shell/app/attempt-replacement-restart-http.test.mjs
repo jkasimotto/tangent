@@ -180,10 +180,11 @@ async function startGoal(base, slug, caller) {
 }
 
 /** Creates the exact retry request for a queue's current attempt. */
-function replacementRequest(goal, queue, operationId) {
+function replacementRequest(goal, queue, operationId, caller) {
   const assignment = queue.steps.find((item) => item.id === queue.currentAssignmentId);
   return {
     goal,
+    caller,
     assignmentId: assignment.id,
     expectedAttemptId: assignment.attempts.at(-1).id,
     expectedRevision: queue.revision,
@@ -229,7 +230,7 @@ test("exact-attempt replacement survives controller restarts without losing eith
     const goal = `${areaName}/goal-starting.md`;
     const queue = await startGoal(controller.base, "starting", brain);
     const sourceSession = queue.steps[0].session;
-    const request = replacementRequest(goal, queue, "restart-while-starting");
+    const request = replacementRequest(goal, queue, "restart-while-starting", brain);
     const requested = await jsonRequest(controller.base, "/api/goals/attempts/replace", request);
     assert.equal(requested.response.status, 200, JSON.stringify(requested.body));
     assert.equal(requested.body.operation.status, "replacement-starting");
@@ -270,7 +271,7 @@ test("exact-attempt replacement survives controller restarts without losing eith
     const goal = `${areaName}/goal-dead-target.md`;
     const queue = await startGoal(controller.base, "dead-target", brain);
     const sourceSession = queue.steps[0].session;
-    const request = replacementRequest(goal, queue, "replacement-target-died");
+    const request = replacementRequest(goal, queue, "replacement-target-died", brain);
     const requested = await jsonRequest(controller.base, "/api/goals/attempts/replace", request);
     assert.equal(requested.response.status, 200, JSON.stringify(requested.body));
     const replacementSession = requested.body.operation.replacementTarget.session;
@@ -298,7 +299,7 @@ test("exact-attempt replacement survives controller restarts without losing eith
     const goal = `${areaName}/goal-retirement-retry.md`;
     const queue = await startGoal(controller.base, "retirement-retry", brain);
     const sourceSession = queue.steps[0].session;
-    const request = replacementRequest(goal, queue, "resume-retirement");
+    const request = replacementRequest(goal, queue, "resume-retirement", brain);
     const requested = await jsonRequest(controller.base, "/api/goals/attempts/replace", request);
     assert.equal(requested.response.status, 200, JSON.stringify(requested.body));
     const replacementSession = requested.body.operation.replacementTarget.session;

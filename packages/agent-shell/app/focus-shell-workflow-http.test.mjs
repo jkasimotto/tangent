@@ -568,19 +568,6 @@ test("the context-first shell is default and keeps the user's understanding with
     body: JSON.stringify({ session: described.session, text: "nothing" }),
   });
   assert.equal(strayHandover.status, 200, "a work-definition session can still hand over its durable discovery facts");
-  const editRunning = await fetch(`${base}/api/pipelines/edit`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, step: 1, instruction: "changed" }),
-  });
-  assert.equal(editRunning.status, 409);
-  const editPending = await fetch(`${base}/api/pipelines/edit`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, step: 3, instruction: "Implement the design and prove it." }),
-  }).then((response) => response.json());
-  assert.equal(editPending.pipeline.steps[2].instruction, "Implement the design and prove it.");
-
   // A typed worker report completes only its assignment. A local caller starts
   // each later assignment through the authoritative queue.
   const handoverOne = await fetch(`${base}/api/goals/handover`, {

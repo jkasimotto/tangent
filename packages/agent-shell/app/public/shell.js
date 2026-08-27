@@ -543,8 +543,8 @@ const {
   selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt,
   selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath,
   confirmAreaMove, addDescribeSource, showDescribe,
-  openDescribeSession, cancelDescribe, showDecision, startPipeline, savePipelineChanges, replaceGoalAttempt,
-  openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm,
+  openDescribeSession, cancelDescribe, showDecision, replaceGoalAttempt,
+  openGoalAgent, openReaderAgent, openModal, closeModal, getModalConfirm,
   confirmStop, confirmComplete, confirmWontDo,
 } = shellCoordinator;
 
@@ -613,7 +613,7 @@ function vaultRenderProjection() {
   const goalFields = (goal) => [goal.file, goal.title, goal.status, goal.doneWhen, goal.mtime, goal.changedAt, goal.depth, goal.waitingOn, goal.storyText, goal.agents, goal.firstStartAt, goal.lastEndAt, (goal.documents ?? []).map((document) => [document.file, document.changedAt])];
   return [
     (state.vault.map ?? []).map((group) => [group.path, (group.goals ?? []).map(goalFields)]),
-    (state.vault.areas ?? []).map((area) => [area.path, area.status, area.children, area.purpose, area.body, (area.goals ?? []).map(goalFields), (area.documents ?? []).map((document) => [document.file, document.title, document.mtime, document.changedAt])]),
+    (state.vault.areas ?? []).map((area) => [area.path, area.status, area.children, area.purpose, area.body, area.noteSignal?.text, area.noteSignal?.warning, (area.goals ?? []).map(goalFields), (area.documents ?? []).map((document) => [document.file, document.title, document.mtime, document.changedAt])]),
     (state.vault.documents ?? []).map((document) => [document.file, document.title, document.mtime, document.hash, document.docKind, document.changedAt, document.inDegree, document.goalHistory]),
   ];
 }
@@ -1481,7 +1481,7 @@ bindShellEvents({
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, confirmStopBrain, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource,
-    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
+    openGoalAgent, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, paintWorkCaption, describeLaunchArea, describeWorkSessions,
     goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea,

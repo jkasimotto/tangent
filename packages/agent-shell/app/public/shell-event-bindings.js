@@ -20,7 +20,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, confirmStopBrain, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource,
-    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
+    openGoalAgent, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, paintWorkCaption, describeLaunchArea, describeWorkSessions,
     goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded,
@@ -370,49 +370,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return { enabled: true, record, assignment, attempt, assignmentId: assignment.id, expectedAttemptId };
   }
 
-  /** Opens Change agent on the same chooser and preserves any unsettled operation. */
-  function openChangeAgent(goal, opener) {
+  /**
+   * Change agent is a message to the brain (D8): only the brain starts a new
+   * worker attempt, so `c` opens the Area's composer with the request typed.
+   */
+  function openChangeAgent(goal) {
     const target = replacementTargetForGoal(goal);
     if (!target.enabled) return showToast(target.reason);
-    const existing = state.launch.replacement;
-    const canResume = existing?.goal === goal.file && existing.expectedAttemptId === target.expectedAttemptId
-      && !["complete", "failed", "rollback"].includes(existing.operation?.status);
-    const point = captureNavigationPoint(opener);
-    launchReturnPoint = point;
-    launchParentSurface = null;
-    stopLaunchFocusRequest();
-    const rect = opener?.getBoundingClientRect?.() ?? { top: 120, bottom: 140, right: 720 };
-    state.launchTarget = goal.file;
-    state.launchAnchor = { top: Math.round(rect.bottom + 8), above: Math.round(rect.top - 8), right: Math.round(rect.right) };
-    launchOptionsFor(goal.area);
-    state.launch.record = target.record;
-    const steps = launchStepsForRecord(target.record);
-    const active = Math.max(0, steps.findIndex((row) => row.id === target.assignmentId));
-    state.launch.steps = steps;
-    loadLaunchStep(steps, active);
-    if (canResume) {
-      state.launch.replacement = existing;
-      state.launch.choice = existing.launch ? { ...existing.launch } : replacementLaunchChoice(target.assignment, target.attempt);
-      state.launch.command = "";
-    }
-    else {
-      state.launch.choice = replacementLaunchChoice(target.assignment, target.attempt);
-      state.launch.command = "";
-      state.launch.replacement = {
-        goal: goal.file,
-        assignmentId: target.assignmentId,
-        expectedRevision: target.record.revision,
-        expectedAttemptId: target.expectedAttemptId,
-        operationId: crypto.randomUUID(),
-        launch: null,
-        operation: null,
-        requiresConfirmation: false,
-        saving: false,
-        inspectedSession: "",
-      };
-    }
-    paint(true);
-    requestLaunchFocus(state.launch.replacement.operation ? "key:launch:start" : "choices");
+    showDescribe({ area: goal.area, description: `Replace the agent on ${goal.title} (${goal.file})` });
     return true;
   }
 
@@ -1844,7 +1809,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       leaveHarnessEditor({ discard: true });
       return restoreNavigationPoint(point);
     }
-    if (target.closest("[data-launch-open-session]")) return launchOpenSession();
     if (target.closest("[data-open-agent]")) {
       const session = sessionForGoal(currentGoal());
       return session ? openSessionLayer(session, "agent") : showToast("This session is not live.");

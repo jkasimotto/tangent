@@ -1554,6 +1554,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           <div class="work-group-identity">
             <span class="work-group-name">${workFoldTriangle({ open: !folded, area: area.path, name })}<button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)}`)}>${escapeHtml(name)}</button></span>
             <span class="work-group-count">${escapeHtml(summary.text)}</span>
+            ${area.noteSignal ? `<span class="area-note-signal work-group-note${area.noteSignal.warning ? " warning" : ""}" title="The brain reads this note every turn. Keep it under 100 lines and rewrite Current every two weeks.">${escapeHtml(area.noteSignal.text)}</span>` : ""}
             ${summary.questions
               ? `<button class="desk-state ${status.kind}" type="button" data-review-questions="${escapeHtml(area.path)}" ${workCommandAttributes("questions")}>${escapeHtml(status.label)}${workKey("questions")}</button>`
               : `<span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>`}

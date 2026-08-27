@@ -153,4 +153,35 @@ test("a worker sends notes, questions, and done to its brain, and nothing else",
   assert.equal(legacy.body.status, "noted");
   const fromBrainEdit = await post(base, "/api/goals/edit", { file: worker.goal, status: "done", session: brain.body.session }, brain.body.session);
   assert.notEqual(fromBrainEdit.status, 403, "the gate is for workers only");
+
+  // D6: every other write is refused for a worker, whatever the body says.
+  // The first worker's Goal is done above, so the blocked worker is the probe.
+  const refusedRoutes = [
+    "/api/goals/agent", "/api/goals/attempts/replace", "/api/goals/attempts/resume", "/api/pipelines/append", "/api/pipelines/control",
+    "/api/processes/check", "/api/harnesses", "/api/launch/default", "/api/brains/reply", "/api/brains/verdict", "/api/brains/requests/answer",
+    "/api/areas/journal", "/api/spawn", "/api/agent", "/api/brains/start", "/api/brains/stop", "/api/document",
+  ];
+  for (const route of refusedRoutes) {
+    const answer = await post(base, route, { area, file: third.goal, goal: third.goal, caller: third.session, session: third.session }, third.session);
+    assert.equal(answer.status, 403, `${route} refuses a worker: ${JSON.stringify(answer.body)}`);
+    assert.equal(answer.body.error, 'workers only send. Use: tangent send brain "<note>"', route);
+  }
+  const noHandover = await fetch(`${base}/api/brains/handover`, { method: "POST", headers: { "content-type": "application/json", "x-tangent-session": third.session }, body: "{}" });
+  assert.equal(noHandover.status, 404, "the brain handover route is gone, not gated");
+
+  // D5: a worker sends only to its brain. Another session or Area is refused.
+  const toBrainSession = await post(base, "/api/agents/send", { to: brain.body.session, from: third.session, text: "Hello brain." });
+  assert.equal(toBrainSession.status, 403);
+  assert.equal(toBrainSession.body.error, 'workers only send to their brain. Use: tangent send brain "<note>"');
+  const toArea = await post(base, "/api/agents/send", { to: "otto", from: third.session, text: "Hello otto." });
+  assert.equal(toArea.status, 403);
+  const brainToWorker = await post(base, "/api/agents/send", { to: third.session, from: brain.body.session, text: "Carry on." });
+  assert.notEqual(brainToWorker.status, 403, "a brain still messages its workers");
+
+  // D8: a replacement is a new worker attempt, so only the brain requests one.
+  const queue = await readQueue(root, third);
+  const replaceBody = { goal: third.goal, assignmentId: queue.currentAssignmentId, expectedRevision: queue.revision, expectedAttemptId: queue.steps[0].attempts.at(-1).id, launch: { harness: "test" }, operationId: "julian-replace" };
+  const julianReplace = await post(base, "/api/goals/attempts/replace", replaceBody);
+  assert.equal(julianReplace.status, 403);
+  assert.match(julianReplace.body.error, /^only the brain starts workers/);
 });

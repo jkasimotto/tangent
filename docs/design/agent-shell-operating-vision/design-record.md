@@ -129,7 +129,7 @@ Julian's answers are marked (Julian).
 
 **D2. A worker start with no folder is refused.** Before any record: `goal <slug>: <area> and its parent Areas bind no repository. Add "- Repository: <path>" under ## Resources in <note>, or pass --path.` A document-only Area declares its own vault folder, `- Repository: ~/.tangent/trees/<area>`. That line does not inherit. The ten test fixtures gain a `- Repository:` line.
 
-**D3. The attempt records its folder.** `cwd` and `cwdSource: step | area:<area>` on the attempt, `@tangent_cwd` on the session, `- Working directory: <path>` in the worker prompt, and a folder beside the harness in the start output.
+**D3. The attempt records its folder.** `cwd` and `cwdSource: step | area:<area>` on the attempt, `@tangent_cwd` on the session, a `## Working directory` section in the worker prompt, and a folder beside the harness in the start output.
 
 **D4. Brains start in their Area folder in the vault (Julian).** `spawnBrainSession` uses `path.join(TREES_ROOT, record.area)` always. The brain prompt keeps `Repository:` from `resolveWorkFolder` and the instruction-file references. The loss: no native loading of the repository's `CLAUDE.md` and project skills. D20 lists project skills by name.
 
@@ -139,7 +139,7 @@ Julian's answers are marked (Julian).
 
 **D6. The server refuses other Tangent commands from a worker session.** Goal, document, idea, vault, process, and area mutations from a session whose `@tangent_kind` is `goal` return 403 `workers only send. Use: tangent send brain "<note>"`. Reads (`goal show`, `area show`) stay allowed because a worker may need to read its Goal.
 
-**D7. Old verbs alias for one release.** `tangent handover`, `tangent goal handover`, and `tangent agent send` keep working and print a hint. The untyped-evidence status change goes. Reminder texts and `~/.agents/AGENTS.md` change in the same commit. The worker prompt shrinks to: Goal, sources, working directory, the brain's instruction, and the one command.
+**D7. Old verbs alias for one release.** `tangent handover`, `tangent goal handover`, and `tangent agent send` keep working and print a hint. The untyped-evidence status change goes. Reminder texts and `~/.agents/AGENTS.md` change in the same commit. The worker prompt shrinks to: Goal, `## Done when`, sources, working directory, the brain's instruction, and the one command. It keeps the one sentence that says where design documents go.
 
 ### 5.3 Brain contract
 

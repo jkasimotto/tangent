@@ -437,13 +437,13 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   }
 
   /** Opens a fresh or unfinished description without taking over another defining agent. */
-  function showDescribe({ source = null, area = "" } = {}) {
+  function showDescribe({ source = null, area = "", description = "" } = {}) {
     state.describeReturn = captureReturnPoint();
     if (source) {
       state.describeDraft = { area: source.area, description: "", sources: [] };
       addDescribeSource(source);
     } else if (area) {
-      state.describeDraft = { area, description: "", sources: [] };
+      state.describeDraft = { area, description, sources: [] };
     } else if (!state.describeDraft) {
       state.describeDraft = { area: preferredArea(), description: "", sources: [] };
     }
@@ -577,29 +577,6 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       state.agentReturn = null;
       openSessionLayer(sessionForGoal(currentGoal()), "agent", captureReturnPoint());
       showToast("The agent opened with this Goal and all linked Documents.");
-    } catch (error) {
-      showToast(error.message);
-    }
-  }
-
-  /** Launches the agent inside an already-created shell session. */
-  async function launchOpenSession() {
-    const goal = currentGoal();
-    const session = sessionForGoal(goal);
-    if (!goal || !session) return;
-    try {
-      const endpoint = session.phase === "collaborate" ? "/api/goals/agent" : "/api/goals/start";
-      const start = await launchFieldsForArea(goal.area);
-      const body = session.phase === "collaborate"
-        ? { file: goal.file, launch: true, ...start.fields }
-        : { file: goal.file, approved: true, launch: true, ...start.fields };
-      await post(endpoint, body);
-      await refresh();
-      state.agentReturnView = "work";
-      const opened = sessionForGoal(currentGoal());
-      if (opened) openSessionLayer(opened, "agent", captureReturnPoint());
-      else paint(true);
-      showToast(start.label ? `The agent started on ${start.label}.` : "The agent started.");
     } catch (error) {
       showToast(error.message);
     }
@@ -856,5 +833,5 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Toggles the server-owned macOS sleep assertion. */
 
-  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, replaceGoalAttempt, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
+  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, replaceGoalAttempt, openGoalAgent, openReaderAgent, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
 }

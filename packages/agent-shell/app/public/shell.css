@@ -1681,6 +1681,7 @@ li .document-comment { margin: 8px 0 10px; }
 .area-purpose { max-width: 820px; margin: 4px 0 0; color: var(--muted); }
 .area-note-signal { margin: 4px 0 0; font-size: 12px; color: var(--muted); opacity: 0.8; }
 .area-note-signal.warning { color: var(--warning, #b45309); opacity: 1; }
+.work-group-note { margin: 0 0 0 10px; font-size: 10px; }
 .area-current { max-width: 820px; margin: 2px 0 0; color: var(--quiet); font-size: 13px; }
 .area-contents-actions-spacer { flex: 1; }
 .area-map-screen .area-content-section { padding: 0 26px 26px; }

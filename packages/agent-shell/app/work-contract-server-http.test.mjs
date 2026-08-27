@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { startBrainCaller, startShellServer } from "./focus-shell-http-fixture.mjs";
-import { pipelinePath, readPipeline, writePipeline } from "./pipeline-record.mjs";
+import { readPipeline, writePipeline } from "./pipeline-record.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
@@ -140,65 +140,6 @@ test("approved Agent Shell work contracts cross the real HTTP route boundary", a
   const sourceSession = started.body.session;
   openedSessions.push(sourceSession);
 
-  await context.test("POST /api/pipelines/mutate commits one stable-ID batch atomically", async () => {
-    const initialRevision = started.body.pipeline.revision;
-    const operations = [
-      { type: "update", assignmentId: "release", patch: { instruction: "Release the proven contract.", continueFromAssignmentId: "implementation" } },
-      { type: "move", assignmentId: "release", afterAssignmentId: "implementation" },
-      { type: "remove", assignmentId: "draft-review" },
-      { type: "add", afterAssignmentId: "release", assignment: { id: "final-review", instruction: "Review the release.", kind: "review", launch, continueFromAssignmentId: "release" } },
-    ];
-    const changed = await jsonRequest(base, "/api/pipelines/mutate", {
-      goal: goalFile,
-      expectedRevision: initialRevision,
-      operationId: "mutate-stable-ids",
-      operations,
-    });
-    assert.equal(changed.response.status, 200, JSON.stringify(changed.body));
-    assert.equal(changed.body.repeated, false);
-    assert.equal(changed.body.pipeline.revision, initialRevision + 1, "the whole batch consumes one revision");
-    assert.deepEqual(changed.body.pipeline.steps.map((assignment) => assignment.id), ["implementation", "release", "final-review"]);
-    assert.deepEqual(changed.body.pipeline.steps.map((assignment) => assignment.continueFromAssignmentId), [null, "implementation", "release"]);
-    assert.equal(changed.body.pipeline.steps[1].instruction, "Release the proven contract.");
-
-    const persisted = await readPipeline(pipelines, "otto/test", "work-contract");
-    assert.deepEqual(persisted.steps.map((assignment) => assignment.id), ["implementation", "release", "final-review"]);
-    const stored = JSON.parse(await readFile(pipelinePath(pipelines, "otto/test", "work-contract"), "utf8"));
-    assert.equal(stored.steps.every((assignment) => !Object.hasOwn(assignment, "continueFrom")), true, "storage uses only stable continuation IDs");
-
-    const beforeInvalid = structuredClone(persisted);
-    const invalid = await jsonRequest(base, "/api/pipelines/mutate", {
-      goal: goalFile,
-      expectedRevision: persisted.revision,
-      operationId: "mutate-invalid",
-      operations: [{ type: "remove", assignmentId: "release" }],
-    });
-    assert.equal(invalid.response.status, 400, JSON.stringify(invalid.body));
-    assert.equal(invalid.body.code, "invalid-assignments");
-    assert.deepEqual(await readPipeline(pipelines, "otto/test", "work-contract"), beforeInvalid, "a broken reference rolls back every operation");
-
-    const repeated = await jsonRequest(base, "/api/pipelines/mutate", {
-      goal: goalFile,
-      expectedRevision: initialRevision,
-      operationId: "mutate-stable-ids",
-      operations: [{ type: "update", assignmentId: "release", patch: { instruction: "A retry cannot overwrite committed text." } }],
-    });
-    assert.equal(repeated.response.status, 200, JSON.stringify(repeated.body));
-    assert.equal(repeated.body.repeated, true);
-    assert.equal(repeated.body.pipeline.steps[1].instruction, "Release the proven contract.");
-    assert.equal(repeated.body.pipeline.revision, initialRevision + 1);
-
-    const stale = await jsonRequest(base, "/api/pipelines/mutate", {
-      goal: goalFile,
-      expectedRevision: initialRevision,
-      operationId: "mutate-stale",
-      operations: [{ type: "update", assignmentId: "release", patch: { instruction: "Stale text." } }],
-    });
-    assert.equal(stale.response.status, 409, JSON.stringify(stale.body));
-    assert.equal(stale.body.code, "stale-revision");
-    assert.equal(stale.body.pipeline.revision, initialRevision + 1, "the stale response includes the current queue");
-  });
-
   // Seed durable evidence that replacement must carry through unchanged.
   // The server generated the queue and exact live attempt; only the historical
   // evidence is fixture data because no worker has actually run in this test.
@@ -242,6 +183,7 @@ test("approved Agent Shell work contracts cross the real HTTP route boundary", a
       expectedAttemptId: before.steps[0].attempts.at(-1).id,
       launch,
       operationId: "replace-current-attempt",
+      caller: brain,
     };
     const requested = await jsonRequest(base, "/api/goals/attempts/replace", request);
     assert.equal(requested.response.status, 200, JSON.stringify(requested.body));

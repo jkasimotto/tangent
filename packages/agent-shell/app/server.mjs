@@ -26,7 +26,7 @@ import { createPaneObserver } from "./pane-observer.mjs";
 import { classifyWorkingComposer } from "./pane-state.mjs";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 import { createObservationCache } from "./observation-cache.mjs";
-import { PipelineMutationError, appendSteps, continuationSource, currentStep, endPipeline, goalBindingGoneFromSnapshot, mutatePendingAssignments, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllPipelines, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
+import { PipelineMutationError, appendSteps, continuationSource, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllPipelines, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, reminderDue } from "./context-handover.mjs";
 import { messageBanner, noticeMessage, normalizeMessage } from "./agent-messages.mjs";
@@ -3471,147 +3471,6 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   return { status: 200, state: "queued", after: currentStep(record)?.index ?? last.index, added: added.map((step) => step.index), pipeline: record, warnings, launches };
 }
 
-/** Edits one pending step; started steps are history. */
-async function editPipelineStep(goalFile, index, patch, options = {}) {
-  return withGoalQueueMutation(goalFile, () => editPipelineStepUnlocked(goalFile, index, patch, options));
-}
-
-/** Performs one serialized pending-assignment edit. */
-async function editPipelineStepUnlocked(goalFile, index, patch, options = {}) {
-  const byFile = await goalsByFile();
-  const o = byFile.get(goalFile);
-  if (!o) return { status: 404, error: `no goal file ${goalFile}` };
-  const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
-  if (!record) return { status: 404, error: "no pipeline on this goal" };
-  const guarded = queueMutationGuard(record, options);
-  if (guarded) {
-    if (guarded.repeated) await recordCommittedCommand({ operation: "goal-assignment-edit", actorSession: options.caller, targetArea: o.area, goal: o.slug, operationId: options.idempotencyKey });
-    return guarded;
-  }
-  const step = record.steps[Number(index) - 1];
-  if (!step) return { status: 404, error: `no step ${index}` };
-  if (step.status !== "pending") return { status: 409, error: `step ${step.index} is ${step.status}; only pending steps change` };
-  const draft = record.steps.map((item) => ({ ...item }));
-  const target = draft[step.index - 1];
-  if (typeof patch.instruction === "string") target.instruction = patch.instruction.trim();
-  if (typeof patch.command === "string" && patch.command.trim()) { target.command = patch.command.trim(); target.launch = null; }
-  else if (patch.choice && typeof patch.choice === "object") { target.launch = { harness: String(patch.choice.harness ?? ""), model: patch.choice.model ?? null, effort: patch.choice.effort ?? null }; target.command = ""; }
-  if (patch.continueFrom === null || Number.isInteger(patch.continueFrom)) target.continueFrom = patch.continueFrom;
-  const error = validateSteps(draft);
-  if (error) return { status: 400, error };
-  record.steps = draft;
-  record.assignments = record.steps;
-  record.revision = Math.max(1, Number(record.revision) || 1) + 1;
-  record.updatedAt = new Date().toISOString();
-  await writePipeline(PIPELINES_ROOT, record);
-  await recordCommittedCommand({ operation: "goal-assignment-edit", actorSession: options.caller, targetArea: o.area, goal: o.slug, operationId: options.idempotencyKey });
-  return { status: 200, pipeline: record };
-}
-
-/** Validates one path field without changing any durable queue state. */
-function validatePendingAssignmentPath(value, label) {
-  if (value === null || value === undefined || String(value).trim() === "") return { value: null };
-  const requested = String(value).trim();
-  const directory = requested.replace(/^~(?=\/|$)/, os.homedir());
-  if (!path.isAbsolute(directory)) return { error: `${label}: path ${requested} is not an absolute directory` };
-  if (!existsSync(directory) || !statSync(directory).isDirectory()) return { error: `${label}: no directory ${directory}` };
-  return { value: directory };
-}
-
-/**
- * Resolves all launch and path inputs in an assignment mutation before the
- * queue clone changes. The queue stores the requested launch identity; this
- * pass proves that identity resolves against the same registry snapshot.
- */
-async function validatePendingAssignmentOperations(area, operations) {
-  const normalized = structuredClone(operations);
-  const warnings = [];
-  const defaultHarness = await areaHarnessId(area);
-  for (const [position, operation] of normalized.entries()) {
-    const target = operation?.type === "add" ? operation.assignment : operation?.type === "update" ? operation.patch : null;
-    if (!target || typeof target !== "object" || Array.isArray(target)) continue;
-    if (Object.hasOwn(target, "launch")) {
-      const chosen = await launchCatalog.requested({ choice: target.launch });
-      if (chosen.error) return { error: `operation ${position + 1}: ${chosen.error}`, status: 409 };
-      target.launch = {
-        harness: chosen.harness,
-        model: chosen.model ?? null,
-        effort: chosen.effort ?? null,
-      };
-      if (defaultHarness && chosen.harness !== defaultHarness) {
-        warnings.push(`operation ${position + 1}: --launch ${launchRef(target.launch)} differs from the default harness ${defaultHarness}.`);
-      }
-    }
-    if (Object.hasOwn(target, "path")) {
-      const located = validatePendingAssignmentPath(target.path, `operation ${position + 1}`);
-      if (located.error) return { error: located.error, status: 400 };
-      target.path = located.value;
-    }
-  }
-  return { operations: normalized, warnings };
-}
-
-/** Applies one atomic stable-ID mutation to the pending assignment suffix. */
-async function mutatePipelineAssignments(goalFile, operations, options = {}) {
-  return withGoalQueueMutation(goalFile, () => mutatePipelineAssignmentsUnlocked(goalFile, operations, options));
-}
-
-/** Performs one serialized assignment mutation and one durable write. */
-async function mutatePipelineAssignmentsUnlocked(goalFile, operations, options = {}) {
-  const goal = (await goalsByFile()).get(goalFile);
-  if (!goal) return { status: 404, error: `no goal file ${goalFile}` };
-  if (["done", "dropped", "parked"].includes(goal.status)) return { status: 409, error: `goal is ${goal.status}` };
-  const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
-  if (!record) return { status: 404, error: "no pipeline on this goal" };
-  const operationId = String(options.idempotencyKey ?? "").trim();
-  if (!operationId) return { status: 400, code: "operation-required", error: "an operation ID is required", pipeline: record };
-  if (record.idempotencyKeys?.includes(operationId)) {
-    await recordCommittedCommand({
-      operation: "goal-assignments-mutate",
-      actorSession: options.caller,
-      targetArea: goal.area,
-      goal: goal.slug,
-      assignment: "pending-suffix",
-      operationId,
-      result: "repeated without another write",
-    });
-    return { status: 200, state: "repeated", repeated: true, pipeline: record, warnings: [] };
-  }
-  if (Number(options.expectedRevision) !== Number(record.revision)) {
-    return { status: 409, code: "stale-revision", error: `stale-revision:${record.revision}`, pipeline: record };
-  }
-  const prepared = await validatePendingAssignmentOperations(goal.area, operations);
-  if (prepared.error) return { status: prepared.status, error: prepared.error, pipeline: record };
-  try {
-    const result = mutatePendingAssignments(record, {
-      expectedRevision: options.expectedRevision,
-      operationId,
-      operations: prepared.operations,
-    });
-    if (!result.repeated) await writePipeline(PIPELINES_ROOT, record);
-    const assignmentIds = [...(result.added ?? []), ...(result.removed ?? []), ...(result.moved ?? [])];
-    await recordCommittedCommand({
-      operation: "goal-assignments-mutate",
-      actorSession: options.caller,
-      targetArea: goal.area,
-      goal: goal.slug,
-      assignment: assignmentIds.join(",") || "pending-suffix",
-      operationId,
-      result: result.repeated ? "repeated without another write" : "committed atomically",
-    });
-    return { status: 200, ...result, warnings: prepared.warnings };
-  } catch (error) {
-    if (!(error instanceof PipelineMutationError)) throw error;
-    const conflict = ["stale-revision", "assignment-history-immutable", "assignment-not-found", "duplicate-assignment", "queue-paused"].includes(error.code);
-    return {
-      status: conflict ? 409 : 400,
-      code: error.code,
-      error: String(error.message ?? error),
-      pipeline: error.pipeline ?? record,
-    };
-  }
-}
-
 /** Returns one current attempt's immutable live target after all tags match. */
 async function inspectCurrentGoalAttemptTarget(goal, record, assignment, attempt) {
   const sessions = await listAllSessions({ fresh: true });
@@ -3858,6 +3717,9 @@ async function replaceGoalAttempt(goalFile, options = {}) {
 async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
   const goal = (await goalsByFile()).get(goalFile);
   if (!goal) return { status: 404, error: `no goal file ${goalFile}` };
+  // Everything starts through the brain (D8): a replacement is a new worker
+  // attempt, so only a live brain requests one.
+  if (!await liveCallingBrain(options.caller)) return { status: 403, error: brainOnlyStartRefusal(goal.area) };
   if (["done", "dropped", "parked"].includes(goal.status)) return { status: 409, error: `goal is ${goal.status}` };
   const operationId = String(options.operationId ?? "").trim();
   if (!operationId) return { status: 400, code: "operation-required", error: "an operation ID is required" };
@@ -4314,15 +4176,19 @@ async function routeBrainNotice(area, text, { idempotencyKey = null, sender = nu
  * `tangent send brain`; every other Tangent mutation belongs to the brain.
  */
 const WORKER_REFUSED_ROUTES = new Set([
-  "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/edit", "/api/goals/start",
+  "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/edit", "/api/goals/start", "/api/goals/agent",
   "/api/goals/depend", "/api/goals/undepend", "/api/goals/accept", "/api/goals/understanding", "/api/goals/cleanup",
-  "/api/pipelines/append", "/api/pipelines/control", "/api/pipelines/edit", "/api/pipelines/mutate", "/api/goals/attempts/replace", "/api/goals/attempts/resume",
-  "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/idea/new", "/api/document/resolve", "/api/document",
-  "/api/brains/start", "/api/brains/stop", "/api/brains/handover", "/api/brains/requests", "/api/brains/requests/withdraw",
-  "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/control",
+  "/api/pipelines/append", "/api/pipelines/control", "/api/goals/attempts/replace", "/api/goals/attempts/resume",
+  "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/areas/journal", "/api/idea/new", "/api/document/resolve", "/api/document",
+  "/api/brains/start", "/api/brains/stop", "/api/brains/reply", "/api/brains/verdict", "/api/brains/verdict/undo",
+  "/api/brains/requests", "/api/brains/requests/withdraw", "/api/brains/requests/answer", "/api/brains/requests/dismiss",
+  "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/control", "/api/processes/check",
+  "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
 
 const WORKER_MUTATION_REFUSAL = 'workers only send. Use: tangent send brain "<note>"';
+/** The 403 text when a worker sends to anything but its brain (D5). */
+const WORKER_SEND_TARGET_REFUSAL = 'workers only send to their brain. Use: tangent send brain "<note>"';
 
 /**
  * The 403 text for a mutating route called from a worker session, or null
@@ -5824,8 +5690,6 @@ const pipelineRoutes = createPipelineRoutes({
   isWorkerSendKind: (kind) => WORKER_SEND_KINDS.has(kind),
   control: controlPipeline,
   append: appendPipelineSteps,
-  edit: editPipelineStep,
-  mutate: mutatePipelineAssignments,
   replaceAttempt: replaceGoalAttempt,
   resumeAttempt: resumeGoalAttempt,
 });
@@ -5938,6 +5802,8 @@ const agentRoutes = createAgentRoutes({
     const target = resolveSession(requested, sessions);
     const live = sessions.find((session) => session.name === target);
     const sender = commandActor(body.from, { sessions, brains });
+    // Workers have one command (D5): their notes go to their own brain.
+    if (sender.role === "worker") return { status: 403, error: WORKER_SEND_TARGET_REFUSAL };
     const entry = { from: sender.session ?? "unknown sender", area: sender.area, text, durable: true, queuedAt: new Date().toISOString() };
     if (!live) {
       const inbox = areaInboxTarget(requested, { areas: flattenAreaPaths(tree), brains });

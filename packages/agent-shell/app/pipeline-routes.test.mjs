@@ -56,34 +56,6 @@ test("pipeline routes reject a report value that is not an object", async () => 
   assert.equal(called, false, "a malformed report never reaches the queue controller");
 });
 
-test("pipeline routes dispatch atomic pending-assignment mutations", async () => {
-  const calls = [];
-  const routes = createPipelineRoutes({
-    /** Records one atomic pending-assignment mutation. */
-    async mutate(goal, operations, options) {
-      calls.push({ goal, operations, options });
-      return { status: 200, state: "mutated", pipeline: { revision: 4 }, warnings: ["kept"] };
-    },
-  });
-  const output = response();
-  await routes.handle(request("POST", {
-    goal: "goal.md",
-    operations: [{ type: "move", assignmentId: "assignment-2", afterAssignmentId: "assignment-3" }],
-    expectedRevision: 3,
-    operationId: "mutation-1",
-    caller: "brain-1",
-  }), output, new URL("http://shell/api/pipelines/mutate"));
-
-  assert.deepEqual(calls, [{
-    goal: "goal.md",
-    operations: [{ type: "move", assignmentId: "assignment-2", afterAssignmentId: "assignment-3" }],
-    options: { caller: "brain-1", expectedRevision: 3, idempotencyKey: "mutation-1" },
-  }]);
-  assert.equal(output.status, 200);
-  assert.equal(output.body.pipeline.revision, 4);
-  assert.deepEqual(output.body.warnings, ["kept"]);
-});
-
 test("pipeline routes dispatch fenced Goal attempt replacement", async () => {
   const calls = [];
   const routes = createPipelineRoutes({

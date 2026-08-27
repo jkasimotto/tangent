@@ -1,13 +1,16 @@
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, requiredString, stringArg, type Args } from "@tangent/core/cli";
 
-import { currentTmuxSession, postJson, resolveServerUrl } from "../client.js";
+import { currentSessionIsWorker, currentTmuxSession, postJson, resolveServerUrl } from "../client.js";
 import { sendCommandSpec } from "../spec.js";
 
 /** The one flag word of a send, or "note" when no flag is given. */
 export type SendKind = "note" | "done" | "blocked" | "question";
 
 const FLAG_KINDS: SendKind[] = ["done", "blocked", "question"];
+
+/** The refusal a worker gets for any send target but its brain (D5). The server says the same. */
+export const WORKER_SEND_TARGET_REFUSAL = 'workers only send to their brain. Use: tangent send brain "<note>"';
 
 /**
  * Handles `tangent send <to> "<note>" [--done | --blocked | --question]`.
@@ -34,6 +37,7 @@ export async function runSendCli(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
   if (kind !== "note") throw new Error("--done, --blocked, and --question work only with tangent send brain.");
+  if (await currentSessionIsWorker()) throw new Error(WORKER_SEND_TARGET_REFUSAL);
   const result = await postJson(server, "/api/agents/send", { to, text, from });
   console.log(sendResultLine(result));
 }

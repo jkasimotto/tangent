@@ -79,7 +79,9 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.doesNotMatch(shellScript, /noteServerBoot/);
   assert.match(shellScript, /api\/shell\/rebuild/);
   assert.match(shellScript, /data-goal-anchor/);
-  assert.doesNotMatch(shellScript, /data-view-goal|Goal details/);
+  assert.doesNotMatch(shellScript, /data-view-goal/, "Goal reading does not restore the retired standalone detail screen");
+  assert.match(shellScript, /api\/goals\/detail/);
+  assert.match(shellScript, /Goal details/, "the Document reader projects the stable Goal read model");
   assert.doesNotMatch(serverSource, /createReloadController|api\/reload|source changed; restarting|watch\(here/);
   // Command teaching moved to the ambient ~/.agents/AGENTS.md: the describe
   // prompt names the trivial-path command and the two good outcomes instead.

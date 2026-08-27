@@ -1,6 +1,11 @@
 import test from "node:test";
 import { assert, readFile, path, JSDOM, shellBundle, here, settle, click, submit, openDocumentViaGoTo, jsonResponse } from "./focus-shell-ui-fixture.mjs";
 
+/** Opens the Area Focus surface through its keyboard-owned command. */
+function openAreaFocus(window) {
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "f", bubbles: true, cancelable: true }));
+}
+
 /** Builds one Goal for the Work projection. */
 function goal(area, slug, title) {
   return {
@@ -104,8 +109,8 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   assert.equal(window.document.querySelector(".attention-queue"), null, "Work carries no attention strip");
   assert.ok(window.document.querySelector("[data-review-questions]"), "an Area whose brain asked shows its question count");
 
-  click(window, '[data-work-group="otto/alpha"] .work-group-action-menu > summary');
-  click(window, '[data-work-group="otto/alpha"] [data-open-area-focus]');
+  click(window, '[data-work-group="otto/alpha"] [data-work-object-actions]');
+  click(window, '[data-modal-action="focus"]');
   await settle(window);
   const search = window.document.querySelector("#area-focus-search");
   assert.equal(window.document.activeElement, search);
@@ -166,10 +171,10 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   assert.match(others.textContent, /1 open/, "the folded header stays truthful about what it holds");
   assert.equal(others.querySelector(`[data-open-goal-run="${beta.file}"]`), null, "a folded group draws no rows");
   assert.equal(others.querySelector("[data-open-area-brain]"), null, "the group spans many Areas, so it offers no brain");
-  click(window, '[data-fold-work-area="__other-areas"]');
+  click(window, '[data-work-group="__other-areas"] [data-work-tree-action="expand"]');
   const expanded = window.document.querySelector('[data-work-group="__other-areas"]');
   assert.ok(expanded.querySelector(`[data-open-goal-run="${beta.file}"]`), "expanding the group reveals the work outside Focus");
-  click(window, '[data-fold-work-area="__other-areas"]');
+  click(window, '[data-work-group="__other-areas"] [data-work-tree-action="collapse"]');
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Focus:\s*Alpha/);
   assert.deepEqual(
     [...window.document.querySelectorAll(".desk-state[data-review-questions]")].map((button) => button.dataset.reviewQuestions),
@@ -224,7 +229,7 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null);
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'), "Clear restores complete Work");
 
-  click(window, "[data-open-area-focus]");
+  openAreaFocus(window);
   const programSearch = window.document.querySelector("#area-focus-search");
   programSearch.value = "delta";
   programSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -236,7 +241,7 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   assert.ok(window.document.querySelector('[data-desk-area="otto/delta"]'), "the selected Area keeps its calm header");
   click(window, "[data-clear-area-focus]");
 
-  click(window, "[data-open-area-focus]");
+  openAreaFocus(window);
   const pickerSearch = window.document.querySelector("#area-focus-search");
   pickerSearch.value = "gamma";
   pickerSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -257,7 +262,7 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   assert.equal(window.document.querySelector(".area-focus-summary"), null);
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'), "stale Focus recovery restores complete Work");
 
-  click(window, "[data-open-area-focus]");
+  openAreaFocus(window);
   const awaySearch = window.document.querySelector("#area-focus-search");
   awaySearch.value = "otto/alpha";
   awaySearch.dispatchEvent(new window.Event("input", { bubbles: true }));

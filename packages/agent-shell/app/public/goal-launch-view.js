@@ -148,7 +148,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   function launchOptionsFor(area) {
     const kind = state.launchTarget === BRAIN_LAUNCH_TARGET ? "brain" : state.launchTarget === DEFAULT_AGENTS_TARGET ? "all" : "launch";
     if (state.launch.area !== area || (state.launch.kind && state.launch.kind !== kind)) {
-      state.launch = { area, kind, options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null };
+      state.launch = { area, kind, options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null, stale: null };
     } else state.launch.kind = kind;
     if (!state.launch.options && !state.launch.loading) {
       state.launch.loading = true;
@@ -230,14 +230,54 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     return { fields: preset.command ? { command: preset.command } : {}, label };
   }
 
-  // ---- pipeline drafts ----
-  // The popover holds one draft step per row. The active row's fields live in
-  // state.launch (choice, command, instruction, continueFrom) so the picker
-  // code works unchanged; the other rows wait in state.launch.steps.
+  // ---- assignment drafts ----
 
-  /** The active row's draft as one plain object. */
+  /** Creates one stable browser identity that survives reorder before Save. */
+  function draftAssignmentId() {
+    return `draft-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+  }
+
+  /** Creates one unsaved assignment without borrowing a display position. */
+  function blankLaunchStep() {
+    return { id: draftAssignmentId(), persisted: false, status: "draft", choice: null, command: "", instruction: "", kind: "implementation", path: "", continueFromAssignmentId: null };
+  }
+
+  /** Converts queue history and pending rows to the editor's stable model. */
+  function launchStepsForRecord(record) {
+    const source = record?.steps ?? record?.assignments ?? [];
+    return source.map((step, index) => {
+      const legacySource = Number.isInteger(step.continueFrom) ? source[step.continueFrom - 1] : null;
+      return {
+        id: String(step.id ?? step.assignmentId ?? `assignment-${index + 1}`),
+        persisted: true,
+        status: step.status ?? "pending",
+        choice: step.launch ?? null,
+        command: step.launch ? "" : step.command ?? "",
+        instruction: step.instruction ?? "",
+        kind: step.kind === "review" ? "review" : "implementation",
+        path: step.path ?? "",
+        continueFromAssignmentId: step.continueFromAssignmentId ?? legacySource?.id ?? legacySource?.assignmentId ?? null,
+      };
+    });
+  }
+
+  /** True only for a pending queue row or a new local row. */
+  function launchStepIsMutable(row) {
+    return Boolean(row && (!row.persisted || row.status === "pending"));
+  }
+
+  /** The active row's draft as one plain object with its stable identity. */
   function launchStepDraft() {
-    return { choice: state.launch.choice, command: state.launch.command, instruction: state.launch.instruction, continueFrom: state.launch.continueFrom };
+    const row = state.launch.steps[state.launch.active] ?? blankLaunchStep();
+    return {
+      ...row,
+      choice: state.launch.choice,
+      command: state.launch.command,
+      instruction: state.launch.instruction,
+      kind: state.launch.assignmentKind === "review" ? "review" : "implementation",
+      path: state.launch.assignmentPath ?? "",
+      continueFromAssignmentId: state.launch.continueFrom ?? null,
+    };
   }
 
   /** Copies the typed instruction and command into the active row before any repaint. */
@@ -248,12 +288,19 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     if (brainInstruction && state.brainDraft) state.brainDraft.instruction = brainInstruction.value;
     const command = document.querySelector("#launch-command-input");
     if (command) state.launch.command = command.value;
+    const path = document.querySelector("[data-launch-path]");
+    if (path) state.launch.assignmentPath = path.value;
+    const kind = document.querySelector("[data-launch-kind]");
+    if (kind) state.launch.assignmentKind = kind.value === "review" ? "review" : "implementation";
+    const continuation = document.querySelector("[data-launch-continue]");
+    if (continuation) state.launch.continueFrom = continuation.value || null;
   }
 
   /** Stores the active row's fields into the steps array and returns the array. */
   function commitActiveStep() {
-    const steps = state.launch.steps.length ? state.launch.steps : [launchStepDraft()];
-    steps[state.launch.active] = launchStepDraft();
+    const steps = state.launch.steps.length ? state.launch.steps : [blankLaunchStep()];
+    state.launch.active = Math.min(state.launch.active, steps.length - 1);
+    if (launchStepIsMutable(steps[state.launch.active])) steps[state.launch.active] = { ...steps[state.launch.active], ...launchStepDraft() };
     state.launch.steps = steps;
     return steps;
   }
@@ -265,20 +312,26 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
 
   /** Loads one row of the given steps into the active fields without storing the current one. */
   function loadLaunchStep(steps, index) {
-    const row = steps[index] ?? { choice: null, command: "", instruction: "", continueFrom: null };
-    state.launch.active = index;
+    const row = steps[index] ?? blankLaunchStep();
+    state.launch.active = Math.max(0, index);
     state.launch.choice = row.choice ?? null;
     state.launch.command = row.command ?? "";
     state.launch.instruction = row.instruction ?? "";
-    state.launch.continueFrom = row.continueFrom ?? null;
+    state.launch.assignmentKind = row.kind === "review" ? "review" : "implementation";
+    state.launch.assignmentPath = row.path ?? "";
+    state.launch.continueFrom = row.continueFromAssignmentId ?? null;
     state.launch.editing = false;
   }
 
-  /** Appends one row and makes it active. */
-  function addLaunchStep() {
+  /** Inserts one pending row after the selected mutable assignment. */
+  function addLaunchStep(afterIndex = state.launch.active) {
     const steps = commitActiveStep();
-    steps.push({ choice: null, command: "", instruction: "", continueFrom: null });
-    activateLaunchStep(steps.length - 1);
+    const row = steps[afterIndex];
+    if (row && !launchStepIsMutable(row) && steps.some(launchStepIsMutable)) return false;
+    const insertion = row ? afterIndex + 1 : steps.length;
+    steps.splice(insertion, 0, blankLaunchStep());
+    loadLaunchStep(steps, insertion);
+    return true;
   }
 
   /**
@@ -288,15 +341,31 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
    */
   function removeLaunchStep(index) {
     const steps = commitActiveStep();
-    const fixed = state.launch.record ? state.launch.record.steps.length : 0;
-    const firstPending = state.launch.record ? state.launch.record.steps.findIndex((step) => step.status === "pending") : -1;
-    if (index < fixed) return;
-    if (steps.length - fixed <= 1 && firstPending < 0) return;
+    if (!launchStepIsMutable(steps[index])) return false;
+    if (steps.length <= 1 || (state.launch.record && !steps.some((step) => !launchStepIsMutable(step)) && steps.filter(launchStepIsMutable).length <= 1)) return false;
+    const removed = steps[index].id;
     steps.splice(index, 1);
-    for (const step of steps) if (step.continueFrom && step.continueFrom > steps.length) step.continueFrom = null;
-    const nearest = Math.min(state.launch.active > index ? state.launch.active - 1 : state.launch.active, steps.length - 1);
-    // Load without committing: the removed row must not be written back.
-    loadLaunchStep(steps, nearest >= fixed || firstPending < 0 ? Math.max(nearest, fixed) : firstPending);
+    for (const step of steps) if (step.continueFromAssignmentId === removed) step.continueFromAssignmentId = null;
+    const editable = steps.map((step, position) => ({ step, position })).filter((item) => launchStepIsMutable(item.step));
+    const next = editable.find((item) => item.position >= index) ?? editable.at(-1);
+    loadLaunchStep(steps, next?.position ?? Math.max(0, Math.min(index - 1, steps.length - 1)));
+    return true;
+  }
+
+  /** Moves one pending assignment while keeping continuation identities stable. */
+  function moveLaunchStep(index, direction) {
+    const steps = commitActiveStep();
+    if (!launchStepIsMutable(steps[index])) return false;
+    const next = index + direction;
+    if (next < 0 || next >= steps.length || !launchStepIsMutable(steps[next])) return false;
+    [steps[index], steps[next]] = [steps[next], steps[index]];
+    const positions = new Map(steps.map((step, position) => [step.id, position]));
+    for (const [position, step] of steps.entries()) {
+      const source = positions.get(step.continueFromAssignmentId);
+      if (Number.isInteger(source) && source >= position) step.continueFromAssignmentId = null;
+    }
+    loadLaunchStep(steps, next);
+    return true;
   }
 
   /** The label one draft row shows in the step list. */
@@ -313,7 +382,13 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   /** One request step for the server: instruction plus a launch or a command. */
   function launchStepRequest(row) {
     const options = state.launch.options;
-    const base = { instruction: row.instruction.trim(), continueFrom: row.continueFrom ?? null };
+    const base = {
+      id: row.id,
+      instruction: row.instruction.trim(),
+      kind: row.kind === "review" ? "review" : "implementation",
+      path: row.path?.trim() || null,
+      continueFromAssignmentId: row.continueFromAssignmentId ?? null,
+    };
     if (row.command?.trim()) return { ...base, command: row.command.trim() };
     if (row.choice?.harness) return { ...base, launch: { harness: row.choice.harness, model: row.choice.model ?? null, effort: row.choice.effort ?? null } };
     const preset = options?.default && !options.default.error ? options.default : null;
@@ -340,44 +415,110 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
    * rather than starting over. Finished Goals show nothing.
    */
   function pipelineRecordForGoal(goal) {
-    if (!goal || ["done", "dropped", "deferred"].includes(goal.status)) return null;
+    if (!goal || ["done", "dropped", "parked", "deferred"].includes(goal.status)) return null;
     return (state.pipelines ?? []).find((item) => item.goal === goal.file) ?? null;
   }
 
-  /** The draft rows the popover holds after a record's own steps: the steps to append. */
+  /** The rows created locally after the queue revision was loaded. */
   function launchDraftRows(steps = commitActiveStep()) {
-    const record = state.launch.record;
-    return record ? steps.slice(record.steps.length) : steps;
+    return state.launch.record ? steps.filter((row) => !row.persisted) : steps;
   }
 
-  /** The step list above the picker: rows, add, remove; describe mode has none. */
+  /** Builds one atomic stable-ID mutation batch for the current queue draft. */
+  function pipelineMutationOperations(record, rows = commitActiveStep()) {
+    if (!record) return [];
+    const original = launchStepsForRecord(record);
+    const originalById = new Map(original.map((row) => [row.id, row]));
+    const current = rows.filter(launchStepIsMutable);
+    const currentIds = new Set(current.map((row) => row.id));
+    const operations = original.filter((row) => row.status === "pending" && !currentIds.has(row.id))
+      .map((row) => ({ type: "remove", assignmentId: row.id }));
+    let previousId = rows.slice(0, Math.max(0, rows.findIndex(launchStepIsMutable))).at(-1)?.id ?? null;
+    for (const row of current) {
+      const request = launchStepRequest(row);
+      if (!row.persisted) operations.push({ type: "add", afterAssignmentId: previousId, assignment: request });
+      else {
+        const before = originalById.get(row.id);
+        const comparableBefore = before ? launchStepRequest(before) : null;
+        if (!comparableBefore || JSON.stringify(comparableBefore) !== JSON.stringify(request)) {
+          const patch = { ...request };
+          delete patch.id;
+          operations.push({ type: "update", assignmentId: row.id, patch });
+        }
+      }
+      previousId = row.id;
+    }
+    const simulated = original.filter((row) => row.status === "pending" && currentIds.has(row.id)).map((row) => row.id);
+    for (const row of current.filter((item) => !item.persisted)) {
+      const wanted = current.findIndex((item) => item.id === row.id);
+      simulated.splice(wanted, 0, row.id);
+    }
+    const firstMutable = rows.findIndex(launchStepIsMutable);
+    const historyAnchor = firstMutable > 0 ? rows[firstMutable - 1].id : null;
+    for (let index = 0; index < current.length; index += 1) {
+      const id = current[index].id;
+      const position = simulated.indexOf(id);
+      if (position === index) continue;
+      operations.push({ type: "move", assignmentId: id, afterAssignmentId: index ? current[index - 1].id : historyAnchor });
+      simulated.splice(position, 1);
+      simulated.splice(index, 0, id);
+    }
+    return operations;
+  }
+
+  /** Rebases the local operation batch onto the server's current queue. */
+  function rebasePipelineDraft(latestRecord, originalRecord = state.launch.record, rows = commitActiveStep()) {
+    const operations = pipelineMutationOperations(originalRecord, rows);
+    const rebased = launchStepsForRecord(latestRecord);
+    /** Converts a request assignment back to one editable browser row. */
+    const draftRow = (assignment, persisted = false) => ({
+      id: String(assignment.id), persisted, status: persisted ? "pending" : "draft",
+      choice: assignment.launch ?? null, command: assignment.command ?? "", instruction: assignment.instruction ?? "",
+      kind: assignment.kind === "review" ? "review" : "implementation", path: assignment.path ?? "",
+      continueFromAssignmentId: assignment.continueFromAssignmentId ?? null,
+    });
+    for (const operation of operations) {
+      if (operation.type === "add") {
+        const after = operation.afterAssignmentId == null ? -1 : rebased.findIndex((row) => row.id === operation.afterAssignmentId);
+        rebased.splice(after + 1, 0, draftRow(operation.assignment));
+      } else if (operation.type === "update") {
+        const index = rebased.findIndex((row) => row.id === operation.assignmentId);
+        if (index >= 0 && launchStepIsMutable(rebased[index])) rebased[index] = { ...rebased[index], ...draftRow({ id: operation.assignmentId, ...operation.patch }, true) };
+      } else if (operation.type === "remove") {
+        const index = rebased.findIndex((row) => row.id === operation.assignmentId && launchStepIsMutable(row));
+        if (index >= 0) rebased.splice(index, 1);
+      } else if (operation.type === "move") {
+        const index = rebased.findIndex((row) => row.id === operation.assignmentId);
+        if (index < 0 || !launchStepIsMutable(rebased[index])) continue;
+        const [row] = rebased.splice(index, 1);
+        const after = operation.afterAssignmentId == null ? -1 : rebased.findIndex((item) => item.id === operation.afterAssignmentId);
+        rebased.splice(after + 1, 0, row);
+      }
+    }
+    return rebased;
+  }
+
+  /** The assignment list and its keyboard-equivalent pointer actions. */
   function launchStepList() {
     if ([DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET].includes(state.launchTarget)) return "";
-    const record = state.launch.record;
     const steps = commitActiveStep();
-    const fixed = record ? record.steps.length : 0;
     const glyph = { complete: "✓", running: "●", pending: "○", skipped: "–", stopped: "■", ended: "■" };
-    // Rows of a record: history stays fixed, pending rows edit in place.
-    const recordRows = (record?.steps ?? []).map((step, index) => `
-        <li class="launch-step ${step.status}${state.launch.active === index ? " selected" : ""}">
-          ${step.status === "pending"
-            ? `<button type="button" data-launch-step-select="${index}" title="Edit step ${step.index}"><b>${glyph[step.status]}</b><span>${step.index} · ${escapeHtml(step.label || launchStepLabel({ choice: step.launch, command: step.command }))}</span><em>${escapeHtml(clip(step.instruction, 60))}</em></button>`
-            : `<span class="launch-step-fixed"><b>${glyph[step.status] ?? "○"}</b><span>${step.index} · ${escapeHtml(step.label || "agent")}</span><em>${escapeHtml(clip(step.instruction, 60))}</em></span>`}
-        </li>`);
-    // Draft rows: a new pipeline, or the steps to append after a record.
-    const removable = record ? steps.length - fixed > 1 || record.steps.some((step) => step.status === "pending") : steps.length > 1;
-    const draftRows = steps.slice(fixed).map((row, offset) => {
-      const index = fixed + offset;
-      return `
-        <li class="launch-step draft${state.launch.active === index ? " selected" : ""}">
-          <button type="button" data-launch-step-select="${index}" title="Edit step ${index + 1}"><b>${record ? "+" : index + 1}</b><span>${record ? `${index + 1} · ` : ""}${escapeHtml(launchStepLabel(row))}</span><em>${row.instruction?.trim() ? escapeHtml(clip(row.instruction.trim(), 60)) : "<i>no instruction</i>"}</em></button>
-          ${removable ? `<button type="button" class="launch-step-remove" data-launch-step-remove="${index}" aria-label="Remove step ${index + 1}">×</button>` : ""}
-        </li>`;
+    const rows = steps.map((row, index) => {
+      const mutable = launchStepIsMutable(row);
+      const canRemove = mutable && (steps.length > 1 || steps.some((step) => !launchStepIsMutable(step)));
+      return `<li class="launch-step ${row.status}${state.launch.active === index ? " selected" : ""}" data-launch-assignment="${escapeHtml(row.id)}">
+        ${mutable
+          ? `<button type="button" data-launch-step-select="${index}" data-focus-key="launch:assignment:${escapeHtml(row.id)}" title="Edit assignment ${index + 1} (e)"><b>${row.persisted ? glyph.pending : "+"}</b><span>${index + 1} · ${escapeHtml(launchStepLabel(row))}</span><em>${row.instruction?.trim() ? escapeHtml(clip(row.instruction.trim(), 60)) : "<i>no instruction</i>"}</em></button>
+            <span class="launch-step-actions"><button type="button" data-launch-step-add-after="${index}" title="Add after (a)">a</button><button type="button" data-launch-step-edit="${index}" title="Edit (e)">e</button><button type="button" data-launch-step-move="-1" data-launch-step-index="${index}" ${index > 0 && launchStepIsMutable(steps[index - 1]) ? "" : "disabled"} title="Move up (K)">K</button><button type="button" data-launch-step-move="1" data-launch-step-index="${index}" ${index < steps.length - 1 && launchStepIsMutable(steps[index + 1]) ? "" : "disabled"} title="Move down (J)">J</button>${canRemove ? `<button type="button" data-launch-step-remove="${index}" title="Remove (d)">d</button>` : ""}</span>`
+          : `<span class="launch-step-fixed"><b>${glyph[row.status] ?? "■"}</b><span>${index + 1} · ${escapeHtml(launchStepLabel(row))}</span><em>${escapeHtml(clip(row.instruction, 60))}</em></span>`}
+      </li>`;
     });
     return `
-      <ol class="launch-steps" aria-label="${record ? "Pipeline steps" : "Steps"}">${[...recordRows, ...draftRows].join("")}
-      </ol>
-      <button type="button" class="quiet-button launch-step-add" data-launch-step-add>+ Add step</button>`;
+      <section class="launch-assignment-region" data-launch-assignment-region aria-label="Assignments">
+        <p class="launch-region-title">Assignments <small>j/k rows · a add · e edit · d remove · J/K move</small></p>
+        <ol class="launch-steps" aria-label="Assignments">${rows.join("")}</ol>
+        <button type="button" class="quiet-button launch-step-add" data-launch-step-add>Add assignment <kbd>a</kbd></button>
+      </section>`;
   }
 
   /**
@@ -429,22 +570,29 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const brain = braining ? brainForAreaCard(state.brainDraft?.area) : null;
     const brainResumes = Boolean(brain && !brain.live);
     const record = state.launch.record;
-    const stepCount = describing || braining || settings ? 1 : commitActiveStep().length;
-    const drafts = record ? launchDraftRows().length : 0;
+    const assignmentRows = describing || braining || settings ? [] : commitActiveStep();
+    const activeAssignment = assignmentRows[state.launch.active];
+    const activeMutable = launchStepIsMutable(activeAssignment);
+    const stepCount = describing || braining || settings ? 1 : assignmentRows.length;
     const startLabel = braining
       ? (brainResumes ? "Send and wake brain" : "Start brain")
       : record
-      ? (state.launch.active < record.steps.length ? `Save step ${state.launch.active + 1}` : drafts > 1 ? `Add ${drafts} steps` : `Add step ${record.steps.length + 1}`)
-      : stepCount > 1 ? `Start ${stepCount} steps` : `Start ${selection ? (selection.label || "agent") : "agent"}`;
+      ? "Save pending changes"
+      : stepCount > 1 ? `Start ${stepCount} assignments` : `Start ${selection ? (selection.label || "agent") : "agent"}`;
     const brainZone = braining ? `
         <label class="brain-instruction"><span>${brainResumes ? "What should this brain do next?" : "What should this Area get done?"}</span><textarea id="brain-instruction" rows="5" placeholder="${brainResumes ? "The message that wakes this brain. It keeps its founding instruction and its plan, and reads this as the reason it is awake." : "The instruction the brain plans and dispatches from. It splits the work into Goals, starts agents in dependency order, reviews what comes back, and asks you only for real decisions."}">${escapeHtml(state.brainDraft?.instruction ?? "")}</textarea></label>
         ${brainResumes ? `<p class="form-note">A brain ran here before (${escapeHtml(brainStateLabel(brain).toLowerCase())}). Your message wakes it and keeps its founding instruction. Start over begins a new brain from the message above.</p>` : ""}` : "";
-    const stepZone = describing || braining || settings ? "" : `
-        <label class="launch-instruction"><span>Step ${state.launch.active + 1} does</span><textarea id="launch-instruction" rows="2" placeholder="${stepCount > 1 || record ? "What this agent does" : "What this agent does (optional for one step)"}">${escapeHtml(state.launch.instruction ?? "")}</textarea></label>
-        ${state.launch.active > 0 ? `<label class="launch-continue"><span>Session</span><select data-launch-continue><option value="">Fresh session</option>${Array.from({ length: state.launch.active }, (_, k) => `<option value="${k + 1}"${state.launch.continueFrom === k + 1 ? " selected" : ""}>Continue step ${k + 1}</option>`).join("")}</select></label>` : ""}`;
+    const continuationRows = assignmentRows.slice(0, state.launch.active);
+    const stepZone = describing || braining || settings ? "" : !activeMutable
+      ? `<section class="launch-assignment-history"><p>This assignment is immutable history. Select a pending assignment or add one.</p></section>`
+      : `<section class="launch-assignment-editor" data-launch-assignment-editor aria-label="Assignment fields">
+          <label class="launch-instruction"><span>Assignment ${state.launch.active + 1} does</span><textarea id="launch-instruction" rows="2" placeholder="${stepCount > 1 || record ? "What this agent does" : "What this agent does (optional for one assignment)"}">${escapeHtml(state.launch.instruction ?? "")}</textarea></label>
+          <div class="launch-assignment-metadata"><label><span>Type</span><select data-launch-kind><option value="implementation"${state.launch.assignmentKind !== "review" ? " selected" : ""}>Implementation</option><option value="review"${state.launch.assignmentKind === "review" ? " selected" : ""}>Review</option></select></label><label><span>Path <small>optional</small></span><input data-launch-path value="${escapeHtml(state.launch.assignmentPath ?? "")}" placeholder="Repository path"></label><label class="launch-continue"><span>Session</span><select data-launch-continue><option value="">Fresh session</option>${continuationRows.map((row, index) => `<option value="${escapeHtml(row.id)}"${state.launch.continueFrom === row.id ? " selected" : ""}>Continue assignment ${index + 1}</option>`).join("")}</select></label></div>
+        </section>`;
     const settingsRows = settings ? defaultAgentRows(options) : "";
     const settingsMode = state.defaultAgents.mode;
-    const showChoices = braining || (!settings || (state.defaultAgents.editing && settingsMode === "launch"));
+    const goalChoiceVisible = !record || activeMutable;
+    const showChoices = braining || (goalChoiceVisible && (!settings || (state.defaultAgents.editing && settingsMode === "launch")));
     const settingsEditor = settings && state.defaultAgents.editing ? `
       <section class="default-agent-editor" aria-label="Edit ${escapeHtml(state.defaultAgents.editing)} default">
         <p>${settingsMode === "launch" ? `Choose the harness, model, and effort for ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"}.` : settingsMode === "work" ? "Brain will follow the Work default of this Area." : `The ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"} default will inherit from the nearest parent Area.`}</p>
@@ -460,6 +608,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
         ${launchStepList()}
         ${brainZone}
         ${settingsEditor}
+        ${stepZone}
         ${showChoices && (options.harnesses ?? []).length ? `
         <div class="launch-columns" aria-label="Agent choices">
           <div class="launch-col" data-launch-column="harness" role="radiogroup" aria-label="Harness"><p class="launch-col-title">Harness</p>${harnessButtons}</div>
@@ -467,7 +616,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
           ${efforts.length ? `<div class="launch-col" data-launch-column="effort" role="radiogroup" aria-label="Effort"><p class="launch-col-title">Effort</p>${effortButtons}</div>` : ""}
         </div>` : showChoices ? `<p class="launch-none">No harness registry. Add one at <code>~/.tangent/trees/harnesses.md</code>.</p>` : ""}
         ${braining || showChoices ? commandZone : ""}
-        ${stepZone}
+        ${state.launch.stale ? `<section class="launch-stale" role="alert"><strong>The queue changed while this editor was open.</strong><span>Your local draft is intact.</span><button class="quiet-button" type="button" data-launch-rebase>Reload queue and reapply draft</button></section>` : ""}
         ${settingsActions || `<div class="action-row start-actions">
           <button class="primary-button" type="button" data-launch-start data-focus-key="launch:start" ${braining && !selection?.harness ? "disabled" : ""}>${escapeHtml(startLabel)}</button>
           ${brainResumes ? `<button class="quiet-button" type="button" data-brain-start-over>Start over</button>` : ""}
@@ -649,7 +798,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     }
     try {
       await post("/api/harnesses", draft);
-      state.launch = { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null };
+      state.launch = { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null, stale: null };
       state.view = state.harnessReturnView;
       state.harnessDraft = null;
       paint(true);
@@ -753,5 +902,5 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
 
   /** Renders the complete native agent terminal without a second chat. */
 
-  return { selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, launchStepLabel, launchStepRequest, launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, launchStepList, launchPickerBlock, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
+  return { selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, blankLaunchStep, launchStepsForRecord, launchStepIsMutable, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, moveLaunchStep, launchStepLabel, launchStepRequest, launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, pipelineMutationOperations, rebasePipelineDraft, launchStepList, launchPickerBlock, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
 }

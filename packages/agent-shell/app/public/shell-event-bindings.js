@@ -1,7 +1,7 @@
 import { journalCaptureNeedsRetry, journalCaptureToast } from "./journal-capture-core.js";
 import { keyboardEventIsComposing, resolveKeyboardContext } from "./keyboard-context.js";
 import { documentReadingCommands, documentReadingScrollTarget, matchDocumentReadingCommand } from "./document-reading-commands.js";
-import { workCommandHelpRows, workCommandMatches } from "./work-commands.js";
+import { workCommandHelpRows, workCommandMatches, workCommandsFor } from "./work-commands.js";
 
 /** Binds browser events through capability-owned feature ports. */
 export function bindShellEvents({ shell, chrome, prompts, work, areas, programs, launch, documents }) {
@@ -19,11 +19,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   const {
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, confirmStopBrain, saveDescribeDraft, saveDescribeSession, describeWorkSession,
-    openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
-    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict,
+    openDescribeSession, addDescribeSource, switchDescribeToManualCreate,
+    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
-    goalGroupRoot, toggleSubgoals, toggleWorkArea,
+    goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded,
   } = work;
   const {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,
@@ -34,9 +34,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     programAreaDirectory,
   } = programs;
   const {
-    syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep,
-    addLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses, startPipeline,
-    savePipelineStep, appendPipelineSteps, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
+    syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep, moveLaunchStep,
+    addLaunchStep, launchStepIsMutable, launchStepsForRecord, blankLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses, startPipeline,
+    savePipelineChanges, launchOptionsFor, pipelineRecordForGoal, rebasePipelineDraft, loadLaunchStep,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   } = launch;
   const {
@@ -85,11 +85,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     region.textContent = count.trim();
   }
 
-  /** Stores and paints one cursor row, then optionally gives its control focus. */
-  function setWorkCursor(row, focus = true) {
+  /** Stores one cursor without rebuilding the element that received a pointer event. */
+  function rememberWorkCursor(row) {
     if (!row?.dataset.workCursor) return false;
     state.workCursor = row.dataset.workCursor;
     localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+    for (const item of visibleCursorRows()) item.classList.toggle("cursor", item === row);
+    return true;
+  }
+
+  /** Stores and paints one cursor row, then optionally gives its control focus. */
+  function setWorkCursor(row, focus = true) {
+    if (!rememberWorkCursor(row)) return false;
     paint(true);
     if (focus) window.setTimeout(() => [...document.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === state.workCursor)?.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus(), 0);
     return true;
@@ -137,6 +144,72 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       target ??= direction < 0 ? groups[0] : groups.at(-1);
     }
     return setWorkCursor(target?.querySelector(".work-group-row[data-work-cursor^='area:']"));
+  }
+
+  /** Returns the semantic parent of one visible Work tree row. */
+  function parentWorkRow(row) {
+    if (!row) return null;
+    const parentGoal = row.dataset.subgoalOf;
+    if (parentGoal) return visibleCursorRows().find((item) => item.dataset.goalAnchor === parentGoal) ?? null;
+    if (row.dataset.goalAnchor) return row.closest("tbody[data-work-group]")?.querySelector(".work-group-row[data-work-cursor^='area:']") ?? null;
+    return null;
+  }
+
+  /** Returns the first visible child of one expanded Work tree row. */
+  function firstChildWorkRow(row) {
+    if (!row) return null;
+    if (row.classList.contains("work-group-row")) {
+      return [...(row.closest("tbody[data-work-group]")?.querySelectorAll("[data-work-cursor]") ?? [])]
+        .find((item) => item !== row && !item.hidden) ?? null;
+    }
+    const file = row.dataset.goalAnchor;
+    if (!file) return null;
+    return visibleCursorRows().find((item) => item.dataset.subgoalOf === file) ?? null;
+  }
+
+  /** True when one Work row owns children that are currently hidden. */
+  function workRowIsCollapsed(row) {
+    if (row?.classList.contains("work-group-row")) return row.closest("tbody[data-work-group]")?.classList.contains("folded") ?? false;
+    if (!row?.dataset.goalAnchor) return false;
+    return state.collapsedGoalTrees.has(row.dataset.goalAnchor);
+  }
+
+  /** Applies Vim `h`: collapse this node, then move to its parent. */
+  function collapseWorkTree(row = cursorRow()) {
+    if (!row) return false;
+    if (row.classList.contains("work-group-row")) {
+      if (workRowIsCollapsed(row)) return false;
+      setWorkAreaFolded(row.dataset.workArea, true);
+      return true;
+    }
+    const firstChild = firstChildWorkRow(row);
+    if (firstChild && !workRowIsCollapsed(row)) {
+      setSubgoalsExpanded(row.dataset.goalAnchor, false);
+      return true;
+    }
+    const parent = parentWorkRow(row);
+    return parent ? setWorkCursor(parent) : false;
+  }
+
+  /** Applies Vim `l`: expand this node, then move to its first child. */
+  function expandWorkTree(row = cursorRow()) {
+    if (!row) return false;
+    if (row.classList.contains("work-group-row")) {
+      if (workRowIsCollapsed(row)) {
+        setWorkAreaFolded(row.dataset.workArea, false);
+        return true;
+      }
+      const child = firstChildWorkRow(row);
+      return child ? setWorkCursor(child) : false;
+    }
+    const file = row.dataset.goalAnchor;
+    const children = file ? [...screen.querySelectorAll("[data-subgoal-of]")].filter((item) => item.dataset.subgoalOf === file) : [];
+    if (!children.length) return false;
+    if (workRowIsCollapsed(row)) {
+      setSubgoalsExpanded(file, true);
+      return true;
+    }
+    return setWorkCursor(children.find((item) => !item.hidden));
   }
 
   /** Captures the semantic browser position that a child surface must restore. */
@@ -201,9 +274,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       let candidate;
       if (preference === "summary" || summaryKind) candidate = summary;
       else if (exact) candidate = exact;
+      else if (state.launchTarget === BRAIN_LAUNCH_TARGET) candidate = popover.querySelector("#brain-instruction");
       else if (preference === "choices") candidate = choice;
       else if (state.launchTarget === DEFAULT_AGENTS_TARGET && !state.defaultAgents.editing) candidate = summary;
-      else candidate = choice ?? popover.querySelector("textarea, input, select, button:not([disabled])");
+      else candidate = popover.querySelector("[data-launch-assignment-region] [data-launch-step-select]") ?? choice ?? popover.querySelector("textarea, input, select, button:not([disabled])");
       (candidate ?? popover).focus?.({ preventScroll: true });
       return Boolean(candidate);
     };
@@ -214,6 +288,38 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     });
     launchFocusObserver.observe(screen, { childList: true, subtree: true });
     window.setTimeout(stopLaunchFocusRequest, 2500);
+  }
+
+  /** Opens one Goal Launch Editor from any semantic pointer or keyboard action. */
+  function openGoalLaunchEditor(file, opener) {
+    const goal = goalByFile(file) ?? (state.goalDetail?.goal?.file === file ? state.goalDetail.goal : null);
+    if (!goal) return showToast("The Goal file was removed from the vault.");
+    if (state.launchTarget === file) return dismissLaunchSurface();
+    launchReturnPoint = captureNavigationPoint(opener);
+    launchParentSurface = null;
+    stopLaunchFocusRequest();
+    const rect = opener?.getBoundingClientRect?.() ?? { top: 120, bottom: 140, right: 720 };
+    state.launchTarget = file;
+    state.launchAnchor = { top: Math.round(rect.bottom + 8), above: Math.round(rect.top - 8), right: Math.round(rect.right) };
+    launchOptionsFor(goal.area);
+    const record = pipelineRecordForGoal(goal);
+    if (record) {
+      state.launch.record = record;
+      const steps = launchStepsForRecord(record);
+      const firstPending = steps.findIndex(launchStepIsMutable);
+      state.launch.steps = steps;
+      loadLaunchStep(steps, firstPending >= 0 ? firstPending : Math.max(0, steps.length - 1));
+    } else {
+      state.launch.record = null;
+      const steps = [blankLaunchStep()];
+      state.launch.steps = steps;
+      loadLaunchStep(steps, 0);
+    }
+    state.launch.stale = null;
+    state.launch.open = false;
+    paint(true);
+    requestLaunchFocus();
+    return true;
   }
 
   /** Owns keyboard movement inside the shared brain, Goal, and defaults chooser. */
@@ -246,14 +352,50 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       button.click();
       return true;
     }
+    const assignment = active.closest?.("[data-launch-assignment]");
+    const assignmentRegion = active.closest?.("[data-launch-assignment-region]");
+    if (assignmentRegion && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const rows = [...assignmentRegion.querySelectorAll("[data-launch-assignment]")];
+      const current = rows.indexOf(assignment);
+      if (["j", "k", "ArrowDown", "ArrowUp"].includes(event.key)) {
+        event.preventDefault();
+        event.stopPropagation();
+        const delta = ["j", "ArrowDown"].includes(event.key) ? 1 : -1;
+        const next = current < 0 ? (delta > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, current + delta));
+        rows[next]?.querySelector("[data-launch-step-select]")?.focus({ preventScroll: true });
+        return true;
+      }
+      const index = Number(assignment?.querySelector("[data-launch-step-select]")?.dataset.launchStepSelect ?? state.launch.active);
+      if (event.key === "a") {
+        event.preventDefault(); event.stopPropagation();
+        addLaunchStep(index); paint(true); requestLaunchFocus(`key:launch:assignment:${state.launch.steps[state.launch.active]?.id}`);
+        return true;
+      }
+      if (event.key === "e") {
+        event.preventDefault(); event.stopPropagation();
+        activateLaunchStep(index); paint(true); window.setTimeout(() => document.querySelector("#launch-instruction")?.focus(), 0);
+        return true;
+      }
+      if (event.key === "d") {
+        event.preventDefault(); event.stopPropagation();
+        removeLaunchStep(index); paint(true); requestLaunchFocus(`key:launch:assignment:${state.launch.steps[state.launch.active]?.id}`);
+        return true;
+      }
+      if (event.key === "J" || event.key === "K") {
+        event.preventDefault(); event.stopPropagation();
+        moveLaunchStep(index, event.key === "J" ? 1 : -1); paint(true); requestLaunchFocus(`key:launch:assignment:${state.launch.steps[state.launch.active]?.id}`);
+        return true;
+      }
+    }
     const vertical = !event.ctrlKey && !event.metaKey && !event.altKey && ["j", "k", "ArrowDown", "ArrowUp"].includes(event.key);
     const horizontal = !event.ctrlKey && !event.metaKey && !event.altKey && ["h", "l", "ArrowLeft", "ArrowRight"].includes(event.key);
     if (!vertical && !horizontal) return false;
     const columns = [...popover.querySelectorAll("[data-launch-column]")].filter((column) => column.querySelector(".launch-option"));
     if (!columns.length) return false;
+    const column = active.closest?.("[data-launch-column]");
+    if (!column) return false;
     event.preventDefault();
     event.stopPropagation();
-    const column = active.closest?.("[data-launch-column]");
     let columnIndex = columns.indexOf(column);
     if (horizontal) {
       const delta = ["l", "ArrowRight"].includes(event.key) ? 1 : -1;
@@ -362,6 +504,255 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return openModal({ kicker: "Work keys", title: "Move around Work", copy: "", rows, confirmLabel: "Close", onConfirm: closeKeySheet });
   }
 
+  /** Opens every Goal outcome behind one keyboard and pointer surface. */
+  function openGoalStatus(goal) {
+    if (!goal) return showToast("Choose a Goal row first.");
+    const open = !["done", "dropped", "parked", "deferred"].includes(goal.status);
+    const options = [
+      { value: "done", key: "d", label: "Done", help: "Close the Goal because its done condition is met.", enabled: open, reason: "This Goal is already closed." },
+      { value: "dropped", key: "w", label: "Won't do", help: "Close the Goal with a required reason.", enabled: open, reason: "This Goal is already closed." },
+      { value: "parked", key: "p", label: "Park", help: "Hide the Goal from default Work without deleting its history.", enabled: open, reason: "This Goal is already closed." },
+      { value: "open", key: "r", label: "Reopen", help: "Return this Goal to open without starting an agent.", enabled: !open, reason: "This Goal is already open." },
+    ];
+    /** Applies or confirms the chosen Goal state. */
+    const chooseStatus = async (status) => {
+      rememberGoal(goal.file);
+      if (status === "done") {
+        confirmComplete(goal.file);
+        return false;
+      }
+      if (status === "dropped") {
+        confirmWontDo();
+        return false;
+      }
+      if (status === "parked") {
+        /** Parks after an optional note and exact-attempt confirmation on the server. */
+        const parkGoal = async () => {
+          const reason = modalLayer.querySelector("[data-modal-input]")?.value.trim() || "";
+          try {
+            await post("/api/goals/edit", { file: goal.file, status: "parked", ...(reason ? { reason } : {}) });
+            await refresh();
+            paint(true);
+            showToast("The Goal is parked. Its history is unchanged.");
+            return true;
+          } catch (error) {
+            showToast(error.message);
+            return false;
+          }
+        };
+        openModal({
+          kicker: "Park Goal",
+          title: `Park “${goal.title}”?`,
+          copy: sessionForGoal(goal) ? "The server detaches this Goal from its exact live attempt. It does not stop unrelated work." : "The Goal leaves default Work. Its queue, comments, and attempts remain.",
+          field: { label: "Reason (optional)", placeholder: "Why is this Goal being parked?", required: false },
+          confirmLabel: "Park Goal",
+          danger: Boolean(sessionForGoal(goal)),
+          onConfirm: parkGoal,
+        });
+        return false;
+      }
+      if (status === "open") {
+        try {
+          await post("/api/goals/edit", { file: goal.file, status: "open" });
+          await refresh();
+          paint(true);
+          showToast("The Goal is open again. No agent started.");
+          return true;
+        } catch (error) {
+          showToast(error.message);
+          return false;
+        }
+      }
+      return false;
+    };
+    return openModal({
+      kicker: "Goal status",
+      title: goal.title,
+      copy: "Choose the outcome. Escape returns to the exact Goal row.",
+      field: { kind: "actions", label: "Goal status", options },
+      confirmLabel: "",
+      onConfirm: chooseStatus,
+    });
+  }
+
+  /** Reports whether one directional tree command can act on this object. */
+  function treeCommandAvailability(id, row) {
+    if (id === "collapse") {
+      if (row?.classList.contains("work-group-row")) return workRowIsCollapsed(row) ? { enabled: false, reason: "This Area is already collapsed and has no parent on Work." } : { enabled: true };
+      return { enabled: Boolean(parentWorkRow(row) || firstChildWorkRow(row)), reason: "This Goal has no parent or children on Work." };
+    }
+    if (id === "expand") {
+      const child = firstChildWorkRow(row);
+      return { enabled: Boolean(workRowIsCollapsed(row) || child), reason: "This Goal has no children." };
+    }
+    return { enabled: true };
+  }
+
+  /** Runs one Work command against one semantic row. Pointer and keys share it. */
+  function executeWorkCommand(id, row = cursorRow()) {
+    const area = commandAreaForRow(row);
+    const goal = goalByFile(row?.dataset.goalAnchor ?? "");
+    if (id === "previousArea" || id === "nextArea") return moveAreaCursor(id === "previousArea" ? -1 : 1, row);
+    if (id === "openBrain") {
+      if (!area) return showToast("This row has no Area command header.");
+      const brain = (state.brains ?? []).find((item) => item.live && item.status === "active" && item.area === area);
+      const session = state.sessions.find((item) => item.name === brain?.session);
+      if (session) return openSessionLayer(session, "brain");
+      const point = captureNavigationPoint(row?.querySelector("[data-work-row-title], [data-work-cursor-control]"));
+      const opened = openOrStartBrain(area);
+      Promise.resolve(opened).then(() => {
+        if (state.launchTarget !== BRAIN_LAUNCH_TARGET) return;
+        launchReturnPoint ??= point;
+        requestLaunchFocus();
+      }, () => {});
+      return opened;
+    }
+    if (id === "stopBrain") {
+      const brain = brainForAreaCard(area);
+      return area ? confirmStopBrain(area, brain?.currentAttemptId ?? brain?.session ?? "") : showToast("This row has no Area command header.");
+    }
+    if (id === "defaults") {
+      if (!area) return showToast("This row has no Area command header.");
+      const trigger = row.querySelector("[data-work-object-actions], [data-work-cursor-control]");
+      trigger.dataset.defaultAgentsArea = area;
+      rememberLaunchReturn(row.querySelector("[data-work-row-title], [data-work-cursor-control]"));
+      const result = toggleDefaultAgents(trigger);
+      requestLaunchFocus("summary");
+      return result;
+    }
+    if (id === "newGoal") return area ? showCreate(area, "work") : showToast("This row has no Area command header.");
+    if (id === "questions") return area ? openQuestionsReview(area) : showToast("This row has no Area command header.");
+    if (id === "note") return area ? openAreaCapture(area) : showToast("This row has no Area command header.");
+    if (id === "focus") return openAreaFocusPicker();
+    if (id === "collapse") return collapseWorkTree(row) || showToast(treeCommandAvailability(id, row).reason);
+    if (id === "expand") return expandWorkTree(row) || showToast(treeCommandAvailability(id, row).reason);
+    if (id === "readGoal") return goal ? openDocument(goal.file) : showToast("Choose a Goal row first.");
+    if (id === "goalStatus") return goal ? openGoalStatus(goal) : showToast("Choose a Goal row first.");
+    if (id === "editAssignments") return goal ? openGoalLaunchEditor(goal.file, row.querySelector("[data-work-object-actions], [data-work-row-title]")) : showToast("Choose a Goal row first.");
+    if (id === "filter") return document.querySelector("#work-search")?.focus();
+    if (id === "keys") return openWorkKeySheet();
+    return undefined;
+  }
+
+  /** Runs one guarded pipeline control from either pointer or object actions. */
+  async function controlGoalPipeline(goalFile, action, step) {
+    try {
+      const record = (state.pipelines ?? []).find((item) => item.goal === goalFile);
+      const result = await post("/api/pipelines/control", {
+        goal: goalFile,
+        action,
+        step: Number(step),
+        expectedRevision: record?.revision,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      await refresh();
+      paint(true);
+      showToast(result.next
+        ? `Step ${result.next.index} started.`
+        : action === "skip"
+          ? `Step ${step} skipped; the pipeline is complete.`
+          : action === "end"
+            ? "Work stopped. The Goal stays open."
+            : `Step ${step} ${action}ed.`);
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+
+  /** Opens one state-owned action surface for the current Work object. */
+  function openObjectActions(row = cursorRow()) {
+    if (!row) return showToast("There is no Work object to act on.");
+    rememberWorkCursor(row);
+    const area = commandAreaForRow(row);
+    const goal = goalByFile(row.dataset.goalAnchor ?? "");
+    const brain = area ? brainForAreaCard(area) : null;
+    const isArea = row.classList.contains("work-group-row") && area;
+    const options = workCommandsFor({ palette: true }).filter((command) => {
+      if (["commands", "openBrain", "stopBrain", "defaults", "newGoal", "focus", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return Boolean(isArea);
+      if (["readGoal", "goalStatus"].includes(command.id)) return Boolean(goal);
+      return ["collapse", "expand", "filter", "keys"].includes(command.id);
+    }).map((command) => {
+      const tree = treeCommandAvailability(command.id, row);
+      const enabled = command.id === "stopBrain" ? Boolean(brain?.live) : tree.enabled;
+      const reason = command.id === "stopBrain" && !brain?.live ? "This Area has no live brain." : tree.reason;
+      return { value: command.id, key: command.keyDisplay, label: command.label, help: command.help, enabled, reason };
+    });
+    const record = goal ? pipelineRecordForGoal(goal) : null;
+    const currentAssignment = record?.steps?.find((step) => !["complete", "skipped", "ended", "replaced"].includes(step.status));
+    const stoppedAssignment = currentAssignment && (currentAssignment.status === "stopped" || (currentAssignment.status === "running" && !currentAssignment.live));
+    if (record) options.splice(2, 0, { value: "editAssignments", key: "e", label: "Edit pending assignments", help: "Review history and atomically edit the pending queue.", enabled: true });
+    if (goal && sessionForGoal(goal)) options.splice(2, 0, { value: "stopWork", key: "", label: "End current agent", help: "Stop this exact agent while keeping the Goal and its notes.", enabled: true });
+    if (goal && stoppedAssignment) {
+      if (currentAssignment.index < (record.steps?.length ?? 0)) options.splice(2, 0, { value: "skipAssignment", key: "", label: `Skip to assignment ${currentAssignment.index + 1}`, help: "End this stopped assignment and advance to the next one.", enabled: true });
+      options.splice(2, 0, { value: "endPipeline", key: "", label: "End work", help: "End the run while keeping the Goal open and preserving its history.", enabled: true });
+    }
+    const cursor = row.dataset.workCursor;
+    /** Resolves the repainted semantic object before it runs the chosen command. */
+    const run = (id) => {
+      const currentRow = visibleCursorRows().find((item) => item.dataset.workCursor === cursor) ?? row;
+      if (id === "stopWork" && goal) {
+        rememberGoal(goal.file);
+        confirmStop();
+        return false;
+      }
+      if (id === "skipAssignment" && goal && currentAssignment) {
+        controlGoalPipeline(goal.file, "skip", currentAssignment.index);
+        return true;
+      }
+      if (id === "endPipeline" && goal && currentAssignment) {
+        controlGoalPipeline(goal.file, "end", currentAssignment.index);
+        return true;
+      }
+      return executeWorkCommand(id, currentRow);
+    };
+    return openModal({
+      kicker: goal ? "Goal actions" : "Area actions",
+      title: goal?.title ?? (area ? areaLabel(area) : "Work"),
+      copy: "The pointer action and shortcut run the same command.",
+      field: { kind: "actions", label: "Actions", options },
+      confirmLabel: "",
+      onConfirm: run,
+    });
+  }
+
+  /** Opens the server-reported Goal actions from the stable Goal reader. */
+  function openReaderGoalActions(opener = document.querySelector("[data-reader-goal-actions]")) {
+    const detail = state.goalDetail;
+    const goal = detail?.goal;
+    if (!goal) return showToast("This reader is not showing a Goal.");
+    const keyFor = { read: "o", start: "↵", "change-agent": "c", status: "x" };
+    const options = (detail.commands ?? []).map((command) => ({
+      value: command.id,
+      key: keyFor[command.id] ?? "",
+      label: command.label || command.id,
+      help: command.enabled === false ? command.reason : command.id === "status" ? "Choose Done, Won't do, Park, or Reopen." : "Run this Goal command.",
+      enabled: command.enabled !== false,
+      reason: command.reason,
+    }));
+    /** Runs one command without replacing the reader's stable object identity. */
+    const run = (id) => {
+      if (id === "read") return true;
+      if (id === "status") {
+        openGoalStatus(goal);
+        return false;
+      }
+      if (id === "start") return openGoalLaunchEditor(goal.file, opener);
+      if (id === "change-agent") {
+        showToast("Change agent opens from Work with c.");
+        return false;
+      }
+      return false;
+    };
+    return openModal({
+      kicker: "Goal actions",
+      title: goal.title,
+      copy: "Availability and disabled reasons come from the Goal detail model.",
+      field: { kind: "actions", label: "Goal actions", options },
+      confirmLabel: "",
+      onConfirm: run,
+    });
+  }
+
   /** Opens the shared key sheet for either Document reading surface. */
   function openDocumentKeySheet({ quick = Boolean(state.documentPeek) } = {}) {
     const rows = [
@@ -411,6 +802,25 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     window.clearTimeout(keySheetPendingGTimer);
     scroller.scrollTop = Math.min(maximum, Math.max(0, target));
     return true;
+  }
+
+  /** Runs the callback owned by the current modal and closes only that modal. */
+  async function invokeModalChoice(value = undefined) {
+    const action = modalConfirm();
+    if (!action) return;
+    try {
+      const previousSession = state.sessionPeek?.session ?? "";
+      const previousLaunch = state.launchTarget;
+      const result = await action(value);
+      const sameSurface = modalConfirm() === action;
+      if (result !== false && sameSurface) {
+        const handedOff = Boolean(state.sessionPeek?.session && state.sessionPeek.session !== previousSession)
+          || Boolean(state.launchTarget && state.launchTarget !== previousLaunch);
+        closeModal({ restoreFocus: !handedOff });
+      }
+    } catch (error) {
+      showToast(error.message);
+    }
   }
 
   /** The scroll owner for the full or quick Document surface. */
@@ -742,12 +1152,15 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const cursor = target.closest?.("[data-work-cursor]");
     const areaJump = target.closest?.("[data-move-work-area]");
     if (areaJump && state.view === "work") return moveAreaCursor(Number(areaJump.dataset.moveWorkArea), cursor ?? cursorRow());
-    if (cursor && state.view === "work") setWorkCursor(cursor, false);
+    if (cursor && state.view === "work") rememberWorkCursor(cursor);
     const workKeys = target.closest?.("[data-work-keys]");
     if (workKeys) return openWorkKeySheet();
     if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: false });
-    const workCommands = target.closest?.("[data-work-commands]");
-    if (workCommands) return openWorkCommands(workCommands.dataset.workCommands || commandAreaForRow(cursor ?? cursorRow()));
+    const objectActions = target.closest?.("[data-work-object-actions], [data-work-commands]");
+    if (objectActions) {
+      objectActions.focus?.({ preventScroll: true });
+      return openObjectActions(cursor ?? cursorRow());
+    }
     const captureArea = target.closest?.("[data-capture-area]");
     if (captureArea) return openAreaCapture(captureArea.dataset.captureArea || commandAreaForRow(cursor ?? cursorRow()));
     if (target.closest?.("[data-open-area-focus], [data-change-area-focus]")) return openAreaFocusPicker();
@@ -990,32 +1403,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const describeArea = target.closest("[data-describe-area]");
     if (describeArea) return showDescribe({ area: describeArea.dataset.describeArea });
     if (target.closest("[data-describe-work]")) return showDescribe();
-    const checkGoal = target.closest("[data-check-goal]");
-    if (checkGoal) {
-      const file = checkGoal.dataset.checkGoal;
-      if (state.goalSelection.includes(file)) {
-        state.goalSelection = state.goalSelection.filter((item) => item !== file);
-        return paint(true);
-      }
-      // One agent owns one brain-owned Area group. Checking a Goal in another
-      // group replaces the selection and says so, instead of silently starting
-      // an agent across two groups (design-redesign-work-as-a-compact-table).
-      const group = goalGroupRoot(file);
-      const foreign = state.goalSelection.filter((item) => goalGroupRoot(item) !== group);
-      if (foreign.length) {
-        state.goalSelection = [file];
-        showToast(`Selection moved to ${areaLabel(group)}. ${foreign.length} ${foreign.length === 1 ? "Goal" : "Goals"} in another group cleared.`);
-        return paint(true);
-      }
-      state.goalSelection = [...state.goalSelection, file];
-      return paint(true);
-    }
-    const startSelected = target.closest("[data-start-selected]");
-    if (startSelected) return startSelectedGoals(startSelected.dataset.startSelected);
-    if (target.closest("[data-clear-selection]")) {
-      state.goalSelection = [];
-      return paint(true);
-    }
     if (target.closest("[data-create-manually]")) return switchDescribeToManualCreate();
     if (target.closest("[data-cancel-create]")) return cancelCreate();
     if (target.closest("[data-cancel-describe]")) return cancelDescribe();
@@ -1036,6 +1423,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     const documentButton = target.closest("[data-open-document]");
     if (documentButton) return openDocument(documentButton.dataset.openDocument);
+    const readerGoalActions = target.closest("[data-reader-goal-actions]");
+    if (readerGoalActions) return openReaderGoalActions(readerGoalActions);
     const closeRow = target.closest("[data-open-close]");
     if (closeRow) {
       const file = closeRow.dataset.openClose;
@@ -1067,8 +1456,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       event.stopPropagation();
       return sendVerdict(verdictRow.dataset.verdictArea, verdictRow.dataset.verdictLine, verdictRow.dataset.verdict, "", verdictRow.dataset.effectRevision);
     }
-    const foldArea = target.closest("[data-fold-work-area]");
-    if (foldArea) return toggleWorkArea(foldArea.dataset.foldWorkArea);
+    const workTree = target.closest("[data-work-tree-action]");
+    if (workTree) return executeWorkCommand(workTree.dataset.workTreeAction, cursor ?? cursorRow());
     const requestRow = target.closest("[data-open-request-id]");
     if (requestRow) return openRequest(requestRow.dataset.openRequestArea, requestRow.dataset.openRequestId);
     const replyRow = target.closest("[data-reply-subject]");
@@ -1089,16 +1478,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const pipelineControl = target.closest("[data-pipeline-control]");
     if (pipelineControl) {
       const { pipelineControl: action, pipelineGoal: goalFile, pipelineStep: step } = pipelineControl.dataset;
-      try {
-        const record = (state.pipelines ?? []).find((item) => item.goal === goalFile);
-        const result = await post("/api/pipelines/control", { goal: goalFile, action, step: Number(step), expectedRevision: record?.revision, idempotencyKey: crypto.randomUUID() });
-        await refresh();
-        paint(true);
-        showToast(result.next ? `Step ${result.next.index} started.` : action === "skip" ? `Step ${step} skipped; the pipeline is complete.` : action === "end" ? "Work stopped. The Goal stays open." : `Step ${step} ${action}ed.`);
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
+      return controlGoalPipeline(goalFile, action, step);
     }
     const goalRecovery = target.closest("[data-goal-recovery]");
     if (goalRecovery) {
@@ -1144,38 +1524,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return result;
       }
       const describing = file === DESCRIBE_LAUNCH_TARGET;
-      const goal = describing ? null : goalByFile(file);
-      if (!describing && !goal) return;
+      if (!describing) return openGoalLaunchEditor(file, launchFor);
       if (state.launchTarget === file) {
         return dismissLaunchSurface();
       }
-      const previousTarget = state.launchTarget;
       launchReturnPoint = captureNavigationPoint(launchFor);
       launchParentSurface = null;
       stopLaunchFocusRequest();
       const rect = launchFor.getBoundingClientRect();
       state.launchTarget = file;
       state.launchAnchor = { top: Math.round(rect.bottom + 8), above: Math.round(rect.top - 8), right: Math.round(rect.right) };
-      launchOptionsFor(describing ? describeLaunchArea() : goal.area);
-      const record = describing ? null : pipelineRecordForGoal(goal);
-      if (record) {
-        // Record mode: history stays, the first pending step is up for edits,
-        // and when nothing is pending a draft row waits to be appended.
-        state.launch.record = record;
-        const firstPending = record.steps.findIndex((step) => step.status === "pending");
-        const steps = record.steps.map((step) => ({ choice: step.launch, command: step.launch ? "" : step.command, instruction: step.instruction, continueFrom: step.continueFrom }));
-        if (firstPending < 0) steps.push({ choice: null, command: "", instruction: "", continueFrom: null });
-        state.launch.steps = steps;
-        loadLaunchStep(steps, firstPending >= 0 ? firstPending : steps.length - 1);
-      } else if (state.launch.record || (previousTarget && previousTarget !== file)) {
-        state.launch.record = null;
-        state.launch.steps = [];
-        state.launch.active = 0;
-        state.launch.choice = null;
-        state.launch.command = "";
-        state.launch.instruction = "";
-        state.launch.continueFrom = null;
-      }
+      launchOptionsFor(describeLaunchArea());
+      state.launch.stale = null;
       state.launch.open = false;
       paint(true);
       requestLaunchFocus();
@@ -1248,10 +1608,27 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       activateLaunchStep(Number(launchStepSelect.dataset.launchStepSelect));
       return paint(true);
     }
+    const launchStepEdit = target.closest("[data-launch-step-edit]");
+    if (launchStepEdit) {
+      activateLaunchStep(Number(launchStepEdit.dataset.launchStepEdit));
+      paint(true);
+      return window.setTimeout(() => document.querySelector("#launch-instruction")?.focus(), 0);
+    }
     const launchStepRemove = target.closest("[data-launch-step-remove]");
     if (launchStepRemove) {
       removeLaunchStep(Number(launchStepRemove.dataset.launchStepRemove));
       return paint(true);
+    }
+    const launchStepMove = target.closest("[data-launch-step-move]");
+    if (launchStepMove) {
+      moveLaunchStep(Number(launchStepMove.dataset.launchStepIndex), Number(launchStepMove.dataset.launchStepMove));
+      return paint(true);
+    }
+    const launchStepAddAfter = target.closest("[data-launch-step-add-after]");
+    if (launchStepAddAfter) {
+      addLaunchStep(Number(launchStepAddAfter.dataset.launchStepAddAfter));
+      paint(true);
+      return window.setTimeout(() => document.querySelector("#launch-instruction")?.focus(), 0);
     }
     if (target.closest("[data-launch-step-add]")) {
       addLaunchStep();
@@ -1270,6 +1647,21 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.launch.editing = false;
       return paint(true);
     }
+    if (target.closest("[data-launch-rebase]")) {
+      const latest = state.launch.stale?.pipeline;
+      if (!latest) return showToast("The current queue is not available yet.");
+      syncLaunchDraft();
+      const activeId = state.launch.steps[state.launch.active]?.id;
+      const rows = rebasePipelineDraft(latest, state.launch.record);
+      state.launch.record = latest;
+      state.launch.steps = rows;
+      const active = Math.max(0, rows.findIndex((row) => row.id === activeId));
+      loadLaunchStep(rows, active);
+      state.launch.stale = null;
+      paint(true);
+      requestLaunchFocus(`key:launch:assignment:${rows[active]?.id}`);
+      return showToast("The current queue is loaded and your local draft was reapplied.");
+    }
     if (target.closest("[data-brain-start-over]")) return startBrain({ resume: false });
     if (target.closest("[data-launch-start]")) {
       syncLaunchDraft();
@@ -1279,7 +1671,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return startBrain({ resume: Boolean(brain && !brain.live) });
       }
       if (targetFile !== DESCRIBE_LAUNCH_TARGET && state.launch.record) {
-        return state.launch.active < state.launch.record.steps.length ? savePipelineStep(targetFile) : appendPipelineSteps(targetFile);
+        return savePipelineChanges(targetFile);
       }
       if (targetFile !== DESCRIBE_LAUNCH_TARGET && launchIsPipeline()) return startPipeline(targetFile);
       state.launch.open = false;
@@ -1289,8 +1681,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       launchReturnPoint = null;
       launchParentSurface = null;
       if (targetFile === DESCRIBE_LAUNCH_TARGET) return document.querySelector("[data-describe-work-form]")?.requestSubmit();
-      const targetGoal = targetFile ? goalByFile(targetFile) : null;
-      if (targetGoal && selectionForArea(targetGoal.area)[0] === targetFile) return startSelectedGoals(targetGoal.area);
       if (targetFile) rememberGoal(targetFile);
       return openGoalAgent({ returnView: "work" });
     }
@@ -1411,23 +1801,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       }
       return;
     }
-    if (target.closest("[data-modal-cancel]")) return closeModal();
-    if (target.closest("[data-modal-confirm]")) {
-      const action = modalConfirm();
-      if (!action) return;
-      try {
-        const previousSession = state.sessionPeek?.session ?? "";
-        const previousLaunch = state.launchTarget;
-        const result = await action();
-        if (result !== false) {
-          const handedOff = Boolean(state.sessionPeek?.session && state.sessionPeek.session !== previousSession)
-            || Boolean(state.launchTarget && state.launchTarget !== previousLaunch);
-          closeModal({ restoreFocus: !handedOff });
-        }
-      } catch (error) {
-        showToast(error.message);
-      }
+    const modalAction = target.closest("[data-modal-action]");
+    if (modalAction) {
+      const reason = modalAction.dataset.disabledReason;
+      if (modalAction.getAttribute("aria-disabled") === "true") return showToast(reason || "This action is not available.");
+      return invokeModalChoice(modalAction.dataset.modalAction);
     }
+    if (target.closest("[data-modal-cancel]")) return closeModal();
+    if (target.closest("[data-modal-confirm]")) return invokeModalChoice();
   });
 
   document.addEventListener("submit", async (event) => {
@@ -1589,6 +1970,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.addEventListener("input", (event) => {
+    if (event.target.matches?.("[data-launch-path]")) {
+      state.launch.assignmentPath = event.target.value;
+      return;
+    }
     if (event.target.id === "area-focus-search") {
       return updateAreaFocusQuery(event.target.value, event.target.selectionStart);
     }
@@ -1689,7 +2074,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return;
     }
     if (event.target.matches?.("select[data-launch-continue]")) {
-      state.launch.continueFrom = event.target.value ? Number(event.target.value) : null;
+      state.launch.continueFrom = event.target.value || null;
+      return;
+    }
+    if (event.target.matches?.("select[data-launch-kind]")) {
+      state.launch.assignmentKind = event.target.value === "review" ? "review" : "implementation";
       return;
     }
     if (event.target.matches?.("select[data-harness-field]") && state.harnessDraft) {
@@ -1947,17 +2336,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   /**
    * Unwinds Work one visible stage at a time. The order is deliberate: a
-   * temporary surface, staged Focus, selection, query, applied Focus, and
+   * temporary surface, staged Focus, query, applied Focus, and
    * finally the Work tab.
    */
   function unwindWork() {
     state.workPendingG = false;
     if (closeTransientSurface()) return;
     if (state.areaFocusPicker) return cancelAreaFocusPicker();
-    if (state.goalSelection.length) {
-      state.goalSelection = [];
-      return paint(true);
-    }
     if (state.query) {
       state.query = "";
       paint(true);
@@ -2068,10 +2453,26 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
     if (context === "modal") {
       const focusedAction = event.target.closest?.("button:not([disabled]), a[href]");
+      const actionButtons = [...modalLayer.querySelectorAll("[data-modal-action]")];
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
         closeModal();
+      } else if (actionButtons.length && !event.metaKey && !event.ctrlKey && !event.altKey && ["j", "k", "ArrowDown", "ArrowUp"].includes(event.key)) {
+        event.preventDefault();
+        event.stopPropagation();
+        const current = actionButtons.indexOf(event.target.closest?.("[data-modal-action]"));
+        const delta = ["j", "ArrowDown"].includes(event.key) ? 1 : -1;
+        const next = current < 0 ? (delta > 0 ? 0 : actionButtons.length - 1) : Math.max(0, Math.min(actionButtons.length - 1, current + delta));
+        actionButtons[next]?.focus({ preventScroll: true });
+      } else if (actionButtons.length && !event.metaKey && !event.ctrlKey && !event.altKey && actionButtons.some((button) => button.dataset.modalKey === event.key)) {
+        event.preventDefault();
+        event.stopPropagation();
+        actionButtons.find((button) => button.dataset.modalKey === event.key)?.click();
+      } else if (actionButtons.length && event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        (event.target.closest?.("[data-modal-action]") ?? actionButtons[0])?.click();
       } else if (handleKeySheetScroll(event)) {
         return;
       } else if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && !modalLayer.querySelector("[data-modal-input], [data-modal-select]")) {
@@ -2136,6 +2537,15 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       }
       if (handleLaunchPopoverKey(event)) return;
       if (handleCommandEnter(event)) return;
+      if (event.key === "Escape" && event.target.closest?.("[data-launch-assignment-editor]")) {
+        event.preventDefault();
+        event.stopPropagation();
+        const row = state.launch.steps[state.launch.active];
+        loadLaunchStep(state.launch.steps, state.launch.active);
+        paint(true);
+        requestLaunchFocus(`key:launch:assignment:${row?.id}`);
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         closeTransientSurface();
@@ -2180,52 +2590,34 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.workPendingG = false;
       if (workCommandMatches(event, "openBrain")) {
         event.preventDefault();
-        if (!commandArea) return showToast("This row has no Area command header.");
-        const brain = (state.brains ?? []).find((item) => item.live && item.status === "active" && item.area === commandArea);
-        const session = state.sessions.find((item) => item.name === brain?.session);
-        if (session) return openSessionLayer(session, "brain");
-        const point = captureNavigationPoint(current?.querySelector("[data-work-row-title], [data-work-cursor-control]"));
-        const opened = openOrStartBrain(commandArea);
-        Promise.resolve(opened).then(() => {
-          if (state.launchTarget !== BRAIN_LAUNCH_TARGET) return;
-          launchReturnPoint ??= point;
-          requestLaunchFocus();
-        }, () => {});
-        return opened;
+        return executeWorkCommand("openBrain", current);
       }
       if (workCommandMatches(event, "stopBrain")) {
         event.preventDefault();
-        if (!commandArea) return showToast("This row has no Area command header.");
-        const brain = brainForAreaCard(commandArea);
-        return confirmStopBrain(commandArea, brain?.currentAttemptId ?? brain?.session ?? "");
+        return executeWorkCommand("stopBrain", current);
       }
       if (workCommandMatches(event, "defaults")) {
         event.preventDefault();
-        const button = areaCommandPointer(current, "[data-default-agents-area]");
-        if (!button) return showToast("This row has no Area command header.");
-        rememberLaunchReturn(current?.querySelector("[data-work-row-title], [data-work-cursor-control]"));
-        const result = toggleDefaultAgents(button);
-        requestLaunchFocus("summary");
-        return result;
+        return executeWorkCommand("defaults", current);
       }
       if (workCommandMatches(event, "newGoal")) {
         event.preventDefault();
-        return commandArea ? showCreate(commandArea, "work") : showToast("This row has no Area command header.");
+        return executeWorkCommand("newGoal", current);
       }
-      if (workCommandMatches(event, "fold")) {
+      if (workCommandMatches(event, "collapse") || workCommandMatches(event, "expand")) {
         event.preventDefault();
-        return commandArea ? toggleWorkArea(commandArea) : showToast("This row has no Area command header.");
+        return executeWorkCommand(workCommandMatches(event, "collapse") ? "collapse" : "expand", current);
       }
-      if (workCommandMatches(event, "questions")) { event.preventDefault(); return commandArea ? openQuestionsReview(commandArea) : showToast("This row has no Area command header."); }
-      if (workCommandMatches(event, "note")) { event.preventDefault(); return commandArea ? openAreaCapture(commandArea) : showToast("This row has no Area command header."); }
-      if (workCommandMatches(event, "focus")) { event.preventDefault(); return openAreaFocusPicker(); }
-      if (workCommandMatches(event, "complete")) {
+      if (workCommandMatches(event, "questions")) { event.preventDefault(); return executeWorkCommand("questions", current); }
+      if (workCommandMatches(event, "note")) { event.preventDefault(); return executeWorkCommand("note", current); }
+      if (workCommandMatches(event, "focus")) { event.preventDefault(); return executeWorkCommand("focus", current); }
+      if (workCommandMatches(event, "readGoal")) {
         event.preventDefault();
-        const goal = goalByFile(current?.dataset.goalAnchor ?? current?.closest?.("[data-goal-anchor]")?.dataset.goalAnchor);
-        return goal ? confirmComplete(goal.file) : showToast("Choose a Goal row first.");
+        return executeWorkCommand("readGoal", current);
       }
-      if (workCommandMatches(event, "filter")) { event.preventDefault(); return document.querySelector("#work-search")?.focus(); }
-      if (workCommandMatches(event, "commands")) { event.preventDefault(); return openWorkCommands(commandArea); }
+      if (workCommandMatches(event, "goalStatus")) { event.preventDefault(); return executeWorkCommand("goalStatus", current); }
+      if (workCommandMatches(event, "filter")) { event.preventDefault(); return executeWorkCommand("filter", current); }
+      if (workCommandMatches(event, "commands")) { event.preventDefault(); return openObjectActions(current); }
       if (workCommandMatches(event, "keys")) {
         event.preventDefault();
         return openWorkKeySheet();
@@ -2236,6 +2628,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       event.preventDefault();
       event.stopPropagation();
       return;
+    }
+    if (context === "document" && state.goalDetail?.goal && event.key === ":" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      return openReaderGoalActions();
     }
     if (context === "document" && handleDocumentReadingKey(event)) return;
     if (context === "document" && event.metaKey && event.altKey && !event.shiftKey && !event.ctrlKey) {

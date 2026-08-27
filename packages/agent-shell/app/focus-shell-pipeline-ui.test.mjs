@@ -39,8 +39,8 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
         pipeline = {
           goal: goal.file, area: goal.area, slug: goal.slug, revision: 1, status: "running", updatedAt: "t1", extraFiles: [],
           steps: body.steps.map((step, index) => ({
-            index: index + 1, instruction: step.instruction, launch: step.launch ?? null, command: step.command ?? "",
-            label: index === 0 ? "Codex · Sol · High" : "Claude · Fable 5", continueFrom: step.continueFrom ?? null,
+            id: step.id, index: index + 1, instruction: step.instruction, kind: step.kind, path: step.path, launch: step.launch ?? null, command: step.command ?? "",
+            label: index === 0 ? "Codex · Sol · High" : "Claude · Fable 5", continueFromAssignmentId: step.continueFromAssignmentId ?? null,
             status: index === 0 ? "running" : "pending", session: index === 0 ? "dnd-ship-the-map" : null,
             handover: null, handoverSource: null, live: index === 0, state: index === 0 ? "working" : null, stateDetail: null, idleSince: null,
           })),
@@ -48,15 +48,30 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
         sessions = [{ name: "dnd-ship-the-map", goal: goal.file, state: "working", phase: "execute", command: "codex", pipeline: goal.file, step: 1 }];
         return jsonResponse({ session: "dnd-ship-the-map", pipeline });
       }
-      if (pathname === "/api/pipelines/append") {
-        const added = body.steps.map((step, offset) => ({
-          index: pipeline.steps.length + offset + 1, instruction: step.instruction, launch: step.launch ?? null, command: step.command ?? "",
-          label: "Claude · Fable 5", continueFrom: step.continueFrom ?? null, status: "pending", session: null,
-          handover: null, handoverSource: null, live: false, state: null, stateDetail: null, idleSince: null,
-        }));
-        pipeline.steps.push(...added);
-        pipeline.updatedAt = `t${pipeline.steps.length}`;
-        return jsonResponse({ status: "queued", after: 1, added: added.map((step) => step.index), pipeline });
+      if (pathname === "/api/pipelines/mutate") {
+        for (const operation of body.operations) {
+          if (operation.type === "add") {
+            const after = operation.afterAssignmentId == null ? -1 : pipeline.steps.findIndex((step) => step.id === operation.afterAssignmentId);
+            pipeline.steps.splice(after + 1, 0, {
+              ...operation.assignment, label: operation.assignment.launch?.harness === "codex" ? "Codex · Sol" : "Claude · Fable 5",
+              status: "pending", session: null, handover: null, handoverSource: null, live: false, state: null, stateDetail: null, idleSince: null,
+            });
+          } else if (operation.type === "update") {
+            const assignment = pipeline.steps.find((step) => step.id === operation.assignmentId);
+            Object.assign(assignment, operation.patch);
+          } else if (operation.type === "remove") {
+            pipeline.steps = pipeline.steps.filter((step) => step.id !== operation.assignmentId);
+          } else if (operation.type === "move") {
+            const index = pipeline.steps.findIndex((step) => step.id === operation.assignmentId);
+            const [assignment] = pipeline.steps.splice(index, 1);
+            const after = operation.afterAssignmentId == null ? -1 : pipeline.steps.findIndex((step) => step.id === operation.afterAssignmentId);
+            pipeline.steps.splice(after + 1, 0, assignment);
+          }
+        }
+        pipeline.steps.forEach((step, index) => { step.index = index + 1; });
+        pipeline.revision += 1;
+        pipeline.updatedAt = `t${pipeline.revision}`;
+        return jsonResponse({ state: "updated", pipeline, added: [], removed: [], moved: [] });
       }
       if (pathname === "/api/pipelines/control" && body.action === "end") {
         for (const step of pipeline.steps) if (!["complete", "skipped"].includes(step.status)) { step.status = "ended"; step.live = false; }
@@ -113,12 +128,13 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 2);
   assert.match(window.document.querySelector("[data-launch-step-select='0']").textContent, /Codex · Sol · High/);
   assert.match(window.document.querySelector("[data-launch-step-select='0']").textContent, /design the map/);
-  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Start 2 steps/);
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Start 2 assignments/);
   // Step 2 keeps the Area default and continues step 1's session.
   window.document.querySelector("#launch-instruction").value = "Review the design and update it";
   const continueSelect = window.document.querySelector("[data-launch-continue]");
   assert.ok(continueSelect, "a later step can continue an earlier one");
-  continueSelect.value = "1";
+  const firstAssignmentId = window.document.querySelector("[data-launch-assignment]").dataset.launchAssignment;
+  continueSelect.value = firstAssignmentId;
   continueSelect.dispatchEvent(new window.Event("change", { bubbles: true }));
   // Switching rows keeps both drafts.
   click(window, "[data-launch-step-select='0']");
@@ -131,10 +147,16 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   await settle(window);
   const start = posts.find((entry) => entry.path === "/api/goals/start");
   assert.equal(start.body.file, goal.file);
-  assert.deepEqual(start.body.steps, [
-    { instruction: "/design the map", continueFrom: null, launch: { harness: "codex", model: "sol", effort: "high" } },
-    { instruction: "Review the design and update it", continueFrom: 1, launch: { harness: "claude", model: "fable-5", effort: null } },
-  ]);
+  assert.equal(start.body.steps.length, 2);
+  assert.deepEqual(start.body.steps[0], {
+    id: firstAssignmentId, instruction: "/design the map", kind: "implementation", path: null,
+    continueFromAssignmentId: null, launch: { harness: "codex", model: "sol", effort: "high" },
+  });
+  assert.deepEqual(start.body.steps[1], {
+    id: start.body.steps[1].id, instruction: "Review the design and update it", kind: "implementation", path: null,
+    continueFromAssignmentId: firstAssignmentId, launch: { harness: "claude", model: "fable-5", effort: null },
+  });
+  assert.match(start.body.steps[1].id, /^draft-/);
 
   // The desk compresses pipeline mechanics into Open plus one action menu.
   click(window, "#work-tab");
@@ -149,36 +171,43 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.equal(row.querySelector(".desk-goal-facts"), null, "agent count is not repeated on the Goal");
   assert.equal(row.querySelector("[data-check-goal]"), null);
   assert.equal(row.querySelector("[data-pipeline-control]"), null);
-  assert.match(row.querySelector("[data-stop-goal]").textContent, /^End work$/);
+  assert.equal(row.querySelector("[data-stop-goal]"), null, "rare actions left the table markup");
 
   // The running pipeline row keeps a ▾ that opens the step list: history is
   // fixed, the pending step edits in place, and a draft row appends.
-  const stepsToggle = row.querySelector("[data-launch-for]");
-  assert.ok(stepsToggle, "a running pipeline row offers its steps");
-  assert.match(stepsToggle.textContent, /Steps and agents/);
-  click(window, `[data-goal-anchor='${goal.file}'] [data-launch-for]`);
+  click(window, `[data-goal-anchor='${goal.file}'] [data-work-object-actions]`);
+  await settle(window);
+  assert.ok(window.document.querySelector("[data-modal-action='editAssignments']"), "a running pipeline offers its assignments");
+  click(window, "[data-modal-action='editAssignments']");
   await settle(window);
   await settle(window);
   assert.ok(popover(), "the popover opened on the running pipeline");
   assert.equal(window.document.querySelectorAll(".launch-step-fixed").length, 1, "the running step is history");
   assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 1, "only the pending step is editable");
   assert.equal(window.document.querySelector("#launch-instruction").value, "Review the design and update it");
-  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Save step 2/);
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Save pending changes/);
   click(window, "[data-launch-step-add]");
   assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 2);
-  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Add step 3/);
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Save pending changes/);
   window.document.querySelector("#launch-instruction").value = "Prove it";
   click(window, "[data-launch-harness='codex']");
   click(window, "[data-launch-start]");
   await settle(window);
   await settle(window);
-  const append = posts.find((entry) => entry.path === "/api/pipelines/append");
-  assert.equal(append.body.goal, goal.file);
-  assert.deepEqual(append.body.steps, [{ instruction: "Prove it", continueFrom: null, launch: { harness: "codex", model: "sol", effort: null } }]);
-  assert.equal(append.body.expectedRevision, 1);
-  assert.match(append.body.idempotencyKey, /^[0-9a-f-]{36}$/);
-  assert.equal(popover(), null, "the popover closed after the append");
-  assert.equal(posts.filter((entry) => entry.path === "/api/goals/start").length, 1, "an append never restarts the pipeline");
+  const mutation = posts.find((entry) => entry.path === "/api/pipelines/mutate");
+  assert.equal(mutation.body.goal, goal.file);
+  assert.equal(mutation.body.expectedRevision, 1);
+  assert.match(mutation.body.operationId, /^[0-9a-f-]{36}$/);
+  assert.equal(mutation.body.operations.length, 1);
+  assert.equal(mutation.body.operations[0].type, "add");
+  assert.equal(mutation.body.operations[0].afterAssignmentId, start.body.steps[1].id);
+  assert.deepEqual(mutation.body.operations[0].assignment, {
+    id: mutation.body.operations[0].assignment.id, instruction: "Prove it", kind: "implementation", path: null,
+    continueFromAssignmentId: null, launch: { harness: "codex", model: "sol", effort: null },
+  });
+  assert.match(mutation.body.operations[0].assignment.id, /^draft-/);
+  assert.equal(popover(), null, "the popover closed after the atomic save");
+  assert.equal(posts.filter((entry) => entry.path === "/api/goals/start").length, 1, "a queue mutation never restarts the pipeline");
   const grownRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.equal(grownRow.querySelector(".work-cell-action [data-open-goal-run]").textContent, "codex/sol/high");
 
@@ -194,12 +223,14 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.equal(stoppedRow.querySelector(".work-cell-action [data-open-goal-run]"), null, "a dead session is not offered as Open");
   assert.equal(stoppedRow.querySelector("[data-stop-goal]"), null);
   assert.equal(stoppedRow.querySelector("[data-pipeline-control='restart']"), null);
-  assert.ok(stoppedRow.querySelector("[data-pipeline-control='skip']"));
-  click(window, `[data-goal-anchor='${goal.file}'] [data-pipeline-control='skip']`);
+  click(window, `[data-goal-anchor='${goal.file}'] [data-work-object-actions]`);
+  await settle(window);
+  assert.ok(window.document.querySelector("[data-modal-action='skipAssignment']"));
+  click(window, "[data-modal-action='skipAssignment']");
   await settle(window);
   await settle(window);
   const control = posts.find((entry) => entry.path === "/api/pipelines/control");
-  assert.deepEqual({ goal: control.body.goal, action: control.body.action, step: control.body.step, expectedRevision: control.body.expectedRevision }, { goal: goal.file, action: "skip", step: 1, expectedRevision: 1 });
+  assert.deepEqual({ goal: control.body.goal, action: control.body.action, step: control.body.step, expectedRevision: control.body.expectedRevision }, { goal: goal.file, action: "skip", step: 1, expectedRevision: 2 });
   assert.match(control.body.idempotencyKey, /^[0-9a-f-]{36}$/);
   const afterRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.equal(afterRow.querySelector(".desk-handover"), null, "the handover line left the card");
@@ -208,10 +239,12 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   // open Goal and no Restart lingers.
   assert.match(afterRow.querySelector(".desk-state").textContent, /^Stopped$/);
   assert.equal(afterRow.querySelector(".work-cell-action [data-open-goal-run]"), null, "the stopped next step is controlled from the menu");
-  const stopWork = afterRow.querySelector("[data-pipeline-control='end']");
-  assert.ok(stopWork, "a stopped step offers Stop work");
-  assert.equal(stopWork.textContent, "End work");
-  click(window, `[data-goal-anchor='${goal.file}'] [data-pipeline-control='end']`);
+  click(window, `[data-goal-anchor='${goal.file}'] [data-work-object-actions]`);
+  await settle(window);
+  const stopWork = window.document.querySelector("[data-modal-action='endPipeline']");
+  assert.ok(stopWork, "a stopped step offers End work");
+  assert.match(stopWork.textContent, /End work/);
+  click(window, "[data-modal-action='endPipeline']");
   await settle(window);
   await settle(window);
   const endPost = posts.filter((entry) => entry.path === "/api/pipelines/control").at(-1);
@@ -223,8 +256,8 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.match(endedRow.querySelector(".desk-state").textContent, /^Open$/);
   assert.equal(endedRow.querySelector("[data-pipeline-control]"), null, "nothing offers Restart after Stop work");
 
-  // A finished pipeline: the row is a plain Goal row again, and its ▾ opens
-  // the finished steps with a draft row ready to append, never a fresh start.
+  // A finished pipeline: the row is a plain Goal row again, and its action
+  // surface opens immutable history with an explicit Add route.
   for (const step of pipeline.steps) { step.status = "complete"; step.live = false; }
   pipeline.status = "complete";
   pipeline.updatedAt = "t-complete";
@@ -235,18 +268,21 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   // Every step ran and no Test exists yet, so the result is not offered for
   // acceptance (design-redesign-work-as-a-compact-table Decision 11).
   assert.match(finishedRow.querySelector(".desk-state").textContent, /^Preparing validation$/);
-  assert.equal(finishedRow.querySelector(".desk-action-menu [data-launch-for]").textContent, "Steps and agents…", "the finished run's steps stay one menu item away");
-  click(window, `[data-goal-anchor='${goal.file}'] [data-launch-for]`);
+  click(window, `[data-goal-anchor='${goal.file}'] [data-work-object-actions]`);
+  await settle(window);
+  assert.match(window.document.querySelector("[data-modal-action='editAssignments']").textContent, /Edit pending assignments/, "the finished run's assignments stay one action away");
+  click(window, "[data-modal-action='editAssignments']");
   await settle(window);
   await settle(window);
   assert.equal(window.document.querySelectorAll(".launch-step-fixed").length, 3, "finished steps stay as history");
-  assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 1, "one draft row waits to be appended");
-  assert.equal(window.document.querySelector("[data-launch-step-remove]"), null, "the only draft row cannot be removed");
-  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Add step 4/);
+  assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 0, "history does not masquerade as a mutable draft");
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Save pending changes/);
   click(window, "[data-launch-step-add]");
-  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Add 2 steps/);
-  click(window, "[data-launch-step-remove='4']");
-  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Add step 4/);
+  assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 1, "Add creates one stable pending assignment");
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Save pending changes/);
+  click(window, "[data-launch-step-remove='3']");
+  assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 0, "the unsaved assignment can be removed again");
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Save pending changes/);
 
   dom.window.close();
 });

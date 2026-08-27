@@ -435,8 +435,8 @@ const {
   brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain,
   humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel,
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
-  forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict, replyAboutRow, areaQuestions, areaBlockers,
-  goalGroupRoot, toggleSubgoals, toggleWorkArea,
+  forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers,
+  goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea,
   openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork,
 } = workDeskView;
 
@@ -477,8 +477,8 @@ const goalLaunchView = createGoalLaunchView({
 const {
   selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock,
   launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, launchStepDraft, syncLaunchDraft, commitActiveStep,
-  activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, launchStepLabel, launchStepRequest,
-  launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, launchStepList, launchPickerBlock,
+  blankLaunchStep, launchStepsForRecord, launchStepIsMutable, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, moveLaunchStep, launchStepLabel, launchStepRequest,
+  launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, pipelineMutationOperations, rebasePipelineDraft, launchStepList, launchPickerBlock,
   toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor,
 } = goalLaunchView;
 
@@ -533,7 +533,7 @@ const shellCoordinator = createShellCoordinator({
   programs: { currentProgram, programById, programIsLive, programAreaDirectory },
   launch: {
     launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, syncLaunchDraft, commitActiveStep, launchStepDraft,
-    launchStepRequest, launchDraftRows, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
+    launchStepRequest, pipelineMutationOperations, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   },
   documents: { openDocument, refreshDocument, rememberDocumentPosition, documentGoal, openDocumentPeek, closeDocumentPeek },
@@ -543,8 +543,8 @@ const {
   selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt,
   selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath,
   confirmAreaMove, showCreate, switchDescribeToManualCreate, cancelCreate, addDescribeSource, showDescribe,
-  openDescribeSession, cancelDescribe, showDecision, selectionForArea, startPipeline, savePipelineStep,
-  appendPipelineSteps, startSelectedGoals, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm,
+  openDescribeSession, cancelDescribe, showDecision, startPipeline, savePipelineChanges,
+  openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm,
   confirmStop, confirmComplete, confirmWontDo,
 } = shellCoordinator;
 
@@ -622,7 +622,7 @@ function renderKey() {
   const goal = currentGoal();
   const session = sessionForGoal(goal);
   if (state.view === "document") {
-    return JSON.stringify([state.view, state.document?.file, state.document?.hash, state.documentTrailIndex, state.documentTrail.length, commentComposerKey()]);
+    return JSON.stringify([state.view, state.document?.file, state.document?.hash, state.goalDetail, state.documentTrailIndex, state.documentTrail.length, commentComposerKey()]);
   }
   return JSON.stringify([
     state.view, state.workCursor,
@@ -632,7 +632,6 @@ function renderKey() {
     state.describeDraft,
     state.describeSessionName,
     state.areaSelection,
-    state.goalSelection,
     [...state.expandedAreas].sort(),
     [state.workFilter, state.areaFocus, [...state.collapsedDeskSections].sort(), [...state.collapsedGoalTrees].sort(), Boolean(state.areaFocusPicker)],
     // The card's durations count up, so a repaint is due once a minute even
@@ -644,7 +643,7 @@ function renderKey() {
     state.programs.operations.map((item) => [item.id, item.paused, item.lastRunAt, item.nextRunAt, item.session?.state]),
     vaultRenderProjection(),
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
-    [state.launch.area, state.launch.kind, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, state.launch.options, state.launch.instruction, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
+    [state.launch.area, state.launch.kind, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, state.launch.options, state.launch.instruction, state.launch.assignmentKind, state.launch.assignmentPath, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null, state.launch.stale],
     (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.session, step.startedAt, step.endedAt, step.live, step.state, step.idleSince, step.waitingSince])]),
     (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.stateQuestion, item.waitingSince, item.updatedAt, (item.forJulian ?? []).map((row) => [row.line, row.commentCount, row.missing, row.goalStatus]), (item.requests ?? []).map((request) => [request.id, request.status, request.subject, request.question, request.proposal, request.detail])]),
     (state.goalCleanups ?? []).map((item) => [item.goal, item.lastAttemptAt, item.retryCount, item.failures]),
@@ -1106,6 +1105,7 @@ function restoreReturnPoint(point) {
     return;
   }
   state.document = null;
+  state.goalDetail = null;
   state.documentTrail = [];
   state.documentTrailIndex = -1;
   state.renderedKey = "";
@@ -1136,8 +1136,6 @@ function paint(force = false) {
   // Closing and promoting the layer are the only paths that repaint it
   // (design-quick-returnable-document-search D8).
   if (state.documentPeek || state.goTo) return updateHeader();
-  // Goal selection is a work-view gesture: leaving the desk clears it.
-  if (state.view !== "work" && state.goalSelection.length) state.goalSelection = [];
   if (state.loading) {
     screen.innerHTML = `<div class="loading">Loading Agent Shell…</div>`;
     return;
@@ -1485,11 +1483,11 @@ bindShellEvents({
   work: {
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, confirmStopBrain, saveDescribeDraft, saveDescribeSession, describeWorkSession,
-    openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
-    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict,
+    openDescribeSession, addDescribeSource, switchDescribeToManualCreate,
+    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
-    goalGroupRoot, toggleSubgoals, toggleWorkArea,
+    goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea,
   },
   areas: {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,
@@ -1500,9 +1498,9 @@ bindShellEvents({
     programAreaDirectory,
   },
   launch: {
-    syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep,
-    addLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses, startPipeline,
-    savePipelineStep, appendPipelineSteps, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
+    syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep, moveLaunchStep,
+    addLaunchStep, launchStepIsMutable, launchStepsForRecord, blankLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses, startPipeline,
+    savePipelineChanges, launchOptionsFor, pipelineRecordForGoal, rebasePipelineDraft, loadLaunchStep,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   },
   documents: {

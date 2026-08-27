@@ -21,7 +21,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   const { currentProgram, programById, programIsLive, programAreaDirectory } = programs;
   const {
     launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, syncLaunchDraft, commitActiveStep, launchStepDraft,
-    launchStepRequest, launchDraftRows, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
+    launchStepRequest, pipelineMutationOperations, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   } = launch;
   const { openDocument, refreshDocument, rememberDocumentPosition, documentGoal, openDocumentPeek, closeDocumentPeek } = documents;
@@ -244,6 +244,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     state.view = "work";
     state.query = "";
     state.document = null;
+    state.goalDetail = null;
     state.documentTrail = [];
     state.documentTrailIndex = -1;
     if (goal && state.workFilter !== "all" && !filteredGoalTrees(goalTrees().filter((tree) => tree.goals.some((item) => item.file === file))).length) {
@@ -276,6 +277,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     state.agentReturn = state.view === "work" ? captureReturnPoint() : null;
     state.agentSessionName = null;
     state.document = null;
+    state.goalDetail = null;
     state.documentTrail = [];
     state.documentTrailIndex = -1;
     const session = sessionForGoal(goal);
@@ -288,6 +290,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   function showWork({ focus = false } = {}) {
     state.view = "work";
     state.document = null;
+    state.goalDetail = null;
     state.documentTrail = [];
     state.documentTrailIndex = -1;
     paint(true);
@@ -448,6 +451,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     state.createArea = area || (state.createReturnView === "areas" ? selectedArea()?.path : "") || preferredArea();
     state.view = "create";
     state.document = null;
+    state.goalDetail = null;
     state.documentTrail = [];
     state.documentTrailIndex = -1;
     paint(true);
@@ -495,7 +499,10 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     }
     saveDescribeDraft();
     state.view = "describe";
-    if (!source) state.document = null;
+    if (!source) {
+      state.document = null;
+      state.goalDetail = null;
+    }
     paint(true);
     window.setTimeout(() => document.querySelector("#describe-work")?.focus(), 0);
   }
@@ -521,42 +528,26 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     paint(true);
   }
 
-  /** Opens a native agent with the complete Goal context. */
-  /** The checked Goal files that belong to one Area, in checked order. */
-  function selectionForArea(areaPath) {
-    return state.goalSelection.filter((file) => {
-      const area = goalByFile(file)?.area ?? "";
-      return area === areaPath || area.startsWith(`${areaPath}/`);
-    });
-  }
-
   /**
-   * Starts one agent that owns every Goal checked in one Area panel. The first
-   * checked Goal is the primary: it names the session and leads the prompt; the
-   * rest ride along as "Also in this session" and flip to active on the same
-   * session binding.
-   */
-  /**
-   * Starts the popover's step list as one pipeline on the target Goal (and the
-   * other checked Goals of its Area, which ride along in every step). One step
-   * without an instruction never comes here; that is a plain start.
+   * Starts the Launch Editor's assignment list as one pipeline on the target
+   * Goal. Co-assigned Goal data remains a server capability; Work no longer
+   * builds it from transient browser checkboxes.
    */
   async function startPipeline(targetFile) {
     const goal = goalByFile(targetFile);
     if (!goal) return;
     const steps = commitActiveStep().map(launchStepRequest);
-    const selection = selectionForArea(goal.area);
-    const extraFiles = selection[0] === targetFile ? selection.slice(1) : [];
     try {
-      const result = await post("/api/goals/start", { file: targetFile, steps, extraFiles });
+      const result = await post("/api/goals/start", { file: targetFile, steps });
       state.launch.open = false;
       state.launchTarget = "";
       state.launchAnchor = null;
       state.launch.steps = [];
       state.launch.active = 0;
       state.launch.instruction = "";
+      state.launch.assignmentKind = "implementation";
+      state.launch.assignmentPath = "";
       state.launch.continueFrom = null;
-      state.goalSelection = [];
       await refresh();
       rememberGoal(targetFile);
       const opened = sessionForGoal(currentGoal());
@@ -569,38 +560,16 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     }
   }
 
-  /** Saves the active pending step of a running pipeline. */
-  async function savePipelineStep(targetFile) {
+  /** Saves every local pending-assignment change as one revision-guarded batch. */
+  async function savePipelineChanges(targetFile) {
     const record = state.launch.record;
     if (!record) return;
-    const row = launchStepDraft();
-    const step = record.steps[state.launch.active];
-    if (!step || step.status !== "pending") return showToast("Only pending steps change.");
-    const request = launchStepRequest(row);
+    syncLaunchDraft();
+    const operations = pipelineMutationOperations(record);
+    if (!operations.length) return showToast("The pending assignments have no changes.");
+    const operationId = crypto.randomUUID();
     try {
-      await post("/api/pipelines/edit", { goal: targetFile, step: step.index, expectedRevision: record.revision, idempotencyKey: crypto.randomUUID(), instruction: request.instruction, ...(request.command ? { command: request.command } : request.launch ? { choice: request.launch } : {}), continueFrom: request.continueFrom });
-      await refresh();
-      state.launch.record = pipelineForGoal(goalByFile(targetFile));
-      paint(true);
-      showToast(`Step ${step.index} saved.`);
-    } catch (error) {
-      showToast(error.message);
-    }
-  }
-
-  /**
-   * Appends the popover's draft rows to the Goal's pipeline. The server says
-   * what happened: the steps wait behind the running step, the finished last
-   * agent was asked to hand over again, or the first new step started.
-   */
-  async function appendPipelineSteps(targetFile) {
-    const record = state.launch.record;
-    if (!record) return;
-    const drafts = launchDraftRows();
-    if (!drafts.length) return showToast("Add a step first.");
-    const steps = drafts.map(launchStepRequest);
-    try {
-      const result = await post("/api/pipelines/append", { goal: targetFile, steps, expectedRevision: record.revision, idempotencyKey: crypto.randomUUID() });
+      const result = await post("/api/pipelines/mutate", { goal: targetFile, expectedRevision: record.revision, operationId, operations });
       state.launch.open = false;
       state.launchTarget = "";
       state.launchAnchor = null;
@@ -608,35 +577,20 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       state.launch.steps = [];
       state.launch.active = 0;
       state.launch.instruction = "";
+      state.launch.assignmentKind = "implementation";
+      state.launch.assignmentPath = "";
       state.launch.continueFrom = null;
+      state.launch.stale = null;
       await refresh();
       paint(true);
-      const added = result.added ?? [];
-      const which = added.length > 1 ? `Steps ${added[0]} to ${added[added.length - 1]} added` : `Step ${added[0]} added`;
-      if (result.status === "asked") showToast(`${which}; step ${result.after}'s agent was asked to hand over again.`);
-      else if (result.status === "started") showToast(`${which}; step ${result.next?.index ?? added[0]} started.`);
-      else showToast(`${which}; it starts when step ${result.after} hands over.`);
+      showToast(result.state === "repeated" ? "The assignment changes were already saved." : "The pending assignments were saved together.");
     } catch (error) {
-      showToast(error.message);
-    }
-  }
-
-  /** Starts one agent that owns every checked Goal in one Area. */
-  async function startSelectedGoals(areaPath) {
-    const files = selectionForArea(areaPath);
-    const [primary, ...extraFiles] = files;
-    if (!primary) return;
-    try {
-      rememberGoal(primary);
-      const start = await launchFieldsForArea(areaPath);
-      await post("/api/goals/agent", { file: primary, launch: true, extraFiles, ...start.fields });
-      state.goalSelection = state.goalSelection.filter((file) => !files.includes(file));
-      await refresh();
-      state.agentReturnView = "work";
-      openSessionLayer(sessionForGoal(currentGoal()), "agent", captureReturnPoint());
-      const what = files.length === 1 ? "The agent opened with this Goal" : `The agent opened with ${files.length} Goals`;
-      showToast(start.label ? `${what} on ${start.label}.` : `${what}.`);
-    } catch (error) {
+      if (error.code === "stale-revision") {
+        state.launch.stale = { currentRevision: error.currentRevision, pipeline: error.pipeline, operationId };
+        paint(true);
+        showToast("The queue changed. Your local assignment draft is still open.");
+        return;
+      }
       showToast(error.message);
     }
   }
@@ -719,6 +673,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     const modal = modalLayer.querySelector(".modal");
     modal?.classList.toggle("request-surface", wide);
     modal?.classList.toggle("key-sheet-surface", Boolean(rows.length));
+    modal?.classList.toggle("action-surface", field?.kind === "actions");
     modalKicker.textContent = kicker;
     modalTitle.textContent = title;
     // Setting the text first drops any list a previous modal appended.
@@ -735,21 +690,23 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       modalCopy.removeAttribute("aria-label");
     }
     modalField.hidden = !field;
-    modalField.innerHTML = field?.kind === "select"
+    modalField.innerHTML = field?.kind === "actions"
+      ? `<div class="modal-action-list" role="menu" aria-label="${escapeHtml(field.label || title)}">${field.options.map((option) => `<button type="button" role="menuitem" data-modal-action="${escapeHtml(option.value)}" data-modal-key="${escapeHtml(option.key || "")}"${option.enabled === false ? ` aria-disabled="true" data-disabled-reason="${escapeHtml(option.reason || "This action is not available.")}"` : ""}><span><kbd>${escapeHtml(option.key || "")}</kbd><strong>${escapeHtml(option.label)}</strong></span><small>${escapeHtml(option.enabled === false ? option.reason || option.help : option.help || "")}</small></button>`).join("")}</div>`
+      : field?.kind === "select"
       ? `<label><span>${escapeHtml(field.label)}</span><select data-modal-select>${field.options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></label>`
       : field?.kind === "request"
         ? `<label><span>${escapeHtml(field.actionLabel)}</span><select data-modal-select>${field.options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></label><label><span>${escapeHtml(field.label)}</span><textarea data-modal-input placeholder="${escapeHtml(field.placeholder)}"></textarea></label>`
         : field
-          ? `<label><span>${escapeHtml(field.label)}</span><textarea data-modal-input required placeholder="${escapeHtml(field.placeholder)}"></textarea></label>`
+          ? `<label><span>${escapeHtml(field.label)}</span><textarea data-modal-input${field.required === false ? "" : " required"} placeholder="${escapeHtml(field.placeholder)}"></textarea></label>`
           : "";
-    modalActions.innerHTML = `
-      <button class="quiet-button" type="button" data-modal-cancel>Cancel</button>
-      <button class="${danger ? "danger-button" : "primary-button"}" type="button" data-modal-confirm>${escapeHtml(confirmLabel)} <kbd>${field ? "⌘↵" : "↵"}</kbd></button>
-    `;
+    modalActions.innerHTML = field?.kind === "actions"
+      ? `<button class="quiet-button" type="button" data-modal-cancel>Cancel <kbd>esc</kbd></button>`
+      : `<button class="quiet-button" type="button" data-modal-cancel>Cancel</button>
+      <button class="${danger ? "danger-button" : "primary-button"}" type="button" data-modal-confirm>${escapeHtml(confirmLabel)} <kbd>${field ? "⌘↵" : "↵"}</kbd></button>`;
     modalConfirm = onConfirm;
     modalLayer.hidden = false;
     syncLayerInertness();
-    window.setTimeout(() => (modalField.querySelector("[data-modal-select]") || modalField.querySelector("[data-modal-input]") || (rows.length ? modalCopy : null) || modalActions.querySelector("[data-modal-confirm]"))?.focus(), 0);
+    window.setTimeout(() => (modalField.querySelector("[data-modal-action]:not([aria-disabled='true'])") || modalField.querySelector("[data-modal-action]") || modalField.querySelector("[data-modal-select]") || modalField.querySelector("[data-modal-input]") || (rows.length ? modalCopy : null) || modalActions.querySelector("[data-modal-confirm]"))?.focus(), 0);
   }
 
   /** Closes the confirmation modal without acting. */
@@ -757,7 +714,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     const returnPoint = modalReturnPoint;
     modalReturnPoint = null;
     modalLayer.hidden = true;
-    modalLayer.querySelector(".modal")?.classList.remove("request-surface", "key-sheet-surface");
+    modalLayer.querySelector(".modal")?.classList.remove("request-surface", "key-sheet-surface", "action-surface");
     modalCopy.removeAttribute("tabindex");
     modalCopy.removeAttribute("role");
     modalCopy.removeAttribute("aria-label");
@@ -954,5 +911,5 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Toggles the server-owned macOS sleep assertion. */
 
-  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, showCreate, switchDescribeToManualCreate, cancelCreate, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, selectionForArea, startPipeline, savePipelineStep, appendPipelineSteps, startSelectedGoals, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
+  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, showCreate, switchDescribeToManualCreate, cancelCreate, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, startPipeline, savePipelineChanges, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
 }

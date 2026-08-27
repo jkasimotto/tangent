@@ -27,7 +27,7 @@ export async function settle(window, turns = 3) {
  * Renders the Work screen for one fixture and returns its window. `posts`
  * collects every mutation the page sends, so an action proof needs no server.
  */
-export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [], launchOptions = null, harnessRegistry = null } = {}) {
+export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [], launchOptions = null, harnessRegistry = null, goalDetail = null, documentRecord = null } = {}) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -55,6 +55,8 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
       return jsonResponse(typeof launchOptions === "function" ? launchOptions(requestUrl) : launchOptions);
     }
     if (pathname === "/api/harnesses" && harnessRegistry) return jsonResponse({ registry: harnessRegistry });
+    if (pathname === "/api/goals/detail" && goalDetail) return jsonResponse(typeof goalDetail === "function" ? goalDetail(requestUrl) : goalDetail);
+    if (pathname === "/api/document" && documentRecord) return jsonResponse(typeof documentRecord === "function" ? documentRecord(requestUrl) : documentRecord);
     return jsonResponse(fixture.vault);
   };
   window.eval(bundle);

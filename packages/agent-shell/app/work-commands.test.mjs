@@ -12,8 +12,9 @@ test("Work command records are unique, complete, and own the settled shortcuts",
     assert.match(command.help, /\S/);
     assert.ok(Object.isFrozen(command));
   }
-  const settled = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "newGoal", "focus", "fold", "questions", "note", "complete", "commands", "keys"];
-  assert.deepEqual(settled.map((id) => workCommand(id).keyDisplay), ["{", "}", "b", "s", "d", "a", "f", "z", "r", "n", "x", ":", "?"]);
+  const settled = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "newGoal", "focus", "collapse", "expand", "questions", "note", "readGoal", "goalStatus", "commands", "keys"];
+  assert.deepEqual(settled.map((id) => workCommand(id).keyDisplay), ["{", "}", "b", "s", "d", "a", "f", "h", "l", "r", "n", "o", "x", ":", "?"]);
+  assert.equal(workCommand("fold"), null, "z and the toggle command have left Work");
 });
 
 test("matching reads the registry and rejects unintended modifiers", () => {
@@ -23,6 +24,11 @@ test("matching reads the registry and rejects unintended modifiers", () => {
   assert.equal(workCommandMatches(event("s", { metaKey: true }), "stopBrain"), false);
   assert.equal(workCommandMatches(event("d"), "defaults"), true);
   assert.equal(workCommandMatches(event("a"), "newGoal"), true);
+  assert.equal(workCommandMatches(event("h"), "collapse"), true);
+  assert.equal(workCommandMatches(event("l"), "expand"), true);
+  assert.equal(workCommandMatches(event("z"), "collapse"), false);
+  assert.equal(workCommandMatches(event("o"), "readGoal"), true);
+  assert.equal(workCommandMatches(event("x"), "goalStatus"), true);
   assert.equal(workCommandMatches(event("j", { metaKey: true }), "session"), true);
   assert.equal(workCommandMatches(event("j"), "session"), false);
   assert.equal(workCommandMatches(event(":", { shiftKey: true }), "commands"), true);
@@ -37,7 +43,7 @@ test("palette and help consumers receive structured records", () => {
   const palette = workCommandsFor({ palette: true });
   assert.ok(palette.some((command) => command.id === "stopBrain"));
   assert.ok(palette.some((command) => command.id === "defaults"));
-  assert.deepEqual(palette.filter((command) => command.kind === "navigation").map((command) => command.id), ["previousArea", "nextArea"]);
+  assert.deepEqual(palette.filter((command) => command.kind === "navigation").map((command) => command.id), ["previousArea", "nextArea", "collapse", "expand"]);
   const help = workCommandHelpRows();
   assert.equal(help.length, WORK_COMMANDS.length);
   assert.deepEqual(Object.keys(help[0]), ["id", "keyDisplay", "ariaKeyshortcuts", "scope", "label", "help", "kind"]);

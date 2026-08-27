@@ -28,7 +28,7 @@ test("the work table states its rows and columns in the accessibility tree", asy
   assert.equal(document.querySelector("[data-work-filter]"), null, "Work is one projection, not Current and Planned modes");
 
   const columns = [...table.querySelectorAll("thead th")];
-  assert.deepEqual(columns.map((column) => column.textContent.trim()), ["Select", "Work", "State", "Time", "Action"]);
+  assert.deepEqual(columns.map((column) => column.textContent.trim()), ["Work", "State", "Time", "Action"]);
   assert.ok(columns.every((column) => column.getAttribute("scope") === "col"), "every column header declares its scope");
   assert.equal(table.querySelectorAll("colgroup col").length, columns.length, "one column element per column carries its width");
 
@@ -63,23 +63,23 @@ test("every status carries a word, and every icon-only control carries a name", 
     const name = (control.getAttribute("aria-label") ?? control.textContent ?? "").trim();
     assert.match(name, /\S/, `every control is named: ${control.outerHTML.slice(0, 80)}`);
   }
-  for (const summary of document.querySelectorAll(".work-table .desk-action-menu > summary")) {
-    assert.match(summary.getAttribute("aria-label"), /^Actions for .+/, "an icon-only menu names its Goal");
+  for (const trigger of document.querySelectorAll(".work-table .desk-action-menu-trigger")) {
+    assert.match(trigger.getAttribute("aria-label"), /^Actions for .+/, "an icon-only action trigger names its object");
   }
   assert.equal(document.querySelectorAll(".work-table th:empty").length, 0, "no header cell is empty");
 });
 
-test("Area pointers, toolbar help, and the command palette share one command registry", async () => {
+test("Area pointers, toolbar help, and the state-owned action surface share one command registry", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
-  const ids = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "newGoal", "focus", "fold", "questions", "note"];
-  const menu = document.querySelector(".work-group-action-menu [role='menu']");
+  const ids = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "newGoal", "focus", "collapse", "expand", "questions", "note"];
+  document.querySelector("[data-work-group='otto/onboarding'] [data-work-object-actions]").click();
+  await settle(window);
   for (const id of ids) {
     const command = workCommand(id);
-    const pointer = menu.querySelector(`[data-work-command='${id}']`);
-    assert.ok(pointer, `${id} has a pointer on its Area`);
-    assert.equal(pointer.getAttribute("aria-keyshortcuts"), command.ariaKeyshortcuts);
-    assert.equal(pointer.querySelector("kbd").textContent, command.keyDisplay);
-    assert.match(pointer.title, new RegExp(command.keyDisplay.replace(/[?]/g, "\\?")));
+    const pointer = document.querySelector(`[data-modal-action='${id}']`);
+    assert.ok(pointer, `${id} has a pointer on its Area action surface`);
+    assert.equal(pointer.dataset.modalKey, command.keyDisplay);
+    assert.match(pointer.textContent, new RegExp(command.label));
   }
   for (const id of ["commands", "keys"]) {
     const command = workCommand(id);
@@ -87,27 +87,16 @@ test("Area pointers, toolbar help, and the command palette share one command reg
     assert.equal(pointer.textContent.trim(), `${command.label} ${command.keyDisplay}`);
     assert.equal(pointer.getAttribute("aria-keyshortcuts"), command.ariaKeyshortcuts);
   }
-  const complete = document.querySelector("[data-work-command='complete']");
-  assert.match(complete.textContent, /Complete Goal\s*x/);
-
-  document.querySelector("[data-work-commands]").click();
+  document.querySelector("[data-modal-action='stopBrain']").click();
   await settle(window);
-  const values = [...document.querySelectorAll("[data-modal-select] option")].map((option) => option.value);
-  assert.ok(values.includes("stopBrain"));
-  assert.ok(values.includes("defaults"));
-  const select = document.querySelector("[data-modal-select]");
-  select.value = "stopBrain";
-  document.querySelector("[data-modal-confirm]").click();
-  await settle(window);
-  assert.match(document.querySelector("#modal-title").textContent, /Stop the Onboarding brain/, "palette stop runs the same Area confirmation as its pointer");
+  assert.match(document.querySelector("#modal-title").textContent, /Stop the Onboarding brain/, "action-surface stop runs the guarded confirmation");
   document.querySelector("[data-modal-cancel]").click();
 
-  document.querySelector("[data-work-commands]").click();
+  document.querySelector("[data-work-group='otto/onboarding'] [data-work-object-actions]").click();
   await settle(window);
-  document.querySelector("[data-modal-select]").value = "defaults";
-  document.querySelector("[data-modal-confirm]").click();
+  document.querySelector("[data-modal-action='defaults']").click();
   await settle(window);
-  assert.equal(document.querySelector("[data-launch-popover]")?.getAttribute("aria-label"), "Default agents", "palette defaults runs the same Area settings pointer");
+  assert.equal(document.querySelector("[data-launch-popover]")?.getAttribute("aria-label"), "Default agents", "action-surface defaults runs the same Area settings pointer");
 });
 
 test("Area stop and defaults keys run the same guarded paths as their pointers", async () => {
@@ -181,25 +170,28 @@ test("Shift-brackets and their pointer actions jump between real Area headers", 
   await settle(window);
   assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, standards, "Shift-[ resolves step metadata through its descendant Goal row");
 
-  document.querySelector(`[data-work-group='otto/standards'] [data-move-work-area='-1']`).click();
+  document.querySelector(`[data-work-group='otto/standards'] [data-work-object-actions]`).click();
+  await settle(window);
+  document.querySelector("[data-modal-action='previousArea']").click();
   await settle(window);
   assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, onboarding, "the visible previous action runs the same jump");
 
-  document.querySelector("[data-work-commands]").click();
+  document.querySelector(`[data-work-group='otto/onboarding'] [data-work-object-actions]`).click();
   await settle(window);
-  document.querySelector("[data-modal-select]").value = "nextArea";
-  document.querySelector("[data-modal-confirm]").click();
+  document.querySelector("[data-modal-action='nextArea']").click();
   await settle(window);
-  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, standards, "the command palette runs the same next-Area action");
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, standards, "the action surface runs the same next-Area action");
 
-  document.querySelector(`[data-work-group='otto/tangent'] [data-move-work-area='1']`).click();
+  document.querySelector(`[data-work-group='otto/tangent'] [data-work-object-actions]`).click();
+  await settle(window);
+  document.querySelector("[data-modal-action='nextArea']").click();
   await settle(window);
   assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, tangent, "the final Area holds at the boundary");
 });
 
 test("Area jumps skip the synthetic Other Areas group", async () => {
   const { window, document } = await bootWorkTable(workTableFixture(), { areaFocus: ["otto/onboarding"] });
-  document.querySelector("[data-fold-work-area='__other-areas']").click();
+  document.querySelector("[data-work-group='__other-areas'] [data-work-tree-action='expand']").click();
   await settle(window);
   const outsideGoal = document.querySelector("[data-goal-anchor='otto/standards/goal-framework-docs.md']");
   outsideGoal.querySelector(".work-row-agent").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
@@ -216,7 +208,7 @@ test("Area jumps skip the synthetic Other Areas group", async () => {
 test("Area keys refuse a Goal in Other Areas because it has no matching pointer header", async () => {
   const fixture = workTableFixture();
   const { window, document } = await bootWorkTable(fixture, { areaFocus: ["otto/onboarding"] });
-  document.querySelector("[data-fold-work-area='__other-areas']").click();
+  document.querySelector("[data-work-group='__other-areas'] [data-work-tree-action='expand']").click();
   await settle(window);
   const row = document.querySelector("[data-goal-anchor='otto/standards/goal-framework-docs.md']");
   assert.equal(row.closest("[data-work-group]").dataset.workGroup, "__other-areas");
@@ -418,20 +410,11 @@ test("Command-J refuses a row with no live session and an outside click closes a
   assert.ok(document.querySelector("table.work-table"), "outside close leaves Work mounted");
 });
 
-test("Space checks a startable Goal, and Escape clears the selection", async () => {
-  const { window, document, posts } = await bootWorkTable(plannedWorkFixture(), { workFilter: "inactive" });
-  const startable = [...document.querySelectorAll("tr.work-row")].filter((row) => row.querySelector("[data-check-goal]"));
-  assert.equal(startable.length, 3, "only a Startable Goal offers a checkbox");
-  const checkbox = startable[0].querySelector("[data-check-goal]");
-  checkbox.click();
-  await settle(window);
-  assert.equal(document.querySelectorAll("tr.work-row.selected").length, 1, "checking selects the row");
-  assert.ok(document.querySelector("[data-start-selected]"), "one checked Goal offers one shared agent");
-  assert.equal(posts.length, 0, "selection never starts work");
-
-  document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  await settle(window);
-  assert.equal(document.querySelectorAll("tr.work-row.selected").length, 0, "Escape clears a multi-Goal selection");
+test("Work has no checkbox column or shared browser selection state", async () => {
+  const { document, posts } = await bootWorkTable(plannedWorkFixture(), { workFilter: "inactive" });
+  assert.equal(document.querySelector(".work-col-select, .work-cell-select, [data-check-goal], [data-start-selected]"), null);
+  assert.equal(document.querySelectorAll("tr.work-row.selected").length, 0);
+  assert.equal(posts.length, 0, "rendering Work never starts work");
 });
 
 test("a poll that changes the facts keeps focus on the same control", async () => {
@@ -455,7 +438,7 @@ test("a poll that changes the facts keeps focus on the same control", async () =
   assert.equal(document.activeElement.dataset.focusKey, key, "focus stays on the same control");
 });
 
-test("lifecycle state and dependency readiness stay separate facts", async () => {
+test("Work keeps lifecycle compact and leaves dependency detail to the Goal reader", async () => {
   const current = await bootWorkTable(withDirectAsks(workTableFixture()));
   /** The lifecycle word one Goal row prints. */
   const stateOf = (document, slug) => document.querySelector(`tr[data-goal-anchor$='goal-${slug}.md'] .desk-state`).textContent.trim();
@@ -465,22 +448,16 @@ test("lifecycle state and dependency readiness stay separate facts", async () =>
   assert.equal(current.document.querySelectorAll(".work-table .work-readiness").length, 0, "Current work shows no readiness line");
 
   const planned = await bootWorkTable(plannedWorkFixture(), { workFilter: "inactive" });
-  /** The readiness line one planned Goal row prints. */
-  const readinessOf = (slug) => planned.document.querySelector(`tr[data-goal-anchor$='goal-${slug}.md'] .work-readiness`).textContent.trim();
   for (const slug of ["startable", "blocked", "broken", "errored"]) {
     assert.equal(stateOf(planned.document, slug), "Open", `${slug} is Open, never Ready`);
   }
-  assert.equal(readinessOf("startable"), "Startable");
-  assert.equal(readinessOf("blocked"), "Blocked by 2");
-  assert.equal(readinessOf("broken"), "Broken dependency");
-  assert.equal(readinessOf("errored"), "Dependency error");
+  assert.equal(planned.document.querySelector(".work-readiness, .work-blocker-preview"), null, "readiness and folded dependency previews left Work");
 
   /** The visible primary action of one Goal row. */
   const startAction = (slug) => planned.document.querySelector(`tr[data-goal-anchor$='goal-${slug}.md'] .work-cell-action .desk-action`).textContent.trim();
   assert.equal(startAction("startable"), "Start agent");
   for (const slug of ["blocked", "broken", "errored"]) {
     assert.equal(startAction(slug), "Open", `${slug} opens its Goal instead of starting an agent`);
-    assert.equal(planned.document.querySelector(`tr[data-goal-anchor$='goal-${slug}.md'] [data-check-goal]`), null, `${slug} offers no checkbox`);
   }
 });
 
@@ -493,7 +470,7 @@ test("a Subgoal disclosure hides rows without leaving the row group", async () =
   fixture.vault.map.find((item) => item.path === "otto/tangent").goals = area.goals;
 
   const { window, document } = await bootWorkTable(fixture);
-  const toggle = document.querySelector(`[data-toggle-subgoals='${parent.file}']`);
+  const toggle = document.querySelector(`[data-work-tree-goal='${parent.file}']`);
   assert.ok(toggle, "a parent Goal with Subgoals gets one disclosure");
   const subgoalRow = document.querySelector(`tr[data-subgoal-of='${parent.file}']`);
   assert.equal(subgoalRow.parentElement.tagName, "TBODY", "a Subgoal row stays a row of its group");
@@ -504,11 +481,51 @@ test("a Subgoal disclosure hides rows without leaving the row group", async () =
   await settle(window);
   const hidden = document.querySelector(`tr[data-subgoal-of='${parent.file}']`);
   assert.equal(hidden.hidden, true, "the disclosure hides the following Subgoal rows");
-  assert.equal(document.querySelector(`[data-toggle-subgoals='${parent.file}']`).getAttribute("aria-expanded"), "false");
+  assert.equal(document.querySelector(`[data-work-tree-goal='${parent.file}']`).getAttribute("aria-expanded"), "false");
   assert.equal(titles(document).length, 7, "a hidden Subgoal leaves the arrow-key path");
 });
 
-test("one agent per group: checking across groups moves the selection and says so", async () => {
+test("h and l collapse, expand, and traverse Area and Subgoal tree nodes", async () => {
+  const fixture = workTableFixture();
+  const parent = fixture.goals.find((goal) => goal.slug === "compact-table");
+  const child = { ...parent, slug: "compact-table-css", file: "otto/tangent/goal-compact-table-css.md", title: "Write the table CSS", depth: 1, session: null, firstStartAt: null };
+  const area = fixture.vault.areas.find((item) => item.path === "otto/tangent");
+  area.goals.splice(area.goals.indexOf(parent) + 1, 0, child);
+  fixture.vault.map.find((item) => item.path === "otto/tangent").goals = area.goals;
+
+  const { window, document } = await bootWorkTable(fixture);
+  const areaRow = document.querySelector("[data-work-group='otto/onboarding'] .work-group-row");
+  areaRow.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  areaRow.querySelector("[data-work-cursor-control]").focus();
+  press(window, "h");
+  await settle(window);
+  assert.ok(document.querySelector("[data-work-group='otto/onboarding']").classList.contains("folded"));
+  assert.equal(document.activeElement.closest("[data-work-cursor]")?.dataset.workCursor, "area:otto/onboarding", "collapse keeps focus on the Area");
+  press(window, "l");
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-group='otto/onboarding']").classList.contains("folded"), false);
+  press(window, "l");
+  await settle(window);
+  assert.equal(document.activeElement.closest("[data-goal-anchor]")?.dataset.goalAnchor, "otto/onboarding/goal-walkthrough.md", "l on an expanded Area enters its first child");
+
+  let parentRow = document.querySelector(`[data-goal-anchor='${parent.file}']`);
+  parentRow.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  parentRow.querySelector("[data-work-row-title]").focus();
+  press(window, "h");
+  await settle(window);
+  assert.equal(document.querySelector(`tr[data-subgoal-of='${parent.file}']`).hidden, true);
+  assert.equal(document.activeElement.closest("[data-goal-anchor]")?.dataset.goalAnchor, parent.file);
+  press(window, "l");
+  await settle(window);
+  press(window, "l");
+  await settle(window);
+  assert.equal(document.activeElement.closest("[data-goal-anchor]")?.dataset.goalAnchor, child.file, "l on an expanded Goal enters its first Subgoal");
+  press(window, "h");
+  await settle(window);
+  assert.equal(document.activeElement.closest("[data-goal-anchor]")?.dataset.goalAnchor, parent.file, "h on a leaf returns to its parent");
+});
+
+test("multiple startable groups keep independent start actions without browser selection", async () => {
   const fixture = plannedWorkFixture();
   const other = { ...fixture.goals[0], area: "otto/standards", slug: "standards-startable", file: "otto/standards/goal-standards-startable.md", title: "Write the standards index", dependsOn: [] };
   fixture.vault.areas.push({ path: "otto/standards", name: "standards", goals: [other], documents: [] });
@@ -516,21 +533,10 @@ test("one agent per group: checking across groups moves the selection and says s
   fixture.brains.push({ area: "otto/standards", status: "active", live: true, session: "otto-standards--brain", generation: 1, state: "working", forJulian: [], requests: [] });
   fixture.sessions.push({ name: "otto-standards--brain", area: "otto/standards", kind: "brain", state: "working", command: "claude" });
 
-  const { window, document } = await bootWorkTable(fixture, { workFilter: "inactive" });
-  /** Checks one Goal's selection box. */
-  const check = (file) => document.querySelector(`[data-check-goal='${file}']`).click();
-  check("otto/tangent/goal-startable.md");
-  await settle(window);
-  check("otto/tangent/goal-first-prerequisite.md");
-  await settle(window);
-  assert.equal(document.querySelectorAll("tr.work-row.selected").length, 2, "two Goals of one group select together");
-  assert.match(document.querySelector("[data-start-selected]").textContent, /Start agent on 2 Goals/);
-
-  check(other.file);
-  await settle(window);
-  assert.deepEqual([...document.querySelectorAll("tr.work-row.selected")].map((row) => row.dataset.goalAnchor), [other.file],
-    "a Goal in another group replaces the selection instead of joining it");
-  assert.match(document.querySelector("#toast").textContent, /Selection moved to Otto \/ Standards\. 2 Goals in another group cleared\./);
+  const { document } = await bootWorkTable(fixture, { workFilter: "inactive" });
+  assert.ok(document.querySelector(`[data-goal-anchor='otto/tangent/goal-startable.md'] [data-launch-for]`));
+  assert.ok(document.querySelector(`[data-goal-anchor='${other.file}'] [data-launch-for]`));
+  assert.equal(document.querySelector("[data-check-goal], [data-start-selected], tr.work-row.selected"), null);
 });
 
 // The density contract, read from the stylesheet the browser loads. A rendered

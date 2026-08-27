@@ -11,9 +11,12 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
 
   /** Returns the Goal associated with the active Document. */
   function documentGoal() {
+    if (state.goalDetail?.goal?.file === state.document?.file) {
+      return { ...(goalByFile(state.goalDetail.goal.file) ?? {}), ...state.goalDetail.goal };
+    }
     const history = state.document?.goalHistory ?? [];
     /** Tests whether a linked Goal remains active. */
-    const open = (goal) => goal && !["done", "dropped", "deferred"].includes(goal.status);
+    const open = (goal) => goal && !["done", "dropped", "parked", "deferred"].includes(goal.status);
     const current = currentGoal();
     if (open(current) && history.some((item) => item.file === current.file)) return current;
     return [...history].reverse().map((item) => goalByFile(item.file)).find(open) ?? null;
@@ -22,7 +25,8 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
   /** Returns the nearby Documents for the compact reader picker. */
   function readerDocuments(goal) {
     const areaDocuments = (state.vault?.documents ?? []).filter((document) => document.kind === "document" && document.area === state.document?.area);
-    const documents = [...(goal?.documents?.length ? goal.documents : areaDocuments)];
+    const related = state.goalDetail?.goal && state.goalDetail.goal.file === goal?.file ? state.goalDetail.relatedDocuments : null;
+    const documents = [...(related?.length ? related : goal?.documents?.length ? goal.documents : areaDocuments)];
     if (state.document && !documents.some((document) => document.file === state.document.file)) {
       documents.push({ file: state.document.file, title: state.document.title, kind: "document" });
     }
@@ -119,6 +123,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
     const canGoForward = state.documentTrailIndex >= 0 && state.documentTrailIndex < state.documentTrail.length - 1;
     const brain = activeDocumentBrain();
     const comments = state.document?.comments?.length ?? 0;
+    const goalCanOpenAgent = goal && (sessionsForGoal(goal).length || !state.goalDetail || (state.goalDetail.commands ?? []).some((command) => ["start", "change-agent"].includes(command.id) && command.enabled));
     const notifyLabel = brain ? `Tell ${brain.area} brain I added comments` : "No active brain to notify";
     const notifyTitle = !brain ? `No active brain covers ${state.document?.area ?? "this Area"}` : !comments ? "Add a comment before you notify the brain" : notifyLabel;
     return `
@@ -143,10 +148,51 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
               <button type="button" data-open-brain="${escapeHtml(brain.session)}">Go to brain</button>
             </div>
           </details>` : `<button class="reader-notify-brain" type="button" title="${escapeHtml(notifyTitle)}" disabled>${escapeHtml(notifyLabel)}</button>`}
-          ${goal ? `<button class="reader-agent-action" type="button" data-open-reader-agent>Open agent</button>` : ""}
+          ${state.goalDetail?.goal ? `<button class="quiet-button reader-goal-actions" type="button" data-reader-goal-actions="${escapeHtml(state.goalDetail.goal.file)}" aria-keyshortcuts=":" title="Goal actions (:)">Goal actions <kbd>:</kbd></button>` : ""}
+          ${goalCanOpenAgent ? `<button class="reader-agent-action" type="button" data-open-reader-agent>Open agent</button>` : ""}
           <button class="reader-close-action" type="button" data-leave-document aria-keyshortcuts="Escape" title="Leave the Document reader (Esc)">Close <kbd>esc</kbd></button>
         </div>
       </header>`;
+  }
+
+  /** One terse launch label from an assignment or attempt snapshot. */
+  function goalLaunchLabel(item) {
+    const launch = item?.resolvedLaunch ?? item?.launch ?? null;
+    if (!launch) return item?.command ?? "";
+    if (typeof launch === "string") return launch;
+    return [launch.harness, launch.model, launch.effort].filter(Boolean).join("/") || launch.command || "";
+  }
+
+  /** Renders one complete server-owned Goal read model above its Markdown. */
+  function goalDetailPanel() {
+    const detail = state.goalDetail;
+    if (!detail) return "";
+    if (detail.error) return `<section class="goal-reader-detail error" role="alert"><p>${escapeHtml(detail.error)}</p></section>`;
+    const goal = detail.goal ?? {};
+    const dependencies = detail.dependencies ?? {};
+    const references = [
+      ...(dependencies.prerequisites ?? []).map((item) => ({ ...item, relation: "Needs" })),
+      ...(dependencies.requiredBy ?? []).map((item) => ({ ...item, relation: "Required by" })),
+      ...(dependencies.unresolvedReferences ?? []).map((item) => ({ file: String(item), title: String(item), status: "missing", relation: "Missing" })),
+    ];
+    const assignments = detail.queue?.assignments ?? detail.queue?.steps ?? [];
+    const attempts = detail.attempts ?? [];
+    const commands = detail.commands ?? [];
+    const relatedDocuments = detail.relatedDocuments ?? [];
+    return `<section class="goal-reader-detail" aria-label="Goal details">
+      <div class="goal-reader-facts">
+        <span><small>State</small><strong>${escapeHtml(goal.status === "deferred" ? "parked" : goal.status || "open")}</strong></span>
+        <span><small>Done when</small><strong>${escapeHtml(goal.doneWhen || goal.done_when || "Not recorded")}</strong></span>
+        ${detail.current?.session ? `<span><small>Current agent</small><strong>${escapeHtml(detail.current.session)}</strong></span>` : ""}
+      </div>
+      <div class="goal-reader-sections">
+        <section><h2>Dependencies</h2>${references.length ? `<ul>${references.map((item) => `<li><span>${escapeHtml(item.relation)}</span><strong>${escapeHtml(item.title || item.file || item.slug)}</strong><small>${escapeHtml(item.status || "open")}</small></li>`).join("")}</ul>` : `<p>None.</p>`}</section>
+        <section><h2>Related Documents</h2>${relatedDocuments.length ? `<ul>${relatedDocuments.map((item) => { const record = typeof item === "string" ? { file: item, title: item } : item; return `<li><button type="button" data-open-document="${escapeHtml(record.file)}">${escapeHtml(record.title || record.file)}</button></li>`; }).join("")}</ul>` : `<p>None.</p>`}</section>
+        <section><h2>Queue</h2>${assignments.length ? `<ol>${assignments.map((item, index) => `<li><span>${escapeHtml(String(item.index ?? index + 1))}</span><strong>${escapeHtml(item.instruction || item.label || "Assignment")}</strong><small>${escapeHtml([item.status, goalLaunchLabel(item)].filter(Boolean).join(" · "))}</small></li>`).join("")}</ol>` : `<p>No assignments.</p>`}</section>
+        <section><h2>Attempt history</h2>${attempts.length ? `<ol>${attempts.map((item) => `<li><strong>${escapeHtml(item.session || item.id || "Attempt")}</strong><small>${escapeHtml([item.status || item.assignmentStatus, goalLaunchLabel(item)].filter(Boolean).join(" · "))}</small>${item.current ? `<em>current</em>` : ""}</li>`).join("")}</ol>` : `<p>No attempts.</p>`}</section>
+        <section><h2>Available actions</h2>${commands.length ? `<ul>${commands.map((item) => `<li class="${item.enabled === false ? "disabled" : ""}"><strong>${escapeHtml(item.label || item.id)}</strong>${item.reason ? `<small>${escapeHtml(item.reason)}</small>` : ""}</li>`).join("")}</ul>` : `<p>No actions reported.</p>`}</section>
+      </div>
+    </section>`;
   }
 
   /**
@@ -162,6 +208,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         <header class="document-heading">
           <h1>${escapeHtml(source.title)}</h1>
         </header>
+        ${!readOnly && source.file === state.goalDetail?.goal?.file ? goalDetailPanel() : ""}
         <div class="document-content">${markdownToHtml(source.text, { comments: source.comments ?? [], composer: readOnly ? null : state.commentComposer, readOnly, baseFile: source.file })}</div>
         <p class="document-source">Source: ${escapeHtml(source.file)}</p>
       </article>

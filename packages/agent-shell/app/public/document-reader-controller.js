@@ -47,6 +47,8 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
   /** Opens one Document and records its place in the reading trail. */
   async function openDocument(file, { trail = "push", trailIndex = -1, heading = "" } = {}) {
     const enteringReader = state.view !== "document" || !state.document;
+    const vaultRecord = vaultLinkRecord(file);
+    const goal = goalByFile(file) ?? (vaultRecord?.kind === "goal" ? vaultRecord : null);
     rememberDocumentPosition();
     if (enteringReader) {
       if (state.view !== "document") {
@@ -56,6 +58,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
       }
       state.view = "document";
       state.document = null;
+      state.goalDetail = null;
       paint(true);
     }
     state.commentComposer = null;
@@ -64,7 +67,14 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     cachedSelectionCommentAnchor = null;
     selectionCommentPointerArmed = false;
     try {
-      state.document = await api(`/api/document?file=${encodeURIComponent(file)}`);
+      const [documentRecord, goalDetail] = await Promise.all([
+        api(`/api/document?file=${encodeURIComponent(file)}`),
+        goal
+          ? api(`/api/goals/detail?goal=${encodeURIComponent(file)}`).catch((error) => ({ goal, error: error.message }))
+          : Promise.resolve(null),
+      ]);
+      state.document = documentRecord;
+      state.goalDetail = goalDetail;
       updateDocumentTrail(file, trail, trailIndex);
       paint(true);
       restoreDocumentPosition(heading);
@@ -370,7 +380,17 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     if (!state.document) return;
     rememberDocumentPosition();
     try {
-      state.document = await api(`/api/document?file=${encodeURIComponent(state.document.file)}`);
+      const file = state.document.file;
+      const vaultRecord = vaultLinkRecord(file);
+      const goal = goalByFile(file) ?? (vaultRecord?.kind === "goal" ? vaultRecord : null);
+      const [documentRecord, goalDetail] = await Promise.all([
+        api(`/api/document?file=${encodeURIComponent(file)}`),
+        goal
+          ? api(`/api/goals/detail?goal=${encodeURIComponent(file)}`).catch((error) => ({ goal, error: error.message }))
+          : Promise.resolve(null),
+      ]);
+      state.document = documentRecord;
+      state.goalDetail = goalDetail;
       state.renderedKey = "";
       paint(true);
       restoreDocumentPosition();

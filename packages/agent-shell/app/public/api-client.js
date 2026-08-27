@@ -51,6 +51,10 @@ export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), t
       throw new ApiError(data.error || `Agent Shell returned ${response.status}.`, {
         kind: "http",
         status: response.status,
+        code: data.code ?? "",
+        payload: data,
+        currentRevision: data.currentRevision,
+        pipeline: data.pipeline,
         path,
         method,
         operationId: response.headers?.get?.("x-tangent-operation-id") ?? data.operationId ?? "",

@@ -138,9 +138,7 @@ test("a command modal hands focus to a live session instead of restoring inert W
   area.querySelector("[data-work-cursor-control]").focus();
   press(window, ":", { shiftKey: true });
   await settle(window);
-  const commands = document.querySelector("[data-modal-select]");
-  commands.value = "openBrain";
-  document.querySelector("[data-modal-confirm]").click();
+  document.querySelector("[data-modal-action='openBrain']").click();
   await settle(window, 5);
 
   assert.equal(document.querySelector("#session-layer").hidden, false);
@@ -151,7 +149,9 @@ test("a command modal hands focus to a live session instead of restoring inert W
 
 test("Escape clears Area Work and Document searches before leaving their field", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
-  document.querySelector("[data-open-area='otto/onboarding']").click();
+  document.querySelector("#areas-tab").click();
+  await settle(window);
+  document.querySelector("[data-select-area='otto/onboarding']").click();
   await settle(window);
 
   for (const id of ["area-work-search", "area-document-search"]) {
@@ -169,21 +169,21 @@ test("Escape clears Area Work and Document searches before leaving their field",
   window.close();
 });
 
-test("Escape and pointer Back close a Work details menu before navigating", async () => {
+test("Escape and pointer Cancel close the state-owned Work action surface", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
-  const menu = document.querySelector(".work-group-action-menu");
-  const summary = menu.querySelector("summary");
-  menu.open = true;
-  menu.querySelector("button").focus();
+  const trigger = document.querySelector("[data-work-object-actions]");
+  trigger.click();
+  await settle(window);
+  assert.equal(document.querySelector("#modal-layer").hidden, false);
   press(window, "Escape");
-  assert.equal(menu.open, false);
-  assert.equal(document.activeElement, summary, "Escape returns to the disclosure summary");
+  assert.equal(document.querySelector("#modal-layer").hidden, true);
+  assert.equal(document.activeElement.dataset.focusKey, trigger.dataset.focusKey, "Escape returns to the semantic action trigger");
 
-  menu.open = true;
-  document.querySelector("#back-button").click();
-  assert.equal(menu.open, false, "pointer Back closes the same top disclosure");
-  assert.equal(document.querySelector("#shell-menu").hidden, true, "Back does not open the parent menu yet");
-  assert.equal(document.activeElement, summary);
+  document.activeElement.click();
+  await settle(window);
+  document.querySelector("[data-modal-cancel]").click();
+  assert.equal(document.querySelector("#modal-layer").hidden, true, "pointer Cancel closes the same surface");
+  assert.equal(document.activeElement.dataset.focusKey, trigger.dataset.focusKey);
   window.close();
 });
 
@@ -193,9 +193,8 @@ test("Work Escape unwinds each state in the settled order", async () => {
   search.value = "sandbox";
   search.dispatchEvent(new window.Event("input", { bubbles: true }));
   await settle(window);
-  document.querySelector("[data-check-goal='otto/tangent/goal-startable.md']").click();
-  await settle(window);
-  document.querySelector("[data-open-area-focus]").click();
+  document.querySelector("[data-work-cursor-control]").focus();
+  press(window, "f");
   await settle(window);
   document.querySelector("#back-button").click();
   assert.equal(document.querySelector("#shell-menu").hidden, false);
@@ -208,33 +207,30 @@ test("Work Escape unwinds each state in the settled order", async () => {
   assert.equal(document.querySelector("[data-area-focus-picker]"), null, "2: staged Focus");
   press(window, "Escape");
   await settle(window);
-  assert.equal(document.querySelectorAll("tr.work-row.selected").length, 0, "3: Goal selection");
-  press(window, "Escape");
-  await settle(window);
   search = document.querySelector("#work-search");
-  assert.equal(search.value, "", "4: Work query");
+  assert.equal(search.value, "", "3: Work query");
   assert.ok(document.querySelector("[data-clear-area-focus]"), "applied Focus remains until the next Escape");
   press(window, "Escape");
   await settle(window);
-  assert.equal(document.querySelector("[data-clear-area-focus]"), null, "5: applied Focus");
+  assert.equal(document.querySelector("[data-clear-area-focus]"), null, "4: applied Focus");
   assert.ok(document.activeElement.closest("[data-work-cursor]"), "clearing Focus restores a visible Work row, not a closed-menu control");
   press(window, "Escape");
-  assert.equal(document.activeElement, document.querySelector("#work-tab"), "6: Work tab");
+  assert.equal(document.activeElement, document.querySelector("#work-tab"), "5: Work tab");
 });
 
-test("keyboard x and pointer Done confirm and complete the exact row", async () => {
+test("keyboard x and pointer actions share the Goal status surface", async () => {
   const { window, document, posts } = await bootWorkTable(workTableFixture());
-  const stale = "otto/tangent/goal-inconsistencies.md";
   const target = "otto/tangent/goal-compact-table.md";
-  document.querySelector(`[data-stop-goal='${stale}']`).click();
-  document.querySelector("[data-modal-cancel]").click();
-  await settle(window);
   document.querySelector(`[data-goal-anchor='${target}']`).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await settle(window);
   assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, `goal:${target}`);
   press(window, "x");
   assert.match(document.querySelector("#modal-title").textContent, /Redesign Work as a compact table/);
-  assert.equal(posts.length, 0, "x only opens the shared confirmation");
+  assert.ok(document.querySelector("[data-modal-action='done']"));
+  assert.equal(posts.length, 0, "x only opens the shared status surface");
+  press(window, "d");
+  await settle(window);
+  assert.match(document.querySelector("#modal-title").textContent, /Mark .* complete/);
   const cancel = document.querySelector("[data-modal-cancel]");
   cancel.focus();
   keyFrom(window, cancel, "Enter");
@@ -242,7 +238,12 @@ test("keyboard x and pointer Done confirm and complete the exact row", async () 
   assert.equal(posts.length, 0, "Enter on Cancel never invokes the confirmation action");
   if (!document.querySelector("#modal-layer").hidden) cancel.click();
 
-  document.querySelector(`[data-complete-goal='${target}']`).click();
+  document.querySelector(`[data-goal-anchor='${target}'] [data-work-object-actions]`).click();
+  await settle(window);
+  document.querySelector("[data-modal-action='goalStatus']").click();
+  await settle(window);
+  document.querySelector("[data-modal-action='done']").click();
+  await settle(window);
   assert.match(document.querySelector("#modal-title").textContent, /Redesign Work as a compact table/);
   assert.equal(posts.length, 0, "pointer Done uses the same confirmation");
   document.querySelector("[data-modal-confirm]").click();

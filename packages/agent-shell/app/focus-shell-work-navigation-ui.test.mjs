@@ -316,7 +316,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   await window.refresh();
   await settle(window);
   const tangentRoot = window.document.querySelector('[data-work-group="otto/tangent"]');
-  const tangentBrainAction = tangentRoot.querySelector('[data-open-area-brain="otto/tangent"]');
+  const tangentBrainAction = tangentRoot.querySelector('.work-group-brain[data-open-area-brain="otto/tangent"]');
   assert.equal(tangentBrainAction.querySelector(".work-group-brain-long").textContent, "Start brain", "a group header can start its exact Area brain");
   assert.equal(tangentBrainAction.getAttribute("aria-label"), "Start brain for Otto / Tangent");
 
@@ -345,7 +345,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   const goalRow = window.document.querySelector(`[data-goal-anchor='${goalFile}']`);
   assert.doesNotMatch(goalRow.textContent, /One calm surface/, "the done condition left the card");
   assert.equal(goalRow.querySelector(".desk-docs-chip"), null, "the Docs chip left the card");
-  assert.match(goalRow.querySelector("[data-stop-goal]").textContent, /^End work$/);
+  assert.equal(goalRow.querySelector("[data-stop-goal]"), null, "rare actions live in the state-owned surface");
   const handoffRow = window.document.querySelector(`[data-goal-anchor='${liveEditGoal.file}']`);
   assert.equal(handoffRow.querySelector(".desk-goal-handoff"), null, "the handoff line left the card");
   assert.match(handoffRow.querySelector(".desk-state").textContent, /Waiting/, "the state pill says the Goal waits for Julian; the duration moved off the card");
@@ -353,7 +353,10 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(handoffRow.querySelector("[data-stop-goal]"), null, "invalid actions are omitted instead of disabled");
   assert.equal(window.document.querySelector("[data-view-goal]"), null);
 
-  click(window, `[data-stop-goal='${goalFile}']`);
+  click(window, `[data-goal-anchor='${goalFile}'] [data-work-object-actions]`);
+  await settle(window);
+  assert.match(window.document.querySelector("[data-modal-action='stopWork']").textContent, /End current agent/);
+  click(window, "[data-modal-action='stopWork']");
   assert.match(window.document.querySelector("#modal-title").textContent, /Stop Codex/);
   assert.match(window.document.querySelector("#modal-copy").textContent, /work and its notes stay here/);
   click(window, "[data-modal-confirm]");
@@ -370,7 +373,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/);
   assert.match(window.document.querySelector("#screen").textContent, /Waiting/, "the desk still says a Goal waits for Julian");
   assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Already complete/);
-  assert.match(window.document.querySelector("[data-toggle-subgoals]").getAttribute("aria-label"), /Hide 1 Subgoal of/);
+  assert.match(window.document.querySelector("[data-work-tree-goal]").getAttribute("aria-label"), /Collapse or move to parent/);
 
   const search = window.document.querySelector("#work-search");
   search.value = "tangent";
@@ -573,7 +576,11 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.ok(window.document.querySelector("[data-select-program]"));
 
   click(window, "#work-tab");
-  click(window, `[data-wont-do-goal='${goal.file}']`);
+  click(window, `[data-goal-anchor='${goal.file}'] [data-work-object-actions]`);
+  await settle(window);
+  click(window, "[data-modal-action='goalStatus']");
+  await settle(window);
+  click(window, "[data-modal-action='dropped']");
   assert.match(window.document.querySelector("#modal-title").textContent, /Mark “UX Product Vision” won't do/);
   click(window, "[data-modal-confirm]");
   await settle(window);
@@ -584,7 +591,11 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
   assert.ok(posts.some((entry) => entry.path === "/api/goals/edit" && entry.body.file === goal.file && entry.body.status === "dropped" && entry.body.reason === "A smaller goal replaced this work."));
 
-  click(window, `[data-complete-goal='${subgoal.file}']`);
+  click(window, `[data-goal-anchor='${subgoal.file}'] [data-work-object-actions]`);
+  await settle(window);
+  click(window, "[data-modal-action='goalStatus']");
+  await settle(window);
+  click(window, "[data-modal-action='done']");
   click(window, "[data-modal-confirm]");
   await settle(window);
   assert.ok(posts.some((entry) => entry.path === "/api/goals/edit" && entry.body.file === subgoal.file && entry.body.status === "done"));

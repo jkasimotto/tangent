@@ -1,7 +1,7 @@
 // The Area Work graph's pure projection (design contract:
 // otto/tangent/design-a-better-view-over-my-work-past-and-present).
 const PAGE_SIZE = 12;
-const CLOSED = new Set(["done", "dropped"]);
+const CLOSED = new Set(["done", "dropped", "parked", "deferred"]);
 /** True when a path belongs to one Area subtree. */
 function isInside(path, scope) { return path === scope || path.startsWith(`${scope}/`); }
 /** Orders Goals by Area-note order, latest change, and title. */

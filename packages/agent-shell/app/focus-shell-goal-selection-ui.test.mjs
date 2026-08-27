@@ -1,7 +1,7 @@
 import test from "node:test";
 import { assert, readFile, path, JSDOM, documentComments, areaMapView, shellBundle, here, goToCore, goalCardCore, askCore, settle, click, submit, openDocumentViaGoTo, jsonResponse } from "./focus-shell-ui-fixture.mjs";
 
-test("checked Goals start one shared agent that owns them in checked order", async () => {
+test("Work starts one Goal without transient checkbox co-assignment", async () => {
   const [html, script, mapCore] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
@@ -48,7 +48,10 @@ test("checked Goals start one shared agent that owns them in checked order", asy
     }
     if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     if (pathname === "/api/launch/options") {
-      return jsonResponse({ harnesses: [], default: { harness: "codex", model: "sol", effort: "low", label: "Codex · Sol · Low", command: "codex" } });
+      return jsonResponse({
+        harnesses: [{ id: "codex", label: "Codex", command: "codex", models: [{ id: "sol", label: "Sol", args: "--model sol", efforts: [{ id: "low", label: "Low", args: "-c effort=low" }] }] }],
+        default: { harness: "codex", model: "sol", effort: "low", label: "Codex · Sol · Low", command: "codex --model sol -c effort=low" },
+      });
     }
     return jsonResponse({
       areas: [
@@ -63,41 +66,25 @@ test("checked Goals start one shared agent that owns them in checked order", asy
   await settle(window);
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
 
-  // Both startable rows carry a checkbox; nothing is checked, so no action bar.
-  assert.equal(window.document.querySelectorAll("[data-check-goal]").length, 2);
-  assert.equal(window.document.querySelector("[data-start-selected]"), null);
-
-  // Checking is free: the bar appears, nothing starts.
-  click(window, `[data-check-goal='${second.file}']`);
-  assert.match(window.document.querySelector("[data-start-selected]").textContent, /Start agent on 1 Goal/);
-  click(window, `[data-check-goal='${first.file}']`);
-  assert.match(window.document.querySelector("[data-start-selected]").textContent, /Start agent on 2 Goals/);
+  assert.equal(window.document.querySelector("[data-check-goal], [data-start-selected], .work-col-select"), null);
   assert.equal(posts.length, 0);
 
-  // Escape clears the selection.
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  assert.equal(window.document.querySelector("[data-start-selected]"), null);
-  assert.equal(window.document.querySelectorAll("[data-check-goal]:checked").length, 0);
-
-  // Checked order decides the primary: the first checked Goal leads the session.
-  click(window, `[data-check-goal='${second.file}']`);
-  click(window, `[data-check-goal='${first.file}']`);
-  click(window, "[data-start-selected]");
+  click(window, `[data-launch-for='${second.file}']`);
+  await settle(window);
+  click(window, "[data-launch-start]");
   await settle(window);
   const start = posts.find((entry) => entry.path === "/api/goals/agent");
   assert.equal(start.body.file, second.file);
-  assert.deepEqual(start.body.extraFiles, [first.file]);
+  assert.equal(Object.hasOwn(start.body, "extraFiles"), false, "the browser does not derive co-assignment from transient UI state");
   assert.equal(start.body.launch, true);
   // Start agent never opens the picker, so the client fills the harness from
   // the Area's declared default: the server supplies none and refuses a start
   // that carries none.
   assert.deepEqual(start.body.choice, { harness: "codex", model: "sol", effort: "low" });
 
-  // The selection is spent: returning to the desk shows clean checkboxes.
   click(window, "#work-tab");
   await settle(window);
-  assert.equal(window.document.querySelector("[data-start-selected]"), null);
-  assert.equal(window.document.querySelectorAll("[data-check-goal]:checked").length, 0);
+  assert.equal(window.document.querySelector("[data-check-goal], [data-start-selected]"), null);
 
   dom.window.close();
 });

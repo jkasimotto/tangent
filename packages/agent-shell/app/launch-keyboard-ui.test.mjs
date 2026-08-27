@@ -83,7 +83,9 @@ test("Goal and brain spawning share the Harness, Model, Effort keyboard surface"
   const goal = document.querySelector("[data-goal-anchor='otto/onboarding/goal-walkthrough.md'] [data-work-row-title]");
   goal.click();
   await settle(window, 5);
-  assert.equal(document.activeElement.dataset.launchHarness, "codex");
+  assert.equal(document.activeElement.dataset.launchStepSelect, "0", "Goal launch starts in the assignment-list region");
+  for (let index = 0; index < 20 && !document.activeElement.dataset.launchHarness; index += 1) press(window, "Tab");
+  assert.equal(document.activeElement.dataset.launchHarness, "codex", "Tab reaches the selected Harness without a pointer");
   document.querySelector("[data-launch-edit]").click();
   await settle(window);
   assert.equal(document.activeElement.id, "launch-command-input");
@@ -162,7 +164,8 @@ test("switching from defaults to a Goal loads the Goal catalog and returns to th
   goal.click();
   await settle(window, 5);
 
-  assert.equal(document.activeElement.dataset.launchHarness, "codex", "the Goal receives its launch default, not the settings catalog");
+  assert.equal(document.activeElement.dataset.launchStepSelect, "0", "the Goal starts at its assignment list");
+  assert.equal(document.querySelector("[data-launch-harness='codex']").getAttribute("aria-checked"), "true", "the Goal receives its launch default, not the settings catalog");
   const launchRequests = gets.filter((url) => new URL(url).pathname === "/api/launch/options");
   assert.equal(new URL(launchRequests.at(-1)).searchParams.has("kind"), false, "the replacement chooser requests Goal launch options");
   press(window, "Escape");
@@ -235,9 +238,9 @@ test("a cached chooser opened from Commands keeps focus after the command modal 
   area.querySelector("[data-work-cursor-control]").focus();
   press(window, ":", { shiftKey: true });
   await settle(window);
-  const commands = document.querySelector("[data-modal-select]");
-  commands.value = "defaults";
-  document.querySelector("[data-modal-confirm]").click();
+  const commands = document.querySelector("[data-modal-action='defaults']");
+  assert.ok(commands, "Commands uses the same state-owned action rows as the pointer menu");
+  commands.click();
   await settle(window, 5);
 
   const popover = document.querySelector("[data-launch-popover]");
@@ -260,5 +263,53 @@ test("a chooser near the viewport bottom flips above its trigger", async () => {
   assert.equal(popover.style.top, "", "a flipped chooser no longer uses the unusable below-trigger top");
   assert.equal(popover.style.bottom, "68px", "the chooser bottom sits eight pixels above the trigger");
   assert.ok(Number.parseFloat(popover.style.maxHeight) > 600, "the full space above the trigger remains scrollable");
+  window.close();
+});
+
+test("assignment CRUD and reorder own a, e, d, J, and K without changing stable continuations", async () => {
+  const { window, document } = await bootWorkTable(plannedWorkFixture(), { launchOptions });
+  document.querySelector("[data-goal-anchor='otto/tangent/goal-startable.md'] [data-work-row-title]").click();
+  await settle(window, 5);
+
+  /** Returns the stable assignment identities in current display order. */
+  const assignmentIds = () => [...document.querySelectorAll("[data-launch-assignment]")].map((row) => row.dataset.launchAssignment);
+  const firstId = assignmentIds()[0];
+  press(window, "a");
+  await settle(window);
+  press(window, "a");
+  await settle(window);
+  const [sameFirstId, secondId, thirdId] = assignmentIds();
+  assert.equal(sameFirstId, firstId);
+  assert.equal(new Set([firstId, secondId, thirdId]).size, 3, "every draft keeps a stable identity");
+  for (const key of ["a", "e", "d", "J", "K"]) assert.ok(document.querySelector(`[title*="(${key})"]`), `${key} also has a pointer action`);
+
+  const continuation = document.querySelector("[data-launch-continue]");
+  continuation.value = firstId;
+  continuation.dispatchEvent(new window.Event("change", { bubbles: true }));
+  document.querySelector(`[data-launch-assignment='${thirdId}'] [data-launch-step-select]`).focus();
+  press(window, "K");
+  await settle(window);
+  assert.deepEqual(assignmentIds(), [firstId, thirdId, secondId], "K reorders by identity");
+  assert.equal(document.querySelector("[data-launch-continue]").value, firstId, "a valid continuation survives reorder");
+  press(window, "J");
+  await settle(window);
+  assert.deepEqual(assignmentIds(), [firstId, secondId, thirdId], "J moves the same assignment back down");
+
+  press(window, "e");
+  await settle(window);
+  assert.equal(document.activeElement.id, "launch-instruction");
+  document.activeElement.value = "Discard this inner edit";
+  document.activeElement.dispatchEvent(new window.Event("input", { bubbles: true }));
+  press(window, "Escape");
+  await settle(window);
+  assert.equal(document.activeElement.closest("[data-launch-assignment]")?.dataset.launchAssignment, thirdId, "Escape leaves the inner edit first");
+  assert.equal(document.querySelector("#launch-instruction").value, "", "the cancelled inner edit restores the assignment draft");
+
+  document.querySelector(`[data-launch-assignment='${firstId}'] [data-launch-step-select]`).focus();
+  press(window, "d");
+  await settle(window);
+  assert.deepEqual(assignmentIds(), [secondId, thirdId]);
+  document.querySelector(`[data-launch-assignment='${thirdId}'] [data-launch-step-select]`).click();
+  assert.equal(document.querySelector("[data-launch-continue]").value, "", "removing a continuation source clears only that reference");
   window.close();
 });

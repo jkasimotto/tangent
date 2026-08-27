@@ -18,7 +18,7 @@
   /** Chip order on the map: the known kinds first, then any other kind by name. */
   const KIND_ORDER = ["design", "impl", "plan", "reference", "status", "use-case", "goal", "note", "page"];
   const KIND_LABELS = { "use-case": "use case", impl: "impl", note: "note", page: "page" };
-  const CLOSED_GOAL_STATUS = new Set(["done", "dropped", "deferred"]);
+  const CLOSED_GOAL_STATUS = new Set(["done", "dropped", "parked", "deferred"]);
   const DAY = 86_400_000;
 
   /** The file stem's prefix: `design-foo` → `design`, `use-case-x` → `use-case`, `readme` → "". */
@@ -104,7 +104,7 @@
     return `${Math.round(days / 30)}mo ago`;
   }
 
-  /** True while a Goal is still open (not done, dropped, or deferred). */
+  /** True while a Goal is still open (not done, dropped, parked, or deferred). */
   function goalIsOpen(goal) {
     return !CLOSED_GOAL_STATUS.has(goal?.status);
   }

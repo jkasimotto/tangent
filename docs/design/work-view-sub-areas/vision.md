@@ -47,3 +47,5 @@ One thin row per sub-Area that has open Goals. Its Goals sit under it, with no t
 1. A folded sub-Area hides its Goals, or still lists them under Neara with tags? I recommend hide. A fold that hides nothing is not a fold.
 2. Brain button printed on every sub-Area row, or caption only? I recommend printed, the same as on Neara.
 3. Flat rows named by path (`PG&E / Megabranch / Viz-input`), or a nested outline per level? I recommend flat. Depth 4 stays one row.
+
+Accepted by Julian on 2026-08-28, all three recommendations: a folded sub-Area hides its Goals, the brain button prints on every sub-header, sub-headers are flat rows named by relative path.

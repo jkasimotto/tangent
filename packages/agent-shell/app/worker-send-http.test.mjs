@@ -157,7 +157,7 @@ test("a worker sends notes, questions, and done to its brain, and nothing else",
   // D6: every other write is refused for a worker, whatever the body says.
   // The first worker's Goal is done above, so the blocked worker is the probe.
   const refusedRoutes = [
-    "/api/goals/agent", "/api/goals/attempts/replace", "/api/goals/attempts/resume", "/api/pipelines/append", "/api/pipelines/control",
+    "/api/goals/attempts/replace", "/api/goals/attempts/resume", "/api/pipelines/append", "/api/pipelines/control",
     "/api/processes/check", "/api/harnesses", "/api/launch/default", "/api/brains/reply", "/api/brains/verdict", "/api/brains/requests/answer",
     "/api/areas/journal", "/api/spawn", "/api/agent", "/api/brains/start", "/api/brains/stop", "/api/document",
   ];

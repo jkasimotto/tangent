@@ -110,7 +110,8 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   assert.equal(row().querySelector(".work-row-step"), null, "a finished run names no current step");
   assert.notEqual(row().querySelector(".desk-state").textContent, "Stopped");
   assert.equal(row().querySelector("[data-goal-recovery]"), null, "no recovery start for a step the run moved past");
-  assert.match(row().querySelector(".work-cell-action [data-launch-for]").textContent, /Start agent/, "the Goal is plain open work again");
+  assert.match(row().querySelector(".work-cell-action [data-open-close]").textContent, /Open/, "the Goal is plain open work again: it opens its reader, only the brain starts an agent (D8)");
+  assert.equal(row().querySelector("[data-launch-for]"), null, "no chooser on a Goal row");
 
   // A pending assignment with no current attempt waits for the brain: only
   // the brain starts workers (D8), so Work offers no recovery start.

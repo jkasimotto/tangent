@@ -58,13 +58,15 @@ test("background polls never rebuild the screen under an editing surface or a re
   await settle(window);
   assert.ok(poll, "the shell polls the server");
 
-  // Choosing an agent: the open popover survives a poll, focused or not.
-  click(window, `[data-launch-for='${goal.file}']`);
+  // No Goal control opens a chooser: only the brain starts workers (D8).
+  assert.equal(window.document.querySelector(`[data-goal-anchor='${goal.file}'] [data-launch-for]`), null);
+  // Starting a brain: the open popover survives a poll, focused or not.
+  click(window, "[data-work-group='otto/dnd'] .work-group-brain");
   await settle(window);
   await settle(window);
   const popover = window.document.querySelector("[data-launch-popover]");
   assert.ok(popover, "the popover opened");
-  assert.equal(window.document.querySelector("#launch-instruction"), null, "the chooser composes no assignments: only the brain starts workers (D8)");
+  assert.ok(window.document.querySelector("#brain-instruction"), "the brain chooser takes the first message");
   await vaultChangesAndPolls();
   assert.equal(window.document.querySelector("[data-launch-popover]"), popover, "the poll did not rebuild the popover");
   click(window, "[data-launch-close]");

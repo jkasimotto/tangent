@@ -1768,34 +1768,11 @@ async function pipelineStepPrompt(area, o, record, index, extras = [], sessionNa
   );
 }
 
-/**
- * The contract for one native-agent collaboration around a complete Goal.
- * `folder` is the resolved working directory so the collaborate prompt names
- * it like every other prompt path (D3).
- */
-async function collaborationPrompt(area, o, documentFile = "", extras = [], folder = null) {
-  const assignment = await goalPrompt(area, o, extras, [], null, folder, { closing: false });
-  const focus = documentFile ? await readVaultDocument(documentFile) : null;
-  const documentFocus = focus
-    ? `## Current reading location\n\nJulian is reading ${focus.file}. Use this location to interpret references such as “this section.” It does not limit the feedback to one Document.\n\n`
-    : "";
-  return (
-    `# Work with Julian\n\n` +
-    `This session covers the ${extras.length ? "assigned Goals" : "complete Goal"} and all linked Documents. Julian can ask questions, give feedback, request Document edits, or describe new work; infer the useful response from his words rather than asking him to classify them.\n\n` +
-    `Read the source context before you respond, and research facts yourself. Bring Julian one real decision at a time; he owns choices that change meaning, scope, trade-offs, or proof. When the work is already well defined, get to it; when he is thinking out loud, think with him.\n\n` +
-    `You can edit linked Documents when Julian requests or accepts a change. If feedback turns into separate work, shape it into a Goal with him. Keep the goal State section current with the headings that help: Goal, Settled decisions, Deferred, Proof, and Unresolved decisions.\n\n` +
-    documentFocus +
-    `## Source context\n\n${assignment}`
-  );
-}
-
 // ---- goal prompt arming ----
-// A collaboration call primes a plain shell and leaves both the harness command
-// and the opening prompt for the user to submit. The execution path can request
-// direct launch after it has shown the human-readable plan. In that path, the
-// harness command and the verified opening prompt are both submitted.
+// A start primes a plain shell with the harness command and the opening prompt.
+// A direct launch submits both; otherwise both wait for the user.
 //
-// Arming is only ever set by the start-agent action, never inferred from what
+// Arming is only ever set by a brain start, never inferred from what
 // the user runs. A session that has been used for a while sits unarmed, so
 // ordinary work in the pane (an editor, a test run, a pager) is never typed
 // into; starting the goal again re-primes it, which is how a second harness
@@ -1967,15 +1944,13 @@ async function typePromptNow(session, prompt, submit, label, settle) {
 }
 
 /** Types a Goal assignment after its native harness is ready. */
-async function typeGoalPromptWhenReady(session, area, file, phase = "execute", submit = false, documentFile = "", extraFiles = []) {
+async function typeGoalPromptWhenReady(session, area, file, submit = false, extraFiles = []) {
   const goals = await readAreaGoals(area);
   const o = goals.find((t) => t.file === file);
   if (!o) return false;
   const extras = (extraFiles ?? []).map((extra) => goals.find((t) => t.file === extra)).filter(Boolean);
   const folder = await promptWorkFolder(area);
-  const prompt = phase === "collaborate"
-    ? await collaborationPrompt(area, o, documentFile, extras, folder)
-    : await goalPrompt(area, o, extras, [], null, folder);
+  const prompt = await goalPrompt(area, o, extras, [], null, folder);
   return typePromptWhenReady(session, prompt, submit, "goal prompt");
 }
 
@@ -2025,7 +2000,7 @@ async function tickArmedSessions() {
       reportArmedPromptFailure(error);
     };
     if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt").then(settle).catch(failed);
-    else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.phase, armed.submit, armed.document, armed.extraFiles).then(settle).catch(failed);
+    else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.submit, armed.extraFiles).then(settle).catch(failed);
     else {
       // No goal bound yet: nothing left to type, and nobody was promised a
       // callback for a prompt that never existed.
@@ -2207,8 +2182,9 @@ async function primeGoalSession(session, phase = "execute", { launch = false, do
  * Spawns (or reattaches) the work session for one goal: a plain shell in
  * the area's repo with the suggested agent command pre-typed, bound via
  * @tangent_area + @tangent_goal, goal mechanically flipped to active.
- * Both the launch line and the opening prompt follow the type-but-never-submit
- * rule, so the harness, the model, and the words all stay the user's call.
+ * Only a brain start reaches this (D8): the queue start and the exact-attempt
+ * replacement. Both the launch line and the opening prompt follow the
+ * type-but-never-submit rule unless the start asks for a direct launch.
  * The path option gives the new pane one exact directory instead of the
  * Area repository; a pipeline step passes its own.
  */
@@ -2227,7 +2203,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     .map((extraSlug) => areaGoals.find((t) => t.slug === extraSlug))
     .filter((extra) => extra && extra.slug !== slug && !["done", "dropped", "parked"].includes(extra.status));
   const baseName = normName(`${area.split("/").pop()}--${slug}`).slice(0, 60);
-  const phaseName = pipeline ? pipeline.sessionName : continuation ? continuation.sessionName : phase === "collaborate" ? normName(`${baseName}--collaborate`).slice(0, 60) : baseName;
+  const phaseName = pipeline ? pipeline.sessionName : continuation ? continuation.sessionName : baseName;
   const ownExtras = extras.filter((extra) => !extra.session || !liveNames.has(extra.session) || [o.session, baseName, phaseName].includes(extra.session));
   const extraFiles = ownExtras.map((extra) => extra.file);
   // Starting a Goal that already has a session re-primes it: a pane left
@@ -2256,9 +2232,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     ? await pipelineStepPrompt(area, o, pipeline.record, pipeline.index, ownExtras, pipeline.sessionName, trace, folder)
     : continuation
       ? await goalPrompt(area, o, ownExtras, continuation.entries, null, folder)
-      : phase === "collaborate"
-        ? await collaborationPrompt(area, o, document, ownExtras, folder)
-        : "";
+      : "";
   trace?.mark("step prompt ready", { characters: stepPrompt.length });
   if ((pipeline || continuation) && process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") launch = false;
   // A new launch, including one in an existing shell pane, resolves after the
@@ -2526,23 +2500,6 @@ async function goalContentRevision(file) {
   const text = await readFile(path.join(TREES_ROOT, file), "utf8");
   const stable = text.replace(/^(?:status|session|waiting_on):.*$/gm, (line) => `${line.split(":", 1)[0]}:`);
   return documentHash(stable);
-}
-
-/**
- * The one spawn path in the shell: opens (or re-primes) the session for an
- * goal, by file. A session is only ever primed when this is explicitly
- * asked, and the harness itself is always started by the user.
- */
-async function startGoal(file, options = {}) {
-  const byFile = await goalsByFile();
-  const o = byFile.get(file);
-  if (!o) return { status: 404, error: `no goal file ${file}` };
-  // Extra Goals must share the primary's Area: one session, one repository.
-  const extraSlugs = (options.extraFiles ?? [])
-    .map((extra) => byFile.get(extra))
-    .filter((extra) => extra && extra.area === o.area)
-    .map((extra) => extra.slug);
-  return spawnGoalSession(o.area, o.slug, { ...options, extraSlugs });
 }
 
 // ---- agent pipelines ----
@@ -4176,7 +4133,7 @@ async function routeBrainNotice(area, text, { idempotencyKey = null, sender = nu
  * `tangent send brain`; every other Tangent mutation belongs to the brain.
  */
 const WORKER_REFUSED_ROUTES = new Set([
-  "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/edit", "/api/goals/start", "/api/goals/agent",
+  "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/edit", "/api/goals/start",
   "/api/goals/depend", "/api/goals/undepend", "/api/goals/accept", "/api/goals/understanding", "/api/goals/cleanup",
   "/api/pipelines/append", "/api/pipelines/control", "/api/goals/attempts/replace", "/api/goals/attempts/resume",
   "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/areas/journal", "/api/idea/new", "/api/document/resolve", "/api/document",
@@ -4948,7 +4905,7 @@ async function reconcileBrains(sessions) {
  * Reminds a worker whose carried context has passed the handover threshold
  * to hand its step or Goal to a fresh copy of itself (D1 C, D3). Scope:
  * pipeline steps and solo Goal sessions (kind "goal", phase "execute");
- * brains, work-definition, collaborate, and study sessions never see this.
+ * brains, work-definition, and study sessions never see this.
  * The reminder holder is the running step (pipeline) or a lazily-created
  * solo continuation record (no record churn on a quiet session).
  */
@@ -6268,8 +6225,7 @@ const goalQueryRoutes = createGoalQueryRoutes({
     const goal = (await goalsByFile()).get(file);
     if (!goal) return { status: 404, error: `no goal file ${file}` };
     let markdown;
-    if (mode === "collaborate") markdown = await collaborationPrompt(goal.area, goal, "", [], await promptWorkFolder(goal.area));
-    else if (mode === "pipeline") {
+    if (mode === "pipeline") {
       const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
       if (!record) return { status: 404, error: "this Goal has no pipeline" };
       const selected = record.steps.find((item) => item.index === step) ?? currentStep(record) ?? record.steps[0];
@@ -6341,16 +6297,6 @@ const launchRoutes = createLaunchRoutes({
     const kind = requestedKind === "brain" ? "brain" : "launch";
     const saved = await launchCatalog.saveDefault(area, body.launch ?? {}, kind, String(body.mode ?? "launch"));
     return saved.error ? { status: 400, error: saved.error } : { status: 200, value: saved };
-  },
-  /** Starts a Goal agent in collaboration mode. */
-  async collaborate(body) {
-    const chosen = await launchCatalog.requested(body);
-    if (chosen.error) return { status: 400, error: chosen.error };
-    try {
-      const [focus] = await sourceDocuments(body.document ? [body.document] : []);
-      const result = await startGoal(String(body.file ?? ""), { phase: "collaborate", launch: body.launch === true, document: focus?.file ?? "", command: chosen.command, label: chosen.label, ref: launchRef(chosen), extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
-      return { status: result.status, ...(result.status === 200 ? { value: result } : { error: result.error }) };
-    } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
   },
   /** Starts a Goal agent or a validated pipeline. */
   async start(body) {

@@ -23,6 +23,10 @@ The brain contract had grown machinery around that rule. Tangent generated an 8,
 9. Brain questions do not notify. A brain cannot create a `kind: test` request: the server answers `Julian flags what he checks.`
 10. `tangent help` groups commands as Brains, Workers, and Julian. Removed commands are gone from help. `tangent handover` and `tangent goal handover` stay as hidden aliases that say what replaced them.
 
+## Amendment: the collaborate start is gone (2026-08-28)
+
+Julian, 2026-08-28: "what is goal row start agent. nah delete that. everything through brain." Decision 1 now has no exception. The collaborate start is deleted end to end: the Goal row `Start agent` button and its harness chooser, the Goal reader `start` command, `POST /api/goals/agent`, the collaborate prompt, and the collaborate branch of the prompt preview. The browser chooser for a replacement agent is gone with it. `c` on a Goal opens the brain composer with `Replace the agent on <title> (<file>)`. A Goal row with no session opens its reader. The Open agent action in the Document reader opens the live worker, or asks the brain for one in the same composer. The only ways to start an agent are `a` on an Area, the brain's `tangent goal create --start`, and Restart on a brain row. `tangent goal own|release` still bind or release the Goal session record and start nothing. A test (`brain-only-goal-sessions.test.mjs`) pins the creators of a Goal session to the brain-gated paths.
+
 ## Consequences
 
 - `brain-pacing.mjs`, `brain-command-reference.mjs`, and the prompt builders in `area-brain-domain.mjs` are deleted with their tests.

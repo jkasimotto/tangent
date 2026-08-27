@@ -36,7 +36,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   const {
     syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft,
     launchStepsForRecord, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses,
-    replaceGoalAttempt, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
+    launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   } = launch;
   const {
@@ -303,32 +303,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     window.setTimeout(stopLaunchFocusRequest, 2500);
   }
 
-  /**
-   * Opens the agent chooser for a Goal Julian works on himself (Start agent,
-   * the collaborate route). It composes no assignments: only the brain
-   * starts workers (D8).
-   */
-  function openGoalLaunchEditor(file, opener) {
-    const goal = goalByFile(file) ?? (state.goalDetail?.goal?.file === file ? state.goalDetail.goal : null);
-    if (!goal) return showToast("The Goal file was removed from the vault.");
-    if (state.launchTarget === file) return dismissLaunchSurface();
-    launchReturnPoint = captureNavigationPoint(opener);
-    launchParentSurface = null;
-    stopLaunchFocusRequest();
-    const rect = opener?.getBoundingClientRect?.() ?? { top: 120, bottom: 140, right: 720 };
-    state.launchTarget = file;
-    state.launchAnchor = { top: Math.round(rect.bottom + 8), above: Math.round(rect.top - 8), right: Math.round(rect.right) };
-    launchOptionsFor(goal.area);
-    state.launch.record = null;
-    state.launch.steps = [];
-    loadLaunchStep(state.launch.steps, 0);
-    state.launch.replacement = null;
-    state.launch.open = false;
-    paint(true);
-    requestLaunchFocus();
-    return true;
-  }
-
   /** Whether this Goal has an attempt to resume: a live session or a recorded one. */
   function resumeAvailabilityForGoal(goal) {
     if (!goal) return { enabled: false, reason: "Choose a Goal row first." };
@@ -337,15 +311,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const attempts = (record?.steps ?? []).flatMap((step) => step.attempts ?? []);
     if (!attempts.length) return { enabled: false, reason: "This Goal has no attempts to resume." };
     return { enabled: true, reason: null };
-  }
-
-  /** Normalizes a queue or attempt launch snapshot to the chooser's IDs. */
-  function replacementLaunchChoice(assignment, attempt) {
-    const candidate = assignment?.launch ?? attempt?.launch ?? attempt?.resolvedLaunch?.launch ?? attempt?.resolvedLaunch?.ref ?? attempt?.resolvedLaunch;
-    if (candidate?.harness) return { harness: candidate.harness, model: candidate.model ?? null, effort: candidate.effort ?? null };
-    const ref = typeof candidate === "string" ? candidate : typeof candidate?.ref === "string" ? candidate.ref : "";
-    const [harness, model = null, effort = null] = ref.split("/").filter(Boolean);
-    return harness ? { harness, model, effort } : null;
   }
 
   /** Resolves the exact mutable identity required for safe attempt replacement. */
@@ -818,7 +783,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const detail = state.goalDetail;
     const goal = detail?.goal;
     if (!goal) return showToast("This reader is not showing a Goal.");
-    const keyFor = { read: "o", start: "↵", "change-agent": "c", status: "x" };
+    const keyFor = { read: "o", "change-agent": "c", status: "x" };
     const options = (detail.commands ?? []).map((command) => ({
       value: command.id,
       key: keyFor[command.id] ?? "",
@@ -834,7 +799,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         openGoalStatus(goal);
         return false;
       }
-      if (id === "start") return openGoalLaunchEditor(goal.file, opener);
       if (id === "change-agent") return openChangeAgent(goal, opener);
       return false;
     };
@@ -1623,7 +1587,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return result;
       }
       const describing = file === DESCRIBE_LAUNCH_TARGET;
-      if (!describing) return openGoalLaunchEditor(file, launchFor);
+      if (!describing) return;
       if (state.launchTarget === file) {
         return dismissLaunchSurface();
       }
@@ -1717,7 +1681,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest("[data-launch-start]")) {
       syncLaunchDraft();
       const targetFile = state.launchTarget;
-      if (state.launch.replacement) return replaceGoalAttempt({ confirmed: Boolean(state.launch.replacement.operation) });
       if (targetFile === BRAIN_LAUNCH_TARGET) {
         const brain = brainForAreaCard(state.brainDraft?.area);
         return startBrain({ resume: Boolean(brain && !brain.live) });

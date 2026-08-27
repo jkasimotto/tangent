@@ -20,7 +20,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   const { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea } = areasFeature;
   const { currentProgram, programById, programIsLive, programAreaDirectory } = programs;
   const {
-    launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, syncLaunchDraft, launchStepDraft,
+    launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft, launchStepDraft,
     pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   } = launch;
@@ -478,108 +478,42 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     paint(true);
   }
 
-  /** Starts or confirms one persisted exact-attempt replacement operation. */
-  async function replaceGoalAttempt({ confirmed = false } = {}) {
-    const replacement = state.launch.replacement;
-    if (!replacement) return;
-    const priorStatus = replacement.operation?.status ?? "";
-    if (priorStatus === "complete") {
-      const name = replacement.operation?.replacementTarget?.session;
-      const session = state.sessions.find((item) => item.name === name);
-      return session ? openSessionLayer(session, "agent", captureReturnPoint()) : showToast("The replacement session is no longer live.");
-    }
-    if (["failed", "rollback"].includes(priorStatus)) {
-      replacement.operationId = crypto.randomUUID();
-      replacement.operation = null;
-      replacement.launch = null;
-      replacement.requiresConfirmation = false;
-      confirmed = false;
-    }
-    const selection = launchSelection();
-    const launch = replacement.launch ?? (selection?.harness ? {
-      harness: selection.harness.id,
-      model: selection.model?.id ?? null,
-      effort: selection.effort?.id ?? null,
-    } : null);
-    if (!launch?.harness) return showToast("Choose a registered harness before starting the replacement.");
-    replacement.launch = launch;
-    replacement.saving = true;
-    paint(true);
-    const body = {
-      goal: replacement.goal,
-      assignmentId: replacement.assignmentId,
-      expectedRevision: replacement.expectedRevision,
-      expectedAttemptId: replacement.expectedAttemptId,
-      launch,
-      operationId: replacement.operationId,
-      ...(confirmed || replacement.operation ? { confirmed: true } : {}),
-    };
-    try {
-      const result = await post("/api/goals/attempts/replace", body);
-      replacement.operation = result.operation ?? replacement.operation;
-      replacement.requiresConfirmation = Boolean(result.requiresConfirmation);
-      replacement.saving = false;
-      await refresh();
-      paint(true);
-      const name = result.session ?? result.operation?.replacementTarget?.session;
-      const session = state.sessions.find((item) => item.name === name);
-      if (session && replacement.inspectedSession !== name) {
-        replacement.inspectedSession = name;
-        openSessionLayer(session, "agent", captureReturnPoint());
-      }
-      const status = replacement.operation?.status ?? result.state;
-      if (status === "complete") showToast("The replacement is current and the exact source retirement finished.");
-      else if (result.requiresConfirmation) showToast("The replacement is live. Inspect it, then finish the same replacement operation.");
-      else showToast(`Replacement ${String(status || "operation").replaceAll("-", " ")}.`);
-    } catch (error) {
-      replacement.operation = error.payload?.operation ?? replacement.operation;
-      replacement.requiresConfirmation = replacement.operation?.status === "replacement-starting";
-      replacement.saving = false;
-      paint(true);
-      showToast(error.message);
-    }
-  }
-
-  /** Opens the agent for the selected Goal and remembers the return view. */
-  async function openGoalAgent({ returnView = "work" } = {}) {
+  /**
+   * Opens the live agent for the selected Goal, or asks the Area brain to
+   * start one. Everything starts through the brain (D8), so a Goal without a
+   * session gets a message in the composer, never a direct start.
+   */
+  function openGoalAgent({ returnView = "work" } = {}) {
     const goal = currentGoal();
     if (!goal) return;
+    const session = sessionForGoal(goal);
+    if (!session) return askBrainToStart(goal);
     const returnPoint = returnView === "work" && state.view === "work" ? captureReturnPoint() : null;
-    try {
-      const start = await launchFieldsForArea(goal.area);
-      await post("/api/goals/agent", { file: goal.file, launch: true, ...start.fields });
-      await refresh();
-      state.agentReturnView = returnView;
-      state.agentReturn = returnPoint;
-      openSessionLayer(sessionForGoal(currentGoal()), "agent", returnPoint ?? captureReturnPoint());
-      showToast(`The agent opened with this Goal and its linked Documents${start.label ? ` on ${start.label}` : ""}.`);
-    } catch (error) {
-      showToast(error.message);
-    }
+    state.agentReturnView = returnView;
+    state.agentReturn = returnPoint;
+    openSessionLayer(session, "agent", returnPoint ?? captureReturnPoint());
   }
 
-  /** Replaces the reader with the linked Goal agent. */
-  async function openReaderAgent() {
+  /** Opens the Area brain composer with a request to start an agent on one Goal. */
+  function askBrainToStart(goal) {
+    showDescribe({ area: goal.area, description: `Start an agent on ${goal.title} (${goal.file})` });
+    return true;
+  }
+
+  /** Replaces the reader with the linked Goal agent, or asks the brain for one. */
+  function openReaderAgent() {
     const goal = documentGoal();
     if (!goal || !state.document) return showToast("Link this Document to an open Goal before you open an agent.");
     rememberDocumentPosition();
     state.currentFile = goal.file;
     localStorage.setItem("agent-shell.current-goal", goal.file);
     localStorage.setItem("agent-shell.last-area", goal.area);
-    try {
-      if (!sessionForGoal(goal)) {
-        const start = await launchFieldsForArea(goal.area);
-        await post("/api/goals/agent", { file: goal.file, document: state.document.file, launch: true, ...start.fields });
-        await refresh();
-      }
-      if (!sessionForGoal(currentGoal())) throw new Error("The agent session did not open.");
-      state.agentReturnView = "document";
-      state.agentReturn = null;
-      openSessionLayer(sessionForGoal(currentGoal()), "agent", captureReturnPoint());
-      showToast("The agent opened with this Goal and all linked Documents.");
-    } catch (error) {
-      showToast(error.message);
-    }
+    const session = sessionForGoal(goal);
+    if (!session) return askBrainToStart(goal);
+    state.agentReturnView = "document";
+    state.agentReturn = null;
+    openSessionLayer(session, "agent", captureReturnPoint());
+    showToast("The agent opened with this Goal and all linked Documents.");
   }
 
   /** Opens one confirmation modal with an explicit effect. */
@@ -833,5 +767,5 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Toggles the server-owned macOS sleep assertion. */
 
-  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, replaceGoalAttempt, openGoalAgent, openReaderAgent, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
+  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, openGoalAgent, openReaderAgent, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
 }

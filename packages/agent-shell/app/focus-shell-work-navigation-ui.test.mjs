@@ -181,7 +181,6 @@ test("the live shell restores context, defines work with an agent, and organizes
     if (options.method === "POST") {
       const body = JSON.parse(options.body);
       posts.push({ path: pathname, body });
-      if (pathname === "/api/goals/agent") reviewAgentStarted = true;
       if (pathname === "/api/brains/verdict") {
         brainRowsForJulian = brainRowsForJulian.filter((row) => row.line !== body.line);
         return jsonResponse({ ok: true, line: body.line, index: 2, target: "live-edit-collaboration", verdict: body.verdict });
@@ -220,7 +219,7 @@ test("the live shell restores context, defines work with an agent, and organizes
           { name: "tangent-vision", goal: goalFile, state: tangentSessionState, stateDetail: tangentSessionState === "waiting" ? "decision" : null, stateQuestion: "Do you want to rewrite the vision section?", command: "codex" },
           { name: "stale-completed-run", goal: staleCompletedGoal.file, state: "waiting", command: "codex" },
           ...describeSessions,
-          ...(reviewAgentStarted ? [{ name: "live-edit-collaboration", goal: liveEditGoal.file, state: "waiting", phase: "collaborate", command: "codex" }] : []),
+          ...(reviewAgentStarted ? [{ name: "live-edit-worker", goal: liveEditGoal.file, state: "waiting", phase: "execute", command: "codex" }] : []),
           ...(liveEditBrainStarted ? [{ name: "live-edit-brain", area: liveEditGoal.area, kind: "brain", state: "waiting", command: "claude" }] : []),
         ],
         brains: liveEditBrainStarted
@@ -498,13 +497,16 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, `[data-open-document='${liveEditDocument.file}']`);
   await settle(window);
 
+  // The Goal's worker comes live through the brain: the reader opens it.
+  // Nothing in the browser starts an agent; only the brain does (D8).
+  reviewAgentStarted = true;
+  await window.refresh();
+  await settle(window);
   click(window, "[data-open-reader-agent]");
   await settle(window);
-  const collaboration = posts.find((entry) => entry.path === "/api/goals/agent");
-  assert.equal(collaboration.body.file, liveEditGoal.file);
-  assert.equal(collaboration.body.document, liveEditDocument.file);
+  assert.equal(posts.find((entry) => entry.path === "/api/goals/agent"), undefined, "the reader starts no agent: it opens the live one");
   assert.equal(window.document.querySelector("#session-layer").hidden, false);
-  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "live-edit-collaboration");
+  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "live-edit-worker");
   assert.ok(window.document.querySelector(".document-reader"), "the reader stays below the session layer");
   click(window, "[data-close-session-layer]");
   await settle(window);

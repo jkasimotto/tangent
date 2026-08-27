@@ -1219,7 +1219,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       const idleState = idleGoalState(goal);
       if (idleState === "Ready for validation") return { ...line, state: idleState, action: "Review", kind: "ready", route: "goal" };
       if (idleState === "Preparing validation") return { ...line, state: idleState, action: "Open", kind: "fact", route: "goal" };
-      return { ...line, state: idleState, action: "Start agent", kind: idleState === "Waiting" ? idle : "ready", route: "run" };
+      // No session: the row opens the Goal reader. Only the brain starts an
+      // agent (D8), so Work offers no start of its own.
+      return { ...line, state: idleState, action: "Open", kind: idleState === "Waiting" ? idle : "ready", route: "goal" };
     }
     return { ...line, ...deskSessionAction(session, idle) };
   }
@@ -1598,9 +1600,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // the verb moves into the title and the accessible name
     // (design-see-the-harness-model-effort-and-open-that-agent Decision 1).
     const openLabel = action.launch ? `${action.action} on ${action.launch}${action.cwd ? ` in ${action.cwd}` : ""}` : action.action;
-    const primary = action.action === "Start agent"
-      ? `<button class="desk-action${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" data-focus-key="start:${escapeHtml(goal.file)}" aria-label="Choose an agent for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">Start agent</button>`
-      : action.action && action.launch
+    const primary = action.action && action.launch
         ? `<button class="desk-launch-ref" type="button" ${route} data-focus-key="open:${escapeHtml(goal.file)}" title="${escapeHtml(openLabel)}" aria-label="${escapeHtml(openLabel)}: ${escapeHtml(goal.title)}"><span class="desk-launch-ref-text">${escapeHtml(action.launch)}</span>${workKey("open")}</button>`
         : action.action
           ? `<button class="desk-action" type="button" ${route} data-focus-key="open:${escapeHtml(goal.file)}" aria-label="${escapeHtml(action.action)}: ${escapeHtml(goal.title)}">${escapeHtml(action.action)}${workKey("open")}</button>`
@@ -1618,24 +1618,16 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function workGoalRow(goal, { groupPath, labels, fact, maxElapsedMs = 0, subgoal = false, parent = "", hidden = false, subgoalCount = 0, expanded = true } = {}) {
     const pipeline = pipelineForGoal(goal);
     const record = pipelineRecordForGoal(goal);
-    const projected = pipeline ? deskPipelineAction(goal, pipeline) : deskGoalAction(goal);
-    // Only a Startable Goal offers Start. A blocked, broken, or errored Goal
-    // opens its reader, which owns the exact dependency detail.
-    const startable = projected.action === "Start agent" && (!fact || fact.kind === "ready");
-    const action = projected.action === "Start agent" && !startable
-      ? { ...projected, action: "Open", route: "goal" }
-      : projected;
+    const action = pipeline ? deskPipelineAction(goal, pipeline) : deskGoalAction(goal);
     const { facts, now } = deskGoalFactsData(goal);
     const path = labels?.get(goal.area) ?? descendantPath(goal.area, groupPath);
     const compact = [action.state, action.stepShort, deskGoalElapsedText(facts, now)].filter(Boolean).join(" · ");
     const liveSession = sessionForGoal(goal);
     const agentMeta = [liveSession ? agentName(liveSession) : "", action.launch].filter(Boolean).join(" · ");
     const stepMeta = action.stepLine ? [action.stepLine, action.stepLabel].filter(Boolean).join(" · ") : "";
-    const titleRoute = action.action === "Start agent"
-      ? `data-launch-for="${escapeHtml(goal.file)}"`
-      : action.route === "run"
-        ? `data-open-goal-run="${escapeHtml(goal.file)}"`
-        : `data-open-close="${escapeHtml(goal.file)}"`;
+    const titleRoute = action.route === "run"
+      ? `data-open-goal-run="${escapeHtml(goal.file)}"`
+      : `data-open-close="${escapeHtml(goal.file)}"`;
     const subgoalWord = `${subgoalCount} ${subgoalCount === 1 ? "Subgoal" : "Subgoals"}`;
     const disclosure = subgoalCount ? workFoldTriangle({ open: expanded, goal: goal.file, name: `${subgoalWord} of ${goal.title}` }) : WORK_FOLD_SPACE;
     // A folded Goal names what it hides. Open, the Subgoal rows are the count.

@@ -73,26 +73,23 @@ test("defaults are a complete keyboard chooser with staged Escape and exact retu
   assert.equal(document.activeElement.closest("[data-work-cursor]")?.dataset.workCursor, origin, "closing restores the exact Work row");
 });
 
-test("Goal and brain spawning share the Harness, Model, Effort keyboard surface", async () => {
+test("a Goal row never opens a chooser; brain spawning owns the Harness, Model, Effort keyboard surface", async () => {
   const fixture = withBrainOnlyArea(workTableFixture(), { live: false, planned: true });
   fixture.pipelines = fixture.pipelines.filter((pipeline) => pipeline.goal !== "otto/onboarding/goal-walkthrough.md");
   const unstarted = fixture.goals.find((goal) => goal.file === "otto/onboarding/goal-walkthrough.md");
   unstarted.firstStartAt = null;
   const { window, document } = await bootWorkTable(fixture, { launchOptions });
 
+  // Everything starts through the brain (D8): an open Goal with no session
+  // opens its reader, and no Goal control opens the chooser.
   const goal = document.querySelector("[data-goal-anchor='otto/onboarding/goal-walkthrough.md'] [data-work-row-title]");
+  assert.ok(goal.hasAttribute("data-open-close"), "the title opens the Goal reader");
+  assert.equal(document.querySelector("[data-goal-anchor] [data-launch-for]"), null, "no Goal row carries a chooser trigger");
   goal.click();
   await settle(window, 5);
-  assert.equal(document.activeElement.dataset.launchHarness, "codex", "Goal launch starts at the selected Harness: it composes no assignments (D8)");
-  document.querySelector("[data-launch-edit]").click();
-  await settle(window);
-  assert.equal(document.activeElement.id, "launch-command-input");
+  assert.equal(document.querySelector("[data-launch-popover]"), null, "a Goal opens no chooser");
   press(window, "Escape");
   await settle(window);
-  assert.ok(document.querySelector("[data-launch-popover]"), "Escape leaves command editing before the Goal chooser");
-  press(window, "Escape");
-  await settle(window);
-  assert.equal(document.activeElement, document.querySelector("[data-goal-anchor='otto/onboarding/goal-walkthrough.md'] [data-work-row-title]"));
 
   const brain = document.querySelector("[data-work-group='otto/quiet'] .work-group-brain");
   brain.click();
@@ -148,27 +145,27 @@ test("harness editing has one keyboard and pointer Back contract without losing 
   assert.equal(document.querySelector("[data-harness-form]"), null);
 });
 
-test("switching from defaults to a Goal loads the Goal catalog and returns to that Goal", async () => {
+test("switching from defaults to a brain loads the brain catalog and returns to that brain", async () => {
   const allOptions = { ...launchOptions };
   delete allOptions.default;
-  const { window, document, gets } = await bootWorkTable(plannedWorkFixture(), {
+  const { window, document, gets } = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { live: false, planned: true }), {
     /** Test helper for launchOptions. */
     launchOptions: (url) => url.searchParams.get("kind") === "all" ? allOptions : launchOptions,
   });
 
   press(window, "d");
   await settle(window, 5);
-  const goal = document.querySelector("[data-goal-anchor='otto/tangent/goal-startable.md'] [data-work-row-title]");
-  goal.click();
+  const brain = document.querySelector("[data-work-group='otto/quiet'] .work-group-brain");
+  brain.click();
   await settle(window, 5);
 
-  assert.equal(document.activeElement.dataset.launchHarness, "codex", "the Goal starts at its selected Harness");
-  assert.equal(document.querySelector("[data-launch-harness='codex']").getAttribute("aria-checked"), "true", "the Goal receives its launch default, not the settings catalog");
+  assert.equal(document.activeElement.id, "brain-instruction", "the brain chooser starts at its message");
+  assert.equal(document.querySelector("[data-launch-harness='codex']").getAttribute("aria-checked"), "true", "the brain receives its launch default, not the settings catalog");
   const launchRequests = gets.filter((url) => new URL(url).pathname === "/api/launch/options");
-  assert.equal(new URL(launchRequests.at(-1)).searchParams.has("kind"), false, "the replacement chooser requests Goal launch options");
+  assert.equal(new URL(launchRequests.at(-1)).searchParams.get("kind"), "brain", "the brain chooser requests brain launch options");
   press(window, "Escape");
   await settle(window);
-  assert.equal(document.activeElement, document.querySelector("[data-goal-anchor='otto/tangent/goal-startable.md'] [data-work-row-title]"), "Back returns to the Goal that replaced the prior chooser");
+  assert.equal(document.activeElement, document.querySelector("[data-work-group='otto/quiet'] .work-group-brain"), "Back returns to the brain that replaced the prior chooser");
 });
 
 test("Brain defaults are a nested Back stage and preserve the typed brain instruction", async () => {
@@ -203,11 +200,11 @@ test("Brain defaults are a nested Back stage and preserve the typed brain instru
 test("launch choices expose selected state and trap Tab while options load", async () => {
   let releaseOptions;
   const pendingOptions = new Promise((resolve) => { releaseOptions = resolve; });
-  const { window, document } = await bootWorkTable(plannedWorkFixture(), {
+  const { window, document } = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { live: false, planned: true }), {
     /** Test helper for launchOptions. */
     launchOptions: () => pendingOptions });
 
-  document.querySelector("[data-goal-anchor='otto/tangent/goal-startable.md'] [data-work-row-title]").click();
+  document.querySelector("[data-work-group='otto/quiet'] .work-group-brain").click();
   await settle(window);
   const popover = document.querySelector("[data-launch-popover]");
   assert.equal(document.activeElement, popover, "the loading chooser owns focus");
@@ -249,9 +246,9 @@ test("a cached chooser opened from Commands keeps focus after the command modal 
 });
 
 test("a chooser near the viewport bottom flips above its trigger", async () => {
-  const { window, document } = await bootWorkTable(plannedWorkFixture(), { launchOptions });
+  const { window, document } = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { live: false, planned: true }), { launchOptions });
   Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
-  const trigger = document.querySelector("[data-goal-anchor='otto/tangent/goal-startable.md'] [data-work-row-title]");
+  const trigger = document.querySelector("[data-work-group='otto/quiet'] .work-group-brain");
   trigger.getBoundingClientRect = () => ({ top: 740, bottom: 770, right: 1_200 });
   trigger.click();
   await settle(window, 5);

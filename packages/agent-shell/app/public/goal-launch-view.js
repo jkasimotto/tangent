@@ -1,5 +1,5 @@
 import { currentBriefFields, storyEntries } from "./goal-narrative.js";
-import { clip, escapeHtml } from "./text-format.js";
+import { escapeHtml } from "./text-format.js";
 
 /** Creates Goal launch and creation from shell, Area, Work, and overlay ports. */
 export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
@@ -100,7 +100,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   function launchOptionsFor(area) {
     const kind = state.launchTarget === BRAIN_LAUNCH_TARGET ? "brain" : state.launchTarget === DEFAULT_AGENTS_TARGET ? "all" : "launch";
     if (state.launch.area !== area || (state.launch.kind && state.launch.kind !== kind)) {
-      state.launch = { area, kind, options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null, replacement: null };
+      state.launch = { area, kind, options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null };
     } else state.launch.kind = kind;
     if (!state.launch.options && !state.launch.loading) {
       state.launch.loading = true;
@@ -156,30 +156,6 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
       return { choice: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}), ...(selection.effort ? { effort: selection.effort.id } : {}) } };
     }
     return selection.command ? { command: selection.command } : {};
-  }
-
-  /**
-   * The launch fields for a start that did not go through the picker: Julian
-   * presses Start agent without opening it, so nothing is loaded and nothing
-   * would be sent. The server supplies no harness of its own, so the client
-   * fills the flag from the Area's declared default and names it back in the
-   * toast. Returns the request fields and the label that was started.
-   */
-  async function launchFieldsForArea(area) {
-    // Only this Area's own worker picker may speak for this start. The picker
-    // state survives a close, so a choice made for another Area, or for the
-    // brain, would otherwise start this worker on a harness nobody named for it.
-    const owned = state.launch.area === area && (!state.launch.kind || state.launch.kind === "launch");
-    const chosen = owned ? launchRequestFields() : {};
-    if (Object.keys(chosen).length) return { fields: chosen, label: launchSelection()?.label ?? "" };
-    const options = await api(`/api/launch/options?area=${encodeURIComponent(area)}`).catch(() => null);
-    const preset = options?.default && !options.default.error ? options.default : null;
-    if (!preset) return { fields: {}, label: "" };
-    const label = preset.label || preset.command || "";
-    if (preset.harness) {
-      return { fields: { choice: { harness: preset.harness, ...(preset.model ? { model: preset.model } : {}), ...(preset.effort ? { effort: preset.effort } : {}) } }, label };
-    }
-    return { fields: preset.command ? { command: preset.command } : {}, label };
   }
 
   // ---- assignment drafts ----
@@ -302,21 +278,6 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     return (state.pipelines ?? []).find((item) => item.goal === goal.file) ?? null;
   }
 
-  /** The one assignment Change agent keeps fixed. Nothing else lists assignments: only the brain composes work (D8). */
-  function launchStepList() {
-    if ([DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET].includes(state.launchTarget)) return "";
-    const steps = commitActiveStep();
-    const glyph = { complete: "✓", running: "●", pending: "○", skipped: "–", stopped: "■", ended: "■" };
-    if (state.launch.replacement) {
-      const row = steps[state.launch.active];
-      return `<section class="launch-assignment-region replacement-assignment" data-launch-assignment-region aria-label="Assignment being replaced">
-        <p class="launch-region-title">Assignment identity stays fixed</p>
-        <ol class="launch-steps" aria-label="Assignment being replaced"><li class="launch-step ${escapeHtml(row?.status ?? "running")} selected" data-launch-assignment="${escapeHtml(row?.id ?? state.launch.replacement.assignmentId)}"><span class="launch-step-fixed"><b>${glyph[row?.status] ?? "●"}</b><span>${escapeHtml(String(row?.id ?? state.launch.replacement.assignmentId))}</span><em>${escapeHtml(clip(row?.instruction ?? "", 80))}</em></span></li></ol>
-      </section>`;
-    }
-    return "";
-  }
-
   /**
    * The launch picker: harness and model by display label, the exact composed
    * command one line below, and a start action that states its exact effect.
@@ -333,22 +294,20 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const presetError = presetCandidate?.error ?? "";
     const preset = presetCandidate && !presetCandidate.error ? presetCandidate : {};
     const currentHarness = selection?.harness ?? null;
-    const replacement = state.launch.replacement;
-    const replacementLocked = Boolean(replacement?.saving || (replacement?.operation && !["failed", "rollback"].includes(replacement.operation.status)));
     const harnessButtons = (options.harnesses ?? []).map((harness) => `
-      <button type="button" role="radio" aria-checked="${currentHarness?.id === harness.id}" class="launch-option${currentHarness?.id === harness.id ? " selected" : ""}" data-launch-harness="${escapeHtml(harness.id)}" data-focus-key="launch:harness:${escapeHtml(harness.id)}" ${replacementLocked ? "disabled" : ""}>
+      <button type="button" role="radio" aria-checked="${currentHarness?.id === harness.id}" class="launch-option${currentHarness?.id === harness.id ? " selected" : ""}" data-launch-harness="${escapeHtml(harness.id)}" data-focus-key="launch:harness:${escapeHtml(harness.id)}">
         <span>${escapeHtml(harness.label)}</span>${preset.harness === harness.id ? `<span class="launch-default-tag">default</span>` : ""}
       </button>`).join("");
     const models = currentHarness?.models ?? [];
     const modelButtons = models.length
       ? models.map((model) => `
-        <button type="button" role="radio" aria-checked="${selection?.model?.id === model.id}" class="launch-option${selection?.model?.id === model.id ? " selected" : ""}" data-launch-model="${escapeHtml(model.id)}" data-focus-key="launch:model:${escapeHtml(currentHarness?.id ?? "")}:${escapeHtml(model.id)}" ${replacementLocked ? "disabled" : ""}>
+        <button type="button" role="radio" aria-checked="${selection?.model?.id === model.id}" class="launch-option${selection?.model?.id === model.id ? " selected" : ""}" data-launch-model="${escapeHtml(model.id)}" data-focus-key="launch:model:${escapeHtml(currentHarness?.id ?? "")}:${escapeHtml(model.id)}">
           <span>${escapeHtml(model.label)}</span>${preset.harness === currentHarness?.id && preset.model === model.id ? `<span class="launch-default-tag">default</span>` : ""}
         </button>`).join("")
       : `<p class="launch-none">${currentHarness ? "No model choice. The command is complete." : "Pick a harness first."}</p>`;
     const efforts = selection?.model?.efforts ?? currentHarness?.efforts ?? [];
     const effortButtons = efforts.map((effort) => `
-        <button type="button" role="radio" aria-checked="${selection?.effort?.id === effort.id}" class="launch-option${selection?.effort?.id === effort.id ? " selected" : ""}" data-launch-effort="${escapeHtml(effort.id)}" data-focus-key="launch:effort:${escapeHtml(currentHarness?.id ?? "")}:${escapeHtml(selection?.model?.id ?? "")}:${escapeHtml(effort.id)}" ${replacementLocked ? "disabled" : ""}>
+        <button type="button" role="radio" aria-checked="${selection?.effort?.id === effort.id}" class="launch-option${selection?.effort?.id === effort.id ? " selected" : ""}" data-launch-effort="${escapeHtml(effort.id)}" data-focus-key="launch:effort:${escapeHtml(currentHarness?.id ?? "")}:${escapeHtml(selection?.model?.id ?? "")}:${escapeHtml(effort.id)}">
           <span>${escapeHtml(effort.label)}</span>${preset.harness === currentHarness?.id && preset.effort === effort.id ? `<span class="launch-default-tag">default</span>` : ""}
         </button>`).join("");
     const command = selection?.command ?? "";
@@ -359,8 +318,6 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const brainOverride = braining && Boolean(state.launch.choice?.harness);
     const commandZone = braining
       ? `<section class="brain-launch-summary${brainOverride ? " override" : ""}" aria-label="Resolved brain launch"><p class="kicker">Brain launch</p><strong>${escapeHtml(brainRef || "Not configured")}</strong><span>${escapeHtml(selection?.label || presetError)}</span><code>${escapeHtml(selection?.command || "")}</code>${brainOverride ? `<small class="launch-override-note">One launch only · Area default unchanged</small>` : brainSource ? `<small>${escapeHtml(brainSource)}</small>` : ""}<button class="quiet-button" type="button" data-default-agents-area="${escapeHtml(state.brainDraft?.area ?? "")}" data-default-agents-origin="brain" data-focus-key="launch:brain:default">Change default</button></section>`
-      : replacement
-      ? `<div class="launch-command replacement-command"><code>${escapeHtml(command)}</code><small>Only this assignment's desired launch changes. Its Goal, prompt, path, Documents, and history stay fixed.</small></div>`
       : settings
       ? `<div class="launch-command"><code>${escapeHtml(command)}</code></div>`
       : state.launch.editing
@@ -369,41 +326,15 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
       : `<div class="launch-command"><code>${escapeHtml(command)}</code>${selection?.edited ? `<span class="launch-default-tag">edited</span>` : ""}<button class="quiet-button" type="button" data-launch-edit>Edit command</button></div>`;
     const brain = braining ? brainForAreaCard(state.brainDraft?.area) : null;
     const brainResumes = Boolean(brain && !brain.live);
-    const assignmentRows = describing || braining || settings ? [] : commitActiveStep();
-    const activeAssignment = assignmentRows[state.launch.active];
-    const replacementStatus = replacement?.operation?.status ?? "";
-    const replacementViewStatus = replacement?.saving ? "saving" : replacementStatus;
     const startLabel = braining
       ? (brainResumes ? "Send and wake brain" : "Start brain")
-      : replacement
-      ? replacement?.saving ? "Working…"
-        : replacementStatus === "complete" ? "Open replacement"
-        : replacementStatus === "retirement-incomplete" ? "Retry exact retirement"
-          : ["replacement-starting", "replacement-ready", "source-retiring"].includes(replacementStatus) ? "Finish replacement"
-            : ["failed", "rollback"].includes(replacementStatus) ? "Try replacement again"
-              : "Start replacement"
       : `Start ${selection ? (selection.label || "agent") : "agent"}`;
     const brainZone = braining ? `
         <label class="brain-instruction"><span>${brainResumes ? "What should this brain do next?" : "What should this Area get done?"}</span><textarea id="brain-instruction" rows="5" placeholder="${brainResumes ? "The message that wakes this brain. It keeps its founding instruction and its plan, and reads this as the reason it is awake." : "The instruction the brain plans and dispatches from. It splits the work into Goals, starts agents in dependency order, reviews what comes back, and asks you only for real decisions."}">${escapeHtml(state.brainDraft?.instruction ?? "")}</textarea></label>
         ${brainResumes ? `<p class="form-note">A brain ran here before (${escapeHtml(brainStateLabel(brain).toLowerCase())}). Your message wakes it and keeps its founding instruction. Start over begins a new brain from the message above.</p>` : ""}` : "";
-    const stepZone = describing || braining || settings ? "" : replacement
-      ? `<section class="launch-assignment-history replacement-preserved"><p><strong>Preserved assignment</strong></p><dl><div><dt>Instruction</dt><dd>${escapeHtml(activeAssignment?.instruction || "No instruction")}</dd></div><div><dt>Type</dt><dd>${escapeHtml(activeAssignment?.kind || "implementation")}</dd></div><div><dt>Path</dt><dd>${escapeHtml(activeAssignment?.path || "Area workspace")}</dd></div><div><dt>Continuation</dt><dd>${escapeHtml(activeAssignment?.continueFromAssignmentId || "Fresh session")}</dd></div></dl></section>`
-      : "";
     const settingsRows = settings ? defaultAgentRows(options) : "";
     const settingsMode = state.defaultAgents.mode;
     const showChoices = braining || !settings || (state.defaultAgents.editing && settingsMode === "launch");
-    const replacementStateCopy = {
-      saving: "Tangent is persisting this exact replacement operation.",
-      requested: "The replacement request is durable. The source is still current.",
-      "replacement-starting": "The replacement is live for inspection. The source stays alive until readiness is confirmed.",
-      "replacement-ready": "The replacement is ready. Tangent is preserving the source until promotion is fenced.",
-      "source-retiring": "The replacement is current. Tangent is retiring only the exact source target.",
-      complete: "Replacement complete. Goal and assignment identity were preserved.",
-      failed: "Replacement failed. The source attempt stayed current and alive.",
-      rollback: "Replacement rolled back. The source attempt stayed current.",
-      "retirement-incomplete": "Both sessions remain visible because exact source retirement did not complete.",
-    };
-    const replacementState = replacement ? `<section class="replacement-state ${escapeHtml(replacementViewStatus || "choosing")}" role="status"><strong>${escapeHtml(replacementViewStatus ? replacementViewStatus.replaceAll("-", " ") : "Choose a replacement agent")}</strong><span>${escapeHtml(replacementViewStatus ? replacementStateCopy[replacementViewStatus] || "The persisted replacement operation is still advancing." : "The old agent remains alive until the new agent is ready.")}</span>${replacement?.operation?.error ? `<small>${escapeHtml(replacement.operation.error)}</small>` : ""}${replacement?.operation?.replacementTarget?.session ? `<small>Replacement: ${escapeHtml(replacement.operation.replacementTarget.session)}</small>` : ""}</section>` : "";
     const settingsEditor = settings && state.defaultAgents.editing ? `
       <section class="default-agent-editor" aria-label="Edit ${escapeHtml(state.defaultAgents.editing)} default">
         <p>${settingsMode === "launch" ? `Choose the harness, model, and effort for ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"}.` : settingsMode === "work" ? "Brain will follow the Work default of this Area." : `The ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"} default will inherit from the nearest parent Area.`}</p>
@@ -416,10 +347,8 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     return `
       <div class="launch-picker">
         ${settingsRows}
-        ${launchStepList()}
         ${brainZone}
         ${settingsEditor}
-        ${stepZone}
         ${showChoices && (options.harnesses ?? []).length ? `
         <div class="launch-columns" aria-label="Agent choices">
           <div class="launch-col" data-launch-column="harness" role="radiogroup" aria-label="Harness"><p class="launch-col-title">Harness</p>${harnessButtons}</div>
@@ -427,9 +356,8 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
           ${efforts.length ? `<div class="launch-col" data-launch-column="effort" role="radiogroup" aria-label="Effort"><p class="launch-col-title">Effort</p>${effortButtons}</div>` : ""}
         </div>` : showChoices ? `<p class="launch-none">No harness registry. Add one at <code>~/.tangent/trees/harnesses.md</code>.</p>` : ""}
         ${braining || showChoices ? commandZone : ""}
-        ${replacementState}
         ${settingsActions || `<div class="action-row start-actions">
-          <button class="primary-button" type="button" data-launch-start data-focus-key="launch:start" ${(braining && !selection?.harness) || replacement?.saving ? "disabled" : ""}>${escapeHtml(startLabel)}</button>
+          <button class="primary-button" type="button" data-launch-start data-focus-key="launch:start" ${braining && !selection?.harness ? "disabled" : ""}>${escapeHtml(startLabel)}</button>
           ${brainResumes ? `<button class="quiet-button" type="button" data-brain-start-over>Start over</button>` : ""}
           <button class="quiet-button" type="button" data-launch-close data-focus-key="launch:close">${state.launchTarget ? "Close" : "Back"}</button>
         </div>`}
@@ -609,7 +537,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     }
     try {
       await post("/api/harnesses", draft);
-      state.launch = { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null, replacement: null };
+      state.launch = { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null };
       state.view = state.harnessReturnView;
       state.harnessDraft = null;
       paint(true);
@@ -713,5 +641,5 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
 
   /** Renders the complete native agent terminal without a second chat. */
 
-  return { selectableAreas, preferredArea, areaOptions, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, blankLaunchStep, launchStepsForRecord, launchStepIsMutable, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, launchStepLabel, pipelineForGoal, pipelineRecordForGoal, launchStepList, launchPickerBlock, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
+  return { selectableAreas, preferredArea, areaOptions, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, blankLaunchStep, launchStepsForRecord, launchStepIsMutable, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, launchStepLabel, pipelineForGoal, pipelineRecordForGoal, launchPickerBlock, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
 }

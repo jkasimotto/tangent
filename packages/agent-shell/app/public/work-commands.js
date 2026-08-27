@@ -10,7 +10,7 @@ const records = [
   { id: "firstLast", keyDisplay: "gg / G", ariaKeyshortcuts: null, scope: "work", kind: "navigation", label: "First or last row", help: "Move to the first or last Work row." },
   { id: "previousArea", keyDisplay: "{", ariaKeyshortcuts: "Shift+[", scope: "area", kind: "navigation", palette: true, label: "Previous Area", help: "Jump to the previous real Area header.", shortcuts: [{ key: "{", shiftKey: "any" }] },
   { id: "nextArea", keyDisplay: "}", ariaKeyshortcuts: "Shift+]", scope: "area", kind: "navigation", palette: true, label: "Next Area", help: "Jump to the next real Area header.", shortcuts: [{ key: "}", shiftKey: "any" }] },
-  { id: "open", keyDisplay: "↵", ariaKeyshortcuts: "Enter", scope: "work", kind: "action", label: "Open", help: "Open the live session, the launch chooser, or the Goal reader for this row.", shortcuts: [{ key: "Enter" }] },
+  { id: "open", keyDisplay: "↵", ariaKeyshortcuts: "Enter", scope: "work", kind: "action", label: "Open", help: "Open the live session or the Goal reader for this row.", shortcuts: [{ key: "Enter" }] },
   { id: "openBrain", keyDisplay: "b", ariaKeyshortcuts: "b", scope: "area", kind: "action", palette: true, label: "Open brain", help: "Open this Area brain. A message starts an inactive brain.", shortcuts: [{ key: "b" }] },
   { id: "stopBrain", keyDisplay: "s", ariaKeyshortcuts: "s", scope: "area", kind: "action", palette: true, label: "Stop brain", help: "Stop this Area brain without stopping its worker agents.", shortcuts: [{ key: "s" }] },
   { id: "defaults", keyDisplay: "d", ariaKeyshortcuts: "d", scope: "area", kind: "action", palette: true, label: "Defaults", help: "Change this Area's default Work and brain agents.", shortcuts: [{ key: "d" }] },

@@ -123,7 +123,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
     const canGoForward = state.documentTrailIndex >= 0 && state.documentTrailIndex < state.documentTrail.length - 1;
     const brain = activeDocumentBrain();
     const comments = state.document?.comments?.length ?? 0;
-    const goalCanOpenAgent = goal && (sessionsForGoal(goal).length || !state.goalDetail || (state.goalDetail.commands ?? []).some((command) => ["start", "change-agent"].includes(command.id) && command.enabled));
+    const goalCanOpenAgent = goal && (sessionsForGoal(goal).length || !state.goalDetail || ["open", "active"].includes(goal.status));
     const notifyLabel = brain ? `Tell ${brain.area} brain I added comments` : "No active brain to notify";
     const notifyTitle = !brain ? `No active brain covers ${state.document?.area ?? "this Area"}` : !comments ? "Add a comment before you notify the brain" : notifyLabel;
     return `

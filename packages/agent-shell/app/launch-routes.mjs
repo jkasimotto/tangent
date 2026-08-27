@@ -8,7 +8,6 @@ export function createLaunchRoutes(operations) {
     ["POST /api/harnesses", writeHarnesses],
     ["GET /api/launch/options", options],
     ["POST /api/launch/default", saveDefault],
-    ["POST /api/goals/agent", collaborate],
     ["POST /api/goals/start", start],
   ]);
 
@@ -30,8 +29,6 @@ export function createLaunchRoutes(operations) {
   async function options(_request, response, url) { sendResult(response, await operations.options(url.searchParams.get("area") ?? "", url.searchParams.get("kind") ?? "launch")); }
   /** Saves an Area's default launch. */
   async function saveDefault(request, response) { sendResult(response, await operations.saveDefault(await readJson(request))); }
-  /** Starts an agent in collaboration mode. */
-  async function collaborate(request, response) { sendResult(response, await operations.collaborate(await readJson(request))); }
   /** Starts one Goal agent or pipeline. */
   async function start(request, response) { sendResult(response, await operations.start(await readJson(request))); }
 

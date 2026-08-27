@@ -476,9 +476,9 @@ const goalLaunchView = createGoalLaunchView({
 });
 const {
   selectableAreas, preferredArea, areaOptions, renderDescribeCapture, describeSourcesBlock,
-  launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, launchStepDraft, syncLaunchDraft, commitActiveStep,
+  launchOptionsFor, launchSelection, launchRequestFields, launchStepDraft, syncLaunchDraft, commitActiveStep,
   blankLaunchStep, launchStepsForRecord, launchStepIsMutable, activateLaunchStep, loadLaunchStep, launchStepLabel,
-  pipelineForGoal, pipelineRecordForGoal, launchStepList, launchPickerBlock,
+  pipelineForGoal, pipelineRecordForGoal, launchPickerBlock,
   toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor,
 } = goalLaunchView;
 
@@ -532,7 +532,7 @@ const shellCoordinator = createShellCoordinator({
   areasFeature: { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea },
   programs: { currentProgram, programById, programIsLive, programAreaDirectory },
   launch: {
-    launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, syncLaunchDraft, launchStepDraft,
+    launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft, launchStepDraft,
     pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   },
@@ -543,7 +543,7 @@ const {
   selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt,
   selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath,
   confirmAreaMove, addDescribeSource, showDescribe,
-  openDescribeSession, cancelDescribe, showDecision, replaceGoalAttempt,
+  openDescribeSession, cancelDescribe, showDecision,
   openGoalAgent, openReaderAgent, openModal, closeModal, getModalConfirm,
   confirmStop, confirmComplete, confirmWontDo,
 } = shellCoordinator;
@@ -579,28 +579,26 @@ function launchPopoverVerticalStyle(anchor) {
 }
 
 /**
- * The agent chooser, anchored at the Start-agent split control that opened
- * it. The choice lives at the point of starting: no page change, and the
- * fast path (plain Start agent) never passes through here.
+ * The harness chooser for the brain, Describe work, and the Area defaults,
+ * anchored at the control that opened it. No Goal opens it: only the brain
+ * starts workers (D8).
  */
 function launchPopover() {
   if (!state.launchTarget) return "";
   const describing = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
   const braining = state.launchTarget === BRAIN_LAUNCH_TARGET;
   const settings = state.launchTarget === DEFAULT_AGENTS_TARGET;
-  const replacing = Boolean(state.launch.replacement);
-  const goal = describing || braining || settings ? null : goalByFile(state.launchTarget);
-  if (!describing && !braining && !settings && !goal) return "";
+  if (!describing && !braining && !settings) return "";
   if (braining && !state.brainDraft?.area) return "";
   if (settings && !state.defaultAgents.area) return "";
-  const area = describing ? describeLaunchArea() : braining ? state.brainDraft.area : settings ? state.defaultAgents.area : goal.area;
+  const area = describing ? describeLaunchArea() : braining ? state.brainDraft.area : state.defaultAgents.area;
   launchOptionsFor(area);
   const anchor = state.launchAnchor ?? { top: 120, right: window.innerWidth - 16 };
   const width = Math.min(640, window.innerWidth - 32);
   const left = Math.max(16, anchor.right - width);
   return `
-    <div class="launch-popover" data-launch-popover data-focus-key="launch:surface" tabindex="-1" role="dialog" aria-modal="false" aria-label="${settings ? "Default agents" : replacing ? "Change agent" : "Choose agent and model"}" style="${launchPopoverVerticalStyle(anchor)};left:${left}px;width:${width}px">
-      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : settings ? "Default agents" : replacing ? `Change agent · ${escapeHtml(goal.title)}` : escapeHtml(goal.title)}</strong><span class="launch-key-hint"><kbd>j/k</kbd> choices · <kbd>h/l</kbd> columns · <kbd>Enter</kbd> select · <kbd>Esc</kbd> back</span></header>
+    <div class="launch-popover" data-launch-popover data-focus-key="launch:surface" tabindex="-1" role="dialog" aria-modal="false" aria-label="${settings ? "Default agents" : "Choose agent and model"}" style="${launchPopoverVerticalStyle(anchor)};left:${left}px;width:${width}px">
+      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : "Default agents"}</strong><span class="launch-key-hint"><kbd>j/k</kbd> choices · <kbd>h/l</kbd> columns · <kbd>Enter</kbd> select · <kbd>Esc</kbd> back</span></header>
       ${launchPickerBlock()}
     </div>
   `;
@@ -1412,7 +1410,7 @@ async function loadGoalPrompt(file, mode = "goal") {
   paint(true);
   try {
     const brief = await api(`/api/goals/brief?file=${encodeURIComponent(file)}&mode=${encodeURIComponent(mode)}`);
-    const label = mode === "pipeline" ? "Pipeline step" : mode === "collaborate" ? "Collaboration" : "Goal assignment";
+    const label = mode === "pipeline" ? "Pipeline step" : "Goal assignment";
     state.promptInspector = { loading: false, title: `${label} · ${brief.goal.title}`, text: brief.markdown, error: "", file, area: "" };
   } catch (error) {
     state.promptInspector = { loading: false, title: "", text: "", error: error.message, file, area: "" };
@@ -1497,7 +1495,7 @@ bindShellEvents({
   launch: {
     syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft,
     launchStepsForRecord, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses,
-    replaceGoalAttempt, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
+    launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   },
   documents: {

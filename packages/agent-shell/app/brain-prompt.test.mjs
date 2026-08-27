@@ -234,7 +234,7 @@ test("a worker prompt ends with the one send command and no typed report contrac
   assert.match(closing, /tangent send brain --blocked "<note>"/);
   assert.match(closing, /tangent send brain --question "<note>"/);
   assert.match(closing, /Do not run other tangent commands\. Do not change the Goal file's frontmatter\. The brain marks the Goal done\./);
-  const prompts = serverSource.slice(serverSource.indexOf("async function goalPrompt("), serverSource.indexOf("async function collaborationPrompt("));
+  const prompts = serverSource.slice(serverSource.indexOf("async function goalPrompt("), serverSource.indexOf("async function pipelineStepPrompt("));
   assert.doesNotMatch(prompts, /--report|implementation-result|review-result|## Brain/, "the worker prompt has no typed report contract");
   assert.doesNotMatch(serverSource, /tangent handover|tangent goal handover|tangent agent send/, "old worker verbs are gone from the server");
   assert.doesNotMatch(serverSource, /rationaleDossierContract|tangent process list|tangent document resolve/, "the worker prompt teaches no other command");

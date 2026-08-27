@@ -304,7 +304,8 @@ test("the Goal title is the primary session, launch, or context route", async ()
   assert.match(stopped.querySelector(".work-row-step").textContent, /Step 3 of 3 · codex/, "small step metadata sits below the agent line");
 
   const planned = await bootWorkTable(plannedWorkFixture());
-  assert.ok(planned.document.querySelector("tr[data-goal-anchor$='goal-startable.md'] [data-work-row-title][data-launch-for]"), "a startable Goal title opens the common launch composer");
+  assert.ok(planned.document.querySelector("tr[data-goal-anchor$='goal-startable.md'] [data-work-row-title][data-open-close]"), "an open Goal with no session opens its reader: only the brain starts an agent (D8)");
+  assert.equal(planned.document.querySelector("tr[data-goal-anchor] [data-launch-for]"), null, "no Goal row opens a launch chooser");
 });
 
 test("vim keys move the persistent Work cursor through brains and Goals and stay inert in the filter", async () => {
@@ -462,9 +463,8 @@ test("Work keeps lifecycle compact and leaves dependency detail to the Goal read
   const startButton = (slug) => planned.document.querySelector(`tr[data-goal-anchor$='goal-${slug}.md'] .work-cell-action .desk-action`);
   /** The action button's verb for one Goal slug. */
   const startAction = (slug) => verb(startButton(slug));
-  assert.equal(startAction("startable"), "Start agent");
-  for (const slug of ["blocked", "broken", "errored"]) {
-    assert.equal(startAction(slug), "Open", `${slug} opens its Goal instead of starting an agent`);
+  for (const slug of ["startable", "blocked", "broken", "errored"]) {
+    assert.equal(startAction(slug), "Open", `${slug} opens its Goal; only the brain starts an agent (D8)`);
   }
 });
 
@@ -590,7 +590,7 @@ test("nested Subgoals keep their real parents and every collapsed ancestor hides
   assert.equal(document.activeElement.closest("[data-goal-anchor]")?.dataset.goalAnchor, child.file, "h on the depth-2 leaf returns to depth 1");
 });
 
-test("multiple startable groups keep independent start actions without browser selection", async () => {
+test("multiple open groups keep independent reader actions without browser selection", async () => {
   const fixture = plannedWorkFixture();
   const other = { ...fixture.goals[0], area: "otto/standards", slug: "standards-startable", file: "otto/standards/goal-standards-startable.md", title: "Write the standards index", dependsOn: [] };
   fixture.vault.areas.push({ path: "otto/standards", name: "standards", goals: [other], documents: [] });
@@ -599,8 +599,9 @@ test("multiple startable groups keep independent start actions without browser s
   fixture.sessions.push({ name: "otto-standards--brain", area: "otto/standards", kind: "brain", state: "working", command: "claude" });
 
   const { document } = await bootWorkTable(fixture, { workFilter: "inactive" });
-  assert.ok(document.querySelector(`[data-goal-anchor='otto/tangent/goal-startable.md'] [data-launch-for]`));
-  assert.ok(document.querySelector(`[data-goal-anchor='${other.file}'] [data-launch-for]`));
+  assert.ok(document.querySelector(`[data-goal-anchor='otto/tangent/goal-startable.md'] [data-open-close]`));
+  assert.ok(document.querySelector(`[data-goal-anchor='${other.file}'] [data-open-close]`));
+  assert.equal(document.querySelector("[data-goal-anchor] [data-launch-for]"), null, "no Goal row starts an agent: only the brain does (D8)");
   assert.equal(document.querySelector("[data-check-goal], [data-start-selected], tr.work-row.selected"), null);
 });
 

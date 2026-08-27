@@ -95,14 +95,8 @@ function attemptResume(attempt, registry, liveNames) {
 
 /** Derives baseline command availability from Goal and queue authority. */
 function defaultGoalCommands(goal, dependencies, assignment, attempt) {
-  const status = normalizeGoalStatus(goal.status);
-  const startReason = status !== "open"
-    ? status === "active" ? "This Goal already has a live owner." : `This Goal is ${status}.`
-    : dependencies.blocked ? "This Goal has unfinished or missing prerequisites."
-      : assignment ? "This Goal already has a current assignment." : null;
   return [
     { id: "read", label: "Read Goal", enabled: true, reason: null },
-    { id: "start", label: "Start agent", enabled: !startReason, reason: startReason },
     { id: "change-agent", label: "Change agent", enabled: Boolean(assignment && attempt), reason: assignment && attempt ? null : "This Goal has no current attempt." },
     { id: "status", label: "Goal status", enabled: true, reason: null },
   ];

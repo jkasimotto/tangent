@@ -29,7 +29,7 @@ test("Goal detail combines narrative, blockers, Documents, queue, sessions, and 
   assert.deepEqual(detail.sessions.map((item) => item.name), ["worker"]);
   assert.deepEqual(detail.attempts.map((attempt) => [attempt.id, attempt.current]), [["attempt-1", false], ["attempt-2", true]]);
   assert.deepEqual(detail.current, { assignmentId: "assignment-2", attemptId: "attempt-2", session: "worker" });
-  assert.equal(detail.commands.find((command) => command.id === "start").enabled, false);
+  assert.equal(detail.commands.find((command) => command.id === "start"), undefined, "no start command: only the brain starts an agent (D8)");
   assert.equal(detail.commands.find((command) => command.id === "change-agent").enabled, true);
 });
 
@@ -50,7 +50,7 @@ test("Goal detail exposes explicit server command reasons unchanged", () => {
 test("legacy Deferred never escapes the Goal detail read model", () => {
   const detail = projectGoalDetail({ goal: { file: "otto/test/goal-later.md", status: "deferred" } });
   assert.equal(detail.goal.status, "parked");
-  assert.equal(detail.commands.find((command) => command.id === "start").reason, "This Goal is parked.");
+  assert.equal(detail.commands.find((command) => command.id === "change-agent").reason, "This Goal has no current attempt.");
 });
 
 test("Goal detail says how each attempt is resumed", () => {

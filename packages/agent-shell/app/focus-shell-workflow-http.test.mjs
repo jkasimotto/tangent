@@ -65,7 +65,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.doesNotMatch(shellScript, /data-share-context/);
   assert.match(shellScript, /\/api\/work\/describe/);
   assert.doesNotMatch(shellScript, /\/api\/goals\/shape|shape-review/);
-  assert.match(shellScript, /\/api\/goals\/agent/);
+  assert.doesNotMatch(shellScript, /\/api\/goals\/agent/, "the collaborate start is gone: only the brain starts workers (D8)");
   assert.match(shellScript, /Document reader/);
   assert.match(shellScript, /data-document-history/);
   assert.match(shellScript, /document-picker/);

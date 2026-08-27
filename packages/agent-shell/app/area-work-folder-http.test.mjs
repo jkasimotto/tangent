@@ -118,17 +118,13 @@ test("a worker starts in the Area's bound folder or is refused before any record
     assert.match(prompt, new RegExp(`## Working directory\\n\\n${workspace.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(from area:otto/bound\\)\\nBranch: main`));
   });
 
-  await context.test("the collaborate preview and its typed prompt name the same folder", async () => {
-    const folderLine = new RegExp(`## Working directory\\n\\n${workspace.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(from area:otto/bound\\)\\nBranch: main`);
-    const brief = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent("otto/bound/talk/goal-talk-work.md")}&mode=collaborate`).then((response) => response.json());
-    assert.match(brief.markdown, /^# Work with Julian/);
-    assert.match(brief.markdown, folderLine, "the collaborate preview prints the working directory");
-    const started = await post(base, "/api/goals/agent", { file: "otto/bound/talk/goal-talk-work.md", choice: { harness: "test-shell" } });
-    assert.equal(started.status, 200, JSON.stringify(started.body));
-    openedSessions.push(started.body.session);
-    const prompt = await armedPrompt(armed, started.body.session);
-    assert.match(prompt, /^# Work with Julian/);
-    assert.match(prompt, folderLine, "the typed collaborate prompt prints the working directory");
+  await context.test("the collaborate start is gone: no route outside the brain start creates a Goal session", async () => {
+    const gone = await fetch(`${base}/api/goals/agent`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: "otto/bound/talk/goal-talk-work.md", choice: { harness: "test-shell" } }) });
+    assert.equal(gone.status, 404, await gone.text());
+    const preview = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent("otto/bound/talk/goal-talk-work.md")}&mode=collaborate`).then((response) => response.json());
+    assert.doesNotMatch(preview.markdown ?? "", /^# Work with Julian/, "the preview has no collaborate mode");
+    const { stdout } = await execFileAsync("tmux", ["list-sessions", "-F", "#{session_name}\t#{@tangent_kind}"]).catch(() => ({ stdout: "" }));
+    assert.equal(stdout.includes("talk-work"), false, "no session is created");
   });
 
   await context.test("a step's own path wins and is recorded as the source", async () => {

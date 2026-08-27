@@ -29,7 +29,7 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 - `tangent goal show <slug>` prints each attempt's session, cwd, harness, conversation id, resume command, and last context fill (ADR-0042). `--conversations` finds a codex conversation by the attempt's folder and start time.
 - `tangent goal list [<area>]` and `tangent goal show <slug>` read Goals. The listing takes `--subtree`, a repeatable `--status`, `--changed-since` with the same window or date, and `--query`. The subtree scent counts what the same filters find in the child Areas and prints the command that reads them.
 - `tangent goal depend|undepend` edits advisory prerequisite links.
-- `tangent goal own|release` changes the Goal session binding without stealing a live owner.
+- `tangent goal own|release` changes the Goal session binding without stealing a live owner. Neither starts an agent.
 - `tangent goal done|wont-do` changes Goal state only on Julian's explicit instruction.
 - `tangent idea add|list` writes or reads Area ideas.
 - `tangent document comments|resolve` reads or resolves Julian's inline Document comments.
@@ -123,7 +123,7 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 
 ## Main HTTP shapes
 
-- `POST /api/goals/start`: `{ file, steps?, caller?, recovery?, extraFiles? }`.
+- `POST /api/goals/start`: `{ file, steps?, caller?, recovery?, extraFiles? }`. Only a live brain caller starts a worker (ADR-0041). There is no other start route: `POST /api/goals/agent` was deleted on 2026-08-28.
 - `POST /api/goals/attempts/resume`: `{ goal, attemptId?, conversationId? }`. A live attempt answers `status: "live"` with its session. A dead attempt answers `status: "resumed"` with a new `resume` session in the attempt's folder and the typed `command`. The harness needs `resume` in `harnesses.md` (ADR-0042).
 - `GET /api/goals/detail?goal=<file>[&conversations=1]`: the Goal reader model. Each attempt carries `resume: { live, session, cwd, harness, conversationId, command, contextFill }`. With `conversations=1`, attempts without a recorded id list what the transcript folder holds under `resume.found`.
 - `POST /api/goals/handover`: `{ session, text, report?, kind?, idempotencyKey? }`. `kind` is `note`, `done`, `blocked`, or `question`. A successful response includes the queue `pipeline` and its worker handover `receipt`.

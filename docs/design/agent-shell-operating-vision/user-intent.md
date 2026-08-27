@@ -54,6 +54,8 @@ Julian asked for a design up front, a presented vision in pragmatic Simple Engli
 
 > It doesn't need handover or activation or whatever that is. It needs to know commands it can and should run, what tangent is, what its role is, where to look for information (hint run tangent commands mostly) and be told to read the area note basically (this essentially acts as a system prompt). Anything more than that is overkill. Tell it how to do its job which is organise info in the vault and organise worker agents.
 
+> You can also show their area route to the root, e.g. neara/pgande/autodesign. They need to read the note from each of those for upwards context. Each area needs a main note. And we probably need some more design about how to keep the area note clean and where information should actually go. I want the area note to be like a system prompt: repositories, branches, commands, things it should know every time, what skills are available. The skills should be in that prompt, generated from the skill- slugs, just the names and descriptions (same as regular agent stuff).
+
 ## What the memos ask for, in one list
 
 1. Start a Goal fast, without the brain: pick the Area, pick the harness, go. When it finishes, it can tell the brain.

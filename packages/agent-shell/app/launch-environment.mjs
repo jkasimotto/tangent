@@ -12,15 +12,39 @@ export function fencedBlock(text, tag) {
   return match ? match[1] : null;
 }
 
+/** The registry block tags Tangent reads, newest first. Only the newest is written. */
+export const HARNESS_REGISTRY_TAG = "tangent.harnesses.v2";
+const HARNESS_REGISTRY_TAGS = [HARNESS_REGISTRY_TAG, "tangent.harnesses.v1"];
+
+/**
+ * The optional per-harness conversation fields (ADR-0042). `resume` renders
+ * the command that reopens one conversation, `sessionIdArg` is appended at
+ * launch with a fresh id, and `transcripts` is the folder the harness writes
+ * its conversations to. Each is a string template with `{id}` where the
+ * conversation id goes and, for `resume`, `{command}` for the launch line.
+ */
+const CONVERSATION_FIELDS = ["resume", "sessionIdArg", "transcripts"];
+
+/** The first problem with one harness entry's conversation fields, or null. */
+function conversationFieldProblem(harness) {
+  for (const field of CONVERSATION_FIELDS) {
+    if (harness[field] === undefined || harness[field] === null) continue;
+    if (typeof harness[field] !== "string") return `harness "${harness.id}" ${field} must be a string`;
+    if (field !== "transcripts" && !harness[field].includes("{id}")) return `harness "${harness.id}" ${field} must contain {id}`;
+  }
+  return null;
+}
+
 /**
  * Parses the machine-wide harness registry from the tree-root Document
  * (~/.tangent/trees/harnesses.md). Returns { modelSets, harnesses } on
  * success, { error } when the block is malformed, and null when the file
- * has no registry block at all.
+ * has no registry block at all. A v1 block reads as v2 with no resume fields.
  */
 export function parseHarnessRegistry(text) {
-  const raw = fencedBlock(text, "tangent.harnesses.v1");
-  if (raw === null) return null;
+  const tag = HARNESS_REGISTRY_TAGS.find((candidate) => fencedBlock(text, candidate) !== null);
+  if (!tag) return null;
+  const raw = fencedBlock(text, tag);
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -38,6 +62,8 @@ export function parseHarnessRegistry(text) {
     if (harness.effortSet && !Array.isArray(effortSets[harness.effortSet])) {
       return { error: `harness "${harness.id}" references unknown effort set "${harness.effortSet}"` };
     }
+    const problem = conversationFieldProblem(harness);
+    if (problem) return { error: problem };
   }
   for (const options of Object.values(modelSets)) {
     for (const model of options ?? []) {
@@ -145,6 +171,8 @@ export function validateHarnessRegistry(registry) {
     if (harness.effortSet && !Array.isArray(effortSets[harness.effortSet])) {
       return `harness "${harness.id}" references unknown effort set "${harness.effortSet}"`;
     }
+    const problem = conversationFieldProblem(harness);
+    if (problem) return problem;
   }
   for (const [name, options] of Object.entries(modelSets)) {
     const ids = new Set();
@@ -173,9 +201,10 @@ export function validateHarnessRegistry(registry) {
  * existing fenced block, or appends one to a new or blockless file.
  */
 export function upsertHarnessRegistry(text, registry) {
-  const block = "```tangent.harnesses.v1\n" + JSON.stringify(registry, null, 2) + "\n```";
-  if (fencedBlock(text, "tangent.harnesses.v1") !== null) {
-    return String(text).replace(/```tangent\.harnesses\.v1\s*\n[\s\S]*?\n```/, block);
+  const block = "```" + HARNESS_REGISTRY_TAG + "\n" + JSON.stringify(registry, null, 2) + "\n```";
+  const existing = HARNESS_REGISTRY_TAGS.find((tag) => fencedBlock(text, tag) !== null);
+  if (existing) {
+    return String(text).replace(new RegExp("```" + existing.replace(/\./g, "\\.") + "\\s*\\n[\\s\\S]*?\\n```"), block);
   }
   const base = String(text ?? "").trim() || "# Harnesses\n\nThis Document is the machine-wide harness registry. Every Area inherits it. Edit it here or through the Agent Shell harness editor.";
   return `${base}\n\n${block}\n`;

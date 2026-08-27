@@ -52,3 +52,42 @@ test("legacy Deferred never escapes the Goal detail read model", () => {
   assert.equal(detail.goal.status, "parked");
   assert.equal(detail.commands.find((command) => command.id === "start").reason, "This Goal is parked.");
 });
+
+test("Goal detail says how each attempt is resumed", () => {
+  const registry = { harnesses: [
+    { id: "claude-otto", command: "claude-otto", resume: "{command} --resume {id}", sessionIdArg: "--session-id {id}" },
+    { id: "codex", command: "codex", resume: "codex resume {id}", transcripts: "~/.codex/sessions" },
+    { id: "agy", command: "agy" },
+  ] };
+  const queue = {
+    revision: 3,
+    currentAssignmentId: "assignment-3",
+    steps: [
+      { id: "assignment-1", index: 1, instruction: "Design.", status: "complete", attempts: [{
+        id: "attempt-1", session: "designer", cwd: "/work/design", startedAt: "2026-08-27T01:00:00.000Z", endedAt: "2026-08-27T02:00:00.000Z",
+        resolvedLaunch: { ref: { harness: "claude-otto", model: "opus-5", effort: null }, command: "claude-otto --model claude-opus-5" },
+        providerSession: { provider: "claude-otto", id: "conv-1" }, contextFill: { usedTokens: 158000, windowTokens: 1000000 },
+      }] },
+      { id: "assignment-2", index: 2, instruction: "Build.", status: "complete", attempts: [{
+        id: "attempt-2", session: "builder", cwd: "/work/build", startedAt: "2026-08-27T02:00:00.000Z", endedAt: "2026-08-27T03:00:00.000Z",
+        resolvedLaunch: { ref: { harness: "codex", model: "sol", effort: "high" }, command: "codex --model gpt-5.6-sol" }, providerSession: null,
+      }] },
+      { id: "assignment-3", index: 3, instruction: "Review.", status: "running", session: "reviewer", attempts: [{
+        id: "attempt-3", session: "reviewer", cwd: "/work/review", startedAt: "2026-08-27T03:00:00.000Z", endedAt: null,
+        resolvedLaunch: { ref: { harness: "agy", model: null, effort: null }, command: "agy" }, providerSession: null,
+      }] },
+    ],
+  };
+  const detail = projectGoalDetail({
+    goal: { file: "otto/test/goal-resume.md", slug: "resume", status: "active", session: "reviewer" },
+    queue,
+    sessions: [{ name: "reviewer", goal: "otto/test/goal-resume.md", state: "working" }],
+    registry,
+  });
+  const [first, second, third] = detail.attempts.map((attempt) => attempt.resume);
+  assert.deepEqual(first, { live: false, session: "designer", cwd: "/work/design", harness: "claude-otto", conversationId: "conv-1", command: "claude-otto --model claude-opus-5 --resume conv-1", contextFill: { usedTokens: 158000, windowTokens: 1000000 } });
+  assert.equal(second.command, null, "codex has no id at launch, so no command until one is found");
+  assert.equal(second.conversationId, null);
+  assert.equal(third.live, true, "a live attempt is attached, not resumed");
+  assert.equal(third.command, null, "a harness without resume has no Resume verb");
+});

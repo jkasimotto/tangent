@@ -1,4 +1,5 @@
 import { normalizeGoalRecord, normalizeGoalStatus } from "./goal-lifecycle.mjs";
+import { resumeCommand } from "./harness-conversation.mjs";
 
 /**
  * Builds the complete Goal reader model from authoritative server inputs.
@@ -12,6 +13,7 @@ export function projectGoalDetail({
   sessions = [],
   relatedDocuments = null,
   commands = null,
+  registry = null,
 } = {}) {
   if (!goal?.file) throw new Error("Goal detail needs one Goal record.");
   const normalizedGoal = normalizeGoalRecord(goal);
@@ -35,6 +37,7 @@ export function projectGoalDetail({
     ...assignments.flatMap((assignment) => [assignment.session, ...(assignment.attempts ?? []).map((attempt) => attempt.session)]),
   ].filter(Boolean));
   const relatedSessions = sessions.filter((session) => sessionNames.has(session.name) || session.goal === normalizedGoal.file);
+  const liveNames = new Set(sessions.map((session) => session.name));
   const attempts = assignments.flatMap((assignment) => (assignment.attempts ?? []).map((attempt) => ({
     assignmentId: assignment.id,
     assignmentIndex: assignment.index,
@@ -43,6 +46,7 @@ export function projectGoalDetail({
     ...structuredClone(attempt),
     resolvedLaunch: attempt.resolvedLaunch ?? null,
     current: assignment.id === currentAssignment?.id && attempt.id === currentAttempt?.id,
+    resume: attemptResume(attempt, registry, liveNames),
   })));
   const dependencies = {
     prerequisites,
@@ -66,6 +70,26 @@ export function projectGoalDetail({
       session: currentAttempt?.session ?? currentAssignment.session ?? normalizedGoal.session ?? null,
     } : null,
     commands: normalizeCommands(commands ?? defaultGoalCommands(normalizedGoal, dependencies, currentAssignment, currentAttempt)),
+  };
+}
+
+/**
+ * How one attempt is resumed (ADR-0042): attach while its session lives, else
+ * the harness's resume command with the attempt's conversation id. `command`
+ * is null when the harness has no `resume` or no id was recorded.
+ */
+function attemptResume(attempt, registry, liveNames) {
+  const harnessId = attempt?.resolvedLaunch?.ref?.harness ?? null;
+  const harness = (registry?.harnesses ?? []).find((entry) => entry.id === harnessId) ?? null;
+  const live = Boolean(attempt?.session && liveNames.has(attempt.session) && !attempt.endedAt);
+  return {
+    live,
+    session: attempt?.session ?? null,
+    cwd: attempt?.cwd ?? null,
+    harness: harnessId,
+    conversationId: attempt?.providerSession?.id ?? null,
+    command: resumeCommand(harness, { command: attempt?.resolvedLaunch?.command ?? "", id: attempt?.providerSession?.id ?? "" }),
+    contextFill: attempt?.contextFill ?? null,
   };
 }
 

@@ -13,7 +13,7 @@ import { SEND_ALIAS_HINT, parseWorkerReportOption, workerHandoverResultLine } fr
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   // Boolean flags never consume the token after them.
-  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status"], boolean: ["continue", "own", "confirm", "start", "verify"] });
+  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status"], boolean: ["continue", "own", "confirm", "start", "verify", "conversations"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
   // `tangent goal <subcommand> --help` prints that subcommand's own flags:
@@ -367,7 +367,8 @@ async function showCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const slug = requiredString(args._[1], "tangent goal show requires <slug>.");
   const goal = await requireGoal(server, slug);
-  const detail = await vaultFetch(server, `/api/goals/detail?goal=${encodeURIComponent(goal.file)}`);
+  const lookup = booleanArg(args.conversations) ? "&conversations=1" : "";
+  const detail = await vaultFetch(server, `/api/goals/detail?goal=${encodeURIComponent(goal.file)}${lookup}`);
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(detail, null, 2));
     return;
@@ -392,6 +393,51 @@ async function showCommand(args: Args): Promise<void> {
     const current = assignments.find((item) => item.id === queue.currentAssignmentId) ?? assignments.find((item) => ["running", "waiting", "stopped"].includes(String(item.status ?? "")));
     if (current) console.log(`current agent: ${current.session ?? "none"} (${current.status ?? "unknown"})`);
   }
+  for (const line of attemptLines(Array.isArray(detail.attempts) ? detail.attempts : [])) console.log(line);
+}
+
+type AttemptView = {
+  session?: string | null;
+  cwd?: string | null;
+  resolvedLaunch?: { ref?: { harness?: string; model?: string | null; effort?: string | null } | null; command?: string } | null;
+  contextFill?: { usedTokens?: number; windowTokens?: number } | null;
+  resume?: {
+    live?: boolean;
+    conversationId?: string | null;
+    command?: string | null;
+    found?: Array<{ id?: string }>;
+    contextFill?: { usedTokens?: number; windowTokens?: number } | null;
+  } | null;
+};
+
+/** One `used of window` reading in thousands, or the reason there is none. */
+function contextFillText(fill: { usedTokens?: number; windowTokens?: number } | null | undefined): string {
+  if (!fill || typeof fill.usedTokens !== "number") return "not seen";
+  const window = typeof fill.windowTokens === "number" && fill.windowTokens > 0 ? ` of ${Math.round(fill.windowTokens / 1000)}k` : "";
+  return `${Math.round(fill.usedTokens / 1000)}k${window}`;
+}
+
+/**
+ * The per-attempt lines of `tangent goal show` (ADR-0042): session, folder,
+ * harness, conversation id, the exact resume command, and the last context
+ * fill seen. A brain or Julian copies the resume line as it is.
+ */
+function attemptLines(attempts: AttemptView[]): string[] {
+  if (!attempts.length) return [];
+  const lines = ["attempts:"];
+  attempts.forEach((attempt, index) => {
+    const resume = attempt.resume ?? {};
+    const ref = attempt.resolvedLaunch?.ref;
+    const harness = ref?.harness ? [ref.harness, ref.model, ref.effort].filter(Boolean).join("/") : attempt.resolvedLaunch?.command ?? "unknown";
+    lines.push(`  ${index + 1}. session ${attempt.session ?? "none"}${resume.live ? " (live)" : ""}`);
+    lines.push(`     cwd: ${attempt.cwd ?? "unknown"}`);
+    lines.push(`     harness: ${harness}`);
+    lines.push(`     conversation: ${resume.conversationId ?? "not recorded"}`);
+    if ((resume.found?.length ?? 0) > 1) lines.push(`     found: ${resume.found!.map((item) => item.id).join(", ")} (two match, pass one to resume)`);
+    lines.push(`     resume: ${resume.command ?? "none"}`);
+    lines.push(`     context: ${contextFillText(resume.contextFill ?? attempt.contextFill)}`);
+  });
+  return lines;
 }
 
 /**

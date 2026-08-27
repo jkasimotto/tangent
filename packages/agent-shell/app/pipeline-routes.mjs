@@ -9,6 +9,7 @@ export function createPipelineRoutes(operations) {
     ["POST /api/pipelines/edit", edit],
     ["POST /api/pipelines/mutate", mutate],
     ["POST /api/goals/attempts/replace", replaceAttempt],
+    ["POST /api/goals/attempts/resume", resumeAttempt],
   ]);
 
   /** Handles one matching request and reports whether this router owned it. */
@@ -105,6 +106,18 @@ export function createPipelineRoutes(operations) {
           ...(result.code ? { code: result.code } : {}),
           ...(result.pipeline ? { pipeline: result.pipeline } : {}),
         });
+  }
+
+  /** Attaches a live attempt or opens a new session with its resume command typed. */
+  async function resumeAttempt(request, response) {
+    const body = await readJson(request);
+    const result = await operations.resumeAttempt(String(body.goal ?? ""), {
+      attemptId: String(body.attemptId ?? ""),
+      conversationId: String(body.conversationId ?? ""),
+    });
+    sendJson(response, result.status, result.status === 200
+      ? { status: result.state, session: result.session ?? null, command: result.command ?? null }
+      : { error: result.error, ...(result.found ? { found: result.found } : {}) });
   }
 
   /** Replaces one Goal attempt after its successor is ready. */

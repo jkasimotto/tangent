@@ -119,7 +119,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
   async function saveRegistry(input) {
     if (!repository || !commit) throw new Error("launch catalog is read-only");
     const next = {
-      version: 1,
+      version: 2,
       modelSets: input.modelSets ?? {},
       ...(input.effortSets && Object.keys(input.effortSets).length ? { effortSets: input.effortSets } : {}),
       harnesses: input.harnesses ?? [],

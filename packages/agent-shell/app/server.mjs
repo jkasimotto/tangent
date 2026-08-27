@@ -72,6 +72,7 @@ import { createVaultProjectionController } from "./vault-projection-controller.m
 import { startEventLoopWatchdog } from "./event-loop-watchdog.mjs";
 import { uniqueSessionName } from "./session-names.mjs";
 import { withDefaultModel } from "./agent-command.mjs";
+import { findCodexRollouts, launchWithConversation, newConversation, resumeCommand } from "./harness-conversation.mjs";
 import { clearGoalCleanup, readAllGoalCleanups, readGoalCleanup, writeGoalCleanup } from "./goal-cleanup-record.mjs";
 import { appendJournalEntry, appendMilestone, emergencyStartProblem, exportLegacyAudit, journalFiles, querySubtreeMilestones, readMilestones } from "./area-brain-domain.mjs";
 import { materialOperationEvents, markOperationEventDelivered, readOperationEvents, writeOperationEvents } from "./operation-events.mjs";
@@ -2773,6 +2774,11 @@ async function startPipelineStep(record, index, trace = null) {
   step = record.steps[index - 1];
   trace?.mark("step launch disclosed", { launch: step.launchDisclosure.launch });
   const attemptId = randomUUID();
+  // The conversation id is chosen here, before the session exists, for a
+  // harness that takes one at launch (ADR-0042). A continued session keeps
+  // the conversation it already has.
+  const stepHarness = await registryHarness(step.launch?.harness);
+  const conversation = continuedSession ? source.attempts?.at(-1)?.providerSession ?? null : newConversation(stepHarness);
   let immutableTarget = null;
   if (continuedSession) {
     const goals = await readAreaGoals(record.area);
@@ -2801,7 +2807,7 @@ async function startPipelineStep(record, index, trace = null) {
       phase: "execute",
       approved: true,
       launch: true,
-      command: step.command,
+      command: launchWithConversation(stepHarness, step.command, conversation),
       label: step.label,
       ref: launchRef(step.launch),
       path: step.path,
@@ -2832,6 +2838,8 @@ async function startPipelineStep(record, index, trace = null) {
     },
     cwd: folder.cwd,
     cwdSource: folder.source,
+    providerSession: conversation ? structuredClone(conversation) : null,
+    contextFill: null,
     startedAt: step.startedAt,
     endedAt: null,
     report: null,
@@ -2843,6 +2851,19 @@ async function startPipelineStep(record, index, trace = null) {
   await writePipeline(PIPELINES_ROOT, record);
   trace?.mark("pipeline step persisted", { session: step.session });
   return { status: 200, session: step.session, index, pipeline: record };
+}
+
+/** One registry harness entry by id, or null when unknown or the registry is broken. */
+async function registryHarness(harnessId) {
+  if (!harnessId) return null;
+  const registry = await launchCatalog.registry();
+  if (registry.error) return null;
+  return registry.harnesses.find((entry) => entry.id === harnessId) ?? null;
+}
+
+/** True when two context fill readings differ. */
+function contextFillChanged(before, after) {
+  return (before?.usedTokens ?? null) !== (after?.usedTokens ?? null) || (before?.windowTokens ?? null) !== (after?.windowTokens ?? null);
 }
 
 /** Creates the record for one Goal and starts its first step. */
@@ -4051,6 +4072,13 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
         stopped.push(step.index);
         continue;
       }
+      // The last context fill seen while live stays on the attempt, so a
+      // dead attempt still says how full its conversation was (D22).
+      const liveAttempt = step.attempts?.findLast?.((item) => item.session === step.session);
+      if (liveAttempt && live.context && contextFillChanged(liveAttempt.contextFill, live.context)) {
+        liveAttempt.contextFill = { usedTokens: live.context.usedTokens, windowTokens: live.context.windowTokens, at: new Date().toISOString() };
+        changed = true;
+      }
       const shellExit = workerShellExitNotice(record, step, live);
       if (shellExit && shellExitNoticed.get(key) !== shellExit.sourceId) {
         try {
@@ -4266,7 +4294,7 @@ async function routeBrainNotice(area, text, { idempotencyKey = null, sender = nu
 const WORKER_REFUSED_ROUTES = new Set([
   "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/edit", "/api/goals/start",
   "/api/goals/depend", "/api/goals/undepend", "/api/goals/accept", "/api/goals/understanding", "/api/goals/cleanup",
-  "/api/pipelines/append", "/api/pipelines/control", "/api/pipelines/edit", "/api/pipelines/mutate", "/api/goals/attempts/replace",
+  "/api/pipelines/append", "/api/pipelines/control", "/api/pipelines/edit", "/api/pipelines/mutate", "/api/goals/attempts/replace", "/api/goals/attempts/resume",
   "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/idea/new", "/api/document/resolve", "/api/document",
   "/api/brains/start", "/api/brains/stop", "/api/brains/handover", "/api/brains/requests", "/api/brains/requests/withdraw",
   "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control",
@@ -5802,6 +5830,7 @@ const pipelineRoutes = createPipelineRoutes({
   edit: editPipelineStep,
   mutate: mutatePipelineAssignments,
   replaceAttempt: replaceGoalAttempt,
+  resumeAttempt: resumeGoalAttempt,
 });
 
 /** Rebuilds an opening prompt without hiding otherwise usable durable context. */
@@ -6422,7 +6451,7 @@ const launchRoutes = createLaunchRoutes({
 });
 
 /** Reads the complete Goal model used by both the Vim reader and the CLI. */
-async function readGoalDetail(file) {
+async function readGoalDetail(file, { conversations = false } = {}) {
   const requested = String(file ?? "").trim();
   const goalIndex = await goalsByFile();
   let rawGoal = goalIndex.get(requested);
@@ -6433,26 +6462,92 @@ async function readGoalDetail(file) {
   }
   if (!rawGoal) return { status: 404, error: `no goal ${requested}` };
   const goalFile = rawGoal.file;
-  const [projection, markdown, queue, sessions] = await Promise.all([
+  const [projection, markdown, queue, sessions, registry] = await Promise.all([
     vaultIndex(),
     readFile(path.join(TREES_ROOT, goalFile), "utf8"),
     readPipeline(PIPELINES_ROOT, rawGoal.area, rawGoal.slug),
     listSessions(),
+    launchCatalog.registry(),
   ]);
   const enriched = projection.areas
     .flatMap((area) => area.goals ?? [])
     .find((goal) => goal.file === goalFile) ?? rawGoal;
   const goal = normalizeGoalRecord({ ...rawGoal, ...enriched });
-  return {
-    status: 200,
-    value: projectGoalDetail({
-      goal,
-      markdown,
-      queue,
-      sessions,
-      relatedDocuments: goal.documents ?? [],
-    }),
-  };
+  const validRegistry = registry.error ? null : registry;
+  const detail = projectGoalDetail({
+    goal,
+    markdown,
+    queue,
+    sessions,
+    relatedDocuments: goal.documents ?? [],
+    registry: validRegistry,
+  });
+  if (conversations) await attachFoundConversations(detail, validRegistry);
+  return { status: 200, value: detail };
+}
+
+/**
+ * Finds the conversation of every attempt that got no id at launch (codex)
+ * by its folder and start time, on request only (D22). Every match is
+ * listed; one match also fills the resume command.
+ */
+async function attachFoundConversations(detail, registry) {
+  for (const attempt of detail.attempts) {
+    if (attempt.providerSession?.id) continue;
+    const harness = (registry?.harnesses ?? []).find((entry) => entry.id === attempt.resolvedLaunch?.ref?.harness);
+    if (!harness?.transcripts || !attempt.cwd || !attempt.startedAt) continue;
+    const found = await findCodexRollouts({ transcripts: harness.transcripts, cwd: attempt.cwd, startedAt: attempt.startedAt });
+    attempt.resume.found = found;
+    if (found.length === 1) {
+      attempt.resume.conversationId = found[0].id;
+      attempt.resume.command = resumeCommand(harness, { command: attempt.resolvedLaunch?.command ?? "", id: found[0].id });
+    }
+  }
+}
+
+/**
+ * Resumes one attempt (D23). A live attempt is attached, so the caller opens
+ * its session. A dead attempt gets a new owned tmux session of kind `resume`
+ * in the attempt's folder with the resume command typed and never submitted.
+ * The session carries no Goal, so a finished Goal can be resumed and nothing
+ * rebinds the Goal to it.
+ */
+async function resumeGoalAttempt(goalFile, { attemptId = "", conversationId = "" } = {}) {
+  const goal = (await goalsByFile()).get(goalFile);
+  if (!goal) return { status: 404, error: `no goal file ${goalFile}` };
+  const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+  const attempts = (record?.steps ?? []).flatMap((step) => step.attempts ?? []);
+  const attempt = attemptId ? attempts.find((item) => item.id === attemptId) : attempts.at(-1);
+  if (!attempt) return { status: 404, error: attemptId ? `no attempt ${attemptId} on ${goal.slug}` : `${goal.slug} has no attempts` };
+  const sessions = await listSessions();
+  if (attempt.session && sessions.some((session) => session.name === attempt.session)) {
+    return { status: 200, state: "live", session: attempt.session, command: null };
+  }
+  const harness = await registryHarness(attempt.resolvedLaunch?.ref?.harness);
+  if (!harness?.resume) return { status: 409, error: `harness ${attempt.resolvedLaunch?.ref?.harness ?? "(unknown)"} has no resume command in harnesses.md` };
+  let id = String(conversationId || attempt.providerSession?.id || "");
+  if (!id && harness.transcripts && attempt.cwd && attempt.startedAt) {
+    const found = await findCodexRollouts({ transcripts: harness.transcripts, cwd: attempt.cwd, startedAt: attempt.startedAt });
+    if (found.length === 1) id = found[0].id;
+    else if (found.length > 1) return { status: 409, error: `${found.length} conversations match this attempt: ${found.map((item) => item.id).join(", ")}. Pass conversationId.`, found };
+  }
+  if (!id) return { status: 409, error: `attempt ${attempt.id} has no conversation id to resume` };
+  const command = resumeCommand(harness, { command: attempt.resolvedLaunch?.command ?? "", id });
+  if (!attempt.cwd || !existsSync(attempt.cwd)) return { status: 409, error: `the attempt's folder ${attempt.cwd || "(none)"} does not exist` };
+  const sessionName = normName(`${attempt.session || goal.slug}--resume`).slice(0, 60);
+  if (sessions.some((session) => session.name === sessionName)) return { status: 200, state: "resumed", session: sessionName, command };
+  const occupied = await sessionOwnership.inspect(sessionName);
+  if (occupied.state === "live") return { status: 409, error: terminationError(sessionName, occupied.instanceId ? { state: "foreign", instanceId: occupied.instanceId } : { state: "legacy" }) };
+  await createOwnedTmuxSession(sessionName, ["-d", "-s", sessionName, "-c", attempt.cwd]);
+  await execFileAsync("tmux", ["set-option", "-t", sessionName, "@tangent_kind", "resume"]);
+  await execFileAsync("tmux", ["set-option", "-t", sessionName, "@tangent_area", goal.area]);
+  await execFileAsync("tmux", ["set-option", "-t", sessionName, "@tangent_cwd", attempt.cwd]);
+  await execFileAsync("tmux", ["set-option", "-t", sessionName, "@tangent_work_title", `Resume ${attempt.session || goal.slug}`]);
+  await execFileAsync("tmux", ["set-option", "-t", sessionName, "@tangent_launch_command", command]);
+  // Let the login shell finish drawing its prompt, then type and never submit.
+  await sleep(700);
+  await typeInto(sessionName, command, false);
+  return { status: 200, state: "resumed", session: sessionName, command };
 }
 
 /** Retires or detaches one parked Goal only after its status commit. */
@@ -6558,7 +6653,7 @@ async function reopenGoalExecution(goal, body, operationId) {
 const workMutationRoutes = createWorkMutationRoutes({
   /** Projects one complete Goal reader from vault and runtime authority. */
   async detail(body) {
-    try { return await readGoalDetail(body.goal ?? body.file); }
+    try { return await readGoalDetail(body.goal ?? body.file, { conversations: ["1", "true"].includes(String(body.conversations ?? "")) }); }
     catch (error) { return serverError(error); }
   },
   /** Records Julian's understanding of one Goal. */

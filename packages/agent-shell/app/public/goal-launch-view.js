@@ -765,7 +765,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   /** Saves the edited registry for every Area, then returns to the caller view. */
   async function saveHarnesses() {
     const draft = structuredClone(state.harnessDraft ?? { modelSets: {}, harnesses: [] });
-    draft.version = 1;
+    draft.version = 2;
     draft.harnesses = (draft.harnesses ?? []).filter((harness) => (harness.label ?? "").trim() || (harness.command ?? "").trim());
     const harnessIds = new Set(draft.harnesses.map((harness) => harness.id).filter(Boolean));
     for (const harness of draft.harnesses) {

@@ -1172,13 +1172,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
-   * The desk fill label ("310k"), shown only once a session's carried context
-   * reaches the handover threshold; below it the row shows nothing
-   * (design-worker-context-handover D7, principle 3).
+   * The desk fill label ("310k"), shown on every row whose pane reports its
+   * carried context (ADR-0042, D23). A pane with no readable fill shows nothing.
    */
   function deskFillLabel(context) {
-    if (!context || !state.contextHandoverTokens) return "";
-    if (context.usedTokens < state.contextHandoverTokens) return "";
+    if (!context || typeof context.usedTokens !== "number") return "";
     return `${Math.round(context.usedTokens / 1000)}k`;
   }
 

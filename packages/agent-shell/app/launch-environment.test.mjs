@@ -274,3 +274,52 @@ test("a model can narrow the effort choices offered by its harness", () => {
   assert.match(resolveLaunch(registry, { harness: "codex", model: "luna", effort: "ultra" }).error, /unknown effort/);
   assert.equal(validateHarnessRegistry({ ...registry, modelSets: { codex: [{ id: "bad", effortSet: "missing" }] } }), 'model "bad" references unknown effort set "missing"');
 });
+
+const V2_NOTE = `# Harnesses
+
+\`\`\`tangent.harnesses.v2
+{
+  "version": 2,
+  "modelSets": {},
+  "harnesses": [
+    { "id": "claude-otto", "label": "Claude · Otto", "command": "claude-otto", "resume": "{command} --resume {id}", "sessionIdArg": "--session-id {id}", "transcripts": "~/.claude-otto/projects" },
+    { "id": "codex", "label": "Codex", "command": "codex", "resume": "codex resume {id}", "transcripts": "~/.codex/sessions" },
+    { "id": "agy", "label": "Agy", "command": "agy" }
+  ]
+}
+\`\`\`
+`;
+
+test("a v1 registry reads as v2 with no resume fields", () => {
+  const parsed = parseHarnessRegistry(REGISTRY_NOTE);
+  assert.equal(parsed.error, undefined);
+  assert.equal(parsed.harnesses.every((harness) => harness.resume === undefined && harness.sessionIdArg === undefined), true);
+});
+
+test("a v2 registry keeps resume, sessionIdArg, and transcripts per harness", () => {
+  const parsed = parseHarnessRegistry(V2_NOTE);
+  assert.equal(parsed.error, undefined);
+  const claude = parsed.harnesses.find((harness) => harness.id === "claude-otto");
+  assert.equal(claude.resume, "{command} --resume {id}");
+  assert.equal(claude.sessionIdArg, "--session-id {id}");
+  assert.equal(claude.transcripts, "~/.claude-otto/projects");
+  assert.equal(parsed.harnesses.find((harness) => harness.id === "codex").sessionIdArg, undefined);
+  assert.equal(parsed.harnesses.find((harness) => harness.id === "agy").resume, undefined);
+  assert.equal(validateHarnessRegistry(parsed), null);
+});
+
+test("resume and sessionIdArg templates must carry the conversation id", () => {
+  assert.match(validateHarnessRegistry({ harnesses: [{ id: "x", command: "x", resume: "x --resume" }] }), /resume must contain \{id\}/);
+  assert.match(validateHarnessRegistry({ harnesses: [{ id: "x", command: "x", sessionIdArg: "--session-id" }] }), /sessionIdArg must contain \{id\}/);
+  assert.match(parseHarnessRegistry('```tangent.harnesses.v2\n{"harnesses": [{"id": "x", "command": "x", "transcripts": 3}]}\n```').error, /transcripts must be a string/);
+});
+
+test("saving a registry replaces a v1 block with a v2 block and keeps the fields", () => {
+  const registry = { ...parseHarnessRegistry(V2_NOTE), version: 2 };
+  const written = upsertHarnessRegistry(REGISTRY_NOTE, registry);
+  assert.equal(written.includes("tangent.harnesses.v1"), false);
+  assert.match(written, /```tangent\.harnesses\.v2\n/);
+  const reread = parseHarnessRegistry(written);
+  assert.equal(reread.harnesses.find((harness) => harness.id === "codex").resume, "codex resume {id}");
+  assert.equal(parseHarnessRegistry(upsertHarnessRegistry(written, registry)).harnesses.length, 3);
+});

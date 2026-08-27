@@ -26,6 +26,7 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 - `tangent area audit <area>` writes one detached compatibility audit.
 - `tangent goal create --area <area> --title <text> --done-when <text> ...` creates one Goal and optional Subgoals.
 - `tangent goal start <slug> [--step <instruction> --launch <ref> --path <directory>]...` starts work. A worker opens in the step's `--path`, else in the nearest `- Worktree:` or `- Repository:` line under `## Resources` in the Area note or a parent Area note. An Area with no folder is refused before any record is written. The refusal names the note to edit and the line to add. A `- Repository:` line that points into the vault binds only the Area that declares it. The start output prints the folder beside each step's harness, and the attempt records `cwd` and `cwdSource` (`step` or `area:<area>`).
+- `tangent goal show <slug>` prints each attempt's session, cwd, harness, conversation id, resume command, and last context fill (ADR-0042). `--conversations` finds a codex conversation by the attempt's folder and start time.
 - `tangent goal list [<area>]` and `tangent goal show <slug>` read Goals. The listing takes `--subtree`, a repeatable `--status`, `--changed-since` with the same window or date, and `--query`. The subtree scent counts what the same filters find in the child Areas and prints the command that reads them.
 - `tangent goal depend|undepend` edits advisory prerequisite links.
 - `tangent goal own|release` changes the Goal session binding without stealing a live owner.
@@ -123,6 +124,8 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 ## Main HTTP shapes
 
 - `POST /api/goals/start`: `{ file, steps?, caller?, recovery?, extraFiles? }`.
+- `POST /api/goals/attempts/resume`: `{ goal, attemptId?, conversationId? }`. A live attempt answers `status: "live"` with its session. A dead attempt answers `status: "resumed"` with a new `resume` session in the attempt's folder and the typed `command`. The harness needs `resume` in `harnesses.md` (ADR-0042).
+- `GET /api/goals/detail?goal=<file>[&conversations=1]`: the Goal reader model. Each attempt carries `resume: { live, session, cwd, harness, conversationId, command, contextFill }`. With `conversations=1`, attempts without a recorded id list what the transcript folder holds under `resume.found`.
 - `POST /api/goals/handover`: `{ session, text, report?, kind?, idempotencyKey? }`. `kind` is `note`, `done`, `blocked`, or `question`. A successful response includes the queue `pipeline` and its worker handover `receipt`.
 - `POST /api/agents/send` with `to: "brain"`: `{ to, from, text, kind? }`. The server resolves the worker's Goal queue and its brain. A caller that is not a worker gets 400.
 - `POST /api/pipelines/control`: `{ goal, action, step, caller, expectedRevision, idempotencyKey }`.

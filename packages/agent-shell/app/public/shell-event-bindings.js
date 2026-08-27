@@ -324,6 +324,16 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return true;
   }
 
+  /** Whether this Goal has an attempt to resume: a live session or a recorded one. */
+  function resumeAvailabilityForGoal(goal) {
+    if (!goal) return { enabled: false, reason: "Choose a Goal row first." };
+    if (sessionForGoal(goal)) return { enabled: true, reason: null };
+    const record = pipelineRecordForGoal(goal);
+    const attempts = (record?.steps ?? []).flatMap((step) => step.attempts ?? []);
+    if (!attempts.length) return { enabled: false, reason: "This Goal has no attempts to resume." };
+    return { enabled: true, reason: null };
+  }
+
   /** Normalizes a queue or attempt launch snapshot to the chooser's IDs. */
   function replacementLaunchChoice(assignment, attempt) {
     const candidate = assignment?.launch ?? attempt?.launch ?? attempt?.resolvedLaunch?.launch ?? attempt?.resolvedLaunch?.ref ?? attempt?.resolvedLaunch;
@@ -738,10 +748,36 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return goal ? openChangeAgent(goal, opener) : showToast("Choose a Goal row first.");
     }
     if (id === "goalStatus") return goal ? openGoalStatus(goal) : showToast("Choose a Goal row first.");
+    if (id === "resumeAttempt") {
+      if (!goal) return showToast("Choose a Goal row first.");
+      const resumable = resumeAvailabilityForGoal(goal);
+      return resumable.enabled ? resumeGoalAttempt(goal.file) : showToast(resumable.reason);
+    }
     if (id === "editAssignments") return goal ? openGoalLaunchEditor(goal.file, row.querySelector("[data-work-object-actions], [data-work-row-title]")) : showToast("Choose a Goal row first.");
     if (id === "filter") return document.querySelector("#work-search")?.focus();
     if (id === "keys") return openWorkKeySheet();
     return undefined;
+  }
+
+  /**
+   * Resumes one attempt (ADR-0042): the server attaches a live attempt, or
+   * opens a new `resume` session with the command typed. Either way the
+   * session is entered. Without an attempt id the latest attempt is meant.
+   */
+  async function resumeGoalAttempt(goalFile, attemptId = "", conversationId = "") {
+    try {
+      const result = await post("/api/goals/attempts/resume", { goal: goalFile, ...(attemptId ? { attemptId } : {}), ...(conversationId ? { conversationId } : {}) });
+      await refresh();
+      paint(true);
+      const session = state.sessions.find((item) => item.name === result.session);
+      const typed = result.status === "resumed" ? `Resume command typed in ${result.session}. Press Enter there to submit it.` : "";
+      if (typed) showToast(typed);
+      if (session) return openSessionLayer(session, "agent");
+      return typed ? undefined : showToast(`Session ${result.session} is not live yet.`);
+    } catch (error) {
+      showToast(error.message);
+      return undefined;
+    }
   }
 
   /** Runs one guarded pipeline control from either pointer or object actions. */
@@ -788,12 +824,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const options = workCommandsFor({ palette: true }).filter((command) => {
       if (["commands", "openBrain", "stopBrain", "defaults", "messageBrain", "focus", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return Boolean(isArea);
       if (["readGoal", "changeAgent", "goalStatus"].includes(command.id)) return Boolean(goal);
+      if (command.id === "resumeAttempt") return Boolean(goal) && !isArea;
       return ["collapse", "expand", "filter", "keys"].includes(command.id);
     }).map((command) => {
       const tree = treeCommandAvailability(command.id, row);
       const replacement = command.id === "changeAgent" ? replacementTargetForGoal(goal) : null;
-      const enabled = command.id === "stopBrain" ? Boolean(brain?.live) : replacement ? replacement.enabled : tree.enabled;
-      const reason = command.id === "stopBrain" && !brain?.live ? "This Area has no live brain." : replacement ? replacement.reason : tree.reason;
+      const resumable = command.id === "resumeAttempt" ? resumeAvailabilityForGoal(goal) : null;
+      const enabled = command.id === "stopBrain" ? Boolean(brain?.live) : replacement ? replacement.enabled : resumable ? resumable.enabled : tree.enabled;
+      const reason = command.id === "stopBrain" && !brain?.live ? "This Area has no live brain." : replacement ? replacement.reason : resumable ? resumable.reason : tree.reason;
       return { value: command.id, key: command.keyDisplay, label: command.label, help: command.help, enabled, reason };
     });
     const record = goal ? pipelineRecordForGoal(goal) : null;
@@ -1554,6 +1592,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (documentHistory) return navigateDocumentHistory(documentHistory.dataset.documentHistory);
     if (target.closest("[data-leave-document]")) return leaveCurrentSurface();
     if (target.closest("[data-open-reader-agent]")) return openReaderAgent();
+    const resumeAttempt = target.closest("[data-resume-attempt]");
+    if (resumeAttempt) return resumeGoalAttempt(resumeAttempt.dataset.resumeGoal, resumeAttempt.dataset.resumeAttempt, resumeAttempt.dataset.resumeConversation ?? "");
     if (target.closest("[data-comment-new]")) return openCommentComposer();
     const commentStep = target.closest("[data-comment-step]");
     if (commentStep) return stepComment(Number(commentStep.dataset.commentStep));
@@ -2679,7 +2719,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         event.preventDefault();
         return executeWorkCommand(workCommandMatches(event, "collapse") ? "collapse" : "expand", current);
       }
-      if (workCommandMatches(event, "questions")) { event.preventDefault(); return executeWorkCommand("questions", current); }
+      if (workCommandMatches(event, "questions")) {
+        event.preventDefault();
+        // One key, two objects: `r` on a Goal row resumes its agent, on an
+        // Area header it reviews the brain's questions.
+        return executeWorkCommand(current?.dataset.goalAnchor ? "resumeAttempt" : "questions", current);
+      }
       if (workCommandMatches(event, "note")) { event.preventDefault(); return executeWorkCommand("note", current); }
       if (workCommandMatches(event, "focus")) { event.preventDefault(); return executeWorkCommand("focus", current); }
       if (workCommandMatches(event, "readGoal")) {

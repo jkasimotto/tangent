@@ -183,7 +183,16 @@ export const goalCommandSpec: CliCommandSpec = {
         jsonOption
       ]
     },
-    { name: "show", description: "Show one Goal's notes, status, done condition, dependencies, queue, and current agent", args: "<slug>", options: [serverOption, jsonOption] },
+    {
+      name: "show",
+      description: "Show one Goal's notes, status, done condition, dependencies, queue, current agent, and each attempt's resume command",
+      args: "<slug>",
+      options: [
+        { name: "conversations", description: "Find conversation ids not recorded at launch (codex) by the attempt's folder and start time" },
+        serverOption,
+        jsonOption,
+      ],
+    },
     {
       name: "depend",
       description: "Record advisory Goal prerequisites without blocking or reordering work",

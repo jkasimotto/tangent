@@ -163,6 +163,29 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
     return [launch.harness, launch.model, launch.effort].filter(Boolean).join("/") || launch.command || "";
   }
 
+  /** The `used of window` reading of one attempt's last context fill, or "". */
+  function attemptFillLabel(fill) {
+    if (!fill || typeof fill.usedTokens !== "number") return "";
+    const window = fill.windowTokens ? ` of ${Math.round(fill.windowTokens / 1000)}k` : "";
+    return `${Math.round(fill.usedTokens / 1000)}k${window}`;
+  }
+
+  /**
+   * One attempt in the Goal reader with its Resume verb (ADR-0042). The verb
+   * prints its key. A live attempt attaches. A dead one with a resume command
+   * opens a new session with the command typed. Nothing hidden: an attempt
+   * that cannot be resumed says why in place of the verb.
+   */
+  function attemptHistoryRow(item, goalFile) {
+    const resume = item.resume ?? {};
+    const facts = [item.status || item.assignmentStatus, goalLaunchLabel(item), attemptFillLabel(resume.contextFill ?? item.contextFill)].filter(Boolean).join(" · ");
+    const conversation = resume.conversationId ? `<code class="attempt-conversation" title="Conversation id">${escapeHtml(resume.conversationId)}</code>` : "";
+    const verb = resume.live || resume.command
+      ? `<button class="quiet-button" type="button" data-resume-attempt="${escapeHtml(item.id ?? "")}" data-resume-goal="${escapeHtml(goalFile)}"${resume.conversationId ? ` data-resume-conversation="${escapeHtml(resume.conversationId)}"` : ""} aria-keyshortcuts="r" title="${escapeHtml(resume.live ? "Attach to the live agent (r)" : `Open a new session in ${resume.cwd || "its folder"} with this typed: ${resume.command}`)}">${resume.live ? "Open agent" : "Resume"} <kbd>r</kbd></button>`
+      : `<small class="attempt-no-resume">${escapeHtml(resume.conversationId ? "No resume command for this harness." : "No conversation id recorded.")}</small>`;
+    return `<li><strong>${escapeHtml(item.session || item.id || "Attempt")}</strong><small>${escapeHtml(facts)}</small>${conversation}${item.current ? `<em>current</em>` : ""}${verb}</li>`;
+  }
+
   /** Renders one complete server-owned Goal read model above its Markdown. */
   function goalDetailPanel() {
     const detail = state.goalDetail;
@@ -189,7 +212,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         <section><h2>Dependencies</h2>${references.length ? `<ul>${references.map((item) => `<li><span>${escapeHtml(item.relation)}</span><strong>${escapeHtml(item.title || item.file || item.slug)}</strong><small>${escapeHtml(item.status || "open")}</small></li>`).join("")}</ul>` : `<p>None.</p>`}</section>
         <section><h2>Related Documents</h2>${relatedDocuments.length ? `<ul>${relatedDocuments.map((item) => { const record = typeof item === "string" ? { file: item, title: item } : item; return `<li><button type="button" data-open-document="${escapeHtml(record.file)}">${escapeHtml(record.title || record.file)}</button></li>`; }).join("")}</ul>` : `<p>None.</p>`}</section>
         <section><h2>Queue</h2>${assignments.length ? `<ol>${assignments.map((item, index) => `<li><span>${escapeHtml(String(item.index ?? index + 1))}</span><strong>${escapeHtml(item.instruction || item.label || "Assignment")}</strong><small>${escapeHtml([item.status, goalLaunchLabel(item)].filter(Boolean).join(" · "))}</small></li>`).join("")}</ol>` : `<p>No assignments.</p>`}</section>
-        <section><h2>Attempt history</h2>${attempts.length ? `<ol>${attempts.map((item) => `<li><strong>${escapeHtml(item.session || item.id || "Attempt")}</strong><small>${escapeHtml([item.status || item.assignmentStatus, goalLaunchLabel(item)].filter(Boolean).join(" · "))}</small>${item.current ? `<em>current</em>` : ""}</li>`).join("")}</ol>` : `<p>No attempts.</p>`}</section>
+        <section><h2>Attempt history</h2>${attempts.length ? `<ol>${attempts.map((item) => attemptHistoryRow(item, goal.file)).join("")}</ol>` : `<p>No attempts.</p>`}</section>
         <section><h2>Available actions</h2>${commands.length ? `<ul>${commands.map((item) => `<li class="${item.enabled === false ? "disabled" : ""}"><strong>${escapeHtml(item.label || item.id)}</strong>${item.reason ? `<small>${escapeHtml(item.reason)}</small>` : ""}</li>`).join("")}</ul>` : `<p>No actions reported.</p>`}</section>
       </div>
     </section>`;

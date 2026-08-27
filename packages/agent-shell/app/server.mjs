@@ -26,7 +26,7 @@ import { createPaneObserver } from "./pane-observer.mjs";
 import { classifyWorkingComposer } from "./pane-state.mjs";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 import { createObservationCache } from "./observation-cache.mjs";
-import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllPipelines, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
+import { PipelineMutationError, appendSteps, continuationSource, currentStep, endPipeline, goalBindingGoneFromSnapshot, mutatePendingAssignments, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllPipelines, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, reminderDue } from "./context-handover.mjs";
 import { messageBanner, noticeMessage, normalizeMessage } from "./agent-messages.mjs";
@@ -79,6 +79,10 @@ import { appendJournalEntry, appendMilestone, boundedBrainPrompt, BRAIN_STRUCTUR
 import { materialOperationEvents, markOperationEventDelivered, readOperationEvents, writeOperationEvents } from "./operation-events.mjs";
 import { agentShellInstanceId, createSessionOwnership, SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 import { appendWorkerHandoverReceipt, pendingWorkerHandoverReceipts, recordWorkerHandoverNotice, workerHandoverReceipt } from "./worker-handover-receipt.mjs";
+import { projectGoalDetail } from "./goal-detail.mjs";
+import { goalStatusChange, normalizeGoalRecord, normalizeGoalStatus } from "./goal-lifecycle.mjs";
+import { newAttemptReplacement, readAllAttemptReplacements, readAttemptReplacement, sameAttemptReplacementRequest, transitionAttemptReplacement, unsettledAttemptReplacements, writeAttemptReplacement } from "./goal-attempt-replacement.mjs";
+import { GoalExecutionTransitionError, attachLateSourceEvidence, parkCurrentGoalAttempt, promoteReadyReplacement, reopenParkedGoalQueue } from "./goal-execution-transition.mjs";
 
 const rawExecFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = Number(process.env.TANGENT_TMUX_COMMAND_TIMEOUT_MS ?? 10_000);
@@ -188,6 +192,9 @@ const PIPELINES_ROOT = process.env.TANGENT_PIPELINES_ROOT ?? path.join(os.homedi
 const CONTINUATIONS_ROOT = process.env.TANGENT_CONTINUATIONS_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "continuations");
 // Recoverable failures from retiring workers of finished Goals.
 const GOAL_CLEANUPS_ROOT = process.env.TANGENT_GOAL_CLEANUPS_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "goal-cleanups");
+// Idempotent attempt replacement operations stay outside the vault beside
+// the queue records whose immutable attempt history they change.
+const ATTEMPT_REPLACEMENTS_ROOT = process.env.TANGENT_ATTEMPT_REPLACEMENTS_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "attempt-replacements");
 // One JSON record per exact Area brain: logical lifecycle, founding
 // instruction, checkpoint, launch, and runtime attempt diagnostics.
 const BRAINS_ROOT = process.env.TANGENT_BRAINS_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "brains");
@@ -281,14 +288,14 @@ async function loadSessions() {
     const { stdout } = await runTmuxObservation([
       "list-sessions",
       "-F",
-      `#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_launch_ref}\t#{@tangent_pipeline}\t#{@tangent_step}\t#{@tangent_brain}\t#{@tangent_generation}\t#{${SESSION_OWNER_OPTION}}`,
+      `#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_launch_ref}\t#{@tangent_pipeline}\t#{@tangent_step}\t#{@tangent_brain}\t#{@tangent_generation}\t#{@tangent_assignment}\t#{@tangent_attempt}\t#{${SESSION_OWNER_OPTION}}`,
     ]);
     const sessions = stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel, launchIds, pipeline, step, brain, generation, instanceId] = line.split("\t");
+        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel, launchIds, pipeline, step, brain, generation, assignment, attempt, instanceId] = line.split("\t");
         return {
           name,
           cwd,
@@ -311,6 +318,8 @@ async function loadSessions() {
           step: step ? Number(step) : null,
           brain: brain || null,
           generation: generation ? Number(generation) : null,
+          assignment: assignment || null,
+          attempt: attempt || null,
           instanceId: instanceId || null,
           owned: instanceId === INSTANCE_ID,
           isChat: name === CHAT_SESSION,
@@ -773,7 +782,7 @@ async function readAreaGoals(area) {
     if (!["goal", "outcome"].includes(fm.type)) continue;
     const slug = f.replace(/^(?:goal|outcome)-/, "").slice(0, -".md".length);
     const mtime = await stat(path.join(TREES_ROOT, area, f)).then((s) => s.mtimeMs, () => 0);
-    const status = fm.status || "open";
+    const status = normalizeGoalStatus(fm.status || "open");
     goals.push({
       mtime,
       area,
@@ -1167,7 +1176,7 @@ async function editGoalFile(file, { status, session, title, doneWhen, state, und
   let text = await readFile(abs, "utf8");
   if (status !== undefined) {
     text = withFrontmatterLine(text, "status", status);
-    if (["done", "dropped"].includes(status)) {
+    if (["done", "dropped", "parked"].includes(status)) {
       text = withFrontmatterLine(text, "session", null);
       text = withFrontmatterLine(text, "waiting_on", null);
     }
@@ -1278,7 +1287,7 @@ async function setAreaStatus(area, status, tmuxSession) {
   await vaultRepository.writeMarkdown(file, next);
   await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
   await vaultCommit([file], `update: ${area} area ${status === "done" ? "done" : "reopened"}`, area, tmuxSession);
-  const openGoals = (await readAreaGoalsDeep(area)).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
+  const openGoals = (await readAreaGoalsDeep(area)).filter((goal) => !["done", "dropped", "parked"].includes(goal.status));
   return { file, status, openGoals: openGoals.length };
 }
 
@@ -1498,7 +1507,7 @@ async function finishGoalExecutions({ goalFiles, reason, sessions = null }) {
   const removedNames = new Set([...previouslyRemoved, ...removed, ...alreadyAbsent]);
   const releasedGoals = [];
   for (const goal of byFile.values()) {
-    if (targets.has(goal.file) || !goal.session || !removedNames.has(goal.session) || ["done", "dropped"].includes(goal.status)) continue;
+    if (targets.has(goal.file) || !goal.session || !removedNames.has(goal.session) || ["done", "dropped", "parked"].includes(goal.status)) continue;
     await writeGoalBinding(goal.file, { status: "open", session: null });
     releasedGoals.push(goal.file);
   }
@@ -2257,12 +2266,12 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
  * The path option gives the new pane one exact directory instead of the
  * Area repository; a pipeline step passes its own.
  */
-async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", ref = "", path: workingDirectory = "", extraSlugs = [], pipeline = null, continuation = null, onPrimed = null, trace = null } = {}) {
+async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", ref = "", path: workingDirectory = "", extraSlugs = [], pipeline = null, continuation = null, attemptId = "", deferBinding = false, onPrimed = null, trace = null } = {}) {
   const areaGoals = await readAreaGoals(area);
   trace?.mark("spawn area goals ready", { goals: areaGoals.length });
   const o = areaGoals.find((t) => t.slug === slug);
   if (!o) return { status: 404, error: `no goal "${slug}" on ${area}` };
-  if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
+  if (["done", "dropped", "parked"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
   const sessions = await listSessions();
   trace?.mark("spawn sessions ready", { sessions: sessions.length });
   // Extra Goals ride along in the same session: same Area only, still open,
@@ -2270,7 +2279,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   const liveNames = new Set(sessions.map((s) => s.name));
   const extras = [...new Set(extraSlugs)]
     .map((extraSlug) => areaGoals.find((t) => t.slug === extraSlug))
-    .filter((extra) => extra && extra.slug !== slug && !["done", "dropped"].includes(extra.status));
+    .filter((extra) => extra && extra.slug !== slug && !["done", "dropped", "parked"].includes(extra.status));
   const baseName = normName(`${area.split("/").pop()}--${slug}`).slice(0, 60);
   const phaseName = pipeline ? pipeline.sessionName : continuation ? continuation.sessionName : phase === "collaborate" ? normName(`${baseName}--collaborate`).slice(0, 60) : baseName;
   const ownExtras = extras.filter((extra) => !extra.session || !liveNames.has(extra.session) || [o.session, baseName, phaseName].includes(extra.session));
@@ -2330,7 +2339,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   const dir = workingDirectory || (await areaDirectory(area)) || path.join(TREES_ROOT, area);
   // No command: tmux runs the login shell, so aliases (claude-otto) resolve
   // and the session outlives whatever agent is started in it.
-  await createOwnedTmuxSession(phaseName, ["-d", "-s", phaseName, "-c", dir]);
+  const immutableTarget = await createOwnedTmuxSession(phaseName, ["-d", "-s", phaseName, "-c", dir]);
   trace?.mark("tmux session created", { session: phaseName });
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_area", area]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_goal", o.file]);
@@ -2343,11 +2352,15 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   if (pipeline) {
     await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_pipeline", o.file]);
     await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_step", String(pipeline.index)]);
+    await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_assignment", String(pipeline.record.steps[pipeline.index - 1]?.id ?? "")]);
+    if (attemptId) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_attempt", attemptId]);
   }
   try {
     const owned = [o, ...ownExtras];
-    for (const goal of owned) await writeGoalBinding(goal.file, { status: "active", session: phaseName });
-    await vaultCommit(owned.map((goal) => goal.file), `update: ${area} ${owned.length === 1 ? `goal ${slug}` : `${owned.length} goals`} active`, area, phaseName);
+    if (!deferBinding) {
+      for (const goal of owned) await writeGoalBinding(goal.file, { status: "active", session: phaseName });
+      await vaultCommit(owned.map((goal) => goal.file), `update: ${area} ${owned.length === 1 ? `goal ${slug}` : `${owned.length} goals`} active`, area, phaseName);
+    }
   } catch (err) {
     console.error("goal binding:", err.message ?? err);
   }
@@ -2375,7 +2388,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   if (launch) await primeNewSession();
   else primeNewSession();
   trace?.mark("session primed", { session: phaseName, awaited: launch });
-  return { status: 200, session: phaseName };
+  return { status: 200, session: phaseName, target: immutableTarget };
 }
 
 /**
@@ -2435,7 +2448,7 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
     }) : null;
     if (closedCleanup?.releasedGoals.length) await vaultCommit(closedCleanup.releasedGoals, "update: release Goals from finished worker", closed[0].area, null);
     for (const t of byFile.values()) {
-      if (["done", "dropped"].includes(t.status)) continue;
+      if (["done", "dropped", "parked"].includes(t.status)) continue;
       if (t.session && !live.has(t.session) && !(await sessionOwnership.ownsRecorded(t.session))) continue;
       // The Goal file's own mtime is when its binding was last written: a
       // binding fresher than the sessions snapshot above is not stopped.
@@ -2505,7 +2518,7 @@ async function withGoalInfo(sessions) {
 // shell is the explicit /api/goals/start; everything else — clicking,
 // scoping, selecting — is side-effect free.
 
-const CLOSED_GOAL = new Set(["done", "dropped", "deferred"]);
+const CLOSED_GOAL = new Set(["done", "dropped", "parked"]);
 
 /** Every goal in the vault keyed by its vault-relative file path. */
 async function goalsByFile() {
@@ -2775,26 +2788,37 @@ async function startPipelineStep(record, index, trace = null) {
   trace?.mark("step sessions ready", { sessions: sessions.length });
   const liveNames = new Set(sessions.map((item) => item.name));
   const extraSlugs = (record.extraFiles ?? []).map((extra) => byFile.get(extra)).filter((extra) => extra && extra.area === o.area).map((extra) => extra.slug);
-  const source = step.continueFrom ? record.steps[step.continueFrom - 1] : null;
+  const source = continuationSource(record, step);
   await discloseAssignmentLaunch(record, step);
   // writePipeline canonicalizes assignments in place. Reacquire the stored
   // assignment before recording runtime state, or later writes mutate the
   // detached pre-canonicalization object and leave the queue pending.
   step = record.steps[index - 1];
   trace?.mark("step launch disclosed", { launch: step.launchDisclosure.launch });
+  const attemptId = randomUUID();
+  let immutableTarget = null;
   if (source?.session && liveNames.has(source.session)) {
     const goals = await readAreaGoals(record.area);
     const extras = extraSlugs.map((extraSlug) => goals.find((goal) => goal.slug === extraSlug)).filter(Boolean);
     const prompt = await pipelineStepPrompt(record.area, o, record, index, extras, source.session, trace);
     messages.queue(source.session, { from: "tangent", area: record.area, text: prompt, banner: false, queuedAt: new Date().toISOString() });
     await execFileAsync("tmux", ["set-option", "-t", "=" + source.session + ":", "@tangent_step", String(index)]).catch(() => {});
+    await execFileAsync("tmux", ["set-option", "-t", "=" + source.session + ":", "@tangent_assignment", step.id]).catch(() => {});
+    await execFileAsync("tmux", ["set-option", "-t", "=" + source.session + ":", "@tangent_attempt", attemptId]).catch(() => {});
+    const inspected = await sessionOwnership.inspect(source.session);
+    if (inspected.state === "live" && inspected.instanceId === INSTANCE_ID) immutableTarget = inspected.target;
     if (o.status !== "active" || o.session !== source.session) {
       await writeGoalBinding(o.file, { status: "active", session: source.session });
       await vaultCommit([o.file], `update: ${record.area} goal ${record.slug} active`, record.area, source.session);
     }
     step.session = source.session;
   } else {
-    if (source) step.continueFrom = null; // the earlier session is gone: fall back to fresh
+    if (source) {
+      // The stable reference is the durable contract. When its live process is
+      // gone, clear both the stable value and its legacy display projection.
+      step.continueFromAssignmentId = null;
+      step.continueFrom = null;
+    }
     const sessionName = pipelineStepSessionName(record, index, liveNames);
     const result = await spawnGoalSession(record.area, record.slug, {
       phase: "execute",
@@ -2806,20 +2830,28 @@ async function startPipelineStep(record, index, trace = null) {
       path: step.path,
       extraSlugs,
       pipeline: { record, index, sessionName },
+      attemptId,
       trace,
     });
     if (result.status !== 200) return result;
     step.session = result.session;
+    immutableTarget = result.target ?? null;
   }
   step.status = "running";
   step.startedAt = new Date().toISOString();
   step.endedAt = null;
   record.instanceId = INSTANCE_ID;
   step.attempts = [...(step.attempts ?? []), {
-    id: randomUUID(),
+    id: attemptId,
     kind: step.nextAttemptKind ?? "managed",
     session: step.session,
     instanceId: INSTANCE_ID,
+    target: immutableTarget,
+    resolvedLaunch: {
+      ref: step.launch ? structuredClone(step.launch) : null,
+      command: step.command,
+      label: step.label,
+    },
     startedAt: step.startedAt,
     endedAt: null,
     report: null,
@@ -2838,7 +2870,7 @@ async function startPipeline(file, { steps, extraFiles = [], start = true, attem
   const byFile = await goalsByFile();
   const o = byFile.get(file);
   if (!o) return { status: 404, error: `no goal file ${file}` };
-  if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
+  if (["done", "dropped", "parked"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
   const existingQueue = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
   if (existingQueue && !pipelineFinished(existingQueue)) return { status: 409, error: "this Goal already has an authoritative queue" };
   const sessions = await listSessions();
@@ -3035,6 +3067,42 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
     return settled.status === 200
       ? { status: 200, state: "repeated", next: null, pipeline: record, receipt, repeated: true }
       : settled;
+  }
+
+  // A source process can finish typing after its ready replacement became
+  // current. Preserve that report on the ended source attempt, but never let
+  // it advance or mutate the replacement assignment.
+  for (const record of records) {
+    const step = record.steps.find((assignment) => assignment.attempts?.some((attempt) => attempt.session === sessionName
+      && attempt.endedAt
+      && attempt.disposition?.type === "replaced"));
+    const attempt = step?.attempts?.find((candidate) => candidate.session === sessionName
+      && candidate.endedAt
+      && candidate.disposition?.type === "replaced");
+    if (!step || !attempt) continue;
+    try {
+      const evidence = report
+        ? { ...structuredClone(report), text }
+        : { type: "untyped-evidence", text };
+      const attached = attachLateSourceEvidence(record, {
+        assignmentId: step.id,
+        attemptId: attempt.id,
+        evidence,
+        idempotencyKey: operationId,
+      });
+      if (!attached.repeated) await writePipeline(PIPELINES_ROOT, record);
+      await routeBrainNotice(
+        record.area,
+        `Goal ${record.slug}: late evidence from replaced source ${sessionName} was preserved on attempt ${attempt.id}; it did not advance the current assignment. ${brainMessageExcerpt(report?.summary || text)}`,
+        { idempotencyKey: `late-evidence:${operationId}` },
+      );
+      return { status: 200, state: attached.repeated ? "repeated" : "late-evidence", next: null, pipeline: record, repeated: attached.repeated };
+    } catch (error) {
+      if (error instanceof GoalExecutionTransitionError) {
+        return { status: 409, error: error.message, code: error.code, pipeline: error.pipeline ?? record };
+      }
+      throw error;
+    }
   }
 
   let found = await pipelineStepForSession(sessionName);
@@ -3335,7 +3403,7 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   if (options.caller) {
     caller = await liveBrainForSession(options.caller);
   }
-  if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
+  if (["done", "dropped", "parked"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
   if (!record) return { status: 404, error: "no pipeline on this goal" };
   const guarded = queueMutationGuard(record, options);
@@ -3398,6 +3466,436 @@ async function editPipelineStepUnlocked(goalFile, index, patch, options = {}) {
   await writePipeline(PIPELINES_ROOT, record);
   await recordCommittedCommand({ operation: "goal-assignment-edit", actorSession: options.caller, targetArea: o.area, goal: o.slug, operationId: options.idempotencyKey });
   return { status: 200, pipeline: record };
+}
+
+/** Validates one path field without changing any durable queue state. */
+function validatePendingAssignmentPath(value, label) {
+  if (value === null || value === undefined || String(value).trim() === "") return { value: null };
+  const requested = String(value).trim();
+  const directory = requested.replace(/^~(?=\/|$)/, os.homedir());
+  if (!path.isAbsolute(directory)) return { error: `${label}: path ${requested} is not an absolute directory` };
+  if (!existsSync(directory) || !statSync(directory).isDirectory()) return { error: `${label}: no directory ${directory}` };
+  return { value: directory };
+}
+
+/**
+ * Resolves all launch and path inputs in an assignment mutation before the
+ * queue clone changes. The queue stores the requested launch identity; this
+ * pass proves that identity resolves against the same registry snapshot.
+ */
+async function validatePendingAssignmentOperations(area, operations) {
+  const normalized = structuredClone(operations);
+  const warnings = [];
+  const defaultHarness = await areaHarnessId(area);
+  for (const [position, operation] of normalized.entries()) {
+    const target = operation?.type === "add" ? operation.assignment : operation?.type === "update" ? operation.patch : null;
+    if (!target || typeof target !== "object" || Array.isArray(target)) continue;
+    if (Object.hasOwn(target, "launch")) {
+      const chosen = await launchCatalog.requested({ choice: target.launch });
+      if (chosen.error) return { error: `operation ${position + 1}: ${chosen.error}`, status: 409 };
+      target.launch = {
+        harness: chosen.harness,
+        model: chosen.model ?? null,
+        effort: chosen.effort ?? null,
+      };
+      if (defaultHarness && chosen.harness !== defaultHarness) {
+        warnings.push(`operation ${position + 1}: --launch ${launchRef(target.launch)} differs from the default harness ${defaultHarness}.`);
+      }
+    }
+    if (Object.hasOwn(target, "path")) {
+      const located = validatePendingAssignmentPath(target.path, `operation ${position + 1}`);
+      if (located.error) return { error: located.error, status: 400 };
+      target.path = located.value;
+    }
+  }
+  return { operations: normalized, warnings };
+}
+
+/** Applies one atomic stable-ID mutation to the pending assignment suffix. */
+async function mutatePipelineAssignments(goalFile, operations, options = {}) {
+  return withGoalQueueMutation(goalFile, () => mutatePipelineAssignmentsUnlocked(goalFile, operations, options));
+}
+
+/** Performs one serialized assignment mutation and one durable write. */
+async function mutatePipelineAssignmentsUnlocked(goalFile, operations, options = {}) {
+  const goal = (await goalsByFile()).get(goalFile);
+  if (!goal) return { status: 404, error: `no goal file ${goalFile}` };
+  if (["done", "dropped", "parked"].includes(goal.status)) return { status: 409, error: `goal is ${goal.status}` };
+  const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+  if (!record) return { status: 404, error: "no pipeline on this goal" };
+  const operationId = String(options.idempotencyKey ?? "").trim();
+  if (!operationId) return { status: 400, code: "operation-required", error: "an operation ID is required", pipeline: record };
+  const prepared = await validatePendingAssignmentOperations(goal.area, operations);
+  if (prepared.error) return { status: prepared.status, error: prepared.error, pipeline: record };
+  try {
+    const result = mutatePendingAssignments(record, {
+      expectedRevision: options.expectedRevision,
+      operationId,
+      operations: prepared.operations,
+    });
+    if (!result.repeated) await writePipeline(PIPELINES_ROOT, record);
+    const assignmentIds = [...(result.added ?? []), ...(result.removed ?? []), ...(result.moved ?? [])];
+    await recordCommittedCommand({
+      operation: "goal-assignments-mutate",
+      actorSession: options.caller,
+      targetArea: goal.area,
+      goal: goal.slug,
+      assignment: assignmentIds.join(",") || "pending-suffix",
+      operationId,
+      result: result.repeated ? "repeated without another write" : "committed atomically",
+    });
+    return { status: 200, ...result, warnings: prepared.warnings };
+  } catch (error) {
+    if (!(error instanceof PipelineMutationError)) throw error;
+    const conflict = ["stale-revision", "assignment-history-immutable", "assignment-not-found", "duplicate-assignment", "queue-paused"].includes(error.code);
+    return {
+      status: conflict ? 409 : 400,
+      code: error.code,
+      error: String(error.message ?? error),
+      pipeline: error.pipeline ?? record,
+    };
+  }
+}
+
+/** Returns one current attempt's immutable live target after all tags match. */
+async function inspectCurrentGoalAttemptTarget(goal, record, assignment, attempt) {
+  const sessions = await listAllSessions({ fresh: true });
+  const live = sessions.find((session) => session.name === attempt.session);
+  if (!live) return { error: `source session ${attempt.session} is not live`, code: "source-absent" };
+  if (!live.owned) return { error: `source session ${attempt.session} is not owned by this Agent Shell`, code: "source-foreign" };
+  const expected = {
+    kind: "goal",
+    area: record.area,
+    goal: record.goal,
+    pipeline: record.goal,
+    step: assignment.index,
+  };
+  for (const [key, value] of Object.entries(expected)) {
+    if (String(live[key] ?? "") !== String(value)) {
+      return { error: `source session ${attempt.session} has ${key} ${live[key] ?? "(empty)"}, expected ${value}`, code: "source-target-mismatch" };
+    }
+  }
+  if (live.assignment && live.assignment !== assignment.id) {
+    return { error: `source session ${attempt.session} belongs to assignment ${live.assignment}`, code: "stale-assignment" };
+  }
+  if (live.attempt && live.attempt !== attempt.id) {
+    return { error: `source session ${attempt.session} belongs to attempt ${live.attempt}`, code: "stale-attempt" };
+  }
+  const inspected = await sessionOwnership.inspect(attempt.session);
+  if (inspected.state !== "live" || inspected.instanceId !== INSTANCE_ID) {
+    return { error: `source session ${attempt.session} failed its immutable ownership fence`, code: "source-target-mismatch" };
+  }
+  // Old queues predate the stable assignment and attempt tmux options. The
+  // complete older tag set above proves this exact process before backfill.
+  if (!live.assignment) await execFileAsync("tmux", ["set-option", "-t", inspected.target, "@tangent_assignment", assignment.id]);
+  if (!live.attempt) await execFileAsync("tmux", ["set-option", "-t", inspected.target, "@tangent_attempt", attempt.id]);
+  return {
+    target: {
+      instanceId: INSTANCE_ID,
+      area: record.area,
+      goal: record.goal,
+      assignmentId: assignment.id,
+      attemptId: attempt.id,
+      session: attempt.session,
+      target: inspected.target,
+      generation: null,
+    },
+  };
+}
+
+/** Gives one replacement a fresh tmux name without touching the source. */
+function replacementSessionName(record, liveNames) {
+  const base = normName(`${record.area.split("/").pop()}--${record.slug}`);
+  return uniqueSessionName(base, "-replacement", liveNames, 60);
+}
+
+/** Binds the Goal set to the ready replacement after queue promotion. */
+async function bindReplacementGoalSet(record, operation) {
+  const byFile = await goalsByFile();
+  const source = operation.sourceTarget.session;
+  const files = [record.goal, ...(record.extraFiles ?? [])]
+    .map((file) => byFile.get(file))
+    .filter((goal) => goal && !["done", "dropped", "parked"].includes(goal.status))
+    .filter((goal) => goal.file === record.goal || !goal.session || goal.session === source);
+  for (const goal of files) await writeGoalBinding(goal.file, { status: "active", session: operation.replacementTarget.session });
+  if (files.length) {
+    await vaultCommit(
+      files.map((goal) => goal.file),
+      `update: ${record.area} ${files.length === 1 ? `goal ${record.slug}` : `${files.length} goals`} moved to ready replacement`,
+      record.area,
+      operation.replacementTarget.session,
+    );
+  }
+  return files;
+}
+
+/**
+ * Retires only the immutable source target. A worker that still owns another
+ * Goal is detached and retagged instead, so shared work is never killed.
+ */
+async function retireReplacementSource(record, operation) {
+  const source = operation.sourceTarget;
+  const remaining = [...(await goalsByFile()).values()].find((goal) => goal.file !== record.goal
+    && goal.session === source.session
+    && !["done", "dropped", "parked"].includes(goal.status));
+  if (remaining) {
+    const inspected = await sessionOwnership.inspect(source.session);
+    if (inspected.state !== "live") return inspected.state === "absent"
+      ? { ok: true, sourceOutcome: { kind: "detached", detail: "source ended after replacement promotion" } }
+      : { ok: false, error: terminationError(source.session, inspected) };
+    if (inspected.instanceId !== source.instanceId || inspected.target !== source.target) {
+      return { ok: false, error: `source session ${source.session} no longer matches replacement operation ${operation.id}` };
+    }
+    await execFileAsync("tmux", ["set-option", "-t", source.target, "@tangent_goal", remaining.file]);
+    await execFileAsync("tmux", ["set-option", "-t", source.target, "@tangent_pipeline", ""]);
+    await execFileAsync("tmux", ["set-option", "-t", source.target, "@tangent_step", ""]);
+    await execFileAsync("tmux", ["set-option", "-t", source.target, "@tangent_assignment", ""]);
+    await execFileAsync("tmux", ["set-option", "-t", source.target, "@tangent_attempt", ""]);
+    messages.queue(source.session, {
+      from: "tangent",
+      area: record.area,
+      text: `Goal ${record.slug} moved to replacement ${operation.replacementTarget.session}. Keep this session alive only for Goal ${remaining.slug}.`,
+      banner: true,
+      queuedAt: new Date().toISOString(),
+    });
+    sessionObservation.invalidate();
+    return { ok: true, sourceOutcome: { kind: "detached", detail: `source kept for Goal ${remaining.slug}` } };
+  }
+  const stopped = await sessionOwnership.terminate(source.session, source.target);
+  if (["terminated", "absent"].includes(stopped.state)) {
+    armedSessions.delete(source.session);
+    await clearArmedPrompt(ARMED_ROOT, source.session).catch(() => {});
+    sessionObservation.invalidate();
+    return { ok: true, sourceOutcome: { kind: "retired", detail: stopped.state === "absent" ? "source was already absent" : "exact source target retired" } };
+  }
+  return { ok: false, error: terminationError(source.session, stopped) };
+}
+
+/** Finishes a ready replacement; every stage is restart-safe and idempotent. */
+async function settleReadyGoalReplacementUnlocked(goal, operation, readiness = null) {
+  let record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+  if (!record) return { status: 404, error: "no pipeline on this goal", operation };
+  try {
+    if (operation.status === "replacement-starting") {
+      if (!readiness) {
+        return { status: 200, state: operation.status, session: operation.replacementTarget?.session ?? null, operation, pipeline: record, requiresConfirmation: true };
+      }
+      transitionAttemptReplacement(operation, "replacement-ready", { readiness });
+      await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
+    }
+    if (operation.status === "replacement-ready") {
+      const promoted = promoteReadyReplacement(record, operation);
+      if (!promoted.repeated) await writePipeline(PIPELINES_ROOT, record);
+      await bindReplacementGoalSet(record, operation);
+      transitionAttemptReplacement(operation, "source-retiring");
+      await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
+    } else if (operation.status === "retirement-incomplete") {
+      transitionAttemptReplacement(operation, "source-retiring");
+      await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
+    }
+    if (operation.status === "source-retiring") {
+      const retired = await retireReplacementSource(record, operation);
+      if (retired.ok) transitionAttemptReplacement(operation, "complete", { sourceOutcome: retired.sourceOutcome });
+      else transitionAttemptReplacement(operation, "retirement-incomplete", { error: retired.error });
+      await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
+    }
+    await recordCommittedCommand({
+      operation: "goal-attempt-replace",
+      actorSession: operation.actor?.session,
+      targetArea: goal.area,
+      goal: goal.slug,
+      assignment: operation.assignmentId,
+      operationId: operation.id,
+      result: operation.status,
+    }).catch((error) => console.error("replacement audit:", error.message ?? error));
+    record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug) ?? record;
+    return {
+      status: operation.status === "retirement-incomplete" ? 409 : 200,
+      state: operation.status,
+      session: operation.replacementTarget?.session ?? null,
+      operation,
+      pipeline: record,
+      repeated: operation.status === "complete",
+      ...(operation.status === "retirement-incomplete" ? { error: operation.error, code: "retirement-incomplete" } : {}),
+    };
+  } catch (error) {
+    return {
+      status: ["stale-revision", "stale-assignment", "stale-attempt", "target-mismatch"].includes(error.code) ? 409 : 500,
+      code: error.code ?? "replacement-failed",
+      error: String(error.message ?? error),
+      operation,
+      pipeline: error.pipeline ?? record,
+    };
+  }
+}
+
+/** Records an asynchronous prompt receipt or startup failure. */
+async function recordReplacementReadiness(goalFile, operationId, ready) {
+  return withGoalQueueMutation(goalFile, async () => {
+    const goal = (await goalsByFile()).get(goalFile);
+    const operation = await readAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, goalFile, operationId);
+    if (!goal || !operation || operation.status !== "replacement-starting") return;
+    if (ready) {
+      await settleReadyGoalReplacementUnlocked(goal, operation, {
+        kind: "prompt-receipt",
+        receiptId: `prompt:${operation.replacementAttemptId}`,
+      });
+      return;
+    }
+    const target = operation.replacementTarget;
+    if (target) await sessionOwnership.terminate(target.session, target.target).catch(() => {});
+    transitionAttemptReplacement(operation, "failed", { error: "the replacement prompt was not delivered; the source stayed live" });
+    await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
+  });
+}
+
+/** Starts a successor and never retires the source before durable readiness. */
+async function replaceGoalAttempt(goalFile, options = {}) {
+  return withGoalQueueMutation(goalFile, () => replaceGoalAttemptUnlocked(goalFile, options));
+}
+
+/** Performs one serialized exact-attempt replacement request. */
+async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
+  const goal = (await goalsByFile()).get(goalFile);
+  if (!goal) return { status: 404, error: `no goal file ${goalFile}` };
+  if (["done", "dropped", "parked"].includes(goal.status)) return { status: 409, error: `goal is ${goal.status}` };
+  const operationId = String(options.operationId ?? "").trim();
+  if (!operationId) return { status: 400, code: "operation-required", error: "an operation ID is required" };
+  let record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+  if (!record) return { status: 404, error: "no pipeline on this goal" };
+  const request = {
+    operationId,
+    goal: goalFile,
+    assignmentId: options.assignmentId,
+    expectedAttemptId: options.expectedAttemptId,
+    expectedRevision: options.expectedRevision,
+    launch: options.launch,
+  };
+  const existing = await readAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, goalFile, operationId);
+  if (existing) {
+    let same = false;
+    try { same = sameAttemptReplacementRequest(existing, request); }
+    catch (error) { return { status: 400, code: error.code, error: error.message, operation: existing, pipeline: record }; }
+    if (!same) return { status: 409, code: "operation-conflict", error: `replacement operation ${operationId} names different inputs`, operation: existing, pipeline: record };
+    if (existing.status === "complete" || existing.status === "failed") {
+      return { status: existing.status === "complete" ? 200 : 409, state: existing.status, session: existing.replacementTarget?.session ?? null, operation: existing, pipeline: record, repeated: true };
+    }
+    const readiness = options.confirmed && existing.status === "replacement-starting"
+      ? { kind: "julian-confirmed", receiptId: `julian:${operationId}` }
+      : null;
+    return settleReadyGoalReplacementUnlocked(goal, existing, readiness);
+  }
+
+  const assignment = record.steps.find((item) => item.id === options.assignmentId);
+  const attempt = assignment?.attempts?.at(-1);
+  if (!assignment || !attempt) return { status: 409, code: "stale-assignment", error: "the requested assignment has no current attempt", pipeline: record };
+  const source = await inspectCurrentGoalAttemptTarget(goal, record, assignment, attempt);
+  if (source.error) return { status: 409, code: source.code, error: source.error, pipeline: record };
+  const chosen = await launchCatalog.requested({ choice: options.launch });
+  if (chosen.error || !chosen.command) return { status: 400, code: "launch-invalid", error: chosen.error ?? "replacement launch needs a harness", pipeline: record };
+  let operation;
+  try {
+    const actor = await commandProvenance(options.caller);
+    operation = newAttemptReplacement(record, {
+      ...request,
+      sourceTarget: source.target,
+      actor: { session: actor.session, area: actor.area },
+    });
+    await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
+  } catch (error) {
+    return { status: ["stale-revision", "stale-assignment", "stale-attempt", "target-mismatch"].includes(error.code) ? 409 : 400, code: error.code, error: error.message, pipeline: error.pipeline ?? record };
+  }
+
+  const liveNames = new Set((await listAllSessions({ fresh: true })).map((session) => session.name));
+  const sessionName = replacementSessionName(record, liveNames);
+  const replacementAttemptId = randomUUID();
+  let releasePersisted;
+  const persisted = new Promise((resolve) => { releasePersisted = resolve; });
+  /** Defers the prompt receipt until the starting target is durable. */
+  const onPrimed = (ready) => {
+    void persisted.then(() => recordReplacementReadiness(goalFile, operationId, ready))
+      .catch((error) => console.error("replacement readiness:", error.message ?? error));
+  };
+  let started;
+  try {
+    const goalIndex = await goalsByFile();
+    const extraSlugs = (record.extraFiles ?? []).map((file) => goalIndex.get(file)?.slug).filter(Boolean);
+    started = await spawnGoalSession(goal.area, goal.slug, {
+      phase: "execute",
+      approved: true,
+      launch: true,
+      command: chosen.command,
+      label: chosen.label,
+      ref: launchRef(options.launch),
+      path: assignment.path,
+      extraSlugs,
+      pipeline: { record, index: assignment.index, sessionName },
+      attemptId: replacementAttemptId,
+      deferBinding: true,
+      onPrimed,
+    });
+    if (started.status !== 200) throw new Error(started.error);
+    const replacementTarget = {
+      instanceId: INSTANCE_ID,
+      area: record.area,
+      goal: record.goal,
+      assignmentId: assignment.id,
+      attemptId: replacementAttemptId,
+      session: started.session,
+      target: started.target,
+      generation: null,
+    };
+    transitionAttemptReplacement(operation, "replacement-starting", {
+      replacementAttemptId,
+      replacementTarget,
+      resolvedLaunch: { ref: operation.launch, command: chosen.command, label: chosen.label },
+    });
+    await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
+    releasePersisted();
+  } catch (error) {
+    releasePersisted();
+    const inspected = await sessionOwnership.inspect(sessionName).catch(() => ({ state: "error" }));
+    if (inspected.state === "live" && inspected.instanceId === INSTANCE_ID) await sessionOwnership.terminate(sessionName, inspected.target).catch(() => {});
+    transitionAttemptReplacement(operation, "failed", { error: `replacement startup failed; source preserved: ${String(error.message ?? error)}` });
+    await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
+    return { status: 409, state: operation.status, code: "replacement-start-failed", error: operation.error, operation, pipeline: record };
+  }
+  await recordCommittedCommand({
+    operation: "goal-attempt-replace",
+    actorSession: options.caller,
+    targetArea: goal.area,
+    goal: goal.slug,
+    assignment: assignment.id,
+    operationId,
+    result: "replacement started; source preserved pending readiness",
+  }).catch((error) => console.error("replacement audit:", error.message ?? error));
+  if (options.confirmed) {
+    return settleReadyGoalReplacementUnlocked(goal, operation, { kind: "julian-confirmed", receiptId: `julian:${operationId}` });
+  }
+  return { status: 200, state: operation.status, session: started.session, operation, pipeline: record, requiresConfirmation: true };
+}
+
+/** Resumes only persisted replacement stages that are safe after a restart. */
+async function resumeAttemptReplacements() {
+  const pending = unsettledAttemptReplacements(await readAllAttemptReplacements(ATTEMPT_REPLACEMENTS_ROOT));
+  for (const stored of pending) {
+    await withGoalQueueMutation(stored.goal, async () => {
+      const operation = await readAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, stored.goal, stored.id);
+      if (!operation) return;
+      const goal = (await goalsByFile()).get(operation.goal);
+      if (!goal) return;
+      if (operation.status === "requested") {
+        transitionAttemptReplacement(operation, "failed", { error: "the controller restarted before a replacement target was durable; the source stayed live" });
+        await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
+        return;
+      }
+      if (["replacement-ready", "source-retiring", "retirement-incomplete"].includes(operation.status)) {
+        await settleReadyGoalReplacementUnlocked(goal, operation);
+      }
+      // replacement-starting deliberately waits for a persisted prompt
+      // receipt or Julian's explicit confirmation. Restart never guesses.
+    }).catch((error) => console.error("resume replacement:", error.message ?? error));
+  }
 }
 
 /**
@@ -3702,7 +4200,8 @@ async function commandProvenance(session) {
  * state mutation is already authoritative. This durable notice is its audit
  * event, even when the Area has no active brain generation.
  */
-async function recordCommittedCommand({ operation, actorSession = "", targetArea, goal = "", operationId = "", result = "committed" }) {
+async function recordCommittedCommand({ operation, actorSession = "", targetArea, goal = "", assignment = "", operationId = "", result = "committed" }) {
+  operationId = String(operationId || randomUUID()).slice(0, 128);
   const actor = await commandProvenance(actorSession);
   const subject = goal ? `Goal ${goal}` : `Area ${targetArea}`;
   const origin = actor.session ? `${actor.session}${actor.area ? ` (${actor.area})` : ""}` : "local Agent Shell caller";
@@ -3714,13 +4213,14 @@ async function recordCommittedCommand({ operation, actorSession = "", targetArea
     actorRole: actor.role,
     targetArea,
     goal: goal || null,
-    operationId: operationId || null,
+    assignment: assignment || null,
+    operationId,
     result,
   });
   return routeBrainNotice(
     targetArea,
-    `${subject}: command ${operation} ${result} by ${origin}.`,
-    { idempotencyKey: operationId ? `command:${operation}:${operationId}` : null },
+    `${subject}${assignment ? ` assignment ${assignment}` : ""}: command ${operation} ${result} by ${origin}.`,
+    { idempotencyKey: `command:${operation}:${operationId}` },
   );
 }
 
@@ -3934,7 +4434,7 @@ async function brainPrompt(record) {
   const noteFiles = areaNoteFiles(area);
   const repository = await areaDirectory(area);
   const instructions = repository ? await inheritedInstructionFiles(repository, repository).catch(() => []) : [];
-  const goals = (await readAreaGoals(area)).filter((goal) => !["done", "dropped"].includes(goal.status));
+  const goals = (await readAreaGoals(area)).filter((goal) => !["done", "dropped", "parked"].includes(goal.status));
   const areaPaths = flattenAreaPaths(await readTree(TREES_ROOT));
   const recent = await querySubtreeMilestones({ root: BRAINS_ROOT, area, areas: areaPaths, limit: 12 });
   const requests = openBrainRequests(await readBrainRequests(BRAINS_ROOT, area));
@@ -5623,6 +6123,8 @@ const pipelineRoutes = createPipelineRoutes({
   control: controlPipeline,
   append: appendPipelineSteps,
   edit: editPipelineStep,
+  mutate: mutatePipelineAssignments,
+  replaceAttempt: replaceGoalAttempt,
 });
 
 /** Rebuilds an opening prompt without hiding otherwise usable durable context. */
@@ -5932,7 +6434,7 @@ const shellStateRoutes = createShellStateRoutes({
   /** Returns one coherent live shell snapshot. */
   async snapshot() {
     const sessions = await listSessions();
-    const [pipelines, brains, revisions, rebuild] = await Promise.all([
+    const [pipelines, brains, revisions, rebuild, attemptReplacements] = await Promise.all([
       pipelinesView(sessions).catch(() => []),
       // Projection work runs in the replaceable controller and is cached; the
       // public gateway and terminal path remain independent while the shell
@@ -5940,6 +6442,7 @@ const shellStateRoutes = createShellStateRoutes({
       brainsView(sessions).catch(() => []),
       commitChanges.status().catch(() => ({ deployedCommit: commitChanges.deployedCommit, currentCommit: commitChanges.deployedCommit, commits: [] })),
       rebuildOperations.current().catch(() => null),
+      readAllAttemptReplacements(ATTEMPT_REPLACEMENTS_ROOT).then(unsettledAttemptReplacements).catch(() => []),
     ]);
     return {
       agent: agentCmd,
@@ -5955,6 +6458,7 @@ const shellStateRoutes = createShellStateRoutes({
       sessions,
       runtime: { instanceId: INSTANCE_ID, ownershipKey: SESSION_OWNER_OPTION, sessions: sessionObservation.status() },
       pipelines,
+      attemptReplacements,
       brains,
       contextHandoverTokens: CONTEXT_HANDOVER_TOKENS,
     };
@@ -6063,7 +6567,7 @@ const goalQueryRoutes = createGoalQueryRoutes({
     for (const slug of slugs) {
       const goal = bySlug.get(slug);
       if (!goal) return { status: 404, error: `no goal ${slug}` };
-      if (!releasing && ["done", "dropped"].includes(goal.status)) return { status: 409, error: `goal ${slug} is ${goal.status}` };
+      if (!releasing && ["done", "dropped", "parked"].includes(goal.status)) return { status: 409, error: `goal ${slug} is ${goal.status}` };
       if (goal.session && goal.session !== session && live.has(goal.session)) return { status: 409, error: `goal ${slug} is owned by ${goal.session}` };
       resolved.push(goal);
     }
@@ -6209,7 +6713,145 @@ const launchRoutes = createLaunchRoutes({
     } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
   },
 });
+
+/** Reads the complete Goal model used by both the Vim reader and the CLI. */
+async function readGoalDetail(file) {
+  const requested = String(file ?? "").trim();
+  const goalIndex = await goalsByFile();
+  let rawGoal = goalIndex.get(requested);
+  if (!rawGoal) {
+    const matches = [...goalIndex.values()].filter((goal) => goal.slug === requested);
+    if (matches.length > 1) return { status: 409, error: `goal ${requested} is ambiguous: ${matches.map((goal) => goal.file).join(", ")}` };
+    rawGoal = matches[0] ?? null;
+  }
+  if (!rawGoal) return { status: 404, error: `no goal ${requested}` };
+  const goalFile = rawGoal.file;
+  const [projection, markdown, queue, sessions] = await Promise.all([
+    vaultIndex(),
+    readFile(path.join(TREES_ROOT, goalFile), "utf8"),
+    readPipeline(PIPELINES_ROOT, rawGoal.area, rawGoal.slug),
+    listSessions(),
+  ]);
+  const enriched = projection.areas
+    .flatMap((area) => area.goals ?? [])
+    .find((goal) => goal.file === goalFile) ?? rawGoal;
+  const goal = normalizeGoalRecord({ ...rawGoal, ...enriched });
+  return {
+    status: 200,
+    value: projectGoalDetail({
+      goal,
+      markdown,
+      queue,
+      sessions,
+      relatedDocuments: goal.documents ?? [],
+    }),
+  };
+}
+
+/** Retires or detaches one parked Goal only after its status commit. */
+async function settleParkedGoalSession(goal, sourceTarget, operationId) {
+  const sourceSession = sourceTarget?.session;
+  if (!sourceSession) return { kind: "absent", detail: "the Goal had no source session" };
+  const sessions = await listAllSessions({ fresh: true });
+  const live = sessions.find((session) => session.name === sourceSession);
+  if (!live || !live.owned || live.kind !== "goal" || live.goal !== goal.file) {
+    return { kind: "preserved", detail: "the historical session no longer exactly owns this Goal" };
+  }
+  const inspected = await sessionOwnership.inspect(sourceSession);
+  if (inspected.state === "absent") return { kind: "retired", detail: "the exact source was already absent" };
+  if (inspected.state !== "live" || inspected.instanceId !== sourceTarget.instanceId || inspected.target !== sourceTarget.target) {
+    return { kind: "preserved", detail: "the live session failed its immutable ownership fence" };
+  }
+  const remaining = [...(await goalsByFile()).values()]
+    .find((candidate) => candidate.file !== goal.file
+      && candidate.session === sourceSession
+      && !["done", "dropped", "parked"].includes(candidate.status));
+  const nextGoal = remaining?.file ?? "";
+  if (!remaining) {
+    const stopped = await sessionOwnership.terminate(sourceSession, sourceTarget.target);
+    if (!["terminated", "absent"].includes(stopped.state)) {
+      return { kind: "preserved", detail: terminationError(sourceSession, stopped) };
+    }
+    armedSessions.delete(sourceSession);
+    await clearArmedPrompt(ARMED_ROOT, sourceSession).catch(() => {});
+    sessionObservation.invalidate();
+    return { kind: "retired", detail: "the exact sole Goal attempt was retired after the status commit" };
+  }
+  await execFileAsync("tmux", ["set-option", "-t", inspected.target, "@tangent_goal", nextGoal]);
+  await execFileAsync("tmux", ["set-option", "-t", inspected.target, "@tangent_assignment", ""]);
+  await execFileAsync("tmux", ["set-option", "-t", inspected.target, "@tangent_attempt", ""]);
+  messages.queue(sourceSession, {
+    from: "tangent",
+    area: goal.area,
+    text: remaining
+      ? `Goal ${goal.slug} was parked. Keep working only on Goal ${remaining.slug}; the parked Goal is no longer assigned to this session.`
+      : `Goal ${goal.slug} was parked.`,
+    banner: true,
+    queuedAt: new Date().toISOString(),
+    idempotencyKey: `park-detach:${operationId}`,
+  });
+  sessionObservation.invalidate();
+  return { kind: "detached", detail: `retagged to ${remaining.slug}` };
+}
+
+/** Parks a Goal queue and detaches only its exact current worker. */
+async function parkGoalExecution(goal, body, operationId) {
+  return withGoalQueueMutation(goal.file, async () => {
+    const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+    let sourceSession = goal.session ?? null;
+    let sourceTarget = null;
+    let transition = null;
+    if (record?.currentAssignmentId) {
+      const assignment = record.steps.find((item) => item.id === record.currentAssignmentId);
+      const attempt = assignment?.attempts?.at(-1);
+      if (!assignment || !attempt) return { status: 409, error: "the Goal queue has no exact current attempt", pipeline: record };
+      const inspected = await inspectCurrentGoalAttemptTarget(goal, record, assignment, attempt);
+      if (inspected.error) return { status: 409, code: inspected.code, error: inspected.error, pipeline: record };
+      sourceTarget = inspected.target;
+      try {
+        transition = parkCurrentGoalAttempt(record, {
+          assignmentId: assignment.id,
+          expectedAttemptId: attempt.id,
+          expectedRevision: body.expectedRevision ?? record.revision,
+          operationId,
+          reason: body.reason,
+        });
+      } catch (error) {
+        if (!(error instanceof GoalExecutionTransitionError)) throw error;
+        return { status: error.code === "stale-revision" ? 409 : 400, code: error.code, error: error.message, pipeline: error.pipeline ?? record };
+      }
+      sourceSession = transition.sourceSession ?? sourceSession;
+      if (!transition.repeated) await writePipeline(PIPELINES_ROOT, record);
+    }
+    return { status: 200, transition, sourceSession, sourceTarget, pipeline: record };
+  });
+}
+
+/** Reopens a parked Goal queue without selecting or launching work. */
+async function reopenGoalExecution(goal, body, operationId) {
+  return withGoalQueueMutation(goal.file, async () => {
+    const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+    if (!record || record.status !== "parked") return { status: 200, pipeline: record, repeated: false };
+    try {
+      const result = reopenParkedGoalQueue(record, {
+        expectedRevision: body.expectedRevision ?? record.revision,
+        operationId,
+      });
+      if (!result.repeated) await writePipeline(PIPELINES_ROOT, record);
+      return { status: 200, pipeline: record, repeated: result.repeated };
+    } catch (error) {
+      if (!(error instanceof GoalExecutionTransitionError)) throw error;
+      return { status: error.code === "stale-revision" ? 409 : 400, code: error.code, error: error.message, pipeline: error.pipeline ?? record };
+    }
+  });
+}
+
 const workMutationRoutes = createWorkMutationRoutes({
+  /** Projects one complete Goal reader from vault and runtime authority. */
+  async detail(body) {
+    try { return await readGoalDetail(body.goal ?? body.file); }
+    catch (error) { return serverError(error); }
+  },
   /** Records Julian's understanding of one Goal. */
   async understanding(body) {
     const file = String(body.file ?? "");
@@ -6315,19 +6957,19 @@ const workMutationRoutes = createWorkMutationRoutes({
     const goal = (await goalsByFile()).get(file);
     if (!goal) return { status: 404, error: `no goal file ${file}` };
     const fields = {};
+    let lifecycle = null;
     if (body.status !== undefined) {
-      if (!["open", "done", "dropped"].includes(body.status)) return { status: 400, error: `status must be open, done, or dropped, got "${body.status}"` };
-      fields.status = body.status;
-      if (body.status === "dropped") {
-        const reason = oneLine(body.reason);
-        if (!reason) return { status: 400, error: "give a brief reason before you mark this goal won't do" };
-        fields.wontDoReason = reason;
-      }
+      try { lifecycle = goalStatusChange(goal.status, body.status, body.reason); }
+      catch (error) { return { status: 400, error: String(error.message ?? error), code: error.code ?? "invalid-status" }; }
+      fields.status = lifecycle.status;
+      if (lifecycle.status === "dropped") fields.wontDoReason = lifecycle.reason;
     }
     for (const key of ["title", "doneWhen", "state"]) if (typeof body[key] === "string") fields[key] = body[key];
     if (!Object.keys(fields).length) return { status: 400, error: "nothing to edit" };
     try {
       let changed;
+      let execution = null;
+      const operationId = String(body.operationId ?? body.idempotencyKey ?? randomUUID()).trim().slice(0, 128) || randomUUID();
       if (fields.status === "done") {
         changed = await cascadeGoalDone(file, await goalsByFile());
         const remaining = { ...fields };
@@ -6340,15 +6982,29 @@ const workMutationRoutes = createWorkMutationRoutes({
         changed = [file, ...cleanup.releasedGoals];
         await closeRequestsForGoals([file], "goal-dropped");
         await recordGoalClosure(goal, "dropped", fields.wontDoReason);
+      } else if (fields.status === "parked") {
+        execution = await parkGoalExecution(goal, body, operationId);
+        if (execution.status !== 200) return { status: execution.status, value: { error: execution.error, code: execution.code, pipeline: execution.pipeline } };
+        await editGoalFile(file, fields);
+        changed = [file];
+      } else if (fields.status === "open" && normalizeGoalStatus(goal.status) === "parked") {
+        execution = await reopenGoalExecution(goal, body, operationId);
+        if (execution.status !== 200) return { status: execution.status, value: { error: execution.error, code: execution.code, pipeline: execution.pipeline } };
+        await editGoalFile(file, fields);
+        changed = [file];
       } else {
         await editGoalFile(file, fields);
         changed = [file];
       }
       if (!changed.includes(file)) changed.unshift(file);
-      const what = fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "open" ? "reopened" : "edited";
+      const what = fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "parked" ? "parked" : fields.status === "open" ? "reopened" : "edited";
       await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} ${what} in tree`, goal.area, body.session ? String(body.session) : null);
-      await recordCommittedCommand({ operation: fields.status === "done" ? "goal-done" : fields.status === "dropped" ? "goal-wont-do" : fields.status === "open" ? "goal-reopen" : "goal-edit", actorSession: body.session, targetArea: goal.area, goal: goal.slug });
-      return { status: 200, value: { ok: true } };
+      if (fields.status === "parked" && execution?.sourceTarget) {
+        execution.detached = await settleParkedGoalSession(goal, execution.sourceTarget, operationId)
+          .catch((error) => ({ kind: "preserved", detail: `Goal parked; exact worker retirement needs retry: ${String(error.message ?? error)}` }));
+      }
+      await recordCommittedCommand({ operation: fields.status === "done" ? "goal-done" : fields.status === "dropped" ? "goal-wont-do" : fields.status === "parked" ? "goal-park" : fields.status === "open" ? "goal-reopen" : "goal-edit", actorSession: body.session, targetArea: goal.area, goal: goal.slug, operationId });
+      return { status: 200, value: { ok: true, status: fields.status ?? lifecycle?.status ?? goal.status, ...(execution?.pipeline ? { pipeline: execution.pipeline } : {}), ...(execution?.detached ? { detached: execution.detached } : {}) } };
     } catch (error) {
       if (error.cleanup) return { status: 503, value: { error: error.message, cleanup: error.cleanup } };
       return serverError(error);
@@ -6379,6 +7035,7 @@ function serverError(error) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const operationId = String(req.headers["x-tangent-operation-id"] ?? randomUUID()).slice(0, 128);
+  req.tangentOperationId = operationId;
   res.setHeader("x-tangent-operation-id", operationId);
   try {
     if (url.pathname === "/api/health" && req.method === "GET") {
@@ -6481,6 +7138,7 @@ server.listen(PORT, HOST, () => {
   // harness had not left the shell yet.
   rearmPersistedPrompts().catch((err) => console.error("armed prompts:", err.message ?? err));
   backfillClosureMilestones().catch((err) => console.error("milestone backfill:", err.message ?? err));
+  resumeAttemptReplacements().catch((err) => console.error("replacement resume:", err.message ?? err));
 });
 
 if (IS_CONTROLLER) process.once("disconnect", () => process.exit(0));

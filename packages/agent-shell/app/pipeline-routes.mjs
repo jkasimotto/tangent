@@ -86,7 +86,7 @@ export function createPipelineRoutes(operations) {
     const result = await operations.mutate(String(body.goal ?? ""), Array.isArray(body.operations) ? body.operations : [], {
       caller: String(body.caller ?? ""),
       expectedRevision: body.expectedRevision,
-      idempotencyKey: String(body.operationId ?? body.idempotencyKey ?? ""),
+      idempotencyKey: String(body.operationId ?? body.idempotencyKey ?? request.tangentOperationId ?? ""),
     });
     sendJson(response, result.status, result.status === 200
       ? {
@@ -110,7 +110,7 @@ export function createPipelineRoutes(operations) {
       expectedAttemptId: String(body.expectedAttemptId ?? ""),
       expectedRevision: body.expectedRevision,
       launch: body.launch,
-      operationId: String(body.operationId ?? body.idempotencyKey ?? ""),
+      operationId: String(body.operationId ?? body.idempotencyKey ?? request.tangentOperationId ?? ""),
       caller: String(body.caller ?? ""),
       confirmed: body.confirmed === true,
     });

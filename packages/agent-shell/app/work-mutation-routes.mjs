@@ -20,8 +20,13 @@ export function createWorkMutationRoutes(operations) {
     const operation = routes.get(`${request.method} ${url.pathname}`);
     if (!operation) return false;
     const input = request.method === "GET" ? Object.fromEntries(url.searchParams) : await readJson(request);
+    if (request.method !== "GET" && !input.operationId && request.tangentOperationId) input.operationId = request.tangentOperationId;
     const result = await operations[operation](input);
-    sendJson(response, result.status, result.value ?? { error: result.error });
+    sendJson(response, result.status, result.value ?? {
+      error: result.error,
+      ...(result.code ? { code: result.code } : {}),
+      ...(result.pipeline ? { pipeline: result.pipeline } : {}),
+    });
     return true;
   }
 

@@ -127,7 +127,7 @@ async function startCommand(args: Args): Promise<void> {
   printLaunches(result);
   printLaunchWarnings(result);
   const session = result.session ? String(result.session) : "(no session)";
-  if (result.status === "queued") console.log(`queued ${slug} for its exact Area brain`);
+  if (result.status === "queued") console.log(`queued ${slug} in its authoritative Goal queue`);
   else if (steps.length) console.log(`started ${slug}: ${steps.length} step${steps.length === 1 ? "" : "s"}, step 1 in ${session}${recovery ? " (recovery)" : ""}`);
   else console.log(`started ${slug} in ${session}${recovery ? " (recovery)" : ""}`);
 }
@@ -280,14 +280,14 @@ function parseContinueFrom(value: string | undefined, stepIndex: number): number
 
 /**
  * Handles `tangent goal handover <facts...>`. A worker submits evidence or a
- * typed report; the exact Area brain controls every later attempt.
+ * typed report; the authoritative queue records it and notifies the Area.
  */
 async function handoverCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const session = await requireSession(args, "tangent goal handover");
   const text = args._.slice(1).map(String).join(" ").trim();
   if (!text) throw new Error("tangent goal handover needs the facts as text.");
-  if (booleanArg(args.continue)) throw new Error("--continue is retired. Submit a typed context-risk report; the exact Area brain starts any fresh attempt.");
+  if (booleanArg(args.continue)) throw new Error("--continue is retired. Submit a typed context-risk report; do not replace this worker from inside its own attempt.");
   const body: Record<string, unknown> = { session, text };
   const report = parseWorkerReportOption(args);
   if (report) body.report = report;

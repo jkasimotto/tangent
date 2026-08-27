@@ -224,7 +224,7 @@ export const goalCommandSpec: CliCommandSpec = {
         { name: "path", takesValue: true, description: "Any working directory for the step at the same position; repeatable; missing, or an empty --path=, means the Area repository" },
         { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
         { name: "kind", takesValue: true, description: "implementation or review; repeatable, one per step" },
-        { name: "recovery", description: "Emergency start through the Goal queue when the exact Area brain is impaired" },
+        { name: "recovery", description: "Emergency start through the Goal queue when automatic recovery is impaired" },
         { name: "session", takesValue: true, description: "Caller session; defaults to the current tmux session when available" },
         serverOption,
         jsonOption
@@ -246,7 +246,7 @@ export const goalCommandSpec: CliCommandSpec = {
     },
     {
       name: "handover",
-      description: "Submit this assignment's facts or tagged result to its authoritative queue. The exact Area brain controls later attempts.",
+      description: "Submit this assignment's facts or tagged result to its authoritative queue and notify the target Area.",
       args: "<facts...>",
       options: [
         { name: "session", takesValue: true, description: "The step's session name; defaults to the tmux session this command runs in" },

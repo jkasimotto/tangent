@@ -163,7 +163,7 @@ export interface GoalScope {
 }
 
 /**
- * Lists Goals and keeps the scope facts beside them. An exact-Area listing
+ * Lists Goals and keeps the scope facts beside them. An Area-scoped listing
  * reports how much work sits in child Areas, so a caller that finds nothing
  * learns where to look next instead of searching unrelated systems.
  */

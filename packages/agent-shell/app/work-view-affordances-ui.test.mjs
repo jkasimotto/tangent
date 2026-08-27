@@ -129,7 +129,7 @@ test("the caption prints the current row's keys from the same table as the ? she
   for (const kind of ["area", "goal", "definition", "none"]) {
     for (const entry of workCaptionKeys(kind)) {
       for (const id of entry.ids) assert.ok(sheet.has(id), `${kind} caption entry ${id} is a registered command`);
-      assert.equal(entry.keyDisplay, entry.ids.map((id) => sheet.get(id)).join("/"), "the caption prints the sheet's key");
+      assert.equal(entry.keyDisplay, entry.ids.map((id) => sheet.get(id)).join(entry.join), "the caption prints the sheet's key");
     }
   }
   assert.equal(workRowKind("area:otto/onboarding"), "area");

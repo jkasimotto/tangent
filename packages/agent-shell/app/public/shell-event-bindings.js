@@ -125,38 +125,68 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return visibleCursorRows().find((row) => row.dataset.workCursor === state.workCursor) ?? visibleCursorRows()[0] ?? null;
   }
 
-  /** Returns the exact Area whose visible header owns commands for this row. */
+  /**
+   * The nearest header row at or above one Work row: the row itself when it
+   * is a header, else the last header before it in its row group. A
+   * sub-Area header owns the rows under it, the top-level header owns the
+   * rest (work-view-sub-areas Decision 2).
+   */
+  function ownerHeaderRow(row) {
+    if (!row) return null;
+    if (row.classList.contains("work-group-row")) return row;
+    for (let item = row.previousElementSibling; item; item = item.previousElementSibling) {
+      if (item.classList.contains("work-group-row")) return item;
+    }
+    return null;
+  }
+
+  /** True when one header row carries the brain route that Area commands act through. */
+  function headerHasBrainRoute(header) {
+    return Boolean(header?.querySelector("[data-work-command='openBrain']"));
+  }
+
+  /** Returns the exact Area whose nearest header owns commands for this row. */
   function commandAreaForRow(row) {
-    const group = row?.closest?.("tbody[data-work-group]");
-    if (!group?.querySelector("[data-work-command='openBrain']")) return "";
-    return group.dataset.workGroup ?? "";
+    const header = ownerHeaderRow(row);
+    if (!headerHasBrainRoute(header)) return "";
+    return header.dataset.workArea ?? "";
   }
 
   /** Finds one pointer action in the exact Area header that owns this row. */
   function areaCommandPointer(row, selector) {
-    const group = row?.closest?.("tbody[data-work-group]");
+    const header = ownerHeaderRow(row);
     if (!commandAreaForRow(row)) return null;
-    return group?.querySelector(selector) ?? null;
+    return header?.querySelector(selector) ?? null;
   }
 
-  /** Moves the Work cursor between real Area headers, never synthetic groups. */
+  /** Every visible Area header, top-level and sub-Area, that carries a brain route. Other Areas has none. */
+  function visibleAreaHeaders() {
+    return visibleCursorRows(".work-group-row[data-work-cursor^='area:']").filter(headerHasBrainRoute);
+  }
+
+  /**
+   * Moves the Work cursor to the previous or next visible Area header,
+   * top-level or sub-Area, in document order, clamped at both ends
+   * (work-view-sub-areas Decision 4). A folded Area hides its sub-headers,
+   * so they are not visited. The synthetic Other Areas group is skipped.
+   */
   function moveAreaCursor(direction, row = cursorRow()) {
-    const allGroups = [...screen.querySelectorAll("tbody[data-work-group]")].filter((group) => !group.hidden);
-    const groups = allGroups.filter((group) => group.querySelector("[data-work-command='openBrain']"));
-    if (!groups.length) return false;
-    const currentGroup = row?.closest?.("tbody[data-work-group]");
-    const current = groups.indexOf(currentGroup);
+    const headers = visibleAreaHeaders();
+    if (!headers.length) return false;
+    const currentHeader = ownerHeaderRow(row);
+    const current = headers.indexOf(currentHeader);
     let target;
-    if (current >= 0) target = groups[Math.max(0, Math.min(groups.length - 1, current + Math.sign(direction)))];
+    if (current >= 0) target = headers[Math.max(0, Math.min(headers.length - 1, current + Math.sign(direction)))];
     else {
-      const documentIndex = allGroups.indexOf(currentGroup);
+      const all = visibleCursorRows();
+      const documentIndex = all.indexOf(row);
       const candidates = direction < 0
-        ? groups.filter((group) => allGroups.indexOf(group) < documentIndex)
-        : groups.filter((group) => allGroups.indexOf(group) > documentIndex);
+        ? headers.filter((header) => all.indexOf(header) < documentIndex)
+        : headers.filter((header) => all.indexOf(header) > documentIndex);
       target = direction < 0 ? candidates.at(-1) : candidates[0];
-      target ??= direction < 0 ? groups[0] : groups.at(-1);
+      target ??= direction < 0 ? headers[0] : headers.at(-1);
     }
-    return setWorkCursor(target?.querySelector(".work-group-row[data-work-cursor^='area:']"));
+    return setWorkCursor(target);
   }
 
   /** Returns the semantic parent of one visible Work tree row. */
@@ -164,16 +194,23 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (!row) return null;
     const parentGoal = row.dataset.subgoalOf;
     if (parentGoal) return visibleCursorRows().find((item) => item.dataset.goalAnchor === parentGoal) ?? null;
-    if (row.dataset.goalAnchor) return row.closest("tbody[data-work-group]")?.querySelector(".work-group-row[data-work-cursor^='area:']") ?? null;
-    return null;
+    if (row.dataset.workSubArea) return row.closest("tbody[data-work-group]")?.querySelector(".work-group-row:not([data-work-sub-area])") ?? null;
+    if (row.classList.contains("work-group-row")) return null;
+    return ownerHeaderRow(row);
   }
 
   /** Returns the first visible child of one expanded Work tree row. */
   function firstChildWorkRow(row) {
     if (!row) return null;
     if (row.classList.contains("work-group-row")) {
-      return [...(row.closest("tbody[data-work-group]")?.querySelectorAll("[data-work-cursor]") ?? [])]
-        .find((item) => item !== row && !item.hidden) ?? null;
+      // A top-level header's first child is the next row, a Goal or a
+      // sub-header. A sub-header's children end at the next header.
+      for (let item = row.nextElementSibling; item; item = item.nextElementSibling) {
+        if (item.hidden || !item.dataset.workCursor) continue;
+        if (row.dataset.workSubArea && item.classList.contains("work-group-row")) return null;
+        return item;
+      }
+      return null;
     }
     const file = row.dataset.goalAnchor;
     if (!file) return null;
@@ -182,7 +219,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   /** True when one Work row owns children that are currently hidden. */
   function workRowIsCollapsed(row) {
-    if (row?.classList.contains("work-group-row")) return row.closest("tbody[data-work-group]")?.classList.contains("folded") ?? false;
+    if (row?.classList.contains("work-group-row")) return row.querySelector(".work-fold")?.getAttribute("aria-expanded") === "false";
     if (!row?.dataset.goalAnchor) return false;
     return state.collapsedGoalTrees.has(row.dataset.goalAnchor);
   }
@@ -191,7 +228,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   function collapseWorkTree(row = cursorRow()) {
     if (!row) return false;
     if (row.classList.contains("work-group-row")) {
-      if (workRowIsCollapsed(row)) return false;
+      // A folded sub-header moves to its top-level header. A folded top-level
+      // header has no parent on Work.
+      if (workRowIsCollapsed(row)) {
+        const parent = parentWorkRow(row);
+        return parent ? setWorkCursor(parent) : false;
+      }
       setWorkAreaFolded(row.dataset.workArea, true);
       return true;
     }
@@ -595,7 +637,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   /** Reports whether one directional tree command can act on this object. */
   function treeCommandAvailability(id, row) {
     if (id === "collapse") {
-      if (row?.classList.contains("work-group-row")) return workRowIsCollapsed(row) ? { enabled: false, reason: "This Area is already collapsed and has no parent on Work." } : { enabled: true };
+      if (row?.classList.contains("work-group-row")) return workRowIsCollapsed(row) && !parentWorkRow(row) ? { enabled: false, reason: "This Area is already collapsed and has no parent on Work." } : { enabled: true };
       return { enabled: Boolean(parentWorkRow(row) || firstChildWorkRow(row)), reason: "This Goal has no parent or children on Work." };
     }
     if (id === "expand") {

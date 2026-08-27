@@ -138,17 +138,21 @@ test("Area keys resolve the visible group from Goal and descendant rows", async 
 
   const { window, document } = await bootWorkTable(fixture);
   const childRow = document.querySelector(`[data-goal-anchor='${child.file}']`);
-  assert.equal(childRow.closest("[data-work-group]").dataset.workGroup, "otto/onboarding", "the parent brain header owns the descendant Goal");
+  assert.equal(childRow.closest("[data-work-group]").dataset.workGroup, "otto/onboarding", "the descendant Goal stays in the parent's row group");
+  assert.equal(childRow.previousElementSibling.dataset.workSubArea, "otto/onboarding/lessons", "a sub-Area header sits directly above its Goal");
   childRow.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await settle(window);
-
   press(window, "d");
   await settle(window);
-  assert.match(document.querySelector("[data-launch-popover] header").textContent, /Otto \/ Onboarding/, "d opens the owning header's defaults");
+  assert.match(document.querySelector("[data-launch-popover] header").textContent, /Otto \/ Onboarding \/ Lessons/, "d opens the nearest header's defaults, the sub-Area");
   document.querySelector("[data-launch-close]").click();
+
+  const parentRow = document.querySelector("[data-goal-anchor='otto/onboarding/goal-walkthrough.md']");
+  parentRow.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
   press(window, "a");
   await settle(window);
-  assert.equal(document.querySelector("#describe-area").value, "otto/onboarding", "a messages the brain of the same owning Area header");
+  assert.equal(document.querySelector("#describe-area").value, "otto/onboarding", "a on the Area's own Goal row messages the top-level brain");
 });
 
 test("Shift-brackets and their pointer actions jump between real Area headers", async () => {

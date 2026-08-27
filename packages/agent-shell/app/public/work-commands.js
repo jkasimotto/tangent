@@ -8,8 +8,8 @@
 const records = [
   { id: "moveRows", keyDisplay: "j / k", ariaKeyshortcuts: "j k", scope: "work", kind: "navigation", label: "Move between rows", help: "Move to the next or previous Work row.", shortcuts: [{ key: "j" }, { key: "k" }] },
   { id: "firstLast", keyDisplay: "gg / G", ariaKeyshortcuts: null, scope: "work", kind: "navigation", label: "First or last row", help: "Move to the first or last Work row." },
-  { id: "previousArea", keyDisplay: "{", ariaKeyshortcuts: "Shift+[", scope: "area", kind: "navigation", palette: true, label: "Previous Area", help: "Jump to the previous real Area header.", shortcuts: [{ key: "{", shiftKey: "any" }] },
-  { id: "nextArea", keyDisplay: "}", ariaKeyshortcuts: "Shift+]", scope: "area", kind: "navigation", palette: true, label: "Next Area", help: "Jump to the next real Area header.", shortcuts: [{ key: "}", shiftKey: "any" }] },
+  { id: "previousArea", keyDisplay: "{", ariaKeyshortcuts: "Shift+[", scope: "area", kind: "navigation", palette: true, label: "Previous Area", help: "Jump to the previous Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "{", shiftKey: "any" }] },
+  { id: "nextArea", keyDisplay: "}", ariaKeyshortcuts: "Shift+]", scope: "area", kind: "navigation", palette: true, label: "Next Area", help: "Jump to the next Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "}", shiftKey: "any" }] },
   { id: "open", keyDisplay: "↵", ariaKeyshortcuts: "Enter", scope: "work", kind: "action", label: "Open", help: "Open the live session or the Goal reader for this row.", shortcuts: [{ key: "Enter" }] },
   { id: "openBrain", keyDisplay: "b", ariaKeyshortcuts: "b", scope: "area", kind: "action", palette: true, label: "Open brain", help: "Open this Area brain. A message starts an inactive brain.", shortcuts: [{ key: "b" }] },
   { id: "stopBrain", keyDisplay: "s", ariaKeyshortcuts: "s", scope: "area", kind: "action", palette: true, label: "Stop brain", help: "Stop this Area brain without stopping its worker agents.", shortcuts: [{ key: "s" }] },
@@ -59,6 +59,7 @@ const captionKeysByRow = Object.freeze({
     { ids: ["openBrain"], word: "brain" },
     { ids: ["messageBrain"], word: "message" },
     { ids: ["collapse", "expand"], word: "fold" },
+    { ids: ["previousArea", "nextArea"], word: "areas", join: " " },
     { ids: ["questions"], word: "questions" },
     { ids: ["commands"], word: "more" },
     { ids: ["keys"], word: "all" },
@@ -93,11 +94,12 @@ export function workRowKind(cursor = "") {
 
 /**
  * Caption entries for one row kind: `{ ids, keyDisplay, word }`. `keyDisplay`
- * joins the registered keys with `/`, so fold prints `h/l`.
+ * joins the registered keys with `/`, so fold prints `h/l`. An entry names
+ * its own `join` when a slash reads wrong, so the Area jumps print `{ }`.
  */
 export function workCaptionKeys(kind = "none") {
   const entries = captionKeysByRow[workRowKind(`${kind}:`)] ?? captionKeysByRow.none;
-  return entries.map(({ ids, word }) => ({ ids: [...ids], keyDisplay: ids.map((id) => workCommand(id).keyDisplay).join("/"), word }));
+  return entries.map(({ ids, word, join = "/" }) => ({ ids: [...ids], keyDisplay: ids.map((id) => workCommand(id).keyDisplay).join(join), word, join }));
 }
 
 /** Rows for the `?` sheet. Each row stays separate; consumers never parse prose. */

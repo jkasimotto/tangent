@@ -841,10 +841,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * The open Questions of one Area and its child Areas. Only a brain writing
    * an explicit Request makes one. A waiting worker, a stopped step, and a
    * finished Goal make none: Tangent does not infer an ask from machine state.
+   * A sub-header asks for its own brain only: its deeper sub-Areas are flat
+   * siblings with their own row, so a roll-up prints one question twice.
    */
-  function areaQuestions(path) {
+  function areaQuestions(path, { ownBrainOnly = false } = {}) {
     return (state.brains ?? [])
-      .filter((brain) => brain.area === path || brain.area.startsWith(`${path}/`))
+      .filter((brain) => brain.area === path || (!ownBrainOnly && brain.area.startsWith(`${path}/`)))
       .flatMap((brain) => (brain.requests ?? []).filter((request) => request.status === "open").map((request) => ({ area: brain.area, brain, request })));
   }
 
@@ -854,9 +856,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * then the brain's own recovery. A folded Area shows the first one, which is
    * the next fact that can change what Julian does.
    */
-  function areaBlockers(path, trees, facts) {
+  function areaBlockers(path, trees, facts, { ownBrainOnly = false } = {}) {
     const goals = trees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status));
-    const questions = areaQuestions(path).map((item) => ({ owner: "You", cause: item.request.question || item.request.subject, rank: 0 }));
+    const questions = areaQuestions(path, { ownBrainOnly }).map((item) => ({ owner: "You", cause: item.request.question || item.request.subject, rank: 0 }));
     const dependencies = goals
       .map((goal) => ({ goal, fact: facts.get(goal.file) }))
       .filter((item) => ["blocked", "broken", "error"].includes(item.fact?.kind))
@@ -874,12 +876,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * work and explicit asks. It never counts agents, waits, or handovers, which
    * are the brain's business and turn agent volume into a demand on Julian.
    */
-  function deskAreaSummary(path, trees, descriptions, facts) {
+  function deskAreaSummary(path, trees, descriptions, facts, { ownBrainOnly = false } = {}) {
     const goals = trees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status));
     const sessions = [...goals.map(sessionForGoal).filter(Boolean), ...descriptions];
     const moving = sessions.filter((session) => session.state === "working").length;
-    const blockers = areaBlockers(path, trees, facts);
-    const questions = areaQuestions(path).length;
+    const blockers = areaBlockers(path, trees, facts, { ownBrainOnly });
+    const questions = areaQuestions(path, { ownBrainOnly }).length;
     const parts = [`${goals.length} open`];
     if (moving) parts.push(`${moving} moving`);
     if (blockers.length) parts.push(`${blockers.length} ${blockers.length === 1 ? "blocker" : "blockers"}`);
@@ -888,10 +890,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** Returns one compact, explicit state for an Area on the Work desk. */
-  function deskAreaState(path, trees, descriptions) {
+  function deskAreaState(path, trees, descriptions, { ownBrainOnly = false } = {}) {
     const goals = trees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status));
     const sessions = [...goals.map(sessionForGoal).filter(Boolean), ...descriptions];
-    const waiting = areaQuestions(path).length;
+    const waiting = areaQuestions(path, { ownBrainOnly }).length;
     const working = sessions.filter((session) => session.state === "working").length;
     if (waiting) return { kind: "waiting", label: `${waiting} ${waiting === 1 ? "question" : "questions"}` };
     if (working) return { kind: "working", label: `${working} working` };
@@ -949,7 +951,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const descriptions = (state.workFilter === "inactive" ? [] : describeWorkSessions())
       .filter((session) => inFocus(session.area));
     const core = areaMapCore;
-    const areaList = (roots.length ? allAreas() : areas()).filter((area) => inFocus(area.path));
+    // Every Area, done ones included, so a done sub-Area with open Goals still
+    // earns its sub-header under an open parent (work-view-sub-areas). Without
+    // a Focus, a done Area still earns no top-level header of its own.
+    const areaList = allAreas().filter((area) => inFocus(area.path));
+    const headerAreas = new Set((roots.length ? allAreas() : areas()).map((area) => area.path));
     /** The focus roots this pass renders as roots; a scoped pass has none. */
     const panelRoots = scope ? [] : roots;
     const byPath = new Map(areaList.map((area) => [area.path, area]));
@@ -959,17 +965,24 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       descriptions: descriptions.filter((session) => session.area === path),
       programs: state.programs.operations.filter((program) => program.area === path),
     });
-    const openCounts = new Map();
-    for (const area of areaList) {
-      const { trees: areaTrees, descriptions: areaDescriptions, programs: areaPrograms } = workOf(area.path);
-      const openGoalCount = areaTrees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status)).length, 0);
-      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, panelRoots.length ? areaPrograms.length : 0));
-    }
     const liveBrainAreas = (state.brains ?? [])
       .filter((brain) => brain.status === "active" && brain.live)
       .map((brain) => brain.area)
       .filter(inFocus);
-    const panelDefs = core.deskPanels(openCounts, panelRoots.length ? [...panelRoots, ...liveBrainAreas] : liveBrainAreas);
+    const openCounts = new Map();
+    for (const area of areaList) {
+      const { trees: areaTrees, descriptions: areaDescriptions, programs: areaPrograms } = workOf(area.path);
+      const openGoalCount = areaTrees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status)).length, 0);
+      // A live brain counts as work, the way a Describe session does: its
+      // Area earns a header at the top level and a sub-header below one
+      // (work-view-sub-areas Decision 1), never a peer panel of its parent.
+      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, liveBrainAreas.includes(area.path) ? 1 : 0, panelRoots.length ? areaPrograms.length : 0));
+    }
+    // A live brain at or above the top level still owns its whole subtree as
+    // one group, as before. A live brain deeper down is a sub-header inside
+    // its top-level group, not a peer of it.
+    const liveBrainRoots = liveBrainAreas.filter((path) => path.split("/").length <= 2);
+    const panelDefs = core.deskPanels(openCounts, [...panelRoots, ...liveBrainRoots]).filter((panel) => headerAreas.has(panel.path));
     const covered = new Set(panelDefs.flatMap((panel) => [panel.path, ...panel.sections]));
     const panels = panelDefs.map((panel) => {
       const area = byPath.get(panel.path);
@@ -1503,41 +1516,27 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
-   * The shortest provenance label for each descendant Area of one group: its
-   * own name while that name is unique inside the group, and the complete
-   * relative path when two branches share a name.
-   */
-  function descendantLabels(groupPath, areaPaths) {
-    const counts = new Map();
-    for (const path of areaPaths) {
-      if (path === groupPath) continue;
-      const tail = humanName(path.split("/").at(-1));
-      counts.set(tail, (counts.get(tail) ?? 0) + 1);
-    }
-    const labels = new Map();
-    for (const path of areaPaths) {
-      if (path === groupPath) continue;
-      const tail = humanName(path.split("/").at(-1));
-      labels.set(path, counts.get(tail) === 1 ? tail : descendantPath(path, groupPath));
-    }
-    return labels;
-  }
-
-  /**
    * The group header row: Area, aggregate state, Goal count, and the one brain
    * route for every row below it. The Action column never repeats that route
    * (design-redesign-work-as-a-compact-table Decision 4).
+   *
+   * With `parentPath` it is a sub-header: one thin indented row for a sub-Area
+   * inside an open group, named by its path below the parent, with its own
+   * fold, count, brain button, and menu. It prints the brain state only when
+   * a brain is live or asking, and never the note signal line
+   * (work-view-sub-areas Decisions 1 to 3).
    */
-  function workGroupHeaderRow(record, facts = new Map()) {
+  function workGroupHeaderRow(record, facts = new Map(), { parentPath = "" } = {}) {
     const { area, trees, descriptions, sections } = record;
+    const sub = Boolean(parentPath);
     const allTrees = [...trees, ...sections.flatMap((section) => section.trees)];
     const allDescriptions = [...descriptions, ...sections.flatMap((section) => section.descriptions)];
-    const summary = deskAreaSummary(area.path, allTrees, allDescriptions, facts);
+    const summary = deskAreaSummary(area.path, allTrees, allDescriptions, facts, { ownBrainOnly: sub });
     // The pill keeps saying what the Area is doing, so a live brain with no
     // agent under it still states itself (design-active-brains-show-on-work-
     // even-with-no-agents). Only its "waiting" case changed source: it counts
     // the Questions brains asked, never an inferred ask.
-    const status = deskAreaState(area.path, allTrees, allDescriptions);
+    const status = deskAreaState(area.path, allTrees, allDescriptions, { ownBrainOnly: sub });
     const brain = brainForAreaCard(area.path);
     const label = brain?.live ? "Open brain" : brain ? "Resume brain" : "Start brain";
     // A live brain opens its own session; only a missing or stopped one goes
@@ -1545,21 +1544,24 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const route = brain?.live
       ? `data-open-brain="${escapeHtml(brain.session ?? "")}"`
       : `data-open-area-brain="${escapeHtml(area.path)}"`;
-    const name = humanName(area.name);
+    const name = sub ? descendantPath(area.path, parentPath) : humanName(area.name);
     const cursor = `area:${area.path}`;
-    const folded = areaIsFoldedOnWork(area.path);
+    const folded = sub ? subAreaIsFoldedOnWork(area.path) : areaIsFoldedOnWork(area.path);
+    const showState = !sub || summary.questions || brain?.live;
     const brainCommand = workCommand("openBrain");
     const brainButton = `<button class="work-group-brain" type="button" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)} (${brainCommand.keyDisplay})`)} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span>${workKey("openBrain")}</button>`;
-    return `<tr class="work-group-row${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}">
-      <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="rowgroup" id="${workGroupId(area.path)}">
+    return `<tr class="work-group-row${sub ? " work-sub-area-row" : ""}${folded ? " folded" : ""}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}"${sub ? ` data-work-sub-area="${escapeHtml(area.path)}"` : ""}>
+      <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="${sub ? "row" : "rowgroup"}" id="${workGroupId(area.path)}">
         <div class="work-group-layout">
           <div class="work-group-identity">
             <span class="work-group-name">${workFoldTriangle({ open: !folded, area: area.path, name })}<button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)}`)}>${escapeHtml(name)}</button></span>
             <span class="work-group-count">${escapeHtml(summary.text)}</span>
-            ${area.noteSignal ? `<span class="area-note-signal work-group-note${area.noteSignal.warning ? " warning" : ""}" title="The brain reads this note every turn. Keep it under 100 lines and rewrite Current every two weeks.">${escapeHtml(area.noteSignal.text)}</span>` : ""}
-            ${summary.questions
-              ? `<button class="desk-state ${status.kind}" type="button" data-review-questions="${escapeHtml(area.path)}" ${workCommandAttributes("questions")}>${escapeHtml(status.label)}${workKey("questions")}</button>`
-              : `<span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>`}
+            ${!sub && area.noteSignal ? `<span class="area-note-signal work-group-note${area.noteSignal.warning ? " warning" : ""}" title="The brain reads this note every turn. Keep it under 100 lines and rewrite Current every two weeks.">${escapeHtml(area.noteSignal.text)}</span>` : ""}
+            ${!showState
+              ? ""
+              : summary.questions
+                ? `<button class="desk-state ${status.kind}" type="button" data-review-questions="${escapeHtml(area.path)}" ${workCommandAttributes("questions")}>${escapeHtml(status.label)}${workKey("questions")}</button>`
+                : `<span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>`}
           </div>
           <div class="work-group-controls">
             ${brainButton}
@@ -1615,7 +1617,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * The Work cell also holds one narrow-width copy of the state and time
    * facts; CSS shows exactly one copy at each width, so nothing is read twice.
    */
-  function workGoalRow(goal, { groupPath, labels, fact, maxElapsedMs = 0, subgoal = false, parent = "", hidden = false, subgoalCount = 0, expanded = true } = {}) {
+  function workGoalRow(goal, { groupPath, labels, fact, maxElapsedMs = 0, subgoal = false, subArea = false, parent = "", hidden = false, subgoalCount = 0, expanded = true } = {}) {
     const pipeline = pipelineForGoal(goal);
     const record = pipelineRecordForGoal(goal);
     const action = pipeline ? deskPipelineAction(goal, pipeline) : deskGoalAction(goal);
@@ -1635,7 +1637,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       ? `<small class="work-subgoal-count">${escapeHtml(subgoalWord)}</small>`
       : "";
     const cursor = `goal:${goal.file}`;
-    return `<tr class="desk-goal work-row ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-goal-anchor="${escapeHtml(goal.file)}" data-work-area="${escapeHtml(goal.area)}"${subgoal ? ` data-subgoal-of="${escapeHtml(parent)}"` : ""}${hidden ? " hidden" : ""}>
+    return `<tr class="desk-goal work-row ${subgoal ? "subgoal" : "root-goal"}${subArea ? " under-sub-area" : ""} ${action.kind}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-goal-anchor="${escapeHtml(goal.file)}" data-work-area="${escapeHtml(goal.area)}"${subgoal ? ` data-subgoal-of="${escapeHtml(parent)}"` : ""}${hidden ? " hidden" : ""}>
       <th class="work-cell-work" scope="row">
         <span class="work-cell-title">${disclosure}<span class="work-goal-copy"><span class="work-goal-primary"><button class="work-row-title" type="button" data-work-row-title ${titleRoute} data-focus-key="title:${escapeHtml(goal.file)}" title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</button>${subgoalNote}${path ? `<small class="work-row-path">${escapeHtml(path)}</small>` : ""}</span>${agentMeta ? `<small class="work-row-agent">${escapeHtml(agentMeta)}</small>` : ""}${stepMeta ? `<small class="work-row-step" title="${escapeHtml(action.stepTitle)}">${escapeHtml(stepMeta)}</small>` : ""}</span></span>
         <small class="work-cell-facts">${escapeHtml(compact)}</small>
@@ -1680,6 +1682,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // Every other filter does, "all" included: that view shows more than
     // Current, so it must not be the one place a live brain disappears.
     if (state.workFilter !== "inactive" && record.brain?.live) return true;
+    if (state.workFilter !== "inactive" && record.sections.some((section) => brainForAreaCard(section.area.path)?.live)) return true;
     return [record, ...record.sections].some((part) => part.descriptions.length
       || part.trees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status))));
   }
@@ -1687,12 +1690,17 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** One brain-owned Area group as one row group of the work table. */
   function workGroupBody(record, facts, maxElapsedMs) {
     const { area, trees, descriptions, sections } = record;
-    const parts = [{ area, trees, descriptions }, ...sections];
-    const labels = descendantLabels(area.path, parts.map((part) => part.area.path));
-    const body = parts.flatMap((part) => [
-      ...part.descriptions.map((session) => workDefinitionRow(session)),
-      ...orderedGoalTrees(part.trees).map((tree) => workTreeRows(tree, area.path, labels, facts, maxElapsedMs)),
-    ]).join("");
+    // The Area's own rows sit under its header. Each sub-Area with work gets
+    // one flat sub-header in path order, and its rows sit under that, so no
+    // row needs a path tag (work-view-sub-areas Decision 1).
+    const own = [
+      ...descriptions.map((session) => workDefinitionRow(session)),
+      ...orderedGoalTrees(trees).map((tree) => workTreeRows(tree, area.path, null, facts, maxElapsedMs)),
+    ].join("");
+    const body = own + [...sections]
+      .sort((left, right) => left.area.path.localeCompare(right.area.path))
+      .map((section) => workSubAreaRows(section, area, facts, maxElapsedMs))
+      .join("");
     // A focused Area stays on the screen with nothing in it, and says why, so
     // Julian can see that his Focus is what emptied the table.
     const empty = record.focusRoot && !record.focusHasWork
@@ -1702,6 +1710,31 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return `<tbody class="work-group${folded ? " folded" : ""}" data-work-group="${escapeHtml(area.path)}" data-desk-area="${escapeHtml(area.path)}" aria-labelledby="${workGroupId(area.path)}">
       ${workGroupHeaderRow(record, facts)}${folded ? "" : `${body}${empty}`}
     </tbody>`;
+  }
+
+  /**
+   * One sub-Area inside an open Area group: its thin sub-header, then its own
+   * rows unless the sub-Area is folded. A folded sub-Area keeps its count and
+   * its brain state on the sub-header (work-view-sub-areas Decision 6).
+   */
+  function workSubAreaRows(section, parentArea, facts, maxElapsedMs) {
+    const header = workGroupHeaderRow({ area: section.area, trees: section.trees, descriptions: section.descriptions, sections: [] }, facts, { parentPath: parentArea.path });
+    if (subAreaIsFoldedOnWork(section.area.path)) return header;
+    const rows = [
+      ...section.descriptions.map((session) => workDefinitionRow(session)),
+      ...orderedGoalTrees(section.trees).map((tree) => workTreeRows(tree, section.area.path, null, facts, maxElapsedMs, { subArea: true })),
+    ].join("");
+    return header + rows;
+  }
+
+  /**
+   * Whether one sub-Area is folded on Work. A sub-Area opens by default and
+   * folds only when Julian folded it, whatever the Focus says: the Focus
+   * rule that folds every top-level Area but the first is about attention
+   * between subjects, not inside one (work-view-sub-areas Decision 7).
+   */
+  function subAreaIsFoldedOnWork(path) {
+    return state.foldedWorkAreas.has(path);
   }
 
   /**
@@ -1757,7 +1790,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * only its direct open children, and a collapsed ancestor hides its complete
    * descendant branch even when an intermediate Goal remains expanded.
    */
-  function workTreeRows(tree, groupPath, labels, facts, maxElapsedMs) {
+  function workTreeRows(tree, groupPath, labels, facts, maxElapsedMs, { subArea = false } = {}) {
     const closed = new Set(["done", "dropped", "parked", "deferred"]);
     const goals = tree.goals.filter((goal, index) => index === 0 || !closed.has(goal.status));
     const stack = [];
@@ -1786,6 +1819,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         fact: facts.get(node.goal.file),
         maxElapsedMs,
         subgoal: Boolean(node.parent),
+        subArea,
         parent: node.parent?.goal.file ?? "",
         hidden: hiddenByAncestor(node),
         subgoalCount: node.children.length,

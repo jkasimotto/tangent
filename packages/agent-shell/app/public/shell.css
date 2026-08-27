@@ -553,6 +553,15 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-group-name .work-group-other { color: #9aa3ad; font-size: 13px; font-weight: 720; letter-spacing: -.01em; }
 .work-group.other-areas .work-group-head { opacity: .82; }
 .work-group-count { margin-left: 10px; color: #7c8590; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* A sub-Area header: one thin indented row inside an open Area group, named
+   by its path below the parent. Same triangle, count, brain button, and menu
+   as the top-level header, smaller and quieter (work-view-sub-areas D1). */
+.work-sub-area-row > .work-group-head { height: 24px; padding-left: 26px; background: #121417; }
+.work-sub-area-row .work-group-layout { min-height: 24px; }
+.work-sub-area-row .work-group-name > button:not(.work-fold) { color: #b8c0c9; font-size: 12px; font-weight: 640; }
+.work-sub-area-row .work-group-brain { min-height: 20px; }
+.work-row.under-sub-area .work-cell-work { padding-left: 26px; }
+.work-row.under-sub-area.subgoal .work-cell-work { padding-left: 46px; }
 .work-group-head .desk-state { margin-left: 12px; }
 .work-group-brain { display: inline-flex; min-height: 24px; align-items: center; gap: 6px; padding: 0 4px; border: 0; background: transparent; color: #9ebbe0; cursor: pointer; font-size: 11px; font-weight: 690; line-height: 1; white-space: nowrap; }
 .work-group-brain:hover { color: #fff; }

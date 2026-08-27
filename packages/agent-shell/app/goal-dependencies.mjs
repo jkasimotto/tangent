@@ -1,3 +1,5 @@
+import { normalizeGoalStatus } from "./goal-lifecycle.mjs";
+
 /** Reads canonical Goal links from the Dependencies section. */
 export function dependencySlugs(text) {
   const body = markdownSection(text, "Dependencies");
@@ -114,7 +116,7 @@ function hasCycle(edges) {
 
 /** Reduces one Goal to the stable relationship projection. */
 function goalReference(goal) {
-  return { file: goal.file, title: goal.title, doneWhen: goal.doneWhen, status: goal.status };
+  return { file: goal.file, title: goal.title, doneWhen: goal.doneWhen, status: normalizeGoalStatus(goal.status) };
 }
 
 /** Escapes a literal Markdown heading for a regular expression. */

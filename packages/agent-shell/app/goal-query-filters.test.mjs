@@ -39,6 +39,17 @@ test("the three filters narrow one Goal listing", () => {
   assert.equal(filterGoalSummaries([{ slug: "unknown", status: "open" }], { changedSince: "30d" }, NOW).length, 0);
 });
 
+test("Goal status filters accept Deferred compatibility input and expose Parked", () => {
+  const goals = [
+    { slug: "legacy", status: "deferred" },
+    { slug: "canonical", status: "parked" },
+    { slug: "current", status: "open" },
+  ];
+  const parked = filterGoalSummaries(goals, { status: ["Parked"] }, NOW);
+  assert.deepEqual(parked.map((goal) => [goal.slug, goal.status]), [["legacy", "parked"], ["canonical", "parked"]]);
+  assert.deepEqual(filterGoalSummaries(goals, { status: ["deferred"] }, NOW).map((goal) => goal.slug), ["legacy", "canonical"]);
+});
+
 test("the shared filter record reports whether it narrows", () => {
   assert.equal(hasGoalQueryFilters(goalQueryFilters({})), false);
   assert.equal(hasGoalQueryFilters(goalQueryFilters({ status: ["  "] })), false);
@@ -46,4 +57,5 @@ test("the shared filter record reports whether it narrows", () => {
   assert.deepEqual(goalQueryFilters({ status: [" done ", ""], changedSince: " 30d ", query: " 241 " }), {
     status: ["done"], changedSince: "30d", query: "241",
   });
+  assert.deepEqual(goalQueryFilters({ status: [" Deferred "] }).status, ["parked"]);
 });

@@ -1,6 +1,5 @@
 import areaMapCore from "./public/area-map-core.js";
-
-const CLOSED = new Set(["done", "dropped", "deferred"]);
+import { goalIsHiddenByDefault } from "./goal-lifecycle.mjs";
 
 /** Builds the server-owned Area panel and Goal-attention projection. */
 export function projectDesk(vault, sessions) {
@@ -10,7 +9,7 @@ export function projectDesk(vault, sessions) {
   const descriptions = sessions.filter((session) => session.kind === "work-definition" && session.area);
   const attention = Object.fromEntries(goals.map((goal) => [goal.file, goalAttention(goal, sessionsByGoal.get(goal.file))]));
   const openCounts = new Map(areas.map((area) => {
-    const open = (area.goals ?? []).filter((goal) => !CLOSED.has(goal.status)).length;
+    const open = (area.goals ?? []).filter((goal) => !goalIsHiddenByDefault(goal.status)).length;
     const describing = descriptions.some((session) => session.area === area.path);
     return [area.path, Math.max(open, describing ? 1 : 0)];
   }));

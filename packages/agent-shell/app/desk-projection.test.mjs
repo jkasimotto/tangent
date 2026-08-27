@@ -20,3 +20,14 @@ test("desk projection keeps a Document-only Area visible", () => {
   const vault = { areas: [{ path: "otto/reference", goals: [], documents: [{ file: "otto/reference/note.md", changedAt: 5 }] }] };
   assert.deepEqual(projectDesk(vault, []).panels, [{ path: "otto/reference", sections: [] }]);
 });
+
+test("desk projection hides canonical Parked and legacy Deferred Goals by default", () => {
+  const vault = {
+    areas: [
+      { path: "otto/parked", goals: [{ file: "otto/parked/goal-later.md", status: "parked" }], documents: [] },
+      { path: "otto/deferred", goals: [{ file: "otto/deferred/goal-legacy.md", status: "deferred" }], documents: [] },
+      { path: "otto/open", goals: [{ file: "otto/open/goal-now.md", status: "open" }], documents: [] },
+    ],
+  };
+  assert.deepEqual(projectDesk(vault, []).panels.map((panel) => panel.path), ["otto/open"]);
+});

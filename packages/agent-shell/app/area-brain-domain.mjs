@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import zlib from "node:zlib";
+import { goalIsHiddenByDefault } from "./goal-lifecycle.mjs";
 import { queryTerms, recencyBound } from "./goal-query-filters.mjs";
 import { promisify } from "node:util";
 
@@ -215,7 +216,7 @@ export function selectCurrentDocuments({ goals = [], requests = [], sourceInstru
     reasons.set(document.file, current);
   };
   for (const reference of sourceInstruction) add(reference, "current source instruction", 0);
-  for (const goal of goals.filter((item) => !["done", "dropped"].includes(item.status))) {
+  for (const goal of goals.filter((item) => !goalIsHiddenByDefault(item.status))) {
     for (const reference of goal.documents ?? []) add(reference, `current assignment ${goal.file ?? goal.slug}`, 1);
   }
   for (const request of requests.filter((item) => item.status === "open")) {

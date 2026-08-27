@@ -2,6 +2,8 @@
 // pure: it projects brain, Goal, and queue records without observing, claiming,
 // typing into, or otherwise mutating the live session.
 
+import { normalizeGoalStatus } from "./goal-lifecycle.mjs";
+
 export const AGENT_CONTEXT_SCHEMA = "tangent-agent-context.v1";
 
 const CURRENT_ASSIGNMENT_STATUSES = new Set(["running", "waiting"]);
@@ -197,7 +199,7 @@ function projectGoal(goal, record = null) {
     file: goal?.file ?? record?.goal ?? null,
     area: goal?.area ?? record?.area ?? null,
     title: goal?.title ?? record?.slug ?? "",
-    status: goal?.status ?? null,
+    status: goal?.status == null ? null : normalizeGoalStatus(goal.status),
     doneWhen: goal?.doneWhen ?? "",
     myUnderstanding: goal?.myUnderstanding ?? "",
     subgoals: [...(goal?.subgoals ?? [])],

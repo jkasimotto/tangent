@@ -115,6 +115,24 @@ test("current Documents come from explicit open relationships, not recency", () 
   assert.match(selected[0].reasons[0], /source instruction/);
 });
 
+test("current Documents exclude Parked and legacy Deferred Goal relationships", () => {
+  const documents = new Map([
+    ["open.md", { file: "open.md", title: "Open" }],
+    ["parked.md", { file: "parked.md", title: "Parked" }],
+    ["deferred.md", { file: "deferred.md", title: "Deferred" }],
+  ]);
+  const selected = selectCurrentDocuments({
+    goals: [
+      { file: "goal-open.md", status: "open", documents: ["open.md"] },
+      { file: "goal-parked.md", status: "parked", documents: ["parked.md"] },
+      { file: "goal-deferred.md", status: "deferred", documents: ["deferred.md"] },
+    ],
+    /** Resolves one test reference. */
+    resolve: (file) => documents.get(file),
+  });
+  assert.deepEqual(selected.map((item) => item.file), ["open.md"]);
+});
+
 test("Journal intake saves exact text once before delivery", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-journal-"));
   const first = await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "Exact words.", idempotencyKey: "capture-1" });

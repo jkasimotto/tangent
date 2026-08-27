@@ -17,8 +17,10 @@ test("dependency sections round-trip without changing unrelated Goal content", (
 
 test("the projection derives forward, reverse, and unresolved references", () => {
   const goals = [goal("ship", ["api", "missing"]), goal("api")];
+  goals[1].status = "deferred";
   projectGoalDependencies(goals);
   assert.deepEqual(goals[0].dependsOn.map((item) => item.file), ["otto/model/goal-api.md"]);
+  assert.equal(goals[0].dependsOn[0].status, "parked");
   assert.deepEqual(goals[1].requiredBy.map((item) => item.file), ["otto/model/goal-ship.md"]);
   assert.deepEqual(goals[0].unresolvedDependencies, ["missing"]);
 });

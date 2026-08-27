@@ -120,6 +120,15 @@ test("a historical queue attempt and a plain Goal binding remain recoverable", (
   });
 });
 
+test("agent context exposes a legacy Deferred Goal as Parked", () => {
+  const context = resolveAgentContext({
+    session: "legacy-worker",
+    goals: [{ session: "legacy-worker", status: "deferred", area: "otto/tangent", file: "otto/tangent/goal-later.md", slug: "later", title: "Later", doneWhen: "It is useful later." }],
+  });
+  assert.equal(context.goal.status, "parked");
+  assert.equal(context.current, false);
+});
+
 test("a shared plain session recovers every co-assigned Goal once", () => {
   const context = resolveAgentContext({
     session: "shared-solo",

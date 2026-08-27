@@ -175,4 +175,5 @@ test("visible rows with the same kind, title, and Area show their file names", (
     "otto/tangent · design-search-a.md",
     "otto/tangent · design-search-b.md",
   ]);
+  assert.deepEqual(rows.map((item) => item.disambiguator ?? ""), ["", "design-search-a.md", "design-search-b.md"]);
 });

@@ -34,6 +34,6 @@ export function buildGoToRows({ vault, brains = [], query = "", area = "", kind 
     identityCounts.set(identity, (identityCounts.get(identity) ?? 0) + 1);
   }
   return visible.map((row) => identityCounts.get(visibleIdentity(row)) > 1 && row.file
-    ? { ...row, detail: `${row.areaLabel} · ${fileName(row.file)}` }
+    ? { ...row, detail: `${row.areaLabel} · ${fileName(row.file)}`, disambiguator: fileName(row.file) }
     : row);
 }

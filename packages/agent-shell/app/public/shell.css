@@ -1383,6 +1383,7 @@ details.more-work .area-work-list { margin-top: 18px; }
 .go-to-graph circle { fill: #202832; stroke: #7891ad; cursor: pointer; }
 .go-to-graph g:hover circle, .go-to-graph g:focus circle { fill: #2e3d4d; stroke: #b7d3f2; outline: none; }
 .go-to-graph text { fill: #cdd5dd; font-size: 10px; text-anchor: middle; }
+.go-to-graph .go-to-graph-disambiguator { fill: var(--quiet); font-size: 8px; }
 .go-to-hint { margin: 8px 0 0; color: var(--quiet); font-size: 12px; }
 #go-to-list { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; max-height: 60vh; overflow: auto; }
 #go-to-list li { display: grid; grid-template-columns: 84px minmax(0, 1fr); column-gap: 14px; align-items: baseline; padding: 9px 10px; border-radius: 8px; cursor: pointer; }

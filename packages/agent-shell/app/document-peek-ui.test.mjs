@@ -20,7 +20,7 @@ function record(file, area, title) {
  * controllable Document read. Every quick-layer case in
  * design-quick-returnable-document-search section 11 needs this same world.
  */
-async function bootShell({ projectionFailure = "" } = {}) {
+async function bootShell({ projectionFailure = "", duplicateTitles = false } = {}) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -62,8 +62,8 @@ async function bootShell({ projectionFailure = "" } = {}) {
   window.WebSocket = class { static OPEN = 1; constructor() { this.readyState = 0; this.close = () => {}; this.send = () => {}; } };
 
   const work = goal("otto/tangent", "ship-search", "Ship the finder");
-  const design = record("otto/tangent/design-search.md", "otto/tangent", "Search design");
-  const notes = record("otto/tangent/notes-search.md", "otto/tangent", "Search notes");
+  const design = record("otto/tangent/design-search.md", "otto/tangent", duplicateTitles ? "Search" : "Search design");
+  const notes = record("otto/tangent/notes-search.md", "otto/tangent", duplicateTitles ? "Search" : "Search notes");
   const texts = {
     [design.file]: "# Search design\n\nOpens [[notes-search]] and jumps to [Part two](#part-two).\n\n## Part two\n\nMore words.",
     [notes.file]: "# Search notes\n\nNothing here yet.",
@@ -181,6 +181,21 @@ test("the quick surfaces define the 320 px touch layout contract", async () => {
   assert.match(narrow, /#go-to-list li\s*\{\s*min-height:\s*44px/);
 });
 
+test("graph results show collision labels and Enter opens the focused row", async () => {
+  const { window, notes } = await bootShell({ duplicateTitles: true });
+  click(window, "#go-to-button");
+  click(window, "#go-to-view");
+  const rows = [...window.document.querySelectorAll("[data-go-to-row]")];
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /design-search\.md/);
+  assert.match(rows[1].textContent, /notes-search\.md/);
+
+  rows[1].focus();
+  rows[1].dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await settle(window);
+  assert.match(window.document.querySelector("#document-peek-layer .document-source").textContent, new RegExp(notes.file));
+});
+
 /** Sends one keystroke to the page. */
 function key(window, init) {
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, ...init }));
@@ -200,6 +215,7 @@ test("the quick layer reads a Document above a live session and reveals that exa
   const terminal = terminals.at(-1);
   assert.ok(terminal, "the session layer mounted a terminal");
   terminal.value = "a selected line";
+  terminal.setSelectionRange(2, 10);
   assert.equal(window.document.querySelector("#session-layer").hidden, false);
 
   await peekDocumentViaGoTo(window, design.title);
@@ -209,6 +225,7 @@ test("the quick layer reads a Document above a live session and reveals that exa
   // Case 1 and 11: the session below is untouched and the screen is not a reader.
   assert.equal(terminals.at(-1), terminal, "no terminal was mounted or replaced");
   assert.equal(terminal.value, "a selected line", "the terminal kept its content and selection");
+  assert.deepEqual([terminal.selectionStart, terminal.selectionEnd], [2, 10], "the terminal kept the exact selection range");
   assert.equal(window.document.querySelector("#session-layer").hidden, false);
   assert.equal(window.document.querySelector("#screen .document-reader"), null, "Enter never moved the screen to the reader");
   assert.ok(window.document.querySelector("#screen").hasAttribute("inert"), "the screen below is inert");
@@ -216,6 +233,7 @@ test("the quick layer reads a Document above a live session and reveals that exa
 
   // Case 9 and 12: a command for a lower layer cannot reach past the Document.
   key(window, { key: "j", metaKey: true });
+  key(window, { key: "/", metaKey: true });
   await settle(window);
   assert.equal(layer.hidden, false, "Command-J did not close the quick Document");
   assert.equal(window.document.querySelector("#session-layer").hidden, false, "Command-J did not close the session below");
@@ -253,14 +271,18 @@ test("the finder above a session keeps that session, and the quick layer returns
   await settle(window);
   const search = window.document.querySelector("#work-search");
   const page = window.document.querySelector(".work-page");
+  const screen = window.document.querySelector("#screen");
+  screen.scrollTop = 73;
   search.focus();
   await peekDocumentViaGoTo(window, design.title);
   assert.equal(window.document.querySelector(".work-page"), page, "the Work desk was never rebuilt");
   assert.equal(window.document.querySelector("#work-search").value, "ship");
+  assert.equal(screen.scrollTop, 73, "the Work scroll did not move while the layer was open");
   key(window, { key: "Escape" });
   await settle(window);
   assert.equal(window.document.querySelector(".work-page"), page, "closing the layer rebuilt nothing");
   assert.equal(window.document.querySelector("#work-search").value, "ship");
+  assert.equal(screen.scrollTop, 73, "Escape restored the exact Work scroll");
   assert.equal(window.document.activeElement, search, "focus returned to the control the finder opened from");
 });
 
@@ -355,11 +377,19 @@ test("the private trail moves inside the layer, and one Escape leaves it at any 
   assert.equal(window.document.querySelector("#screen .document-reader"), null, "the link never left the quick path");
   const back = layer.querySelector("[data-document-peek-history='back']");
   assert.equal(back.disabled, false, "the private trail recorded the step");
+  layer.querySelector(".document-peek-scroll").scrollTop = 41;
   click(window, "#document-peek-layer [data-document-peek-history='back']");
   await settle(window);
   assert.match(layer.querySelector(".document-peek-title").textContent, /Search design/);
+  assert.equal(layer.querySelector(".document-peek-scroll").scrollTop, 0, "the first Document kept its own position");
+  layer.querySelector(".document-peek-scroll").scrollTop = 137;
   click(window, "#document-peek-layer [data-open-vault-link='notes-search']");
   await settle(window);
+  click(window, "#document-peek-layer [data-document-peek-history='back']");
+  await settle(window);
+  assert.equal(layer.querySelector(".document-peek-scroll").scrollTop, 137, "the private trail restored the first Document position");
+  click(window, "#document-peek-layer [data-document-heading='part-two']");
+  assert.match(layer.querySelector(".document-peek-title").textContent, /Search design/, "a heading link stayed in the quick Document");
 
   // Case 13: Escape closes the layer, it does not walk the trail back.
   key(window, { key: "Escape" });

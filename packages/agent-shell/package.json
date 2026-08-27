@@ -11,6 +11,10 @@
     "./cli": {
       "types": "./dist/cli/index.d.ts",
       "import": "./dist/cli/index.js"
+    },
+    "./area-resources": {
+      "types": "./app/area-resources.d.ts",
+      "import": "./app/area-resources.mjs"
     }
   },
   "files": [

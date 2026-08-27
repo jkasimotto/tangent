@@ -60,7 +60,7 @@ async function createVault(trees, workspace) {
   await writeFile(path.join(trees, "harnesses.md"), harnessRegistry, "utf8");
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeFile(path.join(area, "test.md"), [
-    "---", "type: area", "---", "", "# Test", "", "## Goals", "",
+    "---", "type: area", "---", "", "# Test", "", "## Resources", "", `- Repository: ${workspace}`, "", "## Goals", "",
     "1. [[goal-work-contract]]", "2. [[goal-prerequisite]]", "3. [[goal-unrelated]]", "",
   ].join("\n"), "utf8");
   await writeFile(path.join(area, "goal-work-contract.md"), [

@@ -37,7 +37,7 @@ async function buildVault(root) {
   await mkdir(workspace, { recursive: true });
   await writeFile(path.join(trees, "harnesses.md"), "# Harnesses\n\n```tangent.harnesses.v1\n{\"version\":1,\"harnesses\":[{\"id\":\"test\",\"label\":\"Test\",\"command\":\"true\"}]}\n```\n", "utf8");
   await writeFile(path.join(trees, "neara", "neara.md"), "---\ntype: area\n---\n\n# Neara\n\n```tangent.environment.v1\n{\"defaults\":{\"brain\":{\"harness\":\"test\"}}}\n```\n", "utf8");
-  await writeFile(path.join(trees, area, "portland.md"), "---\ntype: area\n---\n\n# Portland\n", "utf8");
+  await writeFile(path.join(trees, area, "portland.md"), `---\ntype: area\n---\n\n# Portland\n\n## Resources\n\n- Repository: ${workspace}\n`, "utf8");
   return { trees, workspace };
 }
 

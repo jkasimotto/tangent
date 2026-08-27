@@ -1314,13 +1314,16 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * Decision 3).
    */
   function deskStepAction(step, idle) {
-    if (step.status === "stopped" || (step.status === "running" && !step.live)) return { state: "Stopped", action: "", launch: "", kind: idle, route: "" };
-    if (step.status === "pending") return { state: "Not started", action: "", launch: "", kind: idle, route: "" };
+    if (step.status === "stopped" || (step.status === "running" && !step.live)) return { state: "Stopped", action: "", launch: "", cwd: "", kind: idle, route: "" };
+    if (step.status === "pending") return { state: "Not started", action: "", launch: "", cwd: "", kind: idle, route: "" };
     const launch = launchRefText(step.launch);
-    if (step.state === "working") return { state: "Working", action: `Open step ${step.index}`, launch, kind: "working", route: "run" };
-    if (step.state === "waiting") return { state: "Waiting", action: `Open step ${step.index}`, launch, kind: idle, route: "run" };
-    if (step.state === "shell") return { state: "Stopped", action: `Open step ${step.index}`, launch, kind: idle, route: "run" };
-    return { state: "Open", action: `Open step ${step.index}`, launch, kind: "ready", route: "run" };
+    // The folder the step was started in, disclosed with its harness before
+    // the session existed, so the row can say where the agent works.
+    const cwd = step.launchDisclosure?.cwd ?? "";
+    if (step.state === "working") return { state: "Working", action: `Open step ${step.index}`, launch, cwd, kind: "working", route: "run" };
+    if (step.state === "waiting") return { state: "Waiting", action: `Open step ${step.index}`, launch, cwd, kind: idle, route: "run" };
+    if (step.state === "shell") return { state: "Stopped", action: `Open step ${step.index}`, launch, cwd, kind: idle, route: "run" };
+    return { state: "Open", action: `Open step ${step.index}`, launch, cwd, kind: "ready", route: "run" };
   }
 
   /** Rare pipeline actions shown inside the Goal action menu, only when valid. */
@@ -1578,7 +1581,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // its route and shows `claude-otto/opus-5/medium` instead of its verb, and
     // the verb moves into the title and the accessible name
     // (design-see-the-harness-model-effort-and-open-that-agent Decision 1).
-    const openLabel = action.launch ? `${action.action} on ${action.launch}` : action.action;
+    const openLabel = action.launch ? `${action.action} on ${action.launch}${action.cwd ? ` in ${action.cwd}` : ""}` : action.action;
     const primary = action.action === "Start agent"
       ? `<button class="desk-action${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" data-focus-key="start:${escapeHtml(goal.file)}" aria-label="Choose an agent for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">Start agent</button>`
       : action.action && action.launch

@@ -84,7 +84,7 @@ async function makeTrees(root, leaf) {
   await mkdir(area, { recursive: true });
   await writeFile(path.join(trees, "harnesses.md"), '```tangent.harnesses.v1\n{"version":1,"harnesses":[{"id":"test","command":"true"}]}\n```\n', "utf8");
   await writeFile(path.join(trees, "otto", "otto.md"), '---\ntype: area\n---\n\n# Otto\n\n```tangent.environment.v1\n{"version":1,"defaults":{"launch":{"harness":"test"}}}\n```\n', "utf8");
-  await writeFile(path.join(area, `${leaf}.md`), `---\ntype: area\n---\n\n# ${leaf}\n`, "utf8");
+  await writeFile(path.join(area, `${leaf}.md`), `---\ntype: area\n---\n\n# ${leaf}\n\n## Resources\n\n- Repository: ${root}\n`, "utf8");
   return trees;
 }
 
@@ -207,7 +207,7 @@ test("local callers mutate work across Areas while ownership and queue fences re
   const targetArea = path.join(trees, "neara", "enums");
   await mkdir(targetArea, { recursive: true });
   await writeFile(path.join(trees, "neara", "neara.md"), '---\ntype: area\n---\n\n# Neara\n\n```tangent.environment.v1\n{"version":1,"defaults":{"launch":{"harness":"test"}}}\n```\n', "utf8");
-  await writeFile(path.join(targetArea, "enums.md"), "---\ntype: area\n---\n\n# Enums\n", "utf8");
+  await writeFile(path.join(targetArea, "enums.md"), `---\ntype: area\n---\n\n# Enums\n\n## Resources\n\n- Repository: ${root}\n`, "utf8");
   const sessions = [];
   let port;
   try {

@@ -96,7 +96,7 @@ async function makeTrees(root, leaf) {
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeFile(
     path.join(area, `${leaf}.md`),
-    `---\ntype: area\n---\n\n# ${leaf}\n\n\`\`\`tangent.environment.v1\n${JSON.stringify({
+    `---\ntype: area\n---\n\n# ${leaf}\n\n## Resources\n\n- Repository: ${path.dirname(trees)}\n\n\`\`\`tangent.environment.v1\n${JSON.stringify({
       defaults: {
         launch: { harness: HARNESS_ID },
         brain: { harness: HARNESS_ID },

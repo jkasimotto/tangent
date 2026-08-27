@@ -144,15 +144,17 @@ function soloLaunch(args: Args): { harness: string; model?: string; effort?: str
 }
 
 /**
- * Prints the harness each assignment will run, before the line that says one
- * started. The server materializes these rows and discloses the same choice
- * in the queue record before it creates any session.
+ * Prints the harness each assignment will run and the folder it runs in,
+ * before the line that says one started. The server materializes these rows
+ * and discloses the same choices in the queue record before it creates any
+ * session.
  */
 function printLaunches(result: { launches?: unknown }): void {
-  const launches = Array.isArray(result.launches) ? (result.launches as { index?: number; launch?: string; source?: string; command?: string }[]) : [];
+  const launches = Array.isArray(result.launches) ? (result.launches as { index?: number; launch?: string; source?: string; command?: string; cwd?: string | null }[]) : [];
   for (const row of launches) {
     const source = row.source === "brain-default" ? " (your brain's harness)" : "";
-    console.log(`launch: step ${row.index} runs ${row.launch ?? row.command ?? "(edited command)"}${source}`);
+    const folder = row.cwd ? ` in ${row.cwd}` : "";
+    console.log(`launch: step ${row.index} runs ${row.launch ?? row.command ?? "(edited command)"}${source}${folder}`);
   }
 }
 

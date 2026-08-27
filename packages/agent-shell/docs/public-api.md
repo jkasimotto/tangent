@@ -4,8 +4,9 @@ Public import paths:
 
 - `@tangent/agent-shell`
 - `@tangent/agent-shell/cli`
+- `@tangent/agent-shell/area-resources`
 
-Both paths export the CLI runners and help specifications for `area`, `brain`, `goal`, `idea`, `document`, `agent`, `shell`, `study`, and `vault`. They also export the study contract. Agent Shell does not export its private server modules.
+The first two paths export the CLI runners and help specifications for `area`, `brain`, `goal`, `idea`, `document`, `agent`, `shell`, `study`, and `vault`. They also export the study contract. The third path exports the one parser for an Area note's `## Resources` section (`parseAreaResources`, `resolveWorkFolder`, `describeAreaResources`, `unboundAreaMessage`). The root `tangent trigger` runtime reads Area folders through it. Agent Shell exports no other server module.
 
 The root `tangent` command loads this package only when one of these nouns is used. The root package owns `tangent process` and `tangent trigger`.
 
@@ -19,11 +20,12 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 
 ## Vault and Area commands
 
-- `tangent area list|show <area>` reads Areas.
+- `tangent area list|show <area>` reads Areas. `show` prints the Repository, Worktree, and Branch the Area sees, each with the Area whose note declares it, and the folder a worker starts in.
 - `tangent area create <parent> <name>` creates one nested Area.
 - `tangent area recent <area>` reads subtree milestones. `--since` takes a window (`30d`, `12h`, `2w`, `90m`) or an ISO time, and `--query` keeps the milestones whose summary or reference holds any of its words.
 - `tangent area audit <area>` writes one detached compatibility audit.
 - `tangent goal create --area <area> --title <text> --done-when <text> ...` creates one Goal and optional Subgoals.
+- `tangent goal start <slug> [--step <instruction> --launch <ref> --path <directory>]...` starts work. A worker opens in the step's `--path`, else in the nearest `- Worktree:` or `- Repository:` line under `## Resources` in the Area note or a parent Area note. An Area with no folder is refused before any record is written. The refusal names the note to edit and the line to add. A `- Repository:` line that points into the vault binds only the Area that declares it. The start output prints the folder beside each step's harness, and the attempt records `cwd` and `cwdSource` (`step` or `area:<area>`).
 - `tangent goal list [<area>]` and `tangent goal show <slug>` read Goals. The listing takes `--subtree`, a repeatable `--status`, `--changed-since` with the same window or date, and `--query`. The subtree scent counts what the same filters find in the child Areas and prints the command that reads them.
 - `tangent goal depend|undepend` edits advisory prerequisite links.
 - `tangent goal own|release` changes the Goal session binding without stealing a live owner.

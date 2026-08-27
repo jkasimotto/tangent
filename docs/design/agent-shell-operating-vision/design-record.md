@@ -149,7 +149,7 @@ Julian's answers are marked (Julian).
 
 **D10. No brain handover, no rotation (Julian).** `tangent brain handover`, pacing, the 429 refusal, the 90-minute reminder, and `wakeFromPaceText` go. A brain runs until Julian restarts it with the Restart he has (ADR-0037 picker). The brain row always shows the context fill.
 
-**D11. The brain prompt is built from Markdown.** Sections: identity, the Area note (Purpose, Current, Knowledge), resources (D1), skills (D20), processes (D16). Then open Goals with their queue state, unread notes, the plan Document, and the commands it can use. The default harness block stays in the Area note and is edited in the UI (Julian). `brain-command-reference.mjs` or a short fixed list supplies the command lines.
+**D11. The brain prompt is a short system prompt (Julian).** It says what Tangent is, what the brain's role is, which commands it can and must run, where information lives (the vault and Tangent commands), and that it must read the Area note first. Tangent fills in only the Area, its folder, and Julian's founding message. No generated sections. The default harness block stays in the Area note and is edited in the UI (Julian). The draft text is in the slice 3 spec.
 
 ### 5.4 Checking work and brain questions
 

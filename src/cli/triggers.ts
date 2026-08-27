@@ -263,14 +263,14 @@ export async function installTriggerLaunchAgent(home: string, runner: TriggerRun
   return `installed ${label}; Tangent will check due triggers every minute`;
 }
 
-/** Resolves the Area repository or worktree resource. */
+/**
+ * The folder a trigger runs in when its manifest names none: the same
+ * inherited Worktree or Repository binding workers start in, read by the one
+ * Area resources parser in @tangent/agent-shell.
+ */
 async function areaDirectory(treesRoot: string, area: string): Promise<string> {
-  const note = path.join(treesRoot, area, `${area.split("/").pop()}.md`);
-  let text = "";
-  try { text = await readFile(note, "utf8"); } catch { return ""; }
-  const section = text.split(/^## /m).find((part) => part.startsWith("Resources")) ?? "";
-  const match = section.match(/^\s*-\s*(?:Repository|Worktree):\s*(.+?)\s*$/mi);
-  return match ? match[1]!.replace(/^~(?=\/|$)/, os.homedir()) : "";
+  const { resolveWorkFolder } = await import("@tangent/agent-shell/area-resources");
+  return (await resolveWorkFolder(treesRoot, area))?.cwd ?? "";
 }
 
 /** Launches one agent in a retained trigger session. */

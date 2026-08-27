@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { doneCascade } from "./goal-cascade.mjs";
-import { noteResource } from "./area-agent-command.mjs";
+import { describeAreaResources, resolveWorkFolder, unboundAreaMessage } from "./area-resources.mjs";
 import { launchRef, resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
@@ -441,33 +441,24 @@ async function prepareTerminalSession({ session, chat, workspace, chatCommand })
 }
 
 /**
- * Reads one labelled line from an Area note's `## Resources` section, the
- * vault's home for per-area settings the shell honours when it opens a
- * session (`- Repository: ~/Projects/x`, `- Agent: claude`). Returns null
- * when the note, the section, or the label is missing.
+ * The folder work on this Area runs in: the nearest `Worktree:` or
+ * `Repository:` binding on the Area or its ancestors that names an existing
+ * directory, as `{ path, source: "area:<area>" }`, or null when nothing
+ * binds. Every spawn path and the brain prompt read the folder through this
+ * one call, so they can never disagree about where an Area's work lives.
  */
-async function areaResource(area, label) {
-  const base = String(area ?? "").split("/").pop();
-  let text;
-  try {
-    text = await readFile(path.join(TREES_ROOT, area, base + ".md"), "utf8");
-  } catch {
-    return null;
-  }
-  return noteResource(text, label);
+async function areaWorkFolder(area) {
+  return resolveWorkFolder(TREES_ROOT, area);
 }
 
 /**
- * Resolves the working directory for a tree area from its area note's
- * `## Resources` section (a `Repository:` or `Worktree:` line), the same
- * lookup the chat agent performs when it opens sessions. Returns null when
- * the note records no usable directory.
+ * The folder one assignment starts in: its own `path` when the step named
+ * one, else the Area's bound folder. Null means the start must be refused.
  */
-async function areaDirectory(area) {
-  const recorded = await areaResource(area, "Repository|Worktree");
-  if (!recorded) return null;
-  const dir = recorded.replace(/^~(?=\/|$)/, os.homedir());
-  return path.isAbsolute(dir) && existsSync(dir) ? dir : null;
+async function stepWorkFolder(area, step) {
+  const requested = typeof step?.path === "string" ? step.path.trim() : "";
+  if (requested) return { cwd: requested, source: "step", branch: (await areaWorkFolder(area))?.branch ?? null };
+  return areaWorkFolder(area);
 }
 
 let caffeinateProc = null; // running `caffeinate -is` child, or null
@@ -507,13 +498,14 @@ function readBody(req) {
  */
 async function spawnSession(area, name) {
   if (!/^[a-z0-9-]+$/.test(name ?? "")) return { status: 400, error: "name must be lowercase letters, digits, hyphens" };
-  const dir = await areaDirectory(area);
-  if (!dir) return { status: 409, error: "no repo recorded, ask chat" };
+  const folder = await areaWorkFolder(area);
+  if (!folder) return { status: 409, error: unboundAreaMessage(TREES_ROOT, area, { pathHint: false }) };
   if ((await listAllSessions({ fresh: true })).some((session) => session.name === name)) {
     return { status: 409, error: `session "${name}" already exists` };
   }
-  await createOwnedTmuxSession(name, ["-d", "-s", name, "-c", dir]);
+  await createOwnedTmuxSession(name, ["-d", "-s", name, "-c", folder.cwd]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_area", area]);
+  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_cwd", folder.cwd]);
   return { status: 200 };
 }
 
@@ -1680,11 +1672,22 @@ function describeWorkPrompt(area, description, sources = []) {
 }
 
 /**
+ * The worker prompt section that names the folder the session opened in and
+ * where that folder came from (a step's own path or the Area that bound it),
+ * with the Branch when the Area declares one. Empty when no folder is known.
+ */
+function workingDirectorySection(folder) {
+  if (!folder?.cwd) return "";
+  const branch = folder.branch ? `\nBranch: ${folder.branch}` : "";
+  return `## Working directory\n\n${folder.cwd} (from ${folder.source})${branch}\n\n`;
+}
+
+/**
  * The exact assignment shown before execution and typed into the selected
  * harness. Markdown keeps the contract readable in both the shell and the
  * agent composer.
  */
-async function goalPrompt(area, o, extras = [], continuationEntries = [], trace = null) {
+async function goalPrompt(area, o, extras = [], continuationEntries = [], trace = null, folder = null) {
   const context = await goalContext(area, o, trace);
   trace?.mark("goal context ready", { documents: context.documents.length });
   const areaGoals = await readAreaGoals(area);
@@ -1719,6 +1722,7 @@ async function goalPrompt(area, o, extras = [], continuationEntries = [], trace 
     `## Done when\n\n${o.doneWhen || "Read the Goal file for the done condition."}\n\n` +
     (o.myUnderstanding ? `## Julian's understanding\n\n${o.myUnderstanding}\n\n` : "") +
     `## Sources\n\n${sources.join("\n")}\n\n` +
+    workingDirectorySection(folder) +
     (dependencyLines.length
       ? `## Dependencies\n\nThese facts are advisory. They do not block or reorder this work.\n\n${dependencyLines.join("\n")}\n\n`
       : "") +
@@ -1747,8 +1751,8 @@ async function goalPrompt(area, o, extras = [], continuationEntries = [], trace 
  * instruction, every earlier handover verbatim (facts from earlier agents),
  * and how to hand over when done. Guidance, not a schema.
  */
-async function pipelineStepPrompt(area, o, record, index, extras = [], sessionName = "", trace = null) {
-  const assignment = await goalPrompt(area, o, extras, [], trace);
+async function pipelineStepPrompt(area, o, record, index, extras = [], sessionName = "", trace = null, folder = null) {
+  const assignment = await goalPrompt(area, o, extras, [], trace, folder);
   trace?.mark("assignment rendered", { characters: assignment.length });
   const step = record.steps[index - 1];
   const total = record.steps.length;
@@ -2234,9 +2238,15 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
   const names = new Set(sessions.map((item) => item.name));
   let name = base;
   for (let index = 2; names.has(name); index += 1) name = `${base.slice(0, 55 - String(index).length)}-${index}`;
-  const directory = (await areaDirectory(area)) ?? path.join(TREES_ROOT, area);
-  await createOwnedTmuxSession(name, ["-d", "-s", name, "-c", directory]);
+  // The conversation opens where the Area's work lives. An Area that binds
+  // nothing is refused here, before the session exists, for the same reason
+  // a worker is: a session that silently opens in the vault looks right and
+  // does the wrong thing.
+  const folder = await areaWorkFolder(area);
+  if (!folder) return { status: 409, error: unboundAreaMessage(TREES_ROOT, area, { pathHint: false }) };
+  await createOwnedTmuxSession(name, ["-d", "-s", name, "-c", folder.cwd]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_area", area]);
+  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_cwd", folder.cwd]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "work-definition"]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_phase", "define"]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_work_title", title]);
@@ -2266,7 +2276,7 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
  * The path option gives the new pane one exact directory instead of the
  * Area repository; a pipeline step passes its own.
  */
-async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", ref = "", path: workingDirectory = "", extraSlugs = [], pipeline = null, continuation = null, attemptId = "", deferBinding = false, onPrimed = null, trace = null } = {}) {
+async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", ref = "", path: workingDirectory = "", workFolder = null, extraSlugs = [], pipeline = null, continuation = null, attemptId = "", deferBinding = false, onPrimed = null, trace = null } = {}) {
   const areaGoals = await readAreaGoals(area);
   trace?.mark("spawn area goals ready", { goals: areaGoals.length });
   const o = areaGoals.find((t) => t.slug === slug);
@@ -2284,17 +2294,6 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   const phaseName = pipeline ? pipeline.sessionName : continuation ? continuation.sessionName : phase === "collaborate" ? normName(`${baseName}--collaborate`).slice(0, 60) : baseName;
   const ownExtras = extras.filter((extra) => !extra.session || !liveNames.has(extra.session) || [o.session, baseName, phaseName].includes(extra.session));
   const extraFiles = ownExtras.map((extra) => extra.file);
-  // A pipeline step, or a continued solo session, is always a fresh session
-  // with its own name; the step prompt is typed verbatim once the harness
-  // is up. AGENT_SHELL_TEST_NO_LAUNCH leaves the pane at its shell so tests
-  // can prove binding without a harness.
-  const stepPrompt = pipeline
-    ? await pipelineStepPrompt(area, o, pipeline.record, pipeline.index, ownExtras, pipeline.sessionName, trace)
-    : continuation
-      ? await goalPrompt(area, o, ownExtras, continuation.entries)
-      : "";
-  trace?.mark("step prompt ready", { characters: stepPrompt.length });
-  if ((pipeline || continuation) && process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") launch = false;
   // Starting a Goal that already has a session re-primes it: a pane left
   // at a shell (the agent was stopped to do ordinary work) gets the launch
   // line and the prompt again, a pane still running one is only reattached.
@@ -2303,6 +2302,27 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   const existing = (pipeline || continuation) ? null : [o.session, phaseName, baseName].find((n) => n && sessions.some((s) => s.name === n));
   const live = existing ? sessions.find((session) => session.name === existing) : null;
   const existingAtShell = Boolean(live && SHELL_CMDS.has(live.command));
+  // A fresh session opens in the step's own directory, else the Area's bound
+  // folder. Nothing else: an Area that binds no folder is refused before any
+  // session or record exists, because a worker that silently opens in the
+  // vault looks right on Work and does the wrong thing. A reattached session
+  // keeps the folder it already has.
+  const folder = existing
+    ? { cwd: live?.cwd ?? "", source: "session", branch: null }
+    : workFolder ?? (workingDirectory ? { cwd: workingDirectory, source: "step", branch: null } : await areaWorkFolder(area));
+  if (!folder) return { status: 409, error: `goal ${slug}: ${unboundAreaMessage(TREES_ROOT, area)}` };
+  trace?.mark("work folder resolved", { source: folder.source });
+  // A pipeline step, or a continued solo session, is always a fresh session
+  // with its own name; the step prompt is typed verbatim once the harness
+  // is up. AGENT_SHELL_TEST_NO_LAUNCH leaves the pane at its shell so tests
+  // can prove binding without a harness.
+  const stepPrompt = pipeline
+    ? await pipelineStepPrompt(area, o, pipeline.record, pipeline.index, ownExtras, pipeline.sessionName, trace, folder)
+    : continuation
+      ? await goalPrompt(area, o, ownExtras, continuation.entries, null, folder)
+      : "";
+  trace?.mark("step prompt ready", { characters: stepPrompt.length });
+  if ((pipeline || continuation) && process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") launch = false;
   // A new launch, including one in an existing shell pane, resolves after the
   // saved Area edit. An explicit request still wins, while an agent that
   // already runs keeps its recorded launch.
@@ -2322,7 +2342,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     let primed = false;
     if (approved && phase === "execute" && live && !SHELL_CMDS.has(live.command)) {
       if (live.state === "working") return { status: 409, error: "the agent is still working; wait before you approve another assignment" };
-      await typeInto(existing, await goalPrompt(area, o, ownExtras), true);
+      await typeInto(existing, await goalPrompt(area, o, ownExtras, [], null, folder), true);
     } else {
       primed = await primeGoalSession(existing, phase, { launch, document, command, extraFiles }).catch(() => false);
     }
@@ -2333,15 +2353,12 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     }
     return { status: 200, session: existing, reattached: true, primed };
   }
-  // The step's own directory wins when it named one; without it the Area
-  // repository stays the default, so nothing changes for the steps that
-  // omit it. resolveStepPaths already proved the directory exists.
-  const dir = workingDirectory || (await areaDirectory(area)) || path.join(TREES_ROOT, area);
   // No command: tmux runs the login shell, so aliases (claude-otto) resolve
   // and the session outlives whatever agent is started in it.
-  const immutableTarget = await createOwnedTmuxSession(phaseName, ["-d", "-s", phaseName, "-c", dir]);
+  const immutableTarget = await createOwnedTmuxSession(phaseName, ["-d", "-s", phaseName, "-c", folder.cwd]);
   trace?.mark("tmux session created", { session: phaseName });
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_area", area]);
+  await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_cwd", folder.cwd]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_goal", o.file]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_kind", "goal"]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_phase", phase]);
@@ -2388,7 +2405,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   if (launch) await primeNewSession();
   else primeNewSession();
   trace?.mark("session primed", { session: phaseName, awaited: launch });
-  return { status: 200, session: phaseName, target: immutableTarget };
+  return { status: 200, session: phaseName, target: immutableTarget, cwd: folder.cwd, cwdSource: folder.source };
 }
 
 /**
@@ -2676,6 +2693,27 @@ function resolveStepPaths(steps, firstIndex = 1) {
 }
 
 /**
+ * Settles the folder of every step before anything is written: a step's own
+ * path, else the Goal's Area folder. One step with neither refuses the whole
+ * start with the line to add, so a refused start leaves no record and no
+ * session. Returns `{ folders }` aligned with the steps, or `{ error }`.
+ */
+async function resolveStepFolders(goal, steps) {
+  const folders = [];
+  for (const step of Array.isArray(steps) ? steps : []) {
+    const folder = await stepWorkFolder(goal.area, step);
+    if (!folder) return { error: `goal ${goal.slug}: ${unboundAreaMessage(TREES_ROOT, goal.area)}` };
+    folders.push(folder);
+  }
+  return { folders };
+}
+
+/** Adds each step's settled folder to its launch disclosure row, beside the harness. */
+function discloseStepFolders(rows, folders) {
+  return rows.map((row, position) => ({ ...row, cwd: folders[position]?.cwd ?? null, cwdSource: folders[position]?.source ?? null }));
+}
+
+/**
  * The Area's declared harness id, or null when the Area declares nothing and
  * when its declaration is broken. Callers skip the comparison rather than
  * compare against a guess.
@@ -2747,12 +2785,14 @@ async function materializeStepLaunches(area, steps, { firstIndex = 1, brain = nu
  * the facts it was written with, so a later reader can prove the harness was
  * settled while the assignment still had no session.
  */
-async function discloseAssignmentLaunch(record, step) {
+async function discloseAssignmentLaunch(record, step, folder = null) {
   step.launchDisclosure = {
     launch: launchRef(step.launch) || null,
     source: step.launchSource ?? "explicit",
     label: step.label,
     command: step.command,
+    cwd: folder?.cwd ?? null,
+    cwdSource: folder?.source ?? null,
     assignmentStatus: step.status,
     session: step.session,
     disclosedAt: new Date().toISOString(),
@@ -2792,7 +2832,16 @@ async function startPipelineStep(record, index, trace = null) {
   const liveNames = new Set(sessions.map((item) => item.name));
   const extraSlugs = (record.extraFiles ?? []).map((extra) => byFile.get(extra)).filter((extra) => extra && extra.area === o.area).map((extra) => extra.slug);
   const source = continuationSource(record, step);
-  await discloseAssignmentLaunch(record, step);
+  const continuedSession = source?.session && liveNames.has(source.session) ? sessions.find((item) => item.name === source.session) : null;
+  // The folder is settled and disclosed before anything is created. A step
+  // that continues a live session keeps that session's folder; a fresh
+  // session opens in the step's path or the Area's bound folder, and an
+  // Area that binds nothing stops here with the line to add.
+  const folder = continuedSession
+    ? { cwd: continuedSession.cwd ?? "", source: source.attempts?.at(-1)?.cwdSource ?? "session", branch: null }
+    : await stepWorkFolder(record.area, step);
+  if (!folder) return { status: 409, error: `goal ${record.slug}: ${unboundAreaMessage(TREES_ROOT, record.area)}` };
+  await discloseAssignmentLaunch(record, step, folder);
   // writePipeline canonicalizes assignments in place. Reacquire the stored
   // assignment before recording runtime state, or later writes mutate the
   // detached pre-canonicalization object and leave the queue pending.
@@ -2800,10 +2849,10 @@ async function startPipelineStep(record, index, trace = null) {
   trace?.mark("step launch disclosed", { launch: step.launchDisclosure.launch });
   const attemptId = randomUUID();
   let immutableTarget = null;
-  if (source?.session && liveNames.has(source.session)) {
+  if (continuedSession) {
     const goals = await readAreaGoals(record.area);
     const extras = extraSlugs.map((extraSlug) => goals.find((goal) => goal.slug === extraSlug)).filter(Boolean);
-    const prompt = await pipelineStepPrompt(record.area, o, record, index, extras, source.session, trace);
+    const prompt = await pipelineStepPrompt(record.area, o, record, index, extras, source.session, trace, folder);
     messages.queue(source.session, { from: "tangent", area: record.area, text: prompt, banner: false, queuedAt: new Date().toISOString() });
     await execFileAsync("tmux", ["set-option", "-t", "=" + source.session + ":", "@tangent_step", String(index)]).catch(() => {});
     await execFileAsync("tmux", ["set-option", "-t", "=" + source.session + ":", "@tangent_assignment", step.id]).catch(() => {});
@@ -2831,6 +2880,7 @@ async function startPipelineStep(record, index, trace = null) {
       label: step.label,
       ref: launchRef(step.launch),
       path: step.path,
+      workFolder: folder,
       extraSlugs,
       pipeline: { record, index, sessionName },
       attemptId,
@@ -2855,6 +2905,8 @@ async function startPipelineStep(record, index, trace = null) {
       command: step.command,
       label: step.label,
     },
+    cwd: folder.cwd,
+    cwdSource: folder.source,
     startedAt: step.startedAt,
     endedAt: null,
     report: null,
@@ -2887,13 +2939,16 @@ async function startPipeline(file, { steps, extraFiles = [], start = true, attem
   const located = resolveStepPaths(materialized.steps);
   if (located.error) return { status: 400, error: located.error };
   steps = located.steps;
+  const folders = await resolveStepFolders(o, steps);
+  if (folders.error) return { status: 409, error: folders.error };
   const error = validateSteps(steps);
   if (error) return { status: 400, error };
   const sameArea = extraFiles.map(String).filter((extra) => byFile.get(extra)?.area === o.area);
   const record = newPipeline({ goal: o.file, goalRevision: await goalContentRevision(o.file), area: o.area, slug: o.slug, extraFiles: sameArea, steps });
   record.instanceId = INSTANCE_ID;
   record.steps[0].nextAttemptKind = attemptKind;
-  const { warnings, rows: launches } = materialized;
+  const { warnings } = materialized;
+  const launches = discloseStepFolders(materialized.rows, folders.folders);
   await writePipeline(PIPELINES_ROOT, record);
   if (!start) return { status: 200, state: "queued", session: null, pipeline: record, warnings, launches };
   const started = await startPipelineStep(record, 1);
@@ -3431,6 +3486,8 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   const located = resolveStepPaths(materialized.steps, record.steps.length + 1);
   if (located.error) return { status: 400, error: located.error };
   steps = located.steps;
+  const folders = await resolveStepFolders(o, steps);
+  if (folders.error) return { status: 409, error: folders.error };
   const last = record.steps[record.steps.length - 1];
   let added;
   try {
@@ -3438,7 +3495,8 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   } catch (error) {
     return { status: 400, error: error.message };
   }
-  const { warnings, rows: launches } = materialized;
+  const { warnings } = materialized;
+  const launches = discloseStepFolders(materialized.rows, folders.folders);
   await writePipeline(PIPELINES_ROOT, record);
   await recordCommittedCommand({ operation: "goal-append", actorSession: options.caller, targetArea: o.area, goal: o.slug, operationId: options.idempotencyKey });
   return { status: 200, state: "queued", after: currentStep(record)?.index ?? last.index, added: added.map((step) => step.index), pipeline: record, warnings, launches };
@@ -3916,6 +3974,8 @@ async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
       attemptId: replacementAttemptId,
       session: started.session,
       target: started.target,
+      cwd: started.cwd ?? null,
+      cwdSource: started.cwdSource ?? null,
       generation: null,
     };
     transitionAttemptReplacement(operation, "replacement-starting", {
@@ -4498,6 +4558,23 @@ async function answeredRequestLines(record) {
     .map((request) => `- ${noticeMessage(brainRequestAnswerNotice(request, { answerChars: BRAIN_PROMPT_ANSWER_CHARS }))}${request.goal ? ` (Goal ${request.goal})` : ""}`);
 }
 
+/**
+ * The brain prompt's Resources lines: Repository, Worktree, and Branch as
+ * the Area sees them, each with the Area that declared it, so the brain can
+ * hand exact folders to workers and knows when a parent bound the folder.
+ * An Area that binds no folder reads `Repository: none bound`, the line the
+ * brain fixes before it starts a worker.
+ */
+function resourceLines(area, resources, workFolder) {
+  const lines = [
+    resources.repository ? `Repository: ${resources.repository.value} (from ${resources.repository.area})` : "Repository: none bound",
+    resources.worktree ? `Worktree: ${resources.worktree.value} (from ${resources.worktree.area})` : "",
+    resources.branch ? `Branch: ${resources.branch.value} (from ${resources.branch.area})` : "",
+    workFolder ? `Workers start in ${workFolder.cwd} (from ${workFolder.source}).` : `Workers cannot start: ${unboundAreaMessage(TREES_ROOT, area)}`,
+  ];
+  return lines.filter(Boolean).join("\n");
+}
+
 /** Builds the bounded prompt for one logical Area brain. Runtime attempts do not change its identity. */
 async function brainPrompt(record) {
   const area = record.area;
@@ -4505,7 +4582,12 @@ async function brainPrompt(record) {
   const notices = entry?.notices ?? [];
   const answered = await answeredRequestLines(record);
   const noteFiles = areaNoteFiles(area);
-  const repository = await areaDirectory(area);
+  // The brain sits in its vault Area folder; the repository it organizes
+  // work for is named in the prompt, with the worktree and branch the Area
+  // declares, so the brain can hand exact folders to its workers.
+  const workFolder = await areaWorkFolder(area);
+  const repository = workFolder?.cwd ?? null;
+  const resources = await describeAreaResources(TREES_ROOT, area);
   const instructions = repository ? await inheritedInstructionFiles(repository, repository).catch(() => []) : [];
   const goals = (await readAreaGoals(area)).filter((goal) => !["done", "dropped", "parked"].includes(goal.status));
   const areaPaths = flattenAreaPaths(await readTree(TREES_ROOT));
@@ -4551,7 +4633,6 @@ async function brainPrompt(record) {
   });
   const sourceLines = [
     ...noteFiles.map((file) => `Area source: ${file}`),
-    ...(repository ? [`Repository: ${repository}`] : ["Repository: none bound"]),
     ...instructions.map((item) => `Instruction source: ${item.file} sha256:${item.hash}`),
   ];
   const noticeLimit = 12;
@@ -4582,6 +4663,7 @@ async function brainPrompt(record) {
       + `goal-done needs "goal", and closes that Goal in this Area when Julian authorizes the exact revision. `
       + `route-journal needs "area" and "text", and saves your exact words to another Area's Journal. `
       + `Anything else is a reply, not a button. Run tangent brain request --help for the exact flags.`,
+    Resources: resourceLines(area, resources, workFolder),
     "Retrieval order": `Search ${area} and child Areas first. Then read parent Area sources and inherited repository instructions. Search wider Goals or linked systems only after those sources.`,
     "Area and repository context": sourceLines.join("\n"),
     "Area memory": memory.text || "The approved Area sections are empty.",
@@ -4589,7 +4671,7 @@ async function brainPrompt(record) {
     "Recent milestones": recent.milestones.map((item) => `- ${item.createdAt} ${item.area}: ${clipSummary(item.summary)}`).join("\n") || "No recent material milestones.",
     Omissions: omission.join("\n") || "No bounded collection was omitted.",
   }, BRAIN_STRUCTURAL_LIMIT, {
-    required: ["Identity", "Boundary", "Execution contract", "Wake", "Work frontier", "Questions", "Unread messages", "Asking Julian", "Retrieval order"],
+    required: ["Identity", "Boundary", "Execution contract", "Wake", "Work frontier", "Questions", "Unread messages", "Asking Julian", "Resources", "Retrieval order"],
   });
   return composeBrainPrompt({
     record,
@@ -4801,7 +4883,11 @@ async function spawnBrainSession(record, resolvedLaunch, { handoverOperationId =
   const names = new Set(sessions.map((item) => item.name));
   const generation = (record.generations?.length ?? 0) + 1;
   const name = uniqueSessionName(brainSessionName(record.area, generation), "", names, 60);
-  const directory = (await areaDirectory(record.area)) ?? path.join(TREES_ROOT, record.area);
+  // A brain always sits in its Area folder in the vault, whatever the Area
+  // binds: its work is the Area's notes, Goals, and Documents, and the bound
+  // repository reaches it by name in the prompt. Workers open in the
+  // repository; brains delegate every repository write.
+  const directory = path.join(TREES_ROOT, record.area);
   const operation = handoverOperationId && record.handoverOperation?.id === handoverOperationId
     ? record.handoverOperation
     : null;
@@ -4845,6 +4931,7 @@ async function spawnBrainSession(record, resolvedLaunch, { handoverOperationId =
     await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "brain"]);
     await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_phase", "orchestrate"]);
     await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_brain", record.area]);
+    await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_cwd", directory]);
     await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_generation", String(generation)]);
     if (resolvedLaunch.label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", resolvedLaunch.label]);
     if (launchRef(resolvedLaunch.ref)) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch_ref", launchRef(resolvedLaunch.ref)]);
@@ -6319,10 +6406,15 @@ const areaRoutesOperations = {
   async show(area) {
     if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) return null;
     const text = await areaNote(area);
+    const workFolder = await areaWorkFolder(area);
     return {
       area,
       purpose: noteSection(text, "Purpose"),
       resources: noteSection(text, "Resources"),
+      // The three resource lines as the Area sees them, each with the Area
+      // that declared it, and the folder a worker would actually start in.
+      resolved: await describeAreaResources(TREES_ROOT, area),
+      workFolder,
       goals: (await readAreaGoals(area)).map(goalSummary),
       ideas: ideasFromNote(text),
     };

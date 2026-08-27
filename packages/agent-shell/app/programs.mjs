@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { absoluteAreaPath, cleanAreaPath, areaSlug } from "./area-operations.mjs";
 import { operationFromProgram } from "./area-brain-domain.mjs";
+import { resolveWorkFolder } from "./area-resources.mjs";
 
 const PROCESS_FILE = ".processes.json";
 const TREE_SKIP = new Set([".git", ".obsidian", "shared", "node_modules"]);
@@ -41,21 +42,14 @@ export function triggerSession(area, name) {
   return `trigger-${base}-${hash}`;
 }
 
-/** Reads one area's exact Repository or Worktree resource. */
+/**
+ * The folder a program on this Area runs in: the same Worktree or Repository
+ * binding, inherited from parent Areas, that workers start in. Programs and
+ * workers read one parser so they can never disagree about an Area's folder.
+ */
 export async function programDirectory(treesRoot, area) {
-  const clean = cleanAreaPath(area);
-  const base = path.basename(clean);
-  let text;
-  try {
-    text = await readFile(path.join(absoluteAreaPath(treesRoot, clean), `${base}.md`), "utf8");
-  } catch {
-    return null;
-  }
-  const resources = text.split(/^## /m).find((section) => section.startsWith("Resources")) ?? "";
-  const match = resources.match(/^\s*-\s*(?:Repository|Worktree):\s*(.+?)\s*$/mi);
-  if (!match) return null;
-  const cwd = match[1].replace(/^~(?=\/|$)/, os.homedir());
-  return path.isAbsolute(cwd) && existsSync(cwd) ? cwd : null;
+  const folder = await resolveWorkFolder(treesRoot, cleanAreaPath(area));
+  return folder?.cwd ?? null;
 }
 
 /** Lists every area path in the private vault. */

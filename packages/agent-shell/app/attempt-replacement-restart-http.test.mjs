@@ -153,7 +153,7 @@ async function createVault(trees, workspace) {
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   const slugs = ["unrelated", "starting", "dead-target", "retirement-retry"];
   await writeFile(path.join(area, "restart.md"), [
-    "---", "type: area", "---", "", "# Restart", "", "## Goals", "",
+    "---", "type: area", "---", "", "# Restart", "", "## Resources", "", `- Repository: ${workspace}`, "", "## Goals", "",
     ...slugs.map((slug, index) => `${index + 1}. [[goal-${slug}]]`), "",
   ].join("\n"), "utf8");
   for (const slug of slugs) {

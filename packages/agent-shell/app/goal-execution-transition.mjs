@@ -92,6 +92,8 @@ export function promoteReadyReplacement(queue, operation, now = new Date().toISO
     instanceId: operation.replacementTarget.instanceId,
     target: structuredClone(operation.replacementTarget),
     resolvedLaunch: structuredClone(operation.resolvedLaunch),
+    cwd: operation.replacementTarget.cwd ?? null,
+    cwdSource: operation.replacementTarget.cwdSource ?? null,
     startedAt: operation.replacementStartedAt ?? now,
     endedAt: null,
     report: null,

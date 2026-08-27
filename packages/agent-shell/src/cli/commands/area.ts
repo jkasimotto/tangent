@@ -73,6 +73,7 @@ async function showCommand(args: Args): Promise<void> {
     console.log("Purpose:");
     console.log(detail.purpose);
   }
+  printResources(detail);
   console.log("");
   console.log(`Goals (${detail.goals.length}):`);
   if (!detail.goals.length) console.log("  none");
@@ -82,6 +83,35 @@ async function showCommand(args: Args): Promise<void> {
   if (!detail.ideas.length) console.log("  none");
   for (const idea of detail.ideas) console.log(`  - ${idea}`);
 }
+
+/**
+ * Prints the resource lines the Area sees, each with the Area that declared
+ * it, and the folder a worker starts in, so a brain reading
+ * `tangent area show` knows where the Area's work runs without opening the
+ * note.
+ */
+function printResources(detail: AreaShowDetail): void {
+  const resolved = detail.resolved ?? {};
+  const lines = [
+    ["Repository", resolved.repository],
+    ["Worktree", resolved.worktree],
+    ["Branch", resolved.branch],
+  ].filter((entry): entry is [string, ResolvedResource] => Boolean(entry[1]));
+  console.log("");
+  console.log("Resources:");
+  if (!lines.length) console.log("  Repository: none bound");
+  for (const [label, item] of lines) console.log(`  ${label}: ${item.value} (from ${item.area})`);
+  if (detail.workFolder) console.log(`  Workers start in ${detail.workFolder.cwd} (from ${detail.workFolder.source})`);
+}
+
+/** One resource value with the Area whose note declares it. */
+type ResolvedResource = { value: string; area: string };
+
+/** The parts of `/api/areas/show` the resource printout reads. */
+type AreaShowDetail = {
+  resolved?: { repository?: ResolvedResource | null; worktree?: ResolvedResource | null; branch?: ResolvedResource | null };
+  workFolder?: { cwd: string; source: string } | null;
+};
 
 /**
  * Handles `tangent area create <parent> <name>`: the same route the desk uses, so an agent

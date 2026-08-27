@@ -175,9 +175,9 @@ test("a brain lends its own harness to every worker it starts", async (context) 
   assert.equal(started.status, 200, JSON.stringify(started.body));
   openedSessions.push(started.body.session);
   assert.deepEqual(started.body.launches, [
-    { index: 1, launch: "claude-otto/fable-5", source: "brain-default", label: "Claude · Otto · Fable 5", command: "FAKE_CONFIG_DIR=~/.claude-otto fake-claude --model claude-fable-5" },
-    { index: 2, launch: "claude-otto/fable-5", source: "brain-default", label: "Claude · Otto · Fable 5", command: "FAKE_CONFIG_DIR=~/.claude-otto fake-claude --model claude-fable-5" },
-  ], "the start response says what each assignment runs and where its harness came from");
+    { index: 1, launch: "claude-otto/fable-5", source: "brain-default", label: "Claude · Otto · Fable 5", command: "FAKE_CONFIG_DIR=~/.claude-otto fake-claude --model claude-fable-5", cwd: workspace, cwdSource: "area:otto/proof" },
+    { index: 2, launch: "claude-otto/fable-5", source: "brain-default", label: "Claude · Otto · Fable 5", command: "FAKE_CONFIG_DIR=~/.claude-otto fake-claude --model claude-fable-5", cwd: workspace, cwdSource: "area:otto/proof" },
+  ], "the start response says what each assignment runs, where its harness came from, and the folder it runs in");
   assert.deepEqual(started.body.warnings, []);
   const [first, second] = started.body.pipeline.steps;
   assert.deepEqual(first.launch, { harness: "claude-otto", model: "fable-5", effort: null });

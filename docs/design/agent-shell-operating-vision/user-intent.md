@@ -50,6 +50,10 @@ Julian asked for a design up front, a presented vision in pragmatic Simple Engli
 
 > Also each area has certain resoruces associated with it: repos, worktrees, branches etc. All this should be codified in the area note so the brain knows to start agents in the correct place. Honestly we should make it so that all interactiosn do go through the brain. I can't start an agent without the brain. And agents should not have any tangent commands except tangent agent send or whatever the communication is. And that should send to the brain (they should be told how to run that in their opening prompt). The brain can mark the goal as done etc if need be. Philosophy is that workers only have two interactiosn with tangent 1) receiving their initial prompt from brain 2) sending messages to brain. That is really it. Brain should also only really do tangent stuff mostly. Someetimes it might need to do planning and research to organise tangent work effectively that is cool too. Almost all facts for brain should be stored in md. default harness model etc is the onc exception because i want to change that manually myself. Okay go
 
+## Julian on the brain prompt (same evening)
+
+> It doesn't need handover or activation or whatever that is. It needs to know commands it can and should run, what tangent is, what its role is, where to look for information (hint run tangent commands mostly) and be told to read the area note basically (this essentially acts as a system prompt). Anything more than that is overkill. Tell it how to do its job which is organise info in the vault and organise worker agents.
+
 ## What the memos ask for, in one list
 
 1. Start a Goal fast, without the brain: pick the Area, pick the harness, go. When it finishes, it can tell the brain.

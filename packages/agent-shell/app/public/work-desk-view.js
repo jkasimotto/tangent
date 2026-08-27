@@ -1737,13 +1737,48 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     }
   }
 
-  /** One Goal tree as adjacent rows: the parent, then its open Subgoals. */
+  /**
+   * One preorder Goal tree as adjacent rows.
+   *
+   * Depth, rather than list position, owns parentage. Each rendered Goal gets
+   * only its direct open children, and a collapsed ancestor hides its complete
+   * descendant branch even when an intermediate Goal remains expanded.
+   */
   function workTreeRows(tree, groupPath, labels, facts, maxElapsedMs) {
-    const subgoals = tree.goals.slice(1).filter((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status));
-    const expanded = !state.collapsedGoalTrees.has(tree.root.file);
-    const parentRow = workGoalRow(tree.root, { groupPath, labels, fact: facts.get(tree.root.file), maxElapsedMs, subgoalCount: subgoals.length, expanded });
-    const subgoalRows = subgoals.map((goal) => workGoalRow(goal, { groupPath, labels, fact: facts.get(goal.file), maxElapsedMs, subgoal: true, parent: tree.root.file, hidden: !expanded }));
-    return [parentRow, ...subgoalRows].join("");
+    const closed = new Set(["done", "dropped", "parked", "deferred"]);
+    const goals = tree.goals.filter((goal, index) => index === 0 || !closed.has(goal.status));
+    const stack = [];
+    const nodes = goals.map((goal) => {
+      const parsedDepth = Number(goal.depth ?? 0);
+      const depth = Number.isFinite(parsedDepth) ? Math.max(0, Math.trunc(parsedDepth)) : 0;
+      while (stack.length && stack.at(-1).depth >= depth) stack.pop();
+      const parent = stack.at(-1) ?? null;
+      const node = { goal, depth, parent, children: [] };
+      if (parent) parent.children.push(node);
+      stack.push(node);
+      return node;
+    });
+    /** True when any rendered ancestor owns the collapsed branch. */
+    const hiddenByAncestor = (node) => {
+      for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
+        if (state.collapsedGoalTrees.has(ancestor.goal.file)) return true;
+      }
+      return false;
+    };
+    return nodes.map((node) => {
+      const expanded = !state.collapsedGoalTrees.has(node.goal.file);
+      return workGoalRow(node.goal, {
+        groupPath,
+        labels,
+        fact: facts.get(node.goal.file),
+        maxElapsedMs,
+        subgoal: Boolean(node.parent),
+        parent: node.parent?.goal.file ?? "",
+        hidden: hiddenByAncestor(node),
+        subgoalCount: node.children.length,
+        expanded,
+      });
+    }).join("");
   }
 
   /** Renders the Programs of one Area as a compact operational shelf. */

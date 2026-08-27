@@ -525,6 +525,64 @@ test("h and l collapse, expand, and traverse Area and Subgoal tree nodes", async
   assert.equal(document.activeElement.closest("[data-goal-anchor]")?.dataset.goalAnchor, parent.file, "h on a leaf returns to its parent");
 });
 
+test("nested Subgoals keep their real parents and every collapsed ancestor hides its branch", async () => {
+  const fixture = workTableFixture();
+  const parent = fixture.goals.find((goal) => goal.slug === "compact-table");
+  const child = { ...parent, slug: "compact-table-css", file: "otto/tangent/goal-compact-table-css.md", title: "Write the table CSS", depth: 1, session: null, firstStartAt: null };
+  const grandchild = { ...parent, slug: "compact-table-grid", file: "otto/tangent/goal-compact-table-grid.md", title: "Prove the nested grid", depth: 2, session: null, firstStartAt: null };
+  const sibling = { ...parent, slug: "compact-table-copy", file: "otto/tangent/goal-compact-table-copy.md", title: "Tighten the table copy", depth: 1, session: null, firstStartAt: null };
+  const area = fixture.vault.areas.find((item) => item.path === "otto/tangent");
+  area.goals.splice(area.goals.indexOf(parent) + 1, 0, child, grandchild, sibling);
+  fixture.vault.map.find((item) => item.path === "otto/tangent").goals = area.goals;
+
+  const { window, document } = await bootWorkTable(fixture);
+  /** Returns the rendered row for one exact Goal file. */
+  const row = (file) => document.querySelector(`[data-goal-anchor='${file}']`);
+  assert.equal(row(child.file).dataset.subgoalOf, parent.file, "depth 1 belongs to the root");
+  assert.equal(row(grandchild.file).dataset.subgoalOf, child.file, "depth 2 belongs to its immediate parent");
+  assert.equal(row(sibling.file).dataset.subgoalOf, parent.file, "the next depth-1 Goal leaves the nested branch");
+  assert.match(document.querySelector(`[data-work-tree-goal='${parent.file}']`).getAttribute("aria-label"), /2 Subgoals/, "the root counts only direct children");
+  assert.match(document.querySelector(`[data-work-tree-goal='${child.file}']`).getAttribute("aria-label"), /1 Subgoal/, "the nested parent owns its disclosure");
+
+  row(parent.file).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  row(parent.file).querySelector("[data-work-row-title]").focus();
+  press(window, "h");
+  await settle(window);
+  assert.equal(row(child.file).hidden, true);
+  assert.equal(row(grandchild.file).hidden, true, "the root collapse reaches depth 2");
+  assert.equal(row(sibling.file).hidden, true);
+
+  press(window, "l");
+  await settle(window);
+  press(window, "l");
+  await settle(window);
+  assert.equal(document.activeElement.closest("[data-goal-anchor]")?.dataset.goalAnchor, child.file, "l enters the first direct child");
+  press(window, "h");
+  await settle(window);
+  assert.equal(row(grandchild.file).hidden, true, "h collapses only the nested child's branch");
+  assert.equal(row(sibling.file).hidden, false, "a nested collapse leaves its sibling visible");
+  press(window, "h");
+  await settle(window);
+  assert.equal(document.activeElement.closest("[data-goal-anchor]")?.dataset.goalAnchor, parent.file, "h on the collapsed child returns to its real parent");
+  press(window, "h");
+  await settle(window);
+  press(window, "l");
+  await settle(window);
+  assert.equal(row(child.file).hidden, false, "expanding the root restores its direct child");
+  assert.equal(row(grandchild.file).hidden, true, "the child's retained collapse still hides the grandchild");
+  assert.equal(row(sibling.file).hidden, false);
+  press(window, "l");
+  await settle(window);
+  press(window, "l");
+  await settle(window);
+  press(window, "l");
+  await settle(window);
+  assert.equal(document.activeElement.closest("[data-goal-anchor]")?.dataset.goalAnchor, grandchild.file, "l expands the nested parent and enters its direct child");
+  press(window, "h");
+  await settle(window);
+  assert.equal(document.activeElement.closest("[data-goal-anchor]")?.dataset.goalAnchor, child.file, "h on the depth-2 leaf returns to depth 1");
+});
+
 test("multiple startable groups keep independent start actions without browser selection", async () => {
   const fixture = plannedWorkFixture();
   const other = { ...fixture.goals[0], area: "otto/standards", slug: "standards-startable", file: "otto/standards/goal-standards-startable.md", title: "Write the standards index", dependsOn: [] };

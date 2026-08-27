@@ -595,6 +595,68 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     }
   }
 
+  /** Starts or confirms one persisted exact-attempt replacement operation. */
+  async function replaceGoalAttempt({ confirmed = false } = {}) {
+    const replacement = state.launch.replacement;
+    if (!replacement) return;
+    const priorStatus = replacement.operation?.status ?? "";
+    if (priorStatus === "complete") {
+      const name = replacement.operation?.replacementTarget?.session;
+      const session = state.sessions.find((item) => item.name === name);
+      return session ? openSessionLayer(session, "agent", captureReturnPoint()) : showToast("The replacement session is no longer live.");
+    }
+    if (["failed", "rollback"].includes(priorStatus)) {
+      replacement.operationId = crypto.randomUUID();
+      replacement.operation = null;
+      replacement.launch = null;
+      replacement.requiresConfirmation = false;
+      confirmed = false;
+    }
+    const selection = launchSelection();
+    const launch = replacement.launch ?? (selection?.harness ? {
+      harness: selection.harness.id,
+      model: selection.model?.id ?? null,
+      effort: selection.effort?.id ?? null,
+    } : null);
+    if (!launch?.harness) return showToast("Choose a registered harness before starting the replacement.");
+    replacement.launch = launch;
+    replacement.saving = true;
+    paint(true);
+    const body = {
+      goal: replacement.goal,
+      assignmentId: replacement.assignmentId,
+      expectedRevision: replacement.expectedRevision,
+      expectedAttemptId: replacement.expectedAttemptId,
+      launch,
+      operationId: replacement.operationId,
+      ...(confirmed || replacement.operation ? { confirmed: true } : {}),
+    };
+    try {
+      const result = await post("/api/goals/attempts/replace", body);
+      replacement.operation = result.operation ?? replacement.operation;
+      replacement.requiresConfirmation = Boolean(result.requiresConfirmation);
+      replacement.saving = false;
+      await refresh();
+      paint(true);
+      const name = result.session ?? result.operation?.replacementTarget?.session;
+      const session = state.sessions.find((item) => item.name === name);
+      if (session && replacement.inspectedSession !== name) {
+        replacement.inspectedSession = name;
+        openSessionLayer(session, "agent", captureReturnPoint());
+      }
+      const status = replacement.operation?.status ?? result.state;
+      if (status === "complete") showToast("The replacement is current and the exact source retirement finished.");
+      else if (result.requiresConfirmation) showToast("The replacement is live. Inspect it, then finish the same replacement operation.");
+      else showToast(`Replacement ${String(status || "operation").replaceAll("-", " ")}.`);
+    } catch (error) {
+      replacement.operation = error.payload?.operation ?? replacement.operation;
+      replacement.requiresConfirmation = replacement.operation?.status === "replacement-starting";
+      replacement.saving = false;
+      paint(true);
+      showToast(error.message);
+    }
+  }
+
   /** Opens the agent for the selected Goal and remembers the return view. */
   async function openGoalAgent({ returnView = "work" } = {}) {
     const goal = currentGoal();
@@ -911,5 +973,5 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Toggles the server-owned macOS sleep assertion. */
 
-  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, showCreate, switchDescribeToManualCreate, cancelCreate, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, startPipeline, savePipelineChanges, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
+  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, showCreate, switchDescribeToManualCreate, cancelCreate, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, startPipeline, savePipelineChanges, replaceGoalAttempt, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
 }

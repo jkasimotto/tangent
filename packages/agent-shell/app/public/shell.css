@@ -1141,6 +1141,18 @@ details.more-work .area-work-list { margin-top: 18px; }
 .launch-stale { display: grid; gap: 3px; border-color: #665735; background: rgba(231, 198, 128, .06); color: #c8aa6b; }
 .launch-stale strong { font-size: 11px; }
 .launch-stale span { font-size: 10px; }
+.replacement-assignment .launch-step-fixed { grid-template-columns: 18px minmax(150px, .75fr) minmax(0, 1.25fr); }
+.replacement-preserved dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 16px; margin: 8px 0 0; }
+.replacement-preserved dl div { min-width: 0; }
+.replacement-preserved dt { color: var(--quiet); font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+.replacement-preserved dd { overflow-wrap: anywhere; margin: 2px 0 0; color: var(--text); font-size: 11px; }
+.replacement-command { display: grid; gap: 5px; }
+.replacement-command small { color: var(--quiet); font-size: 10px; }
+.replacement-state { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid #3c5269; border-radius: 7px; background: rgba(94, 145, 199, .08); color: #a9c9eb; }
+.replacement-state strong { font-size: 11px; text-transform: capitalize; }
+.replacement-state span, .replacement-state small { font-size: 10px; }
+.replacement-state.failed, .replacement-state.rollback, .replacement-state.retirement-incomplete { border-color: #725245; background: rgba(196, 116, 82, .08); color: #e1aa8e; }
+.replacement-state.complete { border-color: #3f6657; background: rgba(95, 180, 143, .08); color: #9bd2b7; }
 @media (max-width: 760px) {
   .launch-assignment-metadata { grid-template-columns: 1fr; }
   .launch-region-title { align-items: flex-start; flex-direction: column; }

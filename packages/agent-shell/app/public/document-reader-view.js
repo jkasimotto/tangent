@@ -148,7 +148,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
               <button type="button" data-open-brain="${escapeHtml(brain.session)}">Go to brain</button>
             </div>
           </details>` : `<button class="reader-notify-brain" type="button" title="${escapeHtml(notifyTitle)}" disabled>${escapeHtml(notifyLabel)}</button>`}
-          ${state.goalDetail?.goal ? `<button class="quiet-button reader-goal-actions" type="button" data-reader-goal-actions="${escapeHtml(state.goalDetail.goal.file)}" aria-keyshortcuts=":" title="Goal actions (:)">Goal actions <kbd>:</kbd></button>` : ""}
+          ${state.goalDetail?.goal ? `<button class="quiet-button reader-goal-actions" type="button" data-reader-goal-actions="${escapeHtml(state.goalDetail.goal.file)}" data-focus-key="reader:goal-actions:${escapeHtml(state.goalDetail.goal.file)}" aria-keyshortcuts=":" title="Goal actions (:)">Goal actions <kbd>:</kbd></button>` : ""}
           ${goalCanOpenAgent ? `<button class="reader-agent-action" type="button" data-open-reader-agent>Open agent</button>` : ""}
           <button class="reader-close-action" type="button" data-leave-document aria-keyshortcuts="Escape" title="Leave the Document reader (Esc)">Close <kbd>esc</kbd></button>
         </div>

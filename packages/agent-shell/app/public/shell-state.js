@@ -36,7 +36,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     areaQuery: "", areaDocumentQuery: "", areaDocumentPeriod: "any", areaDocumentOrder: "newest", areaDocumentOnly: "", areaDocumentExcluded: new Set(),
     areaWorkQuery: "", areaWorkScope: "", areaWorkState: "all", areaWorkLimits: new Map(), areaHistory: false, areaJournal: null,
     programId: "", programDraft: { type: "process", area: "", name: "", command: "", cwd: "" },
-    launch: { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null, stale: null },
+    launch: { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null, stale: null, replacement: null },
     defaultAgents: { area: "", editing: "", mode: "" },
     pipelines: [], brains: [], brainDraft: null, agentSessionName: null, sessionPeek: null,
     verdictLines: new Set(), dismissedAskIds: readDismissedAskIds(storage), goTo: null, launchTarget: "", launchAnchor: null, whatHappened: null,

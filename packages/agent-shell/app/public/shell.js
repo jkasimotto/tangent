@@ -543,7 +543,7 @@ const {
   selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt,
   selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath,
   confirmAreaMove, showCreate, switchDescribeToManualCreate, cancelCreate, addDescribeSource, showDescribe,
-  openDescribeSession, cancelDescribe, showDecision, startPipeline, savePipelineChanges,
+  openDescribeSession, cancelDescribe, showDecision, startPipeline, savePipelineChanges, replaceGoalAttempt,
   openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm,
   confirmStop, confirmComplete, confirmWontDo,
 } = shellCoordinator;
@@ -588,6 +588,7 @@ function launchPopover() {
   const describing = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
   const braining = state.launchTarget === BRAIN_LAUNCH_TARGET;
   const settings = state.launchTarget === DEFAULT_AGENTS_TARGET;
+  const replacing = Boolean(state.launch.replacement);
   const goal = describing || braining || settings ? null : goalByFile(state.launchTarget);
   if (!describing && !braining && !settings && !goal) return "";
   if (braining && !state.brainDraft?.area) return "";
@@ -598,8 +599,8 @@ function launchPopover() {
   const width = Math.min(640, window.innerWidth - 32);
   const left = Math.max(16, anchor.right - width);
   return `
-    <div class="launch-popover" data-launch-popover data-focus-key="launch:surface" tabindex="-1" role="dialog" aria-modal="false" aria-label="${settings ? "Default agents" : "Choose agent and model"}" style="${launchPopoverVerticalStyle(anchor)};left:${left}px;width:${width}px">
-      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : settings ? "Default agents" : escapeHtml(goal.title)}</strong><span class="launch-key-hint"><kbd>j/k</kbd> choices · <kbd>h/l</kbd> columns · <kbd>Enter</kbd> select · <kbd>Esc</kbd> back</span></header>
+    <div class="launch-popover" data-launch-popover data-focus-key="launch:surface" tabindex="-1" role="dialog" aria-modal="false" aria-label="${settings ? "Default agents" : replacing ? "Change agent" : "Choose agent and model"}" style="${launchPopoverVerticalStyle(anchor)};left:${left}px;width:${width}px">
+      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : settings ? "Default agents" : replacing ? `Change agent · ${escapeHtml(goal.title)}` : escapeHtml(goal.title)}</strong><span class="launch-key-hint"><kbd>j/k</kbd> choices · <kbd>h/l</kbd> columns · <kbd>Enter</kbd> select · <kbd>Esc</kbd> back</span></header>
       ${launchPickerBlock()}
     </div>
   `;
@@ -866,7 +867,7 @@ function renderScreen() {
   else if (state.view === "program-create") screen.innerHTML = renderProgramCreate();
   else if (state.view === "harnesses") screen.innerHTML = renderHarnessEditor();
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
-  else if (state.view === "document") screen.innerHTML = renderDocument();
+  else if (state.view === "document") screen.innerHTML = renderDocument() + launchPopover();
   else {
     state.view = "work";
     screen.innerHTML = renderWork();
@@ -1500,7 +1501,7 @@ bindShellEvents({
   launch: {
     syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep, moveLaunchStep,
     addLaunchStep, launchStepIsMutable, launchStepsForRecord, blankLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses, startPipeline,
-    savePipelineChanges, launchOptionsFor, pipelineRecordForGoal, rebasePipelineDraft, loadLaunchStep,
+    savePipelineChanges, replaceGoalAttempt, launchOptionsFor, pipelineRecordForGoal, rebasePipelineDraft, loadLaunchStep,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   },
   documents: {

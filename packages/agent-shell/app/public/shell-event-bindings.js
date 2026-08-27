@@ -36,7 +36,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   const {
     syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep, moveLaunchStep,
     addLaunchStep, launchStepIsMutable, launchStepsForRecord, blankLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses, startPipeline,
-    savePipelineChanges, launchOptionsFor, pipelineRecordForGoal, rebasePipelineDraft, loadLaunchStep,
+    savePipelineChanges, replaceGoalAttempt, launchOptionsFor, pipelineRecordForGoal, rebasePipelineDraft, loadLaunchStep,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   } = launch;
   const {
@@ -316,9 +316,87 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       loadLaunchStep(steps, 0);
     }
     state.launch.stale = null;
+    state.launch.replacement = null;
     state.launch.open = false;
     paint(true);
     requestLaunchFocus();
+    return true;
+  }
+
+  /** Normalizes a queue or attempt launch snapshot to the chooser's IDs. */
+  function replacementLaunchChoice(assignment, attempt) {
+    const candidate = assignment?.launch ?? attempt?.launch ?? attempt?.resolvedLaunch?.launch ?? attempt?.resolvedLaunch?.ref ?? attempt?.resolvedLaunch;
+    if (candidate?.harness) return { harness: candidate.harness, model: candidate.model ?? null, effort: candidate.effort ?? null };
+    const ref = typeof candidate === "string" ? candidate : typeof candidate?.ref === "string" ? candidate.ref : "";
+    const [harness, model = null, effort = null] = ref.split("/").filter(Boolean);
+    return harness ? { harness, model, effort } : null;
+  }
+
+  /** Resolves the exact mutable identity required for safe attempt replacement. */
+  function replacementTargetForGoal(goal) {
+    if (!goal) return { enabled: false, reason: "Choose a Goal first." };
+    if (["done", "dropped", "parked", "deferred"].includes(goal.status)) return { enabled: false, reason: "A closed or parked Goal has no replaceable current attempt." };
+    const detail = state.goalDetail?.goal?.file === goal.file ? state.goalDetail : null;
+    const record = (state.pipelines ?? []).find((item) => item.goal === goal.file) ?? detail?.queue ?? null;
+    if (!record) return { enabled: false, reason: "This Goal has no current assignment." };
+    const assignments = record.steps ?? record.assignments ?? [];
+    const assignmentId = record.currentAssignmentId ?? detail?.current?.assignmentId;
+    const assignment = assignments.find((item) => item.id === assignmentId)
+      ?? assignments.find((item) => ["running", "waiting", "stopped"].includes(item.status));
+    if (!assignment || !["running", "waiting", "stopped"].includes(assignment.status)) return { enabled: false, reason: "This Goal has no live or stopped assignment to replace." };
+    const attempts = assignment.attempts ?? [];
+    const attemptId = detail?.current?.assignmentId === assignment.id ? detail?.current?.attemptId ?? null : null;
+    const attempt = attempts.find((item) => item.id === attemptId) ?? attempts.at(-1)
+      ?? detail?.attempts?.find((item) => item.assignmentId === assignment.id && item.current);
+    const expectedAttemptId = attempt?.id ?? attemptId;
+    if (!expectedAttemptId) return { enabled: false, reason: "The current assignment has no fenced attempt identity." };
+    if (!Number.isInteger(record.revision)) return { enabled: false, reason: "The current queue has no revision fence." };
+    return { enabled: true, record, assignment, attempt, assignmentId: assignment.id, expectedAttemptId };
+  }
+
+  /** Opens Change agent on the same chooser and preserves any unsettled operation. */
+  function openChangeAgent(goal, opener) {
+    const target = replacementTargetForGoal(goal);
+    if (!target.enabled) return showToast(target.reason);
+    const existing = state.launch.replacement;
+    const canResume = existing?.goal === goal.file && existing.expectedAttemptId === target.expectedAttemptId
+      && !["complete", "failed", "rollback"].includes(existing.operation?.status);
+    const point = captureNavigationPoint(opener);
+    launchReturnPoint = point;
+    launchParentSurface = null;
+    stopLaunchFocusRequest();
+    const rect = opener?.getBoundingClientRect?.() ?? { top: 120, bottom: 140, right: 720 };
+    state.launchTarget = goal.file;
+    state.launchAnchor = { top: Math.round(rect.bottom + 8), above: Math.round(rect.top - 8), right: Math.round(rect.right) };
+    launchOptionsFor(goal.area);
+    state.launch.record = target.record;
+    const steps = launchStepsForRecord(target.record);
+    const active = Math.max(0, steps.findIndex((row) => row.id === target.assignmentId));
+    state.launch.steps = steps;
+    loadLaunchStep(steps, active);
+    if (canResume) {
+      state.launch.replacement = existing;
+      state.launch.choice = existing.launch ? { ...existing.launch } : replacementLaunchChoice(target.assignment, target.attempt);
+      state.launch.command = "";
+    }
+    else {
+      state.launch.choice = replacementLaunchChoice(target.assignment, target.attempt);
+      state.launch.command = "";
+      state.launch.replacement = {
+        goal: goal.file,
+        assignmentId: target.assignmentId,
+        expectedRevision: target.record.revision,
+        expectedAttemptId: target.expectedAttemptId,
+        operationId: crypto.randomUUID(),
+        launch: null,
+        operation: null,
+        requiresConfirmation: false,
+        saving: false,
+        inspectedSession: "",
+      };
+    }
+    paint(true);
+    requestLaunchFocus(state.launch.replacement.operation ? "key:launch:start" : "choices");
     return true;
   }
 
@@ -627,6 +705,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (id === "collapse") return collapseWorkTree(row) || showToast(treeCommandAvailability(id, row).reason);
     if (id === "expand") return expandWorkTree(row) || showToast(treeCommandAvailability(id, row).reason);
     if (id === "readGoal") return goal ? openDocument(goal.file) : showToast("Choose a Goal row first.");
+    if (id === "changeAgent") {
+      const opener = row?.contains(document.activeElement)
+        ? document.activeElement
+        : row?.querySelector("[data-work-object-actions]") ?? row?.querySelector("[data-work-row-title]");
+      return goal ? openChangeAgent(goal, opener) : showToast("Choose a Goal row first.");
+    }
     if (id === "goalStatus") return goal ? openGoalStatus(goal) : showToast("Choose a Goal row first.");
     if (id === "editAssignments") return goal ? openGoalLaunchEditor(goal.file, row.querySelector("[data-work-object-actions], [data-work-row-title]")) : showToast("Choose a Goal row first.");
     if (id === "filter") return document.querySelector("#work-search")?.focus();
@@ -669,12 +753,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const isArea = row.classList.contains("work-group-row") && area;
     const options = workCommandsFor({ palette: true }).filter((command) => {
       if (["commands", "openBrain", "stopBrain", "defaults", "newGoal", "focus", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return Boolean(isArea);
-      if (["readGoal", "goalStatus"].includes(command.id)) return Boolean(goal);
+      if (["readGoal", "changeAgent", "goalStatus"].includes(command.id)) return Boolean(goal);
       return ["collapse", "expand", "filter", "keys"].includes(command.id);
     }).map((command) => {
       const tree = treeCommandAvailability(command.id, row);
-      const enabled = command.id === "stopBrain" ? Boolean(brain?.live) : tree.enabled;
-      const reason = command.id === "stopBrain" && !brain?.live ? "This Area has no live brain." : tree.reason;
+      const replacement = command.id === "changeAgent" ? replacementTargetForGoal(goal) : null;
+      const enabled = command.id === "stopBrain" ? Boolean(brain?.live) : replacement ? replacement.enabled : tree.enabled;
+      const reason = command.id === "stopBrain" && !brain?.live ? "This Area has no live brain." : replacement ? replacement.reason : tree.reason;
       return { value: command.id, key: command.keyDisplay, label: command.label, help: command.help, enabled, reason };
     });
     const record = goal ? pipelineRecordForGoal(goal) : null;
@@ -737,10 +822,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return false;
       }
       if (id === "start") return openGoalLaunchEditor(goal.file, opener);
-      if (id === "change-agent") {
-        showToast("Change agent opens from Work with c.");
-        return false;
-      }
+      if (id === "change-agent") return openChangeAgent(goal, opener);
       return false;
     };
     return openModal({
@@ -1666,6 +1748,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest("[data-launch-start]")) {
       syncLaunchDraft();
       const targetFile = state.launchTarget;
+      if (state.launch.replacement) return replaceGoalAttempt({ confirmed: Boolean(state.launch.replacement.operation) });
       if (targetFile === BRAIN_LAUNCH_TARGET) {
         const brain = brainForAreaCard(state.brainDraft?.area);
         return startBrain({ resume: Boolean(brain && !brain.live) });
@@ -2614,6 +2697,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (workCommandMatches(event, "readGoal")) {
         event.preventDefault();
         return executeWorkCommand("readGoal", current);
+      }
+      if (workCommandMatches(event, "changeAgent")) {
+        event.preventDefault();
+        return executeWorkCommand("changeAgent", current);
       }
       if (workCommandMatches(event, "goalStatus")) { event.preventDefault(); return executeWorkCommand("goalStatus", current); }
       if (workCommandMatches(event, "filter")) { event.preventDefault(); return executeWorkCommand("filter", current); }

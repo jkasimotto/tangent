@@ -21,6 +21,7 @@ const records = [
   { id: "questions", keyDisplay: "r", ariaKeyshortcuts: "r", scope: "area", kind: "action", palette: true, label: "Review questions", help: "Review the open questions from this Area's brains.", shortcuts: [{ key: "r" }] },
   { id: "note", keyDisplay: "n", ariaKeyshortcuts: "n", scope: "area", kind: "action", palette: true, label: "Capture note", help: "Save a Journal note and send it to this Area brain.", shortcuts: [{ key: "n" }] },
   { id: "readGoal", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "goal", kind: "action", palette: true, label: "Read Goal", help: "Read this Goal, its notes, dependencies, queue, and attempts.", shortcuts: [{ key: "o" }] },
+  { id: "changeAgent", keyDisplay: "c", ariaKeyshortcuts: "c", scope: "goal", kind: "surface", palette: true, label: "Change agent", help: "Start a replacement for the exact current attempt without recreating the Goal.", shortcuts: [{ key: "c" }] },
   { id: "goalStatus", keyDisplay: "x", ariaKeyshortcuts: "x", scope: "goal", kind: "surface", palette: true, label: "Goal status", help: "Choose Done, Won't do, Park, or Reopen for this Goal.", shortcuts: [{ key: "x" }] },
   { id: "commands", keyDisplay: ":", ariaKeyshortcuts: ":", scope: "work", kind: "surface", label: "Commands", help: "Open the commands for the current Work object.", shortcuts: [{ key: ":", shiftKey: "any" }] },
   { id: "filter", keyDisplay: "/", ariaKeyshortcuts: "/", scope: "work", kind: "action", palette: true, label: "Filter Work", help: "Focus the Work search field.", shortcuts: [{ key: "/" }] },

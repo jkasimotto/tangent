@@ -49,6 +49,11 @@ async function buildVault(root) {
   await writeFile(path.join(area, "test.md"), `---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-close-me]]\n\n## Resources\n\n- Repository: ${workspace}\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults":{"launch":{"harness":"other"}}}\n\`\`\`\n`, "utf8");
   await writeFile(path.join(sibling, "other.md"), "---\ntype: area\n---\n\n# Other\n", "utf8");
   await writeFile(
+    path.join(sibling, "goal-not-mine.md"),
+    "---\ntype: goal\nstatus: open\ndone_when: The authorized sibling effect closes it\nsession:\n---\n\n# Not mine\n\n## State\n\nNot started.\n",
+    "utf8"
+  );
+  await writeFile(
     path.join(area, "goal-close-me.md"),
     "---\ntype: goal\nstatus: open\ndone_when: The effect closes it\nsession:\n---\n\n# Close me\n\n## State\n\nNot started.\n",
     "utf8"
@@ -148,7 +153,7 @@ test("an authorized Request effect closes a Goal and routes a Journal on the pro
   assert.equal(rejected.status, 400);
   assert.match(rejected.body.error, /unsupported Request effect type/);
 
-  // A brain never reaches across Areas with an effect, even a listed one.
+  // Julian can authorize one allowlisted effect across an Area boundary.
   const crossArea = await post(base, "/api/brains/requests", {
     session: brain.body.session,
     kind: "decision",
@@ -158,11 +163,12 @@ test("an authorized Request effect closes a Goal and routes a Journal on the pro
     effect: { type: "goal-done", goal: "otto/other/goal-not-mine.md" },
   });
   assert.equal(crossArea.status, 200, "the Request may be written");
-  const refused = await post(base, "/api/brains/requests/answer", {
+  const applied = await post(base, "/api/brains/requests/answer", {
     area: "otto/test", id: crossArea.body.request.id, answer: "authorize", effectRevision: crossArea.body.request.effectRevision,
   });
-  assert.equal(refused.status, 409, "the effect refuses work outside the brain's exact Area");
-  assert.match(refused.body.error, /no longer exists|wrong-area/);
+  assert.equal(applied.status, 200, JSON.stringify(applied.body));
+  assert.equal(applied.body.request.effectOperation.status, "succeeded");
+  assert.match(await readFile(path.join(trees, "otto", "other", "goal-not-mine.md"), "utf8"), /status: done/);
 });
 
 test("a Goal listing narrows by status, recency, and free text on the production path", async (context) => {

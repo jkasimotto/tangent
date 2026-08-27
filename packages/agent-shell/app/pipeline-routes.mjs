@@ -112,6 +112,7 @@ export function createPipelineRoutes(operations) {
       launch: body.launch,
       operationId: String(body.operationId ?? body.idempotencyKey ?? ""),
       caller: String(body.caller ?? ""),
+      confirmed: body.confirmed === true,
     });
     sendJson(response, result.status, result.status === 200
       ? {

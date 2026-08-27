@@ -102,10 +102,12 @@ test("pipeline routes dispatch fenced Goal attempt replacement", async () => {
     launch: { harness: "claude", model: "fable-5", effort: "max" },
     operationId: "replacement-1",
     caller: "brain-1",
+    confirmed: true,
   }), output, new URL("http://shell/api/goals/attempts/replace"));
 
   assert.equal(calls[0].goal, "goal.md");
   assert.equal(calls[0].options.assignmentId, "assignment-1");
+  assert.equal(calls[0].options.confirmed, true);
   assert.deepEqual(calls[0].options.launch, { harness: "claude", model: "fable-5", effort: "max" });
   assert.equal(output.body.session, "goal-r2");
   assert.equal(output.body.operation.id, "replacement-1");

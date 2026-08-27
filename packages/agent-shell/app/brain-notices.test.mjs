@@ -194,12 +194,13 @@ async function completeOnePipeline(base, area, title, handover, caller = "") {
     ...(caller ? { caller } : {}),
   });
   assert.ok(started.session, `pipeline for ${title} started: ${JSON.stringify(started)}`);
+  assert.ok(started.pipeline?.steps?.some((step) => step.session === started.session), `pipeline did not bind ${started.session}: ${JSON.stringify(started)}`);
   const finished = await post(base, "/api/goals/handover", { session: started.session, text: handover });
   assert.equal(finished.status, caller ? "reported" : "complete", `pipeline for ${title} reported: ${JSON.stringify(finished)}`);
   return started.session;
 }
 
-test("live brains can create and start only in their exact Area", async (context) => {
+test("local callers mutate work across Areas while ownership and queue fences remain", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-cross-area-brain-"));
   const sourceLeaf = `probesource${process.pid}`;
   const trees = await makeTrees(root, sourceLeaf);
@@ -228,74 +229,56 @@ test("live brains can create and start only in their exact Area", async (context
   await waitForServer(base);
 
   const sourceBrain = await post(base, "/api/brains/start", { area: `otto/${sourceLeaf}`, instruction: "Orchestrate the source Area." });
-  const targetBrain = await post(base, "/api/brains/start", { area: "neara/enums", instruction: "Orchestrate enums." });
   assert.ok(sourceBrain.session, JSON.stringify(sourceBrain));
-  assert.ok(targetBrain.session, JSON.stringify(targetBrain));
-  sessions.push(sourceBrain.session, targetBrain.session);
+  sessions.push(sourceBrain.session);
 
-  const foreign = await post(base, "/api/goals/create", {
-    area: "neara/enums",
-    goal: { title: "Original Neara enum case", doneWhen: "The enum case is proved." },
-    caller: sourceBrain.session,
-  });
-  assert.match(foreign.error, /wrong-area/);
   const targetGoal = await post(base, "/api/goals/create", {
     area: "neara/enums",
     goal: { title: "Original Neara enum case", doneWhen: "The enum case is proved." },
-    caller: targetBrain.session,
+    caller: sourceBrain.session,
   });
   assert.ok(targetGoal.file, JSON.stringify(targetGoal));
-  const foreignFile = targetGoal.file;
-  const unownedGoal = await readFile(path.join(trees, foreignFile), "utf8");
+  const unownedGoal = await readFile(path.join(trees, targetGoal.file), "utf8");
   assert.match(unownedGoal, /^status: open$/m, "a brain-created Goal starts open");
-  assert.match(unownedGoal, /^session:\s*$/m, "caller authority does not bind the brain as owner");
-  const rejectedForeignStart = await post(base, "/api/goals/start", {
-    file: foreignFile,
+  assert.match(unownedGoal, /^session:\s*$/m, "a caller does not become the Goal owner");
+  const targetStart = await post(base, "/api/goals/start", {
+    file: targetGoal.file,
     steps: [{ instruction: "Prove the enum case.", command: "sleep 300" }],
     caller: sourceBrain.session,
   });
-  assert.match(rejectedForeignStart.error, /wrong-area/);
-  const targetStart = await post(base, "/api/goals/start", {
-    file: foreignFile,
-    steps: [{ instruction: "Prove the enum case.", command: "sleep 300" }],
-    caller: targetBrain.session,
-  });
   assert.ok(targetStart.session, JSON.stringify(targetStart));
-  const foreignStart = targetStart;
-  sessions.push(foreignStart.session);
+  sessions.push(targetStart.session);
 
   const workerCreate = await post(base, "/api/goals/create", {
     area: "neara/enums",
-    goal: { title: "Spoofed create", doneWhen: "It must not exist." },
-    caller: foreignStart.session,
+    goal: { title: "Worker-created enum case", doneWhen: "The worker-created case runs." },
+    caller: targetStart.session,
   });
-  assert.match(workerCreate.error, /Workers cannot mutate managed work/);
-  const workerStart = await post(base, "/api/goals/start", { file: foreignFile, caller: foreignStart.session });
-  assert.match(workerStart.error, /Workers cannot mutate managed work/);
-
-  const ownerConflict = await post(base, "/api/goals/create", {
-    area: "neara/enums",
-    goal: { title: "Owner conflict", doneWhen: "It must not exist." },
-    caller: sourceBrain.session,
-    own: targetBrain.session,
+  assert.ok(workerCreate.file, JSON.stringify(workerCreate));
+  const workerStart = await post(base, "/api/goals/start", {
+    file: workerCreate.file,
+    steps: [{ instruction: "Run the worker-created case.", command: "sleep 300" }],
+    caller: targetStart.session,
   });
-  assert.match(ownerConflict.error, /wrong-area/);
+  assert.ok(workerStart.session, JSON.stringify(workerStart));
+  sessions.push(workerStart.session);
 
   const owned = await post(base, "/api/goals/create", {
     area: "neara/enums",
     goal: { title: "Live owner start conflict", doneWhen: "The owner stays unchanged." },
-    own: targetBrain.session,
+    caller: targetStart.session,
+    own: targetStart.session,
   });
   assert.ok(owned.file, JSON.stringify(owned));
   const ownedGoal = await readFile(path.join(trees, owned.file), "utf8");
   assert.match(ownedGoal, /^status: active$/m, "explicit ownership activates the Goal");
-  assert.match(ownedGoal, new RegExp(`^session: ${targetBrain.session}$`, "m"), "explicit ownership binds the named session");
+  assert.match(ownedGoal, new RegExp(`^session: ${targetStart.session}$`, "m"), "explicit ownership binds the named session");
   const startConflict = await post(base, "/api/goals/start", {
     file: owned.file,
     steps: [{ instruction: "Do not replace the owner.", command: "sleep 300" }],
     caller: sourceBrain.session,
   });
-  assert.match(startConflict.error, /wrong-area/);
+  assert.match(startConflict.error, /owned by live session/, "permissive Area access does not steal a live owner");
 
   const sameArea = await post(base, "/api/goals/create", {
     area: `otto/${sourceLeaf}`,
@@ -316,12 +299,46 @@ test("live brains can create and start only in their exact Area", async (context
   sessions.push(next.session);
   const staleCreate = await post(base, "/api/goals/create", {
     area: "neara/enums",
-    goal: { title: "Stale create", doneWhen: "It must not exist." },
+    goal: { title: "Stale caller create", doneWhen: "A historical caller can still invoke a local command." },
     caller: sourceBrain.session,
   });
-  assert.match(staleCreate.error, /Workers cannot mutate managed work/);
-  const staleStart = await post(base, "/api/goals/start", { file: foreignFile, caller: sourceBrain.session });
-  assert.match(staleStart.error, /Workers cannot mutate managed work/);
+  assert.ok(staleCreate.file, JSON.stringify(staleCreate));
+  const staleStart = await post(base, "/api/goals/start", {
+    file: staleCreate.file,
+    steps: [{ instruction: "Prove the stale caller is audit provenance only.", command: "sleep 300" }],
+    caller: sourceBrain.session,
+  });
+  assert.ok(staleStart.session, JSON.stringify(staleStart));
+  sessions.push(staleStart.session);
+
+  const areaMessage = await post(base, "/api/agents/send", {
+    to: "neara/enums",
+    from: next.session,
+    text: "Review the cross-Area work that already started.",
+  });
+  assert.equal(areaMessage.target, "area");
+  assert.equal(areaMessage.to, "neara/enums");
+  assert.equal(areaMessage.via, "area");
+  const inboxFile = path.join(root, "brains", "neara", "enums", "inbox.json");
+  const inbox = JSON.parse(await readFile(inboxFile, "utf8"));
+  assert.ok(inbox.notices.some((notice) => notice.text.includes("command goal-start")), "committed commands reach the target Area inbox");
+  assert.ok(inbox.notices.some((notice) => notice.text.includes("Review the cross-Area work")), "Area-addressed messages persist without a live target brain");
+
+  const targetBrain = await post(base, "/api/brains/start", { area: "neara/enums", instruction: "Orchestrate enums." });
+  assert.ok(targetBrain.session, JSON.stringify(targetBrain));
+  sessions.push(targetBrain.session);
+  const targetShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(targetBrain.session)}`).then((response) => response.json());
+  assert.match(targetShow.prompt, /Review the cross-Area work that already started/, "the later brain reads its logical Area inbox");
+  const targetNext = await post(base, "/api/brains/handover", { session: targetBrain.session, text: "Inbox received." });
+  assert.equal(targetNext.generation, 2, JSON.stringify(targetNext));
+  sessions.push(targetNext.session);
+  const staleMessage = await post(base, "/api/agents/send", {
+    to: targetBrain.session,
+    from: next.session,
+    text: "This uses the stale session as a logical Area address.",
+  });
+  assert.equal(staleMessage.to, "neara/enums");
+  assert.equal(staleMessage.via, "brain-session");
 });
 
 test("a brain notice survives a server restart and reaches the next generation after a handover", async (context) => {
@@ -359,11 +376,12 @@ test("a brain notice survives a server restart and reaches the next generation a
   sessions.push(step);
   const afterHandover = await waitFor("the notice on disk", async () => {
     const inbox = await readInbox(brains, `otto/${leaf}`);
-    return unreadNotices(inbox).length ? inbox : null;
+    return unreadNotices(inbox).some((notice) => notice.text.includes("Implemented the probe")) ? inbox : null;
   });
-  assert.equal(unreadNotices(afterHandover).length, 1);
-  assert.match(unreadNotices(afterHandover)[0].text, /untyped evidence/);
-  assert.match(unreadNotices(afterHandover)[0].text, /Implemented the probe/);
+  const unreadBeforeRestart = unreadNotices(afterHandover);
+  const reportNotice = unreadBeforeRestart.find((notice) => notice.text.includes("Implemented the probe"));
+  assert.ok(reportNotice, JSON.stringify(unreadBeforeRestart));
+  assert.match(reportNotice.text, /untyped evidence/);
 
   // Restart: the memory queue is gone, the notice is not. The new process
   // queues it again for the generation that is still live.
@@ -377,7 +395,7 @@ test("a brain notice survives a server restart and reaches the next generation a
     const live = agents.find((agent) => agent.name === brain.session);
     return live && live.queued > 0;
   });
-  assert.equal(unreadNotices(await readInbox(brains, `otto/${leaf}`)).length, 1, "a notice the brain never read stays unread");
+  assert.equal(unreadNotices(await readInbox(brains, `otto/${leaf}`)).length, unreadBeforeRestart.length, "notices the brain never read stay unread");
 
   // Generation handover: generation 1 never read the notice, so generation
   // 2's first message lists it.
@@ -425,7 +443,7 @@ test("a notice with no live brain waits on disk and the next generation reads it
   const brain = await post(base, "/api/brains/start", { area: `otto/${leaf}`, instruction: "Get the probe Area done." });
   sessions.push(brain.session);
 
-  // The exact brain creates the authoritative queue, then loses its process.
+  // A brain creates the authoritative queue, then loses its process.
   // The worker's typed report waits durably instead of being dropped.
   const goal = await post(base, "/api/goals/create", { area: `otto/${leaf}`, goal: { title: "Gap demo", doneWhen: "Done." } });
   const started = await post(base, "/api/goals/start", {
@@ -450,10 +468,10 @@ test("a notice with no live brain waits on disk and the next generation reads it
   sessions.push(step);
   const waiting = await waitFor("the notice on disk", async () => {
     const inbox = await readInbox(brains, `otto/${leaf}`);
-    return unreadNotices(inbox).length ? inbox : null;
+    return unreadNotices(inbox).some((notice) => notice.text.includes("submitted implementation-result")) ? inbox : null;
   });
-  assert.equal(unreadNotices(waiting).length, 1);
-  assert.match(unreadNotices(waiting)[0].text, /submitted implementation-result/);
+  const reportNotice = unreadNotices(waiting).find((notice) => notice.text.includes("submitted implementation-result"));
+  assert.ok(reportNotice, JSON.stringify(unreadNotices(waiting)));
 
   const resumed = await post(base, "/api/brains/start", { area: `otto/${leaf}`, resume: true });
   assert.equal(resumed.generation, 2, JSON.stringify(resumed));

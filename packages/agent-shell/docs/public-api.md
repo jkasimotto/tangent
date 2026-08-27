@@ -32,7 +32,7 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 - `tangent document comments|resolve` reads or resolves Julian's inline Document comments.
 - `tangent vault commit <paths...> -m "<verb>: <area> <summary>"` commits only the named vault paths with provenance trailers.
 
-A supplied brain caller must be the current live brain for the exact target Area. Parent, child, sibling, worker, and stale sessions cannot mutate the target Area.
+Area paths do not grant command permission. Brains, workers, browser actions, stale sessions, and local shells use the same target validation. Caller identity is audit provenance. Live ownership, revisions, queue state, and exact attempts remain enforced.
 
 Each server response comes from one Agent Shell instance identity. `GET /api/health` returns `instanceId`. `GET /api/sessions` returns only sessions owned by that instance.
 
@@ -42,9 +42,9 @@ The live tmux ownership key is `@tangent_agent_shell_instance`. A foreign sessio
 
 - `tangent agent list` reads live agent sessions and queued message counts.
 - `tangent agent context [session] [--session <name>] [--json]` rebuilds the durable brain or Goal assignment for a tmux session. Without a name it uses the current tmux session.
-- `tangent agent send <name> <text...>` sends through the server queue.
+- `tangent agent send <session-or-area> <text...>` sends through a live-session queue or a logical Area inbox.
 
-Agent Shell resolves the target to one exact live session. It stores the normalized generic message before it wakes or writes to that pane. Queued messages survive controller restarts in first-in, first-out order. The record remains durable during pane presentation and settles after that presentation completes. This is a presentation receipt, not proof that the model read the text.
+Agent Shell first resolves the target as a live session. It stores the normalized generic message before it wakes or writes to that pane. An exact Area path uses the durable Area brain inbox. A known stale brain session resolves to that same logical inbox. An unknown target returns not found. A missing or inactive brain does not block Area delivery. Queued messages survive controller restarts in first-in, first-out order. A presentation receipt is not proof that the model read the text.
 
 Context recovery reads brain records, exact-Area inbox notices, Goal records, and Goal queues without claiming or mutating the session. Current brain context contains every currently unread durable notice with its Area. Managed worker context contains the primary Goal, every co-assigned Goal, queue revision, exact assignment instruction, attempts, reports, prior handovers, and a rebuilt opening prompt. Queue context exposes the durable `extraFiles` order and repeats those Goals in the rebuilt prompt. A prompt-source failure leaves the durable context available with `promptError`. Historical brain context contains that generation's checkpoint but never the current generation's inbox. A live tmux session with no durable binding returns `role: "unassigned"`; a session that is neither durable nor live returns 404.
 
@@ -66,10 +66,10 @@ Every active Goal execution uses one `area-goal-queue.v2` record under `~/.tange
 - `tangent goal start <slug> --launch <harness[/model[/effort]]>` declares one implementation assignment.
 - `tangent goal start <slug> --step <instruction> [--kind <implementation|review>] [--launch ...] [--path ...] ...` declares ordered assignments.
 - `tangent goal append <slug> --step <instruction> [--kind <implementation|review>] ...` adds pending assignments without rewriting history. The type defaults to `implementation`. A designated review requires `--kind review`; instruction text never infers the type.
-- `tangent brain advance <goal> <step>` starts one pending assignment after the exact-Area brain reviews the current queue.
+- `tangent brain advance <goal> <step>` starts one pending assignment through the Goal queue. Any local caller can use the command.
 - `tangent handover <facts...> --report '<json>'` and `tangent goal handover <facts...> --report '<json>'` submit through the same route.
 
-A Julian start without a caller queues normal work for the exact brain. An exact-Area brain caller can start the declared assignment. A guarded `--recovery` start records `julian-emergency` in the same queue. It requires a pending assignment, no current attempt, and exhausted brain recovery.
+A normal start acts directly through the Goal queue and does not require a live Area brain. A current brain caller can lend its launch default across Areas; other callers name a launch. A guarded `--recovery` start records `julian-emergency` in the same queue. It requires a pending assignment, no current attempt, and exhausted brain recovery.
 
 Worker report types are `implementation-result`, `review-result`, `question-needed`, `context-risk`, and `failed`. The server validates the report against the assignment kind and queue revision. A worker report never starts another assignment. Missing, malformed, truncated, shell-quoted, and non-object reports fail before queue mutation. A rejected typed report also records no queue result or notice.
 
@@ -134,7 +134,7 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 - `GET /api/areas/milestones?area=<path>[&since&limit]` reads material milestones across the Area subtree.
 - `GET /api/operations` lists Area Operations with one `mode`, one `state`, and any `problem`.
 
-Mutation routes validate exact Area authority, current revisions, and idempotency where the record supports retries. Read APIs can carry compatibility aliases. Mutation APIs do not have two meanings.
+Mutation routes validate target records, current revisions, idempotency, live ownership, and exact attempts. Caller identity is audit provenance, not permission. Read APIs can carry compatibility aliases. Mutation APIs do not have two meanings.
 
 Brain start resolves `choice` through the harness registry. The choice applies only to the new attempt; it does not update the Area Brain default. Without `choice`, every new attempt resolves the current inherited Brain default. `expectedLaunch` must equal the selected `harness/model/effort` reference. A live brain is reattached without changing its attempt launch. Raw launch commands are rejected.
 

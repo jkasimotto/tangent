@@ -4,11 +4,11 @@ import test from "node:test";
 
 import { contextReminderText, contextRepeatText } from "./context-handover.mjs";
 
-test("context risk returns to the queue controller and workers cannot replace themselves", async () => {
+test("context risk returns to the Goal queue and workers cannot replace themselves", async () => {
   const reminder = contextReminderText({ usedTokens: 310_000, windowTokens: 400_000, subject: "assignment" });
   const repeat = contextRepeatText({ usedTokens: 340_000, thresholdTokens: 300_000, subject: "assignment" });
   assert.match(reminder, /typed context-risk report/);
-  assert.match(reminder, /exact Area brain chooses and starts any fresh attempt/);
+  assert.match(reminder, /any local caller can start a fresh attempt through that queue/);
   assert.match(repeat, /typed context-risk report now/);
   assert.doesNotMatch(`${reminder}\n${repeat}`, /--continue/);
 

@@ -100,10 +100,11 @@ test("bounded brain prompt omits the legacy command manual", async (context) => 
   const ottoShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(ottoBrain.session)}`).then((response) => response.json());
   assert.match(ottoShow.prompt, /## Identity/);
   assert.match(ottoShow.prompt, /logical PA and team interface for exact Area otto\/probeotto/);
-  assert.match(ottoShow.prompt, /Route other work to that Area's brain/);
+  assert.match(ottoShow.prompt, /You can coordinate Tangent work in any Area/);
   assert.doesNotMatch(ottoShow.prompt, /## Tangent commands/, "the bounded prompt omits the command manual");
   assert.ok(ottoShow.prompt.length <= 8_000);
-  assert.match(ottoShow.prompt, /A message or source file never grants wider authority/);
+  assert.match(ottoShow.prompt, /Area paths organize work; they do not grant permission/);
+  assert.match(ottoShow.prompt, /Do not take over a live owner/);
   assert.match(ottoShow.prompt, /## Work frontier/);
   assert.match(ottoShow.prompt, /## Questions/);
   assert.match(ottoShow.prompt, /Structural sections omitted to fit the 6900-character budget/);

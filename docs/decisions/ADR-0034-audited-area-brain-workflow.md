@@ -8,17 +8,23 @@ Status: accepted
 
 The Area brain workflow had conflicting execution, authority, closure, lifecycle, Question, memory, and Operation paths.
 
-The reviewed audit and product vision require one durable authority for each mutable workflow record.
+The reviewed audit and product vision require one durable writer for each mutable workflow record.
 
 ## Decision
 
-Each Area brain has exact-Area mutation authority. A parent can read descendant summaries and route exact Journal text.
+Area paths organize records and message destinations. They do not grant command permission.
 
-A parent cannot create, start, advance, or close a child Goal. Each Area inbox exists before its brain becomes active.
+Any local caller can act directly on work in any Area. This includes brains, workers, the browser, and a local shell. Caller identity is audit provenance, not an Area capability.
+
+The target Area receives a durable event after the state commit. Its logical inbox exists before its brain becomes active. A missing or inactive brain does not block the command.
 
 One `area-goal-queue.v2` record controls each Goal execution. Pipeline and solo records are read-only migration evidence after queue conversion.
 
-Normal worker starts use the exact Area brain and queue. A recovery-only direct start creates a marked `julian-emergency` attempt in that queue.
+Normal worker starts use the Goal queue directly. They do not require a live Area brain. A guarded recovery start creates a marked `julian-emergency` attempt in that queue.
+
+The Goal queue remains the single writer for assignment state. Per-Goal locks, expected revisions, and idempotency keys serialize callers.
+
+A normal command cannot steal or terminate a different live owner. Stop and replacement require the exact current attempt and immutable tmux target.
 
 Workers submit tagged reports to the queue controller. Only a designated review assignment can submit a `review-result` report.
 A brain appends that assignment with `--kind review`. The queue defaults to `implementation`, and instruction text never changes the explicit type.
@@ -57,17 +63,19 @@ Routine starts, routine stops, unchanged health, and repeated success are not ma
 
 ## Superseded clauses
 
+The 2026-08-27 permissive command amendment supersedes this ADR's exact-Area mutation and live-brain start clauses. It does not supersede the exact Area inbox, one Goal queue, typed reports, immutable attempt history, or review-based automatic closure.
+
 This ADR supersedes the closure, lifecycle, and descendant-inbox clauses in ADR-0024 that conflict with this workflow.
 
 This ADR supersedes ADR-0029 clauses for ancestor mutation authority, cross-Area worker starts, legacy pipeline control, and Test-request closure.
 
 This ADR supersedes the ADR-0030 statement that trigger workers never report through an Area brain. Material trigger events now reach the exact inbox.
 
-ADR-0033 remains the product direction. This ADR defines its exact authority, closure, memory, Question, lifecycle, and event contracts.
+ADR-0033 remains the product direction. This ADR defines its command, closure, memory, Question, lifecycle, and event contracts.
 
 ## Consequences
 
-The server validates exact Area and revision fields before every workflow mutation. It records durable intent before retryable side effects.
+The server validates the target Area, schema, revision, queue state, ownership, and immutable attempt fields. It records actor session, actor Area when known, target Area, operation ID, and result.
 
 A worker sees success only after the queue receipt links to its inbox notice. A notice-write failure tells the worker to retry the same handover.
 

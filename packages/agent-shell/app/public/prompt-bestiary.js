@@ -1,13 +1,13 @@
 /** Reusable message contracts that appear inside lifecycle transitions. */
 export const PROMPT_SPECIES = [
-  { id: "brain", name: "Brain activation", recipient: "Area brain", trigger: "Activate or recover an Area brain", delivery: "Built, typed, and confirmed", shape: "Founding instruction, current checkpoint, bounded memory, current Documents, Questions, events, and exact authority." },
-  { id: "goal", name: "Worker assignment", recipient: "Worker", trigger: "The brain starts an approved assignment", delivery: "Built, typed, and confirmed", shape: "Done condition, sources, approved context, brain authority, and one handover route." },
+  { id: "brain", name: "Brain activation", recipient: "Area brain", trigger: "Activate or recover an Area brain", delivery: "Built, typed, and confirmed", shape: "Founding instruction, current checkpoint, bounded memory, current Documents, Questions, events, command provenance, and mutation fences." },
+  { id: "goal", name: "Worker assignment", recipient: "Worker", trigger: "A local caller starts an approved assignment", delivery: "Built, typed, and confirmed", shape: "Done condition, sources, approved context, queue contract, and one handover route." },
   { id: "pipeline", name: "Pipeline assignment", recipient: "Worker", trigger: "The brain advances an approved pipeline", delivery: "Built, typed, and confirmed", shape: "Worker assignment, current step, earlier handovers, continuation facts, and exit contract." },
   { id: "brain-notice", name: "Brain notice", recipient: "Controlling Area brain", trigger: "A worker reports, a request is answered, or a Document changes", delivery: "Recorded, queued, typed, and confirmed", shape: "A durable event with its Area, source identity, facts, and time." },
   { id: "brain-request", name: "Brain request", recipient: "Julian", trigger: "The brain needs plan approval, a decision, a test, or explicit approval", delivery: "Durable request record", shape: "Kind, subject, detail, question, named answers, status, and answer." },
   { id: "handover", name: "Worker handover", recipient: "Controlling Area brain", trigger: "The worker runs tangent handover", delivery: "Recorded before delivery", shape: "Files, commits, checks, completion facts, unresolved facts, and any decision or test need." },
   { id: "context", name: "Context continuation", recipient: "Fresh worker", trigger: "The brain chooses fresh context for the same assignment", delivery: "New prompt confirmed before old session ends", shape: "Original assignment plus every durable continuation handover." },
-  { id: "comment", name: "Document comment notice", recipient: "Exact live Area brain", trigger: "Julian presses the Document notification button", delivery: "Durable brain notice", shape: "Document path, open comment count, and the command that reads them." },
+  { id: "comment", name: "Document comment notice", recipient: "Logical Area inbox", trigger: "Julian presses the Document notification button", delivery: "Durable brain notice", shape: "Document path, open comment count, and the command that reads them." },
 ];
 
 /** Canonical user concepts. A Subgoal is a Goal relationship. An Ask is a projection. */
@@ -17,8 +17,8 @@ export const MODEL_CONCEPTS = [
   concept("subgoal", "Subgoal", "Durable meaning", "A Goal that contributes to another Goal through a To do that link.", "The parent Goal", "It uses the complete Goal lifecycle.", ["Goal"]),
   concept("document", "Document", "Durable meaning", "Durable knowledge that supports an Area or Goal.", "Its Area", "Comments stay open until their work is complete.", ["Area", "Goal", "Brain"]),
   concept("program", "Program", "Durable meaning", "A repeatable operation attached to an Area.", "Its Area", "Its definition persists when its process stops.", ["Area"]),
-  concept("brain", "Brain", "Control", "One logical controller for one exact Area. Messages, Documents, and Requests never grant mutation authority in another Area.", "One exact Area", "Its lifecycle is active or inactive. Runtime attempts and health remain diagnostic.", ["Area", "Goal", "Queue", "Request"]),
-  concept("pipeline", "Goal queue", "Runtime", "The authoritative ordered assignments, attempts, and reports for one Goal.", "The exact Area Brain", "Workers report. The controller starts each next assignment.", ["Goal", "Run", "Brain"]),
+  concept("brain", "Brain", "Control", "One logical organizer and inbox for one exact Area. Area identity records provenance; it does not grant command permission.", "One exact Area", "Its lifecycle is active or inactive. Runtime attempts and health remain diagnostic.", ["Area", "Goal", "Queue", "Request"]),
+  concept("pipeline", "Goal queue", "Runtime", "The authoritative ordered assignments, attempts, and reports for one Goal.", "Agent Shell", "Workers report. Any local caller can command a valid next transition through the same revision and ownership fences.", ["Goal", "Run", "Brain"]),
   concept("run", "Run", "Runtime", "One agent session that works on a Goal or pipeline step.", "A Goal or pipeline step", "The session can work, wait, stop, or end.", ["Goal", "Pipeline", "Brain"]),
   concept("request", "Request", "Attention", "A durable question from a Brain to Julian.", "The Brain that created it", "It stays open until Julian answers it.", ["Brain", "Test", "Ask"]),
   concept("test", "Test", "Attention", "An observation Question that asks Julian to evaluate visible behavior.", "The exact Area Brain", "Its answer returns to the brain and does not close new queue work.", ["Request", "Goal", "Ask"]),
@@ -38,7 +38,7 @@ const TRANSITIONS = {
     state: "The brain record separates logical lifecycle, health, founding instruction, checkpoint, and attempt diagnostics.",
     delivery: "The prompt is built, typed into the harness composer, and checked before submission.",
     source: "server.mjs: brainPrompt and spawnBrainSession",
-    layers: ["Identity and exact Area authority", "Founding instruction", "Current checkpoint", "Bounded Area memory", "Selected Documents and events"],
+    layers: ["Identity and command provenance", "Founding instruction", "Current checkpoint", "Bounded Area memory", "Selected Documents and events"],
   }),
   plan: transition("Plan request", "Area brain", "Julian", "brain-request", {
     trigger: "The brain has written the proposed Goals, agents, order, dependencies, and risks.",
@@ -68,7 +68,7 @@ const TRANSITIONS = {
     state: "The Goal and pipeline record identify the running session and step.",
     delivery: "Agent Shell waits for a ready composer, types the prompt, checks its tail, and submits it.",
     source: "server.mjs: goalPrompt and pipelineStepPrompt",
-    layers: ["Worker identity and brain authority", "Done condition", "Goal and Area sources", "Current step and prior facts", "One handover contract"],
+    layers: ["Worker identity and queue contract", "Done condition", "Goal and Area sources", "Current step and prior facts", "One handover contract"],
   }),
   handover: transition("Worker handover", "Worker A", "Area brain", "handover", {
     trigger: "The worker finishes a useful turn or needs the brain to choose what happens next.",
@@ -80,15 +80,15 @@ const TRANSITIONS = {
     source: "server.mjs: workerHandover; brain-inbox.mjs",
     layers: ["Worker facts", "Server-owned identity", "Assignment state", "Brain notice"],
   }),
-  advance: transition("Advance assignment", "Area brain", "Agent Shell", "pipeline", {
-    trigger: "The brain reads the handover and chooses an approved pending assignment.",
-    payload: "The Goal and requested step number through tangent brain advance.",
+  advance: transition("Advance assignment", "Local caller", "Agent Shell", "pipeline", {
+    trigger: "A local caller chooses an approved pending assignment.",
+    payload: "The Goal and requested step number through the queue command.",
     knows: "Agent Shell knows the pipeline record, prior handovers, and current step state.",
     next: "Agent Shell builds the next worker prompt and starts Worker B.",
     state: "The selected step changes from pending to starting, then running.",
-    delivery: "The command returns an error if the brain lacks authority or the step cannot start.",
+    delivery: "The command returns an error if the revision is stale, ownership conflicts, or the step cannot start.",
     source: "server.mjs: advanceBrainPipeline",
-    layers: ["Brain identity", "Goal identity", "Requested step", "Authority and state checks"],
+    layers: ["Actor provenance", "Goal identity", "Requested step", "Revision, ownership, and state checks"],
   }),
   nextAssignment: transition("Next worker assignment", "Agent Shell", "Worker B", "pipeline", {
     trigger: "The brain advances the pipeline after it reads Worker A's report.",
@@ -278,11 +278,11 @@ function renderLifecycles({ goals, brains, inspector, selection, messages = fals
   const selectedLifecycle = LIFECYCLES.find((item) => item.id === selection.lifecycle) ?? LIFECYCLES[0];
   const transitionId = selectedLifecycle.transitions.includes(selection.transition) ? selection.transition : selectedLifecycle.transitions[0];
   const selectedTransition = TRANSITIONS[transitionId];
-  const goalOptions = goals.slice(0, 200).map((goal) => { const brain = controllingBrain(goal.area, brains); return `<option value="${escapeHtml(goal.file)}"${inspector.file === goal.file ? " selected" : ""}>${escapeHtml(goal.title)} · ${escapeHtml(brain ? `Managed by ${brain.area}` : "Waiting for exact Area brain")}</option>`; }).join("");
+  const goalOptions = goals.slice(0, 200).map((goal) => { const brain = controllingBrain(goal.area, brains); return `<option value="${escapeHtml(goal.file)}"${inspector.file === goal.file ? " selected" : ""}>${escapeHtml(goal.title)} · ${escapeHtml(brain ? `Managed by ${brain.area}` : "No Area brain record")}</option>`; }).join("");
   const brainOptions = brains.map((brain) => `<option value="${escapeHtml(brain.area)}"${inspector.area === brain.area ? " selected" : ""}>${escapeHtml(brain.area)} · generation ${brain.generation ?? "?"}</option>`).join("");
   const selectedGoal = goals.find((goal) => goal.file === inspector.file);
   const selectedBrain = selectedGoal ? controllingBrain(selectedGoal.area, brains) : null;
-  const liveBadge = selectedGoal ? `<p class="live-compatibility ${selectedBrain ? "managed" : "unmanaged"}"><strong>${selectedBrain ? "Managed work" : "Waiting for controller"}</strong>${selectedBrain ? `Controlled by brain ${escapeHtml(selectedBrain.area)}.` : "Activate the exact Area brain before this Goal can start."}</p>` : "";
+  const liveBadge = selectedGoal ? `<p class="live-compatibility ${selectedBrain ? "managed" : "unmanaged"}"><strong>${selectedBrain ? "Managed work" : "No Area brain record"}</strong>${selectedBrain ? `Organized by brain ${escapeHtml(selectedBrain.area)}.` : "Direct commands remain available. Events wait in the logical Area inbox."}</p>` : "";
   const exactMessages = messages ? `<section class="live-inspector exact-message-inspector"><header><span><strong>Exact messages agents receive</strong><small>Choose a current Brain or Goal. Tangent rebuilds this text with the same server function used when it launches the agent.</small></span></header><div class="live-inspector-body">${liveBadge}<div class="live-prompt-row"><select data-prompt-brain><option value="">Choose a Brain…</option>${brainOptions}</select><button type="button" data-load-brain-prompt>Show brain prompt</button></div><div class="live-prompt-row"><select data-prompt-goal><option value="">Choose a Goal…</option>${goalOptions}</select><button type="button" data-load-goal-prompt="goal">Show worker prompt</button><button type="button" data-load-goal-prompt="pipeline">Show pipeline prompt</button></div></div></section>` : "";
   return `${exactMessages}<div class="bestiary-layout">
       <nav class="lifecycle-index" aria-label="Canonical lifecycles"><div><p class="kicker">Canonical encounters</p><p>The current brain-controlled model.</p></div>${LIFECYCLES.map((item) => `<button type="button" data-bestiary-lifecycle="${item.id}" aria-pressed="${item.id === selectedLifecycle.id}"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.summary)}</small></button>`).join("")}</nav>

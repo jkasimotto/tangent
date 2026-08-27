@@ -29,8 +29,8 @@ import { createObservationCache } from "./observation-cache.mjs";
 import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllPipelines, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, reminderDue } from "./context-handover.mjs";
-import { noticeMessage, normalizeMessage } from "./agent-messages.mjs";
-import { beginGeneration, brainForArea, brainOwnsArea, brainRecordForArea, brainSessionName, countWaitingHandover, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { messageBanner, noticeMessage, normalizeMessage } from "./agent-messages.mjs";
+import { beginGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, countWaitingHandover, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { resolveBrainAttemptLaunch } from "./brain-launch.mjs";
 import { refreshBrainObservation } from "./brain-lifecycle.mjs";
 import { createBrainPacing } from "./brain-pacing.mjs";
@@ -67,6 +67,7 @@ import { createWorkMutationRoutes } from "./work-mutation-routes.mjs";
 import { recordActionTelemetry } from "./action-telemetry.mjs";
 import { createMessageDelivery } from "./message-delivery.mjs";
 import { openMessageQueueStore } from "./message-queue-store.mjs";
+import { areaInboxTarget, commandActor } from "./command-provenance.mjs";
 import { createRebuildOperations, readRebuildOperation, rebuildIsActive } from "./rebuild-operation.mjs";
 import { HttpError, readJson, sendJson } from "./http-json.mjs";
 import { createVaultProjectionController } from "./vault-projection-controller.mjs";
@@ -228,7 +229,7 @@ const CONTEXT_HANDOVER_TOKENS = Number(process.env.TANGENT_CONTEXT_HANDOVER_TOKE
 /** The one-sentence teaching line in every worker prompt. */
 function contextTeachingSentence(subject) {
   const threshold = Math.round(CONTEXT_HANDOVER_TOKENS / 1000);
-  return `If your carried context passes ${threshold}k tokens before you finish, submit a typed context-risk report with the durable facts. The exact Area brain controls the fresh attempt; never replace yourself.`;
+  return `If your carried context passes ${threshold}k tokens before you finish, submit a typed context-risk report with the durable facts. Do not replace yourself. Tangent keeps the report in the Goal queue, and any local caller can start the fresh attempt through that queue.`;
 }
 // One JSON record per session with a prompt armed to type once its harness
 // leaves the shell (armSession below), so the arm survives a server restart
@@ -699,18 +700,17 @@ async function saveVaultDocument(file, text, baseHash, summary = "edited in tree
 }
 
 /**
- * Tells the exact live Area brain that Julian finished adding comments to one
+ * Tells the logical Area brain that Julian finished adding comments to one
  * Document. This is explicit: saving or editing a comment sends nothing.
+ * An inactive or not-yet-created brain reads the durable notice when it starts.
  */
 async function notifyBrainOfDocumentComments(file) {
   const document = await readVaultDocument(file);
   if (!document) return { status: 404, error: `no document ${file}` };
   if (!document.comments.length) return { status: 409, error: "This Document has no open comments." };
-  const brain = await exactLiveBrainForArea(document.area);
-  if (!brain) return { status: 409, error: `No exact active brain is live for ${document.area}.` };
   const count = document.comments.length;
-  await notifyBrain(brain.area, `Julian added comments to ${document.file} (${count} open ${count === 1 ? "comment" : "comments"}). Read them with tangent document comments ${document.file}.`);
-  return { status: 200, value: { ok: true, brain: brain.area, comments: count } };
+  const delivery = await routeBrainNotice(document.area, `Julian added comments to ${document.file} (${count} open ${count === 1 ? "comment" : "comments"}). Read them with tangent document comments ${document.file}.`);
+  return { status: 200, value: { ok: true, brain: document.area, comments: count, delivery: delivery.addressed ? "live" : "inbox" } };
 }
 
 /**
@@ -721,13 +721,12 @@ async function notifyBrainOfDocumentComments(file) {
 async function resolveVaultDocumentComment(file, prefix, note, tmuxSession, index = null) {
   const current = await readVaultDocument(file);
   if (!current) return { status: 404, error: `no document ${file}` };
-  const authority = await optionalBrainCaller(tmuxSession, current.area);
-  if (authority.error) return { status: 403, error: authority.error };
   const result = documentComments.resolveComment(current.text, prefix, index);
   if (result.error) return { status: result.matches.length ? 409 : 404, error: result.error, matches: result.matches };
   const words = result.comment.text.split(/\s+/).slice(0, 6).join(" ");
   const message = `resolve: ${current.area} ${path.basename(file, ".md")} "${words}"` + (note ? `\n\n${String(note).trim()}` : "");
   const document = await writeVaultDocument(current, result.text, message, tmuxSession || null);
+  await recordCommittedCommand({ operation: "document-comment-resolve", actorSession: tmuxSession, targetArea: current.area, result: `resolved comment ${result.comment.index + 1}` });
   return { status: 200, document, comment: result.comment };
 }
 
@@ -1698,7 +1697,7 @@ async function goalPrompt(area, o, extras = [], continuationEntries = [], trace 
   trace?.mark("controlling brain resolved");
   const brainSection = brain
     ? `## Brain\n\n` +
-      `The brain for Area ${brain.area} controls this work. Do the assignment. Do not create, start, close, or re-plan Goals. Do not contact Julian or choose another agent. Report only to the brain with the handover command below.\n\n`
+      `The brain for Area ${brain.area} organizes this assignment. Stay on the assigned Goal and report through the handover command below. Tangent commands can target any Area; Area paths do not grant permission. Do not take over another live owner. Change Done, Won't do, or Area lifecycle only when Julian's words or the designated review contract authorizes it.\n\n`
     : "";
   const alsoOwned = extras.length
     ? `## Also in this session\n\n` +
@@ -1727,7 +1726,7 @@ async function goalPrompt(area, o, extras = [], continuationEntries = [], trace 
     (openComments
       ? `Julian left comments in the Documents marked above. They look like \`{>>Julian: ...<<}\`, sometimes after \`{==the words they refer to==}\`. Read them before you change a Document, and do what they ask or discuss them with Julian. \`tangent document comments <vault-relative file>\` lists them. Close each one only with \`tangent document resolve <file> "<first words of the comment>" -m "<what changed>"\`, after the work is done or after Julian says to close it. Never remove or rewrite a comment by hand, and carry comments along when you rewrite the text around them.\n\n`
       : "") +
-    `Useful habits here: check \`tangent process list\` before starting a server or watcher. When the done condition is met, report the proof to the brain. The brain controls Goal state.\n\n` +
+    `Useful habits here: check \`tangent process list\` before starting a server or watcher. When the done condition is met, report the proof through the typed handover. Tangent keeps assignment state in the Goal queue.\n\n` +
     `Design documents for this work belong in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md (a solution beside it as impl-<slug>.md), in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${o.file.split("/").pop().replace(/\.md$/, "")}]] link so the Goal shows them. Read files wherever they are; write new design documents there.\n\n` +
     contextTeachingSentence("Goal") +
     (continuationEntries.length ? `\n\n${continuationSection({ index: 1, total: 1, entries: continuationEntries, subject: "Goal" })}` : "")
@@ -2690,9 +2689,9 @@ function brainWorkerLaunch(brain) {
  * before this returns, so a refusal or an unresolvable id leaves no record
  * and no session behind.
  *
- * The loud refusal stays for a caller that is not the exact live brain, and
- * for a brain that has no harness id of its own. Tangent still supplies no
- * harness from a profile or from a recorded command.
+ * A current brain caller can lend its own launch across Area boundaries. A
+ * worker, stale brain, browser, or local shell must name the launch. Tangent
+ * still supplies no harness from a profile or from a recorded command.
  */
 async function materializeStepLaunches(area, steps, { firstIndex = 1, brain = null } = {}) {
   const fallback = brainWorkerLaunch(brain);
@@ -2753,7 +2752,7 @@ async function discloseAssignmentLaunch(record, step) {
  */
 async function startPipelineStep(record, index, trace = null) {
   if (record.migrationProblem || record.status === "paused") return { status: 409, error: record.migrationProblem ?? "the Goal queue is paused" };
-  const step = record.steps[index - 1];
+  let step = record.steps[index - 1];
   if (!step) return { status: 404, error: `no step ${index}` };
   const current = record.steps.find((item) => ["running", "waiting"].includes(item.status));
   if (current && current.id !== step.id) {
@@ -2778,6 +2777,10 @@ async function startPipelineStep(record, index, trace = null) {
   const extraSlugs = (record.extraFiles ?? []).map((extra) => byFile.get(extra)).filter((extra) => extra && extra.area === o.area).map((extra) => extra.slug);
   const source = step.continueFrom ? record.steps[step.continueFrom - 1] : null;
   await discloseAssignmentLaunch(record, step);
+  // writePipeline canonicalizes assignments in place. Reacquire the stored
+  // assignment before recording runtime state, or later writes mutate the
+  // detached pre-canonicalization object and leave the queue pending.
+  step = record.steps[index - 1];
   trace?.mark("step launch disclosed", { launch: step.launchDisclosure.launch });
   if (source?.session && liveNames.has(source.session)) {
     const goals = await readAreaGoals(record.area);
@@ -2909,7 +2912,7 @@ async function migrateLiveSoloExecution(goal, sessions) {
   return record;
 }
 
-/** Starts one pending assignment only after the exact brain exhausted automatic recovery. */
+/** Starts one pending assignment only after automatic brain recovery is exhausted. */
 async function recoverQueuedGoal(goal) {
   const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
   const brain = await readBrain(BRAINS_ROOT, goal.area);
@@ -3040,15 +3043,13 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
     if (!live) return { status: 404, error: "This session is not a running Goal worker. Run the handover inside the assigned worker session. Nothing was recorded." };
     const goal = (await goalsByFile()).get(live.goal);
     if (!goal) return { status: 404, error: "This worker has no Goal assignment. Read tangent goal show, then report from the assigned session. Nothing was recorded." };
-    const controller = await exactLiveBrainForArea(goal.area);
-    if (!controller) return { status: 409, error: "This legacy Goal has no live exact-Area brain. Keep the evidence in this worker and ask that Area brain to resume the Goal. Nothing was recorded." };
     const migrated = await migrateLiveSoloExecution(goal, await listSessions());
     const step = migrated?.steps.find((item) => item.status === "running" && item.session === sessionName);
     if (!step) return { status: 409, error: `${migrated?.migrationProblem ?? "The legacy Goal could not become an authoritative queue"}. Nothing was recorded.` };
     found = { record: migrated, step };
   }
   if (found.record.migrationProblem || found.record.status === "paused" || found.record.controllerArea !== found.record.area) {
-    return { status: 409, error: `The authoritative Goal queue is paused: ${found.record.migrationProblem ?? "its controller needs repair"}. Keep this worker session open and ask the exact ${found.record.area} brain to repair it. Nothing was recorded.` };
+    return { status: 409, error: `The authoritative Goal queue is paused: ${found.record.migrationProblem ?? "it needs repair"}. Keep this worker session open and repair the queue for ${found.record.area}. Nothing was recorded.` };
   }
   return completePipelineStep(found.record, found.step, text, "agent", report, operationId, sessionName);
 }
@@ -3235,22 +3236,21 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
   const o = await goalByFile(goalFile);
   trace?.mark("goal resolved");
   if (!o) return { status: 404, error: `no goal file ${goalFile}` };
-  if (["advance", "restart", "send"].includes(action) && !options.caller) {
-    return { status: 403, error: action === "advance"
-      ? "Only the exact Area brain can start a normal assignment."
-      : action === "restart"
-        ? "Use the guarded Goal recovery action after exact-brain recovery is exhausted."
-        : "The retired send-on action cannot advance an authoritative Goal queue." };
-  }
-  if (options.caller) {
-    const authority = await exactBrainCaller(options.caller, o.area);
-    if (authority.error) return { status: 403, error: authority.error };
+  if (["restart", "send"].includes(action) && !options.caller) {
+    return { status: 403, error: action === "restart"
+      ? "Use guarded Goal recovery after automatic recovery is exhausted."
+      : "The retired send-on action cannot advance an authoritative Goal queue." };
   }
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
   trace?.mark("pipeline read");
   if (!record) return { status: 404, error: "no pipeline on this goal" };
   const guarded = queueMutationGuard(record, options, { allowPaused: action === "end" });
-  if (guarded) return guarded;
+  if (guarded) {
+    if (guarded.repeated && action === "advance") {
+      await recordCommittedCommand({ operation: "goal-advance", actorSession: options.caller, targetArea: record.area, goal: record.slug, operationId: options.idempotencyKey });
+    }
+    return guarded;
+  }
   const step = record.steps[Number(index) - 1];
   if (!step) return { status: 404, error: `no step ${index}` };
   const allSessions = await listAllSessions({ fresh: true });
@@ -3275,13 +3275,14 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
       record.currentAssignmentId = null;
     }
     if (step.status !== "pending") return { status: 409, error: `step ${step.index} is ${step.status}; advance needs a pending or stopped step` };
-    const controller = await exactLiveBrainForArea(record.area);
-    trace?.mark("advance controller resolved", { controller: controller?.session ?? null });
-    if (!controller) return { status: 409, error: `no live brain controls ${record.area}` };
-    return startPipelineStep(record, step.index, trace);
+    const started = await startPipelineStep(record, step.index, trace);
+    if (started.status === 200) {
+      await recordCommittedCommand({ operation: "goal-advance", actorSession: options.caller, targetArea: record.area, goal: record.slug, operationId: options.idempotencyKey });
+    }
+    return started;
   }
   if (action === "restart") {
-    return { status: 410, error: "Restart was replaced by exact-brain advance and guarded Julian recovery." };
+    return { status: 410, error: "Restart was replaced by queue advance and guarded recovery." };
   }
   if (action === "skip") {
     if (!["stopped", "running", "pending"].includes(step.status)) return { status: 409, error: `step ${step.index} is ${step.status}` };
@@ -3318,9 +3319,8 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
 
 /**
  * Appends steps to a Goal's pipeline without touching what already ran.
- * New assignments always stay pending. The exact Area brain starts one after
- * it reviews the updated queue, including when the earlier assignments had
- * already finished.
+ * New assignments always stay pending. Any caller can add them. Queue
+ * revision and idempotency guards still serialize concurrent edits.
  */
 async function appendPipelineSteps(goalFile, steps, options = {}) {
   return withGoalQueueMutation(goalFile, () => appendPipelineStepsUnlocked(goalFile, steps, options));
@@ -3333,15 +3333,16 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   if (!o) return { status: 404, error: `no goal file ${goalFile}` };
   let caller = null;
   if (options.caller) {
-    const authority = await exactBrainCaller(options.caller, o.area);
-    if (authority.error) return { status: 403, error: authority.error };
-    caller = authority.brain;
+    caller = await liveBrainForSession(options.caller);
   }
   if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
   if (!record) return { status: 404, error: "no pipeline on this goal" };
   const guarded = queueMutationGuard(record, options);
-  if (guarded) return guarded;
+  if (guarded) {
+    if (guarded.repeated) await recordCommittedCommand({ operation: "goal-append", actorSession: options.caller, targetArea: o.area, goal: o.slug, operationId: options.idempotencyKey });
+    return guarded;
+  }
   // Fill and resolve every new assignment before anything is written: a bad
   // launch names itself and leaves the record as it was.
   const materialized = await materializeStepLaunches(o.area, steps, { firstIndex: record.steps.length + 1, brain: caller });
@@ -3358,6 +3359,7 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   }
   const { warnings, rows: launches } = materialized;
   await writePipeline(PIPELINES_ROOT, record);
+  await recordCommittedCommand({ operation: "goal-append", actorSession: options.caller, targetArea: o.area, goal: o.slug, operationId: options.idempotencyKey });
   return { status: 200, state: "queued", after: currentStep(record)?.index ?? last.index, added: added.map((step) => step.index), pipeline: record, warnings, launches };
 }
 
@@ -3371,14 +3373,13 @@ async function editPipelineStepUnlocked(goalFile, index, patch, options = {}) {
   const byFile = await goalsByFile();
   const o = byFile.get(goalFile);
   if (!o) return { status: 404, error: `no goal file ${goalFile}` };
-  if (options.caller) {
-    const authority = await exactBrainCaller(options.caller, o.area);
-    if (authority.error) return { status: 403, error: authority.error };
-  }
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
   if (!record) return { status: 404, error: "no pipeline on this goal" };
   const guarded = queueMutationGuard(record, options);
-  if (guarded) return guarded;
+  if (guarded) {
+    if (guarded.repeated) await recordCommittedCommand({ operation: "goal-assignment-edit", actorSession: options.caller, targetArea: o.area, goal: o.slug, operationId: options.idempotencyKey });
+    return guarded;
+  }
   const step = record.steps[Number(index) - 1];
   if (!step) return { status: 404, error: `no step ${index}` };
   if (step.status !== "pending") return { status: 409, error: `step ${step.index} is ${step.status}; only pending steps change` };
@@ -3395,6 +3396,7 @@ async function editPipelineStepUnlocked(goalFile, index, patch, options = {}) {
   record.revision = Math.max(1, Number(record.revision) || 1) + 1;
   record.updatedAt = new Date().toISOString();
   await writePipeline(PIPELINES_ROOT, record);
+  await recordCommittedCommand({ operation: "goal-assignment-edit", actorSession: options.caller, targetArea: o.area, goal: o.slug, operationId: options.idempotencyKey });
   return { status: 200, pipeline: record };
 }
 
@@ -3655,8 +3657,11 @@ function releaseBrainNotices(notices) {
  * notice waits on disk for the next generation. Returns true when a live
  * brain was addressed.
  */
-async function routeBrainNotice(area, text, { idempotencyKey = null } = {}) {
-  const message = noticeMessage(text);
+async function routeBrainNotice(area, text, { idempotencyKey = null, sender = null } = {}) {
+  const senderName = String(sender?.session ?? "").trim();
+  const senderArea = String(sender?.area ?? "").trim() || null;
+  const body = noticeMessage(text);
+  const message = senderName ? noticeMessage(messageBanner(senderName, senderArea, body)) : body;
   const records = await readAllBrains(BRAINS_ROOT);
   const owner = brainRecordForArea(records, area);
   const notice = await recordBrainNotice(area, message, idempotencyKey);
@@ -3664,26 +3669,59 @@ async function routeBrainNotice(area, text, { idempotencyKey = null } = {}) {
     return { addressed: Boolean(owner), notice, session: notice.deliveredTo ?? owner?.session ?? null, generation: notice.deliveredGeneration ?? owner?.generation ?? null };
   }
   if (!owner) {
-    await messages.log({ event: "kept", to: `${area} brain`, from: "tangent", text: message, reason: "exact Area brain is not active yet" });
+    await messages.log({ event: "kept", to: `${area} brain`, from: senderName || "tangent", area: senderArea, text: body, reason: "Area brain has not started yet" });
     return { addressed: false, notice, session: null, generation: null };
   }
   const record = await liveBrainForArea(area);
   if (!record) {
-    await messages.log({ event: "kept", to: `${owner.area} brain`, from: "tangent", text: message, reason: "no live brain; waits for the next generation" });
+    await messages.log({ event: "kept", to: `${owner.area} brain`, from: senderName || "tangent", area: senderArea, text: body, reason: "no live brain; waits for the next generation" });
     return { addressed: false, notice, session: null, generation: null };
   }
   const notices = [{ area, id: notice.id }];
   holdBrainNotices(notices);
   messages.queue(record.session, {
-    from: "tangent",
-    area: null,
-    text: message,
+    from: senderName || "tangent",
+    area: senderName ? senderArea : null,
+    text: senderName ? body : message,
     notices,
     generation: record.generation ?? null,
     queuedAt: new Date().toISOString(),
   });
-  await messages.log({ event: "sent", to: record.session, from: "tangent", text: message, disposition: "queued", reason: "brain event" });
+  await messages.log({ event: "sent", to: record.session, from: senderName || "tangent", area: senderArea, text: body, disposition: "queued", reason: "brain event" });
   return { addressed: true, notice, session: record.session, generation: record.generation ?? null };
+}
+
+/** Resolves one command's audit identity without using it as permission. */
+async function commandProvenance(session) {
+  const [sessions, brains] = await Promise.all([listDeliverySessions().catch(() => []), readAllBrains(BRAINS_ROOT)]);
+  return commandActor(session, { sessions, brains });
+}
+
+/**
+ * Records a committed command and tells the logical target Area brain. The
+ * state mutation is already authoritative. This durable notice is its audit
+ * event, even when the Area has no active brain generation.
+ */
+async function recordCommittedCommand({ operation, actorSession = "", targetArea, goal = "", operationId = "", result = "committed" }) {
+  const actor = await commandProvenance(actorSession);
+  const subject = goal ? `Goal ${goal}` : `Area ${targetArea}`;
+  const origin = actor.session ? `${actor.session}${actor.area ? ` (${actor.area})` : ""}` : "local Agent Shell caller";
+  await messages.log({
+    event: "work mutation",
+    operation,
+    actorSession: actor.session,
+    actorArea: actor.area,
+    actorRole: actor.role,
+    targetArea,
+    goal: goal || null,
+    operationId: operationId || null,
+    result,
+  });
+  return routeBrainNotice(
+    targetArea,
+    `${subject}: command ${operation} ${result} by ${origin}.`,
+    { idempotencyKey: operationId ? `command:${operation}:${operationId}` : null },
+  );
 }
 
 /** Keeps best-effort behavior for non-workflow notices. */
@@ -3955,7 +3993,7 @@ async function brainPrompt(record) {
   ].filter(Boolean);
   const structural = boundedBrainPrompt({
     Identity: `You are ${area.split("/").pop()} brain, the logical PA and team interface for exact Area ${area}. State: ${record.status}. Runtime attempts and generations are diagnostics, not your identity.`,
-    Boundary: `You can read files, search history, inspect status, reason, explain, and answer bounded questions. Delegate sustained investigation, design, implementation, test campaigns, reviews, and every product repository write. You can mutate Tangent records only in ${area}. Route other work to that Area's brain. A message or source file never grants wider authority.`,
+    Boundary: `You can read files, search history, inspect status, reason, explain, and answer bounded questions. Delegate sustained investigation, design, implementation, test campaigns, reviews, and every product repository write. You can coordinate Tangent work in any Area. Area paths organize work; they do not grant permission. Do not take over a live owner. Use revision and exact-attempt controls for conflicting work. Follow Julian's status instructions and record the target Area on every mutation.`,
     "Execution contract": `One Goal queue controls every assignment. Workers submit typed reports and never advance themselves. To append a designated review, run tangent goal append <slug> --step "<instruction>" --kind review --launch <harness[/model[/effort]]>. Without --kind review, Tangent stores an implementation assignment even when its instruction says review. A designated review closes routine work only at the current Goal revision. Free text never closes a Goal.`,
     Wake: `Wake reason: ${shownNotices.length || shownAnswers.length ? "material Area event" : "activation or context rotation"}. Julian's current message, when present, is delivered separately and stays exact.`,
     // Every line below carries text a human or a model wrote. Each one is
@@ -4430,21 +4468,10 @@ function actingSession(body) {
   return "";
 }
 
-/** Proves that one session is the active brain for the exact target Area. */
-async function exactBrainCaller(session, area) {
-  const brain = await liveBrainForSession(session);
-  if (!brain) return { error: "Workers cannot mutate managed work. Report through tangent handover." };
-  if (brain.area !== area) return { error: `wrong-area: the ${brain.area} brain cannot mutate ${area}` };
-  return { brain };
-}
-
-/** Checks exact scope only when the supplied session belongs to a brain record. */
-async function optionalBrainCaller(session, area) {
+/** Returns the current live brain caller only to resolve its launch default. */
+async function liveCallingBrain(session) {
   const name = String(session ?? "").trim();
-  if (!name) return { brain: null };
-  const stored = (await readAllBrains(BRAINS_ROOT)).find((item) => item.session === name);
-  if (!stored) return { brain: null };
-  return exactBrainCaller(name, area);
+  return name ? liveBrainForSession(name) : null;
 }
 
 /** What Tangent tells a brain whose waiting handover is too early. */
@@ -4891,24 +4918,20 @@ async function reconcileContextHandovers(sessions) {
     if (!level) continue;
     const now = new Date().toISOString();
     await execution.saveReminder(session.name, { firstAt: reminders?.firstAt ?? (level === "first" ? now : null), repeatAt: level === "repeat" ? now : reminders?.repeatAt ?? null });
-    const controller = await exactLiveBrainForArea(area);
-    const brainControlledText = level === "first"
-      ? `Your context is nearly full. At the next natural pause, report your files, checks, unresolved facts, and first next action to the brain with: tangent handover "<facts>". The brain will decide whether a fresh worker continues.`
-      : `Your context is well past the handover threshold. Report to the brain now with: tangent handover "<facts>".`;
+    const handoverText = level === "first"
+      ? `Your context is nearly full. At the next natural pause, report your files, checks, unresolved facts, and first next action with: tangent handover "<facts>". Do not replace yourself. Tangent keeps the report in the Goal queue, and any local caller can start a fresh attempt through that queue.`
+      : `Your context is well past the handover threshold. Report now with: tangent handover "<facts>". Do not replace yourself. Tangent keeps the report in the Goal queue, and any local caller can start a fresh attempt through that queue.`;
     messages.queue(session.name, {
       from: "tangent",
       area,
       kind: "context-reminder",
-      text: controller ? brainControlledText : level === "first"
-        ? contextReminderText({ ...session.context, subject })
-        : contextRepeatText({ usedTokens: session.context.usedTokens, thresholdTokens: CONTEXT_HANDOVER_TOKENS, subject }),
+      text: handoverText,
       // Rebuilt at delivery time so the fill number is current, not the one
       // read at queue time (design touchpoint 1).
       /** Rebuilds the reminder with the latest pane context at delivery time. */
       render: () => {
         const fill = paneObserver.context(session.name);
         if (!fill) return null;
-        if (controller) return brainControlledText;
         return level === "first"
           ? contextReminderText({ ...fill, subject })
           : contextRepeatText({ usedTokens: fill.usedTokens, thresholdTokens: CONTEXT_HANDOVER_TOKENS, subject });
@@ -5465,9 +5488,9 @@ async function executeAuthorizedRequestEffect(effect, brain) {
     const byFile = await goalsByFile();
     if (!byFile.has(file)) throw new Error("the authorized Goal no longer exists");
     const goal = byFile.get(file);
-    if (goal.area !== brain.area) throw new Error(`wrong-area: the ${brain.area} brain cannot close ${goal.area} work`);
     const changed = await cascadeGoalDone(file, byFile);
     await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} done in tree`, goal.area, brain.session);
+    await recordCommittedCommand({ operation: "goal-done", actorSession: brain.session, targetArea: goal.area, goal: goal.slug, result: "authorized request applied" });
     return;
   }
   if (type === "route-journal") {
@@ -5682,11 +5705,22 @@ const agentRoutes = createAgentRoutes({
   /** Delivers or queues one normalized cross-agent message. */
   async send(body) {
     const text = normalizeMessage(body.text);
-    const sessions = await listDeliverySessions();
-    const target = resolveSession(String(body.to ?? ""), sessions);
+    const [sessions, brains, tree] = await Promise.all([listDeliverySessions(), readAllBrains(BRAINS_ROOT), readTree(TREES_ROOT)]);
+    const requested = String(body.to ?? "").trim();
+    const target = resolveSession(requested, sessions);
     const live = sessions.find((session) => session.name === target);
-    const sender = sessions.find((session) => session.name === String(body.from ?? ""));
-    const entry = { from: sender?.name ?? "unknown sender", area: sender?.area ?? null, text, durable: true, queuedAt: new Date().toISOString() };
+    const sender = commandActor(body.from, { sessions, brains });
+    const entry = { from: sender.session ?? "unknown sender", area: sender.area, text, durable: true, queuedAt: new Date().toISOString() };
+    if (!live) {
+      const inbox = areaInboxTarget(requested, { areas: flattenAreaPaths(tree), brains });
+      if (inbox) {
+        const delivery = await routeBrainNotice(inbox.area, text, { sender: { session: entry.from, area: entry.area } });
+        const reason = delivery.addressed
+          ? "stored in the Area inbox and queued for its live brain"
+          : "stored in the Area inbox; it will arrive when the brain starts";
+        return { status: 200, value: { status: "queued", to: inbox.area, target: "area", via: inbox.via, reason, receipt: delivery.notice.id } };
+      }
+    }
     const result = await messages.dispatch(live ?? null, entry);
     if (result.status !== 200) return { status: result.status, error: result.error };
     return { status: 200, value: { status: result.state, to: result.to, ...(result.reason ? { reason: result.reason, position: result.position } : {}) } };
@@ -5756,11 +5790,10 @@ const areaRoutesOperations = {
   },
   /** Creates and commits one Area. */
   async create(body) {
-    const authority = await optionalBrainCaller(body.caller, String(body.parent ?? ""));
-    if (authority.error) throw new Error(authority.error);
     const created = await createArea({ treesRoot: TREES_ROOT, parent: body.parent, name: body.name });
     await runVaultGit(["add", "--", ...created.changedPaths]);
     await vaultCommit(created.changedPaths, `add: ${created.area} Area`, created.area, null);
+    await recordCommittedCommand({ operation: "area-create", actorSession: body.caller, targetArea: created.area });
     return created;
   },
   /** Describes one valid Area move. */
@@ -6005,12 +6038,11 @@ const goalQueryRoutes = createGoalQueryRoutes({
       return { status, error: result.error };
     }
     if (!result.changed) return { status: 200, value: { ok: true, slug, dependsOn: result.slugs, changed: false } };
-    const authority = await optionalBrainCaller(body.caller, result.goal.area);
-    if (authority.error) return { status: 403, error: authority.error };
     try {
       const text = await readFile(path.join(TREES_ROOT, result.goal.file), "utf8");
       await vaultRepository.writeMarkdown(result.goal.file, writeDependencySlugs(text, result.slugs));
       await vaultCommit([result.goal.file], `update: ${result.goal.area} goal ${result.goal.slug} dependencies`, result.goal.area, null);
+      await recordCommittedCommand({ operation: removing ? "goal-undepend" : "goal-depend", actorSession: body.caller, targetArea: result.goal.area, goal: result.goal.slug });
       return { status: 200, value: { ok: true, slug, dependsOn: result.slugs, changed: true } };
     } catch (error) {
       return { status: 500, error: String(error.stderr ?? error.message ?? error) };
@@ -6027,13 +6059,11 @@ const goalQueryRoutes = createGoalQueryRoutes({
     const live = new Set(liveSessions.map((item) => item.name));
     if (!releasing && !live.has(session)) return { status: 404, error: `no tmux session "${session}"; run this inside the agent's session or pass --session` };
     const bySlug = new Map([...(await goalsByFile()).values()].map((goal) => [goal.slug, goal]));
-    const brains = await readAllBrains(BRAINS_ROOT);
     const resolved = [];
     for (const slug of slugs) {
       const goal = bySlug.get(slug);
       if (!goal) return { status: 404, error: `no goal ${slug}` };
       if (!releasing && ["done", "dropped"].includes(goal.status)) return { status: 409, error: `goal ${slug} is ${goal.status}` };
-      if (!releasing && brainForArea(brains, goal.area)) return { status: 409, error: `the exact ${goal.area} brain controls this Goal through its authoritative queue` };
       if (goal.session && goal.session !== session && live.has(goal.session)) return { status: 409, error: `goal ${slug} is owned by ${goal.session}` };
       resolved.push(goal);
     }
@@ -6044,6 +6074,7 @@ const goalQueryRoutes = createGoalQueryRoutes({
         if (releasing && goal.status !== "active") continue;
         await writeGoalBinding(goal.file, target);
         await vaultCommit([goal.file], `update: ${goal.area} goal ${goal.slug} ${releasing ? "released" : `owned by ${session}`}`, goal.area, releasing ? null : session);
+        await recordCommittedCommand({ operation: releasing ? "goal-release" : "goal-own", actorSession: session, targetArea: goal.area, goal: goal.slug });
       }
       if (!releasing && resolved.length) await adoptGoalSession(liveSessions, session, resolved[0]);
       return { status: 200, value: { ok: true, session, slugs: resolved.map((goal) => goal.slug) } };
@@ -6145,17 +6176,14 @@ const launchRoutes = createLaunchRoutes({
       const goal = (await goalsByFile()).get(file);
       if (!goal) return { status: 404, error: `no goal file ${file}` };
       const caller = String(body.caller ?? "").trim();
-      // The brain proved here is the worker-launch authority further down:
-      // it is passed into startPipeline instead of being read again.
-      let callingBrain = null;
-      if (caller) {
-        const authority = await exactBrainCaller(caller, goal.area);
-        if (authority.error) return { status: 403, error: authority.error };
-        callingBrain = authority.brain;
-      }
+      // A current brain may lend its own launch across Area boundaries. Every
+      // other caller names an explicit launch and keeps the same command rights.
+      const callingBrain = await liveCallingBrain(caller);
       if (body.recovery === true) {
-        if (caller) return { status: 403, error: "Only Julian can use guarded Goal recovery." };
         const recovered = await recoverQueuedGoal(goal);
+        if (recovered.status === 200) {
+          await recordCommittedCommand({ operation: "goal-recovery-start", actorSession: caller, targetArea: goal.area, goal: goal.slug, operationId: body.idempotencyKey });
+        }
         return { status: recovered.status, ...(recovered.status === 200 ? { value: { session: recovered.session, pipeline: recovered.pipeline, warnings: [], recovery: true } } : { error: recovered.error }) };
       }
       let steps = Array.isArray(body.steps) && body.steps.length ? body.steps : null;
@@ -6168,20 +6196,15 @@ const launchRoutes = createLaunchRoutes({
           kind: "implementation",
         }];
       }
-      if (!caller) {
-        const brain = await exactLiveBrainForArea(goal.area);
-        if (!brain) return { status: 409, error: `Activate the exact ${goal.area} brain before normal work starts. Use the explicit recovery action only when brain control is impaired.` };
-        const queued = await startPipeline(file, { steps, start: false, extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
-        if (queued.status !== 200) return { status: queued.status, error: queued.error };
-        await notifyBrain(goal.area, `Goal ${goal.slug}: Julian queued ${steps.length} assignment${steps.length === 1 ? "" : "s"}. Review the queue and start its first assignment.`);
-        return { status: 202, value: { status: "queued", session: null, pipeline: queued.pipeline, warnings: queued.warnings ?? [], launches: queued.launches ?? [] } };
-      }
       const result = await startPipeline(file, {
         steps,
         attemptKind: "managed",
         brain: callingBrain,
         extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [],
       });
+      if (result.status === 200) {
+        await recordCommittedCommand({ operation: "goal-start", actorSession: caller, targetArea: goal.area, goal: goal.slug, operationId: body.idempotencyKey, result: `started assignment 1 in ${result.session}` });
+      }
       return { status: result.status, ...(result.status === 200 ? { value: { session: result.session, pipeline: result.pipeline, warnings: result.warnings ?? [], launches: result.launches ?? [], recovery: false } } : { error: result.error }) };
     } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
   },
@@ -6197,13 +6220,17 @@ const workMutationRoutes = createWorkMutationRoutes({
     try {
       await editGoalFile(file, { understanding });
       await vaultCommit([file], `update: ${goal.area} goal ${goal.slug} records Julian's understanding`, goal.area, null);
+      await recordCommittedCommand({ operation: "goal-understanding", actorSession: body.session, targetArea: goal.area, goal: goal.slug });
       return { status: 200, value: { ok: true, understanding } };
     } catch (error) { return serverError(error); }
   },
   /** Accepts one Goal assignment. */
   async accept(body) {
     try {
-      const result = await acceptGoalAssignment(String(body.file ?? ""));
+      const file = String(body.file ?? "");
+      const result = await acceptGoalAssignment(file);
+      const goal = (await goalsByFile()).get(file);
+      if (result.status === 200 && goal) await recordCommittedCommand({ operation: "goal-accept", actorSession: body.session, targetArea: goal.area, goal: goal.slug });
       return { status: result.status, ...(result.status === 200 ? { value: { ok: true } } : { error: result.error }) };
     } catch (error) { return serverError(error); }
   },
@@ -6214,7 +6241,12 @@ const workMutationRoutes = createWorkMutationRoutes({
     const doneWhen = String(body.doneWhen ?? "").trim();
     if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
     if (!title || !doneWhen) return { status: 400, error: !title ? "a title is required" : "a Goal needs a done condition" };
-    try { return { status: 200, value: { file: (await createGoalSet(area, { goal: { title, doneWhen, state: typeof body.state === "string" ? body.state : "" } })).file } }; }
+    try {
+      const created = await createGoalSet(area, { goal: { title, doneWhen, state: typeof body.state === "string" ? body.state : "" } });
+      const goal = (await goalsByFile()).get(created.file);
+      await recordCommittedCommand({ operation: "goal-create", actorSession: body.caller, targetArea: area, goal: goal?.slug ?? path.basename(created.file, ".md").replace(/^goal-/, "") });
+      return { status: 200, value: { file: created.file } };
+    }
     catch (error) { return serverError(error); }
   },
   /** Creates one Goal with optional Subgoals, sources, and ownership. */
@@ -6224,10 +6256,6 @@ const workMutationRoutes = createWorkMutationRoutes({
     if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
     if (!String(goal.title ?? "").trim() || !String(goal.doneWhen ?? "").trim()) return { status: 400, error: "the Goal needs a name and a done condition" };
     const caller = String(body.caller ?? "").trim();
-    if (caller) {
-      const authority = await exactBrainCaller(caller, area);
-      if (authority.error) return { status: 403, error: authority.error };
-    }
     const subgoals = (Array.isArray(body.subgoals) ? body.subgoals.slice(0, 8) : []).map((item) => ({ title: String(item?.title ?? "").trim(), doneWhen: String(item?.doneWhen ?? "").trim(), state: "Not started." })).filter((item) => item.title || item.doneWhen);
     if (subgoals.some((item) => !item.title || !item.doneWhen)) return { status: 400, error: "each Subgoal needs a name and a done condition" };
     const own = String(body.own ?? "").trim();
@@ -6242,6 +6270,10 @@ const workMutationRoutes = createWorkMutationRoutes({
         await vaultCommit([created.file], `update: ${area} goal owned by ${own}`, area, own);
         await adoptGoalSession(sessions, own, { area, file: created.file });
       }
+      if (created.file) {
+        const createdGoal = (await goalsByFile()).get(created.file);
+        await recordCommittedCommand({ operation: "goal-create", actorSession: caller, targetArea: area, goal: createdGoal?.slug ?? path.basename(created.file, ".md").replace(/^goal-/, "") });
+      }
       return { status: 200, value: { ...created, ...(own ? { session: own } : {}) } };
     } catch (error) { return serverError(error); }
   },
@@ -6251,7 +6283,11 @@ const workMutationRoutes = createWorkMutationRoutes({
     const description = String(body.description ?? "").trim();
     if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
     if (!description) return { status: 400, error: "describe the idea before you save it" };
-    try { return { status: 200, value: { ok: true, file: await saveWorkIdea(area, description) } }; }
+    try {
+      const file = await saveWorkIdea(area, description);
+      await recordCommittedCommand({ operation: "idea-add", actorSession: body.caller, targetArea: area });
+      return { status: 200, value: { ok: true, file } };
+    }
     catch (error) { return serverError(error); }
   },
   /** Lists ideas in one Area or the complete vault. */
@@ -6267,27 +6303,21 @@ const workMutationRoutes = createWorkMutationRoutes({
     const area = String(body.area ?? "");
     const status = String(body.status ?? "");
     if (!validAreaPath(area) || !["done", "active"].includes(status)) return { status: 400, error: "area and status (done or active) required" };
-    const authority = await optionalBrainCaller(body.session, area);
-    if (authority.brain || authority.error) return { status: 403, error: authority.error ?? "Area lifecycle changes require Julian's explicit action outside a brain session." };
     try { await stat(path.join(TREES_ROOT, area)); }
     catch { return { status: 404, error: `no Area ${area}` }; }
-    return { status: 200, value: await setAreaStatus(area, status, body.session ? String(body.session) : null) };
+    const value = await setAreaStatus(area, status, body.session ? String(body.session) : null);
+    await recordCommittedCommand({ operation: status === "done" ? "area-done" : "area-reopen", actorSession: body.session, targetArea: area });
+    return { status: 200, value };
   },
   /** Applies validated direct edits and status changes to one Goal. */
   async edit(body) {
     const file = String(body.file ?? "");
     const goal = (await goalsByFile()).get(file);
     if (!goal) return { status: 404, error: `no goal file ${file}` };
-    const authority = await optionalBrainCaller(body.session, goal.area);
-    if (authority.error) return { status: 403, error: authority.error };
     const fields = {};
     if (body.status !== undefined) {
       if (!["open", "done", "dropped"].includes(body.status)) return { status: 400, error: `status must be open, done, or dropped, got "${body.status}"` };
       fields.status = body.status;
-      if (body.status === "done" && body.session) {
-        const brain = (await readAllBrains(BRAINS_ROOT)).find((item) => item.session === String(body.session));
-            if (brain) return { status: 409, error: "a brain cannot mark a Goal done directly; only the queue controller can apply a current designated review result" };
-      }
       if (body.status === "dropped") {
         const reason = oneLine(body.reason);
         if (!reason) return { status: 400, error: "give a brief reason before you mark this goal won't do" };
@@ -6317,6 +6347,7 @@ const workMutationRoutes = createWorkMutationRoutes({
       if (!changed.includes(file)) changed.unshift(file);
       const what = fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "open" ? "reopened" : "edited";
       await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} ${what} in tree`, goal.area, body.session ? String(body.session) : null);
+      await recordCommittedCommand({ operation: fields.status === "done" ? "goal-done" : fields.status === "dropped" ? "goal-wont-do" : fields.status === "open" ? "goal-reopen" : "goal-edit", actorSession: body.session, targetArea: goal.area, goal: goal.slug });
       return { status: 200, value: { ok: true } };
     } catch (error) {
       if (error.cleanup) return { status: 503, value: { error: error.message, cleanup: error.cleanup } };

@@ -83,7 +83,7 @@ Each generation stores its complete resolved launch. A user-selected registry ch
 Each accepted worker handover adds a receipt to that Goal queue before it writes one exact-Area inbox notice. A pending receipt is a durable notice outbox, and a stable source ID makes retry and recovery idempotent.
 Any harness can pull a rebuilt brain or worker prompt from the session's durable record. Current brain context also carries unread exact-Area notices. A bound worker observed back at its shell creates one durable recovery notice without ending its queue assignment or tmux session.
 Generic `tangent agent send` messages use an atomic file queue. Agent Shell stores them before pane wake or presentation and restores them after controller restarts. See ADR-0039.
-Mutation authority is exact by Area. Parent brains can read descendant summaries and route information, but cannot mutate child work.
+Area paths organize records and inboxes; they do not grant command permission. Any local caller can mutate work in any Area through the same server routes. The server records actor provenance and sends a durable event to the target Area after commit. Queue revisions, live ownership, exact attempts, and immutable tmux targets remain fences.
 Journal capture writes before delivery.
 Exact Request effects use hashed revisions and an allowlist.
 

@@ -13,7 +13,7 @@ The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321
 
 Any replacement harness can recover the current assignment from the tmux session name. The context projection does not claim or mutate the session. A live unbound session reports `unassigned`. A worker that exits to its still-live shell leaves its queue status and tmux session intact and creates one durable exact-Area brain notice.
 
-Agent Shell centers each Area on one logical brain with an active or inactive lifecycle. Exact Area identity controls mutations. The Area Journal saves unstructured text before brain delivery.
+Agent Shell centers each Area on one logical brain with an active or inactive lifecycle. Exact Area identity selects records and inboxes, not command permission. The Area Journal saves unstructured text before brain delivery.
 
 Work shows all open Goals in one projection. An explicit keyboard context owns each key. Terminal sessions keep native tmux input, except the visible leave shortcut. Work and Document actions expose matching keyboard and pointer paths. See ADR-0038.
 

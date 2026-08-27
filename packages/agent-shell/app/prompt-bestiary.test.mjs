@@ -9,10 +9,10 @@ test("the bestiary covers prompts, routing events, and common agent lifecycles",
   assert.ok(LIFECYCLES.every((item) => item.transitions.length >= 3));
 });
 
-test("the Model view explains exact-Area brain authority", () => {
+test("the Model view separates exact-Area identity from command permission", () => {
   const brain = MODEL_CONCEPTS.find((item) => item.id === "brain");
   assert.match(brain.definition, /one exact Area/);
-  assert.match(brain.definition, /never grant mutation authority in another Area/);
+  assert.match(brain.definition, /does not grant command permission/);
   assert.match(brain.lifecycle, /active or inactive/);
   assert.match(brain.lifecycle, /health remain diagnostic/);
 });
@@ -53,7 +53,7 @@ test("a live Goal states whether a brain controls it", () => {
     inspector: { file: "otto/dnd/goal-move.md" },
   });
   assert.match(managed, /Managed work/);
-  assert.match(managed, /Controlled by brain otto\/dnd\/movement/);
+  assert.match(managed, /Organized by brain otto\/dnd\/movement/);
 
   const parentOnly = renderPromptBestiary({
     goals: [{ file: "otto/dnd/goal-move.md", title: "Move", area: "otto/dnd/movement" }],
@@ -61,15 +61,16 @@ test("a live Goal states whether a brain controls it", () => {
     selection: { mode: "messages" },
     inspector: { file: "otto/dnd/goal-move.md" },
   });
-  assert.match(parentOnly, /Waiting for controller/, "parent authority never controls the child Area");
+  assert.match(parentOnly, /No Area brain record/, "a parent brain is not the child Area's logical organizer");
 
   const unmanaged = renderPromptBestiary({
     goals: [{ file: "otto/old/goal-one.md", title: "Old", area: "otto/old" }],
     selection: { mode: "messages" },
     inspector: { file: "otto/old/goal-one.md" },
   });
-  assert.match(unmanaged, /Waiting for controller/);
-  assert.match(unmanaged, /Activate the exact Area brain/);
+  assert.match(unmanaged, /No Area brain record/);
+  assert.match(unmanaged, /Direct commands remain available/);
+  assert.match(unmanaged, /logical Area inbox/);
 });
 
 test("the model starts with stable concepts and separates Subgoal and Ask semantics", () => {

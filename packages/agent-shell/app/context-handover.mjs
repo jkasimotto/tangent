@@ -46,19 +46,19 @@ export function reminderDue({ fill, thresholdTokens, reminders }) {
   return null;
 }
 
-/** The first-level reminder sends context risk to the authoritative controller. */
+/** The first-level reminder records context risk without self-replacement. */
 export function contextReminderText({ usedTokens, windowTokens, subject }) {
   const used = Math.round(usedTokens / 1000);
   const window = Math.round(windowTokens / 1000);
   const pct = Math.round((usedTokens / windowTokens) * 100);
-  return `Your context is at ${used}k of ${window}k (${pct}%). At the next natural pause, submit a typed context-risk report with the durable facts. The exact Area brain chooses and starts any fresh attempt; do not replace yourself. If the ${subject} is nearly done, finish it and submit the normal typed result.`;
+  return `Your context is at ${used}k of ${window}k (${pct}%). At the next natural pause, submit a typed context-risk report with the durable facts. Do not replace yourself. Tangent keeps the report in the Goal queue, and any local caller can start a fresh attempt through that queue. If the ${subject} is nearly done, finish it and submit the normal typed result.`;
 }
 
 /** The second, stronger reminder once carried context is a tenth past the threshold. */
 export function contextRepeatText({ usedTokens, thresholdTokens, subject }) {
   const used = Math.round(usedTokens / 1000);
   const threshold = Math.round(thresholdTokens / 1000);
-  return `Your context is well past ${threshold}k tokens (${used}k). Submit a typed context-risk report now. The exact Area brain chooses and starts any fresh attempt; do not replace yourself.`;
+  return `Your context is well past ${threshold}k tokens (${used}k). Submit a typed context-risk report now. Do not replace yourself. Tangent keeps the report in the Goal queue, and any local caller can start a fresh attempt through that queue.`;
 }
 
 /**

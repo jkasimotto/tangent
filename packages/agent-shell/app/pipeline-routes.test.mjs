@@ -55,3 +55,58 @@ test("pipeline routes reject a report value that is not an object", async () => 
   }
   assert.equal(called, false, "a malformed report never reaches the queue controller");
 });
+
+test("pipeline routes dispatch atomic pending-assignment mutations", async () => {
+  const calls = [];
+  const routes = createPipelineRoutes({
+    /** Records one atomic pending-assignment mutation. */
+    async mutate(goal, operations, options) {
+      calls.push({ goal, operations, options });
+      return { status: 200, state: "mutated", pipeline: { revision: 4 }, warnings: ["kept"] };
+    },
+  });
+  const output = response();
+  await routes.handle(request("POST", {
+    goal: "goal.md",
+    operations: [{ type: "move", assignmentId: "assignment-2", afterAssignmentId: "assignment-3" }],
+    expectedRevision: 3,
+    operationId: "mutation-1",
+    caller: "brain-1",
+  }), output, new URL("http://shell/api/pipelines/mutate"));
+
+  assert.deepEqual(calls, [{
+    goal: "goal.md",
+    operations: [{ type: "move", assignmentId: "assignment-2", afterAssignmentId: "assignment-3" }],
+    options: { caller: "brain-1", expectedRevision: 3, idempotencyKey: "mutation-1" },
+  }]);
+  assert.equal(output.status, 200);
+  assert.equal(output.body.pipeline.revision, 4);
+  assert.deepEqual(output.body.warnings, ["kept"]);
+});
+
+test("pipeline routes dispatch fenced Goal attempt replacement", async () => {
+  const calls = [];
+  const routes = createPipelineRoutes({
+    /** Records one fenced replacement request. */
+    async replaceAttempt(goal, options) {
+      calls.push({ goal, options });
+      return { status: 200, state: "replaced", session: "goal-r2", operation: { id: "replacement-1" }, pipeline: { revision: 8 } };
+    },
+  });
+  const output = response();
+  await routes.handle(request("POST", {
+    goal: "goal.md",
+    assignmentId: "assignment-1",
+    expectedAttemptId: "attempt-1",
+    expectedRevision: 7,
+    launch: { harness: "claude", model: "fable-5", effort: "max" },
+    operationId: "replacement-1",
+    caller: "brain-1",
+  }), output, new URL("http://shell/api/goals/attempts/replace"));
+
+  assert.equal(calls[0].goal, "goal.md");
+  assert.equal(calls[0].options.assignmentId, "assignment-1");
+  assert.deepEqual(calls[0].options.launch, { harness: "claude", model: "fable-5", effort: "max" });
+  assert.equal(output.body.session, "goal-r2");
+  assert.equal(output.body.operation.id, "replacement-1");
+});

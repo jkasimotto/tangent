@@ -7,6 +7,8 @@ export function createPipelineRoutes(operations) {
     ["POST /api/pipelines/control", control],
     ["POST /api/pipelines/append", append],
     ["POST /api/pipelines/edit", edit],
+    ["POST /api/pipelines/mutate", mutate],
+    ["POST /api/goals/attempts/replace", replaceAttempt],
   ]);
 
   /** Handles one matching request and reports whether this router owned it. */
@@ -76,6 +78,56 @@ export function createPipelineRoutes(operations) {
       idempotencyKey: String(body.idempotencyKey ?? ""),
     });
     sendJson(response, result.status, result.status === 200 ? { pipeline: result.pipeline } : { error: result.error });
+  }
+
+  /** Applies one atomic set of edits to assignments that have not started. */
+  async function mutate(request, response) {
+    const body = await readJson(request);
+    const result = await operations.mutate(String(body.goal ?? ""), Array.isArray(body.operations) ? body.operations : [], {
+      caller: String(body.caller ?? ""),
+      expectedRevision: body.expectedRevision,
+      idempotencyKey: String(body.operationId ?? body.idempotencyKey ?? ""),
+    });
+    sendJson(response, result.status, result.status === 200
+      ? {
+          status: result.state ?? "mutated",
+          pipeline: result.pipeline,
+          repeated: result.repeated === true,
+          warnings: result.warnings ?? [],
+        }
+      : {
+          error: result.error,
+          ...(result.code ? { code: result.code } : {}),
+          ...(result.pipeline ? { pipeline: result.pipeline } : {}),
+        });
+  }
+
+  /** Replaces one Goal attempt after its successor is ready. */
+  async function replaceAttempt(request, response) {
+    const body = await readJson(request);
+    const result = await operations.replaceAttempt(String(body.goal ?? ""), {
+      assignmentId: String(body.assignmentId ?? ""),
+      expectedAttemptId: String(body.expectedAttemptId ?? ""),
+      expectedRevision: body.expectedRevision,
+      launch: body.launch,
+      operationId: String(body.operationId ?? body.idempotencyKey ?? ""),
+      caller: String(body.caller ?? ""),
+    });
+    sendJson(response, result.status, result.status === 200
+      ? {
+          status: result.state ?? "replaced",
+          session: result.session ?? null,
+          operation: result.operation ?? null,
+          pipeline: result.pipeline,
+          repeated: result.repeated === true,
+          requiresConfirmation: result.requiresConfirmation === true,
+        }
+      : {
+          error: result.error,
+          ...(result.code ? { code: result.code } : {}),
+          ...(result.operation ? { operation: result.operation } : {}),
+          ...(result.pipeline ? { pipeline: result.pipeline } : {}),
+        });
   }
 
   return { handle };

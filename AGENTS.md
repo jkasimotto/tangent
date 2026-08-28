@@ -13,6 +13,7 @@ All Tangent state lives under `~/.tangent/`. Know these paths:
 | `usage/repos/<hash>/` | One directory per repo, keyed by a hash of the repo path |
 | `usage/global/insights/` | Aggregated deterministic insights (e.g. `park.json`) |
 | `trees/` | Git-managed project tree; node directories only, no content files. README.md has the vault rules. |
+| `trees/.agents/skills/remember/` | Canonical Tangent `/remember` skill. It lives at the vault repository root so agents launched in `~/.tangent/trees` can discover it. Agents working in this repository must use that copy when inspecting or changing Journal capture behavior. |
 | `marks/` | Captured agent-failure marks (`tangent.mark.v1` JSON), owned by @tangent/eval |
 | `eval/runs/` | Eval run manifests, variant work dirs, metrics, reports, diffs |
 | `loops/` | Agent loop logs (plan, scope, implement, review, deploy, ux, watch, feedback) |

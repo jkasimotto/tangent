@@ -732,13 +732,21 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return { enabled: true };
   }
 
+  /** Dismisses one exact presented Document through Julian's fenced route. */
+  async function dismissPresentedDocument(row, file = row?.dataset.presentationFile) {
+    if (!row?.dataset.presentationGoal || !file) return false;
+    await post("/api/goals/dismiss-presentation", { goal: row.dataset.presentationGoal, file });
+    await refresh();
+    return true;
+  }
+
   /** Runs one Work command against one semantic row. Pointer and keys share it. */
   function executeWorkCommand(id, row = cursorRow()) {
     const area = commandAreaForRow(row);
     const goal = goalByFile(row?.dataset.goalAnchor ?? "");
     if (id === "fullDocument" && row?.dataset.presentationFile) return openDocument(row.dataset.presentationFile);
     if (id === "dismissPresentation" && row?.dataset.presentationFile) {
-      return post("/api/goals/dismiss-presentation", { goal: row.dataset.presentationGoal, file: row.dataset.presentationFile }).then(() => refresh());
+      return dismissPresentedDocument(row);
     }
     if (id === "previousArea" || id === "nextArea") return moveAreaCursor(id === "previousArea" ? -1 : 1, row);
     if (id === "openBrain") {
@@ -1675,8 +1683,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const withdrawPresentation = target.closest("[data-withdraw-presentation]");
     if (withdrawPresentation) {
       const row = withdrawPresentation.closest("[data-presentation-goal]");
-      await post("/api/goals/dismiss-presentation", { goal: row.dataset.presentationGoal, file: withdrawPresentation.dataset.withdrawPresentation });
-      return refresh();
+      return dismissPresentedDocument(row, withdrawPresentation.dataset.withdrawPresentation);
     }
     const readerGoalActions = target.closest("[data-reader-goal-actions]");
     if (readerGoalActions) return openReaderGoalActions(readerGoalActions);

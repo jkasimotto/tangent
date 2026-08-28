@@ -56,7 +56,7 @@ test("the work table states its rows and columns in the accessibility tree", asy
   assert.equal(row.children.length, columns.length, "a Goal row fills every column");
 });
 
-test("presented Documents are capped child rows with human titles and keyboard verbs", async () => {
+test("presented Documents are capped child rows whose visible dismiss control uses Julian's fenced route", async () => {
   const fixture = workTableFixture();
   const goal = fixture.goals[0];
   goal.presentations = [1, 2, 3, 4].map((number) => ({
@@ -68,12 +68,13 @@ test("presented Documents are capped child rows with human titles and keyboard v
   assert.equal(rows.length, 3, "Work renders no more than three presentations");
   assert.match(rows[0].textContent, /Readable design 1/);
   assert.match(document.querySelector("[data-work-cursor^='document-more:']").textContent, /and 1 more/);
-  rows[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  rows[0].querySelector("[data-work-row-title]").focus();
-  press(window, "x");
+  rows[0].querySelector("[data-withdraw-presentation]").click();
   await settle(window);
   assert.equal(posts.at(-1).path, "/api/goals/dismiss-presentation");
-  assert.equal(posts.at(-1).body.file, "otto/onboarding/design-1.md");
+  assert.deepEqual(posts.at(-1).body, {
+    goal: "otto/onboarding/goal-walkthrough.md",
+    file: "otto/onboarding/design-1.md",
+  }, "the pointer dismisses only its own Goal presentation");
 });
 
 test("presented Documents stay on Work after Enter opens one, o is the full-reader alias, and x dismisses only its own row", async () => {
@@ -113,7 +114,10 @@ test("presented Documents stay on Work after Enter opens one, o is the full-read
   await settle(window);
   const dismiss = posts.at(-1);
   assert.equal(dismiss.path, "/api/goals/dismiss-presentation", "x dismisses directly on Julian's word, not through the brain's withdraw");
-  assert.equal(dismiss.body.file, "otto/onboarding/design-1.md", "only the highlighted presentation is dismissed");
+  assert.deepEqual(dismiss.body, {
+    goal: "otto/onboarding/goal-walkthrough.md",
+    file: "otto/onboarding/design-1.md",
+  }, "x sends the same exact Goal presentation as its visible dismiss control");
   assert.equal(posts.some((post) => post.path === "/api/goals/withdraw-presentation"), false);
 });
 

@@ -15,6 +15,8 @@ Any replacement harness can recover the current assignment from the tmux session
 
 Agent Shell centers each Area on one logical brain with an active or inactive lifecycle. Exact Area identity selects records and inboxes, not command permission. The Area Journal saves unstructured text before brain delivery.
 
+Root uses `@root` and maps to the vault root. A native brain turn with “remember this” enters that scope's Journal after a successful vault commit (ADR-0044).
+
 Work shows all open Goals in one projection. An explicit keyboard context owns each key. Terminal sessions keep native tmux input, except the visible leave shortcut. Work and Document actions expose matching keyboard and pointer paths. See ADR-0038.
 
 Generic `tangent send` messages persist before pane wake or presentation. The controller restores them after a restart and keeps their exact target order. See ADR-0039.

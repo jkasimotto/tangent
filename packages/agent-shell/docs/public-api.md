@@ -98,13 +98,17 @@ The product lifecycle is `active` or `inactive`. Process, waiting, attempt, and 
 
 Every attempt opens in its Area folder, where the harness reads the AGENTS.md chain, and gets Julian's message as its first message with the waiting inbox notices below it. Agent Shell generates no prompt. Old records keep `checkpoint` and generation `handover` text; nothing writes them (ADR-0041).
 
+Root uses the exact API identity `@root`. It maps to the vault root. It has a normal brain record and no Area folder.
+
+Each new brain attempt stores its native conversation locator. Active Claude and Codex brains support native complete-turn Journal capture (ADR-0044).
+
 Area memory includes exact `Purpose`, `Current`, and `Knowledge`. It includes smaller ancestor `Purpose` and `Knowledge` sections. Selected Documents come only from current source instructions, open Goal relationships, and open Request relationships. Completed Goals and their Documents remain excluded.
 
 ## Questions
 
 Every Question accepts a free-text reply in the native exact-Area brain conversation. A Question can also contain one effect from the server allowlist.
 
-The initial effects are `goal-done` and `route-journal`. Each effect has a hashed revision and a durable operation record. The server writes operation intent before execution. Success closes the Question. Failure records the problem and leaves the Question actionable for retry.
+The initial effects are `goal-done` and `route-journal`. Each effect has a hashed revision and a durable operation record. A new `route-journal` effect names `sourceEntryId` and exact source `text`. The server refuses text that is not in that source entry. The server writes operation intent before execution. Success closes the Question. Failure records the problem and leaves the Question actionable for retry.
 
 Legacy Decide and Test plan lines remain readable during migration. They do not define closure for new Goal queues.
 

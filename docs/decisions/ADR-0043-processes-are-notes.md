@@ -21,6 +21,10 @@ Repeatable work lived in a `triggers` map inside a git-ignored `.processes.json`
 5. Servers and watchers are `tangent service`. The stored session kind stays `process`. The UI label is Service. `tangent process start|stop|restart|close` reach `tangent service` for one release and print a hint.
 6. The `tangent trigger` runtime, its `triggers` manifest map, its state file, its tests, and its LaunchAgent are retired. A manifest that still declares `triggers` is refused with a hint to write a process note. The two triggers that existed are rewritten by hand as process notes in their Areas, with `cwd` as `path:` and the Area's `- Agent:` line as `launch:`. The retained speedrun tmux session is ended.
 
+## Amendment 2026-08-28: loops
+
+A third shape: `every:` alone, with no `schedule:` or `when:`, is a loop. Its body is a message. While the Area brain runs, the scheduler sends the brain `Loop <slug> (every <every>): <body>` every so often, at most one message in flight, and never when no brain lives. A loop runs every `1m` or slower and takes no `launch:`, `path:`, or `verify:`. Work marks the brain of an Area with an active loop with `↻`. Design: `docs/design/agent-shell-brain-loop/design-record.md`.
+
 ## Consequences
 
 - `packages/agent-shell/app/process-note.mjs` parses notes and computes slots. `process-scheduler.mjs` owns discovery, state, the sweep, and the view. `process-routes.mjs` serves `GET /api/processes`, `POST /api/processes/control`, and `POST /api/processes/check`.

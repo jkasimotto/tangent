@@ -629,6 +629,8 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .process-open small { color: var(--quiet); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .process-state.due { color: var(--amber); font-weight: 620; }
 .process-state.paused { color: var(--quiet); }
+.process-state.loop { color: #9ebbe0; }
+.work-group-loop { margin-left: 2px; color: #9ebbe0; font-size: 11px; opacity: 0.8; cursor: default; }
 .process-row.paused td { color: var(--quiet); }
 
 .work-table :focus-visible, .ask-table :focus-visible { outline: 2px solid #8fc4ff; outline-offset: 1px; }

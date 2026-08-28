@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { discoverProcesses, dueNotice, evaluateProcess, goalNamesProcess, processView, readProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
+import { discoverProcesses, dueNotice, evaluateProcess, goalNamesProcess, loopNotice, processView, readProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
 import { parseProcessNote } from "./process-note.mjs";
 
 /** A parsed scheduled process for one Area. */
@@ -137,4 +137,71 @@ test("a Goal names its process by frontmatter file, by slug, or by title", () =>
   assert.equal(goalNamesProcess({ process: null, title: "rebase STAGING " }, note), true, "the title, whatever its case");
   assert.equal(goalNamesProcess({ process: "neara/pgande/process-other.md", title: "Other work" }, note), false);
   assert.equal(goalNamesProcess({ process: null, title: "Rebase" }, note), false, "a shorter title is another Goal");
+});
+
+/** A parsed loop for one Area. */
+function looped() {
+  return parseProcessNote("---\ntype: process\nevery: 20m\n---\nLook at the open questions.\n", { file: "neara/pgande/process-nudge.md", area: "neara/pgande" });
+}
+
+test("a loop ticks only while the brain runs, keeps one message in flight, and fires anyway after three intervals", async () => {
+  const note = looped();
+  /** Noon UTC on 2026-08-28 plus so many minutes. */
+  const at = (minutes) => new Date(Date.UTC(2026, 7, 28, 12, minutes));
+  assert.equal((await evaluateProcess({ note, state: {}, now: at(0), brainLive: false })).reason, "brain not running");
+  const first = await evaluateProcess({ note, state: {}, now: at(0), brainLive: true });
+  assert.deepEqual([first.due, first.reason], [true, "first tick"]);
+  const sent = { lastNoticeAt: at(0).toISOString(), lastDeliveredAt: at(0).toISOString() };
+  assert.equal((await evaluateProcess({ note, state: sent, now: at(10), brainLive: true })).due, false);
+  assert.equal((await evaluateProcess({ note, state: sent, now: at(20), brainLive: true })).due, true);
+  const undelivered = { lastNoticeAt: at(0).toISOString() };
+  assert.match((await evaluateProcess({ note, state: undelivered, now: at(20), brainLive: true })).reason, /waits for the composer/);
+  assert.match((await evaluateProcess({ note, state: undelivered, now: at(60), brainLive: true })).reason, /never reached the brain/);
+  assert.equal((await evaluateProcess({ note: { ...note, status: "paused" }, state: {}, now: at(0), brainLive: true })).reason, "paused");
+  assert.equal(loopNotice(note), "Loop nudge (every 20m): Look at the open questions.");
+  const live = processView(note, sent, at(5), { brainLive: true });
+  assert.deepEqual([live.state, live.when, live.nextRunAt, live.due, live.loop], ["Loop", "Every 20m, to the brain", at(20).toISOString(), false, true]);
+  assert.equal(processView(note, {}, at(5), { brainLive: false }).state, "Waiting for brain");
+});
+
+test("a sweep sends a loop its body and records delivery only when a live brain took it", async () => {
+  const trees = await mkdtemp(path.join(os.tmpdir(), "tangent-loop-trees-"));
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "tangent-loop-state-"));
+  try {
+    await mkdir(path.join(trees, "neara", "pgande"), { recursive: true });
+    await writeFile(path.join(trees, "neara", "pgande", "process-nudge.md"), "---\ntype: process\nevery: 20m\n---\nLook at the open questions.\n", "utf8");
+    const notices = [];
+    let addressed = false;
+    /** Collects the messages the sweep sends and answers like notifyBrain. */
+    const notify = async (area, text, options) => { notices.push({ area, text, options }); return addressed; };
+    /** No probe runs for a loop. */
+    const runProbe = async () => 1;
+    /** A loop has no Goal. */
+    const openGoalFor = async () => null;
+    /** The brain is away. */
+    const noBrain = async () => false;
+    /** The brain runs. */
+    const brain = async () => true;
+    const base = { treesRoot: trees, stateRoot, runProbe, openGoalFor, notify };
+    await sweepProcesses({ ...base, now: new Date("2026-08-28T12:00:00Z"), brainLive: noBrain });
+    assert.equal(notices.length, 0, "no brain, no tick");
+    await sweepProcesses({ ...base, now: new Date("2026-08-28T12:00:10Z"), brainLive: brain });
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].text, "Loop nudge (every 20m): Look at the open questions.");
+    assert.equal(notices[0].options.idempotencyKey, "process:neara/pgande:nudge:2026-08-28T12:00:10.000Z");
+    let state = await readProcessState(stateRoot, "neara/pgande", "nudge");
+    assert.equal(state.lastNoticeAt, "2026-08-28T12:00:10.000Z");
+    assert.equal(state.lastDeliveredAt, undefined);
+    await sweepProcesses({ ...base, now: new Date("2026-08-28T12:20:10Z"), brainLive: brain });
+    assert.equal(notices.length, 1, "an undelivered tick holds the next one");
+    addressed = true;
+    await sweepProcesses({ ...base, now: new Date("2026-08-28T13:00:10Z"), brainLive: brain });
+    assert.equal(notices.length, 2, "three intervals later it fires anyway");
+    state = await readProcessState(stateRoot, "neara/pgande", "nudge");
+    assert.equal(state.lastDeliveredAt, "2026-08-28T13:00:10.000Z");
+    assert.equal(state.lastGoalFile, undefined);
+  } finally {
+    await rm(trees, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+  }
 });

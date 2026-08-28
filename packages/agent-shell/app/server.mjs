@@ -2170,7 +2170,7 @@ const runtimeScheduler = createRuntimeScheduler([
     active: () => true,
     /** Tells the Area brain about each due process note (ADR-0043). */
     async run() {
-      await sweepProcesses({ treesRoot: TREES_ROOT, stateRoot: PROCESSES_ROOT, runProbe: runProcessProbe, openGoalFor: openGoalForProcess, notify: notifyBrain, hiddenAreaStatus });
+      await sweepProcesses({ treesRoot: TREES_ROOT, stateRoot: PROCESSES_ROOT, runProbe: runProcessProbe, openGoalFor: openGoalForProcess, notify: notifyBrain, hiddenAreaStatus, brainLive: loopBrainLive });
     },
   },
   {
@@ -5958,6 +5958,11 @@ async function runProcessProbe(note) {
       resolve(error ? (typeof error.code === "number" ? error.code : 1) : 0);
     });
   });
+}
+
+/** Whether the Area brain runs now, for loop ticks; a lookup error reads as not running. */
+async function loopBrainLive(area) {
+  return Boolean(await liveBrainForArea(area).catch(() => null));
 }
 
 /** Every process note as the Area page, Work, and the CLI show it, with its brain and Goal state. */

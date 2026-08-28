@@ -67,7 +67,7 @@ const areaOption = { name: "area", takesValue: true, description: "Only this Are
 
 export const processCommandSpec: CliCommandSpec = {
   name: "process",
-  description: "Read, pause, resume, and check repeatable work: <area>/process-<slug>.md notes",
+  description: "Read, pause, resume, and check repeatable work and brain loops: <area>/process-<slug>.md notes",
   subcommands: [
     { name: "list", description: "List every process with its schedule, next run, and state", args: "[area]", options: [areaOption, serverOption, jsonOption] },
     { name: "show", description: "Show one process: schedule or probe, next run, last run, last Goal", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] },

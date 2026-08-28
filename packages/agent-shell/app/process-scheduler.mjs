@@ -1,7 +1,8 @@
 // The server is the scheduler (ADR-0043, D17 and D18). Every 10 s it reads
 // each `process-<slug>.md` in the vault, decides whether the process is due,
 // and when it is, writes one note to the Area brain inbox that says how to
-// start it. Tangent starts no worker itself. Run state lives in
+// start it. Tangent starts no worker itself. A loop note (`every:` alone)
+// instead sends its body to a live brain every so often. Run state lives in
 // `~/.tangent/agent-shell/processes/<area>/<slug>.json`.
 
 import { existsSync } from "node:fs";
@@ -76,6 +77,31 @@ export async function discoverProcesses(treesRoot, { area = "" } = {}) {
   return notes;
 }
 
+/** How many intervals a loop waits for a lost delivery before it fires anyway. */
+const LOOP_STALE_INTERVALS = 3;
+
+/** The one message the brain gets on each loop tick: the body, named by its loop. */
+export function loopNotice(note) {
+  return `Loop ${note.slug} (every ${note.every}): ${note.body}`;
+}
+
+/**
+ * Whether a loop is due: it never fired, or `every:` passed since the last
+ * tick and that tick reached the brain. One message is in flight at most.
+ * After three intervals with no delivery it fires anyway, so a lost
+ * delivery costs three intervals, not the loop.
+ */
+export function loopDue(note, state, now) {
+  const last = instant(state.lastNoticeAt);
+  if (!last) return { due: true, reason: "first tick", slot: new Date(now) };
+  const elapsed = new Date(now).getTime() - last.getTime();
+  if (elapsed < note.everyMs) return { due: false, reason: `next tick ${new Date(last.getTime() + note.everyMs).toISOString()}`, slot: null };
+  const delivered = instant(state.lastDeliveredAt);
+  if (delivered && delivered.getTime() >= last.getTime()) return { due: true, reason: `${note.every} passed since the last tick`, slot: new Date(now) };
+  if (elapsed >= note.everyMs * LOOP_STALE_INTERVALS) return { due: true, reason: `the last tick never reached the brain; ${LOOP_STALE_INTERVALS} intervals passed`, slot: new Date(now) };
+  return { due: false, reason: `the last tick ${state.lastNoticeAt} waits for the composer`, slot: null };
+}
+
 /** The one note the brain gets when a process is due (D17). */
 export function dueNotice(note, treesRoot) {
   const file = path.join(treesRoot, note.file);
@@ -137,10 +163,11 @@ function goalIsOpen(goal) {
  * `when:` process whose note the brain has not acted on is not probed again,
  * so the inbox gets one note per condition, not one per interval.
  */
-export async function evaluateProcess({ note, state, now = new Date(), runProbe, openGoal = null, areaHidden = "" }) {
+export async function evaluateProcess({ note, state, now = new Date(), runProbe, openGoal = null, areaHidden = "", brainLive = true }) {
   if (note.error) return { due: false, reason: `broken note: ${note.error}`, slot: null };
   if (note.status === "paused") return { due: false, reason: "paused", slot: null };
   if (areaHidden) return { due: false, reason: `Area is ${areaHidden}`, slot: null };
+  if (note.loop) return brainLive ? loopDue(note, state, now) : { due: false, reason: "brain not running", slot: null };
   if (openGoal && goalIsOpen(openGoal)) return { due: false, reason: `Goal ${openGoal.file} is still open`, slot: null, openGoal };
   if (note.schedule) return { ...scheduleDue(note, state, now) };
   if (state.lastNoticeAt && (!state.lastGoalAt || state.lastGoalAt < state.lastNoticeAt)) return { due: false, reason: `note sent ${state.lastNoticeAt}; waits for the brain`, slot: null };
@@ -160,7 +187,7 @@ export async function evaluateProcess({ note, state, now = new Date(), runProbe,
  * or `archived` when the Area or an ancestor is folded away: its processes
  * are never due (area-archive Decision 7).
  */
-export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), runProbe, openGoalFor, notify, hiddenAreaStatus = async () => "" }) {
+export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), runProbe, openGoalFor, notify, hiddenAreaStatus = async () => "", brainLive = async () => true }) {
   const results = [];
   for (const note of await discoverProcesses(treesRoot)) {
     const state = await readProcessState(stateRoot, note.area, note.slug);
@@ -173,7 +200,7 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
     }
     let outcome;
     try {
-      outcome = await evaluateProcess({ note, state: next, now, runProbe, openGoal, areaHidden: await hiddenAreaStatus(note.area) });
+      outcome = await evaluateProcess({ note, state: next, now, runProbe, openGoal, areaHidden: await hiddenAreaStatus(note.area), brainLive: note.loop ? await brainLive(note.area) : true });
     } catch (error) {
       outcome = { due: false, reason: `check failed: ${error.message}`, slot: null };
     }
@@ -185,7 +212,8 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
       const slotAt = (outcome.slot ?? now).toISOString();
       next.lastDueAt = slotAt;
       next.lastNoticeAt = now.toISOString();
-      await notify(note.area, dueNotice(note, treesRoot), { idempotencyKey: `process:${note.area}:${note.slug}:${slotAt}` });
+      const addressed = await notify(note.area, note.loop ? loopNotice(note) : dueNotice(note, treesRoot), { idempotencyKey: `process:${note.area}:${note.slug}:${slotAt}` });
+      if (note.loop && addressed) next.lastDeliveredAt = now.toISOString();
     }
     next.lastReason = outcome.reason;
     if (JSON.stringify(next) !== JSON.stringify(state)) await writeProcessState(stateRoot, note.area, note.slug, next);
@@ -202,6 +230,8 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
 export function processView(note, state, now = new Date(), { brainLive = false, openGoal = null, areaHidden = "" } = {}) {
   const nextRunAt = note.schedule
     ? nextSlotAfter(note.schedule, now)?.toISOString() ?? null
+    : note.loop
+      ? (instant(state.lastNoticeAt) ? new Date(instant(state.lastNoticeAt).getTime() + note.everyMs) : now).toISOString()
     : note.everyMs ? new Date((instant(state.lastCheckedAt)?.getTime() ?? now.getTime()) + (instant(state.lastCheckedAt) ? note.everyMs : 0)).toISOString() : null;
   const goalOpen = openGoal && goalIsOpen(openGoal);
   const noticeWaits = Boolean(state.lastNoticeAt) && !goalOpen && (!state.lastGoalAt || state.lastGoalAt < state.lastNoticeAt);
@@ -209,16 +239,17 @@ export function processView(note, state, now = new Date(), { brainLive = false, 
   if (note.error) stateWord = "Broken note";
   else if (note.status === "paused") stateWord = "Paused";
   else if (areaHidden) stateWord = `Area ${areaHidden}`;
+  else if (note.loop) stateWord = brainLive ? "Loop" : "Waiting for brain";
   else if (goalOpen) stateWord = "Running";
   else if (noticeWaits) stateWord = brainLive ? "Due, brain told" : "Due, brain not running";
   return {
     area: note.area, slug: note.slug, file: note.file, title: note.title, status: note.status,
     when: describeWhen(note), schedule: note.schedule?.text ?? null, probe: note.when, every: note.every,
-    launch: note.launch, path: note.path, verify: note.verify, error: note.error,
+    launch: note.launch, path: note.path, verify: note.verify, error: note.error, loop: note.loop, body: note.loop ? note.body : undefined,
     nextRunAt: note.status === "paused" || areaHidden ? null : nextRunAt,
     lastRunAt: state.lastDueAt ?? null, lastNoticeAt: state.lastNoticeAt ?? null, lastCheckedAt: state.lastCheckedAt ?? null,
     lastGoalFile: state.lastGoalFile ?? null, lastReason: state.lastReason ?? null,
-    goalOpen: Boolean(goalOpen), due: noticeWaits, brainLive, state: stateWord,
+    goalOpen: Boolean(goalOpen), due: !note.loop && noticeWaits, brainLive, state: stateWord,
   };
 }
 

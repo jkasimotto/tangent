@@ -1,8 +1,11 @@
 // A process is a note: `<area>/process-<slug>.md` (ADR-0043, D16). Its
-// frontmatter says when it is due, either `schedule:` in calendar words or
-// `when:` as a shell probe polled `every:` so often. Its body is the
-// instruction the brain hands the worker. This module parses the note and
-// computes schedule slots. It reads no files and keeps no state.
+// frontmatter says when it is due, either `schedule:` in calendar words,
+// `when:` as a shell probe polled `every:` so often, or `every:` alone,
+// which is a loop: the body is a message the brain gets every so often
+// while it runs (design agent-shell-brain-loop). For the other two shapes
+// the body is the instruction the brain hands the worker. This module
+// parses the note and computes schedule slots. It reads no files and keeps
+// no state.
 
 const DAY_WORDS = new Map([
   ["sunday", 0], ["sun", 0], ["sundays", 0],
@@ -22,6 +25,7 @@ const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frid
 const TIME = /^(\d{1,2}):(\d{2})$/;
 const EVERY = /^(\d+)\s*(s|m|h|d)$/;
 const STATUSES = new Set(["active", "paused"]);
+const LOOP_FLOOR_MS = 60_000;
 
 /** The slug of a process note file, or null when the name is not `process-<slug>.md`. */
 export function processSlugFromFile(file) {
@@ -150,7 +154,7 @@ export function parseProcessNote(text, { file, area }) {
     area, file, slug: slug ?? String(file).split("/").pop(),
     title: processTitle(body, slug ?? "process"),
     status: (fields.status || "active").toLowerCase(),
-    schedule: null, when: fields.when || null, every: fields.every || null, everyMs: null,
+    schedule: null, when: fields.when || null, every: fields.every || null, everyMs: null, loop: false,
     launch: fields.launch || null, path: fields.path || null, verify: /^(yes|true)$/i.test(fields.verify ?? ""),
     body: body.trim(),
     error: null,
@@ -160,14 +164,24 @@ export function parseProcessNote(text, { file, area }) {
     if (fields.type !== "process") throw new Error("the frontmatter needs type: process");
     if (!STATUSES.has(note.status)) throw new Error(`status must be active or paused, not ${JSON.stringify(fields.status)}`);
     if (fields.schedule && fields.when) throw new Error("use schedule: or when:, not both");
-    if (!fields.schedule && !fields.when) throw new Error("the frontmatter needs schedule: <calendar words> or when: <shell probe> with every: <duration>");
+    if (fields.schedule && fields.every) throw new Error("use schedule: or every:, not both");
+    if (!fields.schedule && !fields.when && !fields.every) throw new Error("the frontmatter needs schedule: <calendar words>, when: <shell probe> with every: <duration>, or every: <duration> alone for a loop");
     if (fields.schedule) note.schedule = parseSchedule(fields.schedule);
+    if (fields.every && !fields.when) {
+      // A loop: every: alone. Worker keys would mean a mis-typed when: line,
+      // so they break the note instead of turning a job into a heartbeat.
+      note.loop = true;
+      note.everyMs = parseEvery(fields.every);
+      if (note.everyMs < LOOP_FLOOR_MS) throw new Error("a loop runs every 1m or slower");
+      const workerKeys = ["launch", "path", "verify"].filter((key) => fields[key]);
+      if (workerKeys.length) throw new Error(`a loop takes no ${workerKeys.join(", ")}; add when: <shell probe> for a job that starts a worker`);
+    }
     if (note.launch && /\s/.test(note.launch)) throw new Error("launch must be harness[/model[/effort]], such as launch: claude/opus-5, not a command line");
     if (fields.when) {
       if (!fields.every) throw new Error("when: needs every: <duration>, such as every: 30m");
       note.everyMs = parseEvery(fields.every);
     }
-    if (!note.body) throw new Error("the body is empty; write the instruction the brain gives the worker");
+    if (!note.body) throw new Error(note.loop ? "the body is empty; write the message the brain gets" : "the body is empty; write the instruction the brain gives the worker");
   } catch (error) {
     note.error = error.message;
   }
@@ -177,6 +191,7 @@ export function parseProcessNote(text, { file, area }) {
 /** One line that says when a process runs, for lists and the brain. */
 export function describeWhen(note) {
   if (note.schedule) return note.schedule.text;
+  if (note.loop) return `Every ${note.every}, to the brain`;
   if (note.when) return `Every ${note.every} while \`${note.when}\` exits 0`;
   return "No schedule";
 }

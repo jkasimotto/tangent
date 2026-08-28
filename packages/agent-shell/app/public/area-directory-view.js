@@ -238,7 +238,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
         <td>${escapeHtml(item.when)}</td>
         <td>${escapeHtml(item.status === "paused" ? "–" : processMoment(item.nextRunAt))}</td>
         <td>${escapeHtml(processMoment(item.lastRunAt))}</td>
-        <td><span class="process-state ${escapeHtml(item.due ? "due" : item.status)}">${escapeHtml(item.error ? `Broken note: ${item.error}` : item.state)}</span></td>
+        <td><span class="process-state ${escapeHtml(item.due ? "due" : item.loop && item.status === "active" ? "loop" : item.status)}">${escapeHtml(item.error ? `Broken note: ${item.error}` : item.state)}</span></td>
       </tr>`).join("");
     return `
       <section class="area-workspace-section area-processes" aria-labelledby="area-processes-heading">

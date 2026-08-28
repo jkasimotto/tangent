@@ -29,7 +29,7 @@ test("a when: process needs every: and describes its probe", () => {
 
 test("a broken note keeps its slug and says what is wrong", () => {
   assert.match(parseProcessNote("---\ntype: goal\nschedule: daily 09:00\n---\nBody.\n", { file: "a/process-x.md", area: "a" }).error, /type: process/);
-  assert.match(parseProcessNote("---\ntype: process\n---\nBody.\n", { file: "a/process-x.md", area: "a" }).error, /schedule: .* or when:/);
+  assert.match(parseProcessNote("---\ntype: process\n---\nBody.\n", { file: "a/process-x.md", area: "a" }).error, /schedule: .*, when: .*, or every: .* for a loop/);
   assert.match(parseProcessNote("---\ntype: process\nschedule: daily 09:00\nwhen: true\nevery: 1h\n---\nBody.\n", { file: "a/process-x.md", area: "a" }).error, /not both/);
   assert.match(parseProcessNote("---\ntype: process\nschedule: daily 09:00\nstatus: off\n---\nBody.\n", { file: "a/process-x.md", area: "a" }).error, /active or paused/);
   assert.match(parseProcessNote("---\ntype: process\nschedule: daily 09:00\nlaunch: claude --model opus\n---\nBody.\n", { file: "a/process-x.md", area: "a" }).error, /launch must be harness\[\/model\[\/effort\]\]/);
@@ -62,4 +62,21 @@ test("slots are computed in UTC and missed slots coalesce to the latest", () => 
   assert.equal(latestSlotAtOrBefore(three, new Date("2026-08-28T16:05:00Z")).toISOString(), "2026-08-28T16:00:00.000Z");
   assert.equal(nextSlotAfter(three, new Date("2026-08-28T16:05:00Z")).toISOString(), "2026-08-28T19:30:00.000Z");
   assert.equal(nextSlotAfter(three, new Date("2026-08-28T20:00:00Z")).toISOString(), "2026-08-29T07:30:00.000Z");
+});
+
+test("every: alone is a loop whose body is the message, with a one-minute floor and no worker keys", () => {
+  const loop = parseProcessNote("---\ntype: process\nevery: 20m\n---\nLook at the open questions.\n", { file: "neara/pgande/process-nudge.md", area: "neara/pgande" });
+  assert.equal(loop.error, null);
+  assert.equal(loop.loop, true);
+  assert.equal(loop.everyMs, 20 * 60_000);
+  assert.equal(loop.body, "Look at the open questions.");
+  assert.equal(describeWhen(loop), "Every 20m, to the brain");
+  const fast = parseProcessNote("---\ntype: process\nevery: 30s\n---\nPing.\n", { file: "a/process-fast.md", area: "a" });
+  assert.match(fast.error, /every 1m or slower/);
+  const job = parseProcessNote("---\ntype: process\nevery: 20m\npath: /tmp\n---\nPing.\n", { file: "a/process-job.md", area: "a" });
+  assert.match(job.error, /a loop takes no path; add when:/);
+  const both = parseProcessNote("---\ntype: process\nschedule: daily 09:00\nevery: 20m\n---\nPing.\n", { file: "a/process-both.md", area: "a" });
+  assert.match(both.error, /schedule: or every:, not both/);
+  const empty = parseProcessNote("---\ntype: process\nevery: 20m\n---\n", { file: "a/process-empty.md", area: "a" });
+  assert.match(empty.error, /write the message the brain gets/);
 });

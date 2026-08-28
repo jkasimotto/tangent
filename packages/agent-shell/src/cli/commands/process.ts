@@ -15,6 +15,7 @@ type ProcessView = {
   area: string; slug: string; file: string; title: string; status: string; when: string;
   nextRunAt: string | null; lastRunAt: string | null; lastNoticeAt: string | null; lastGoalFile: string | null;
   lastReason: string | null; state: string; error: string | null; launch: string | null; path: string | null; verify: boolean;
+  loop?: boolean; body?: string; every?: string | null;
 };
 
 /** Dispatches `tangent process` subcommands. */
@@ -56,6 +57,7 @@ async function showCommand(args: Args): Promise<void> {
   console.log(`  last run: ${item.lastRunAt ?? "never"}`);
   if (item.lastNoticeAt) console.log(`  brain told: ${item.lastNoticeAt}`);
   if (item.lastGoalFile) console.log(`  last Goal: ${item.lastGoalFile}`);
+  if (item.loop) console.log(`  message: ${item.body}`);
   if (item.launch) console.log(`  launch: ${item.launch}`);
   if (item.path) console.log(`  path: ${item.path}`);
   if (item.verify) console.log("  verify: yes");
@@ -117,6 +119,10 @@ schedule: (calendar words such as "daily 09:00", "weekdays 08:30 UTC") or
 when: (a shell probe; exit 0 means due) with every: (30m, 2h). Optional
 launch: (harness[/model[/effort]], such as claude/opus-5), path:, verify:.
 The body is the instruction the brain gives the worker. When it is due, the server writes one note to the Area brain.
+
+A loop is the same note with every: alone (1m or slower) and the message as
+the body. While the Area brain runs, the server sends it that message every
+so often. Pause it to stop it.
 
 Servers and watchers are "tangent service".
 

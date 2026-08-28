@@ -53,7 +53,7 @@ Human-facing root commands include `setup`, `status`, `service`, `usage`, `rollu
 
 The root-owned `service` command resolves inherited `.processes.json` definitions for servers and watchers. It manages Area-bound tmux sessions (kind `process`) and composes the personal tree. It is not reusable. `tangent process start|stop|restart|close` still reach it for one release with a hint.
 
-`tangent process` is repeatable work. A process is a `<area>/process-<slug>.md` note. The Agent Shell server is its scheduler: when a process is due, the server writes one note to the Area brain, which starts the work as a Goal. The root `trigger` command and its LaunchAgent are retired. See ADR-0043.
+`tangent process` is repeatable work. A process is a `<area>/process-<slug>.md` note. The Agent Shell server is its scheduler: when a process is due, the server writes one note to the Area brain, which starts the work as a Goal. A note with `every:` alone is a loop: the brain gets its body as a message every so often while it runs. The root `trigger` command and its LaunchAgent are retired. See ADR-0043.
 
 Raw, debug, and CI commands remain callable but hidden from default help.
 

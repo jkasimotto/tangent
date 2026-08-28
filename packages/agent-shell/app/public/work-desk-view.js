@@ -1547,6 +1547,19 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
+   * The one small mark that says this Area's brain has a loop: an active
+   * `every:`-only process note (design agent-shell-brain-loop, Decision 5).
+   * Hover names the interval and the first words of the message. Nothing
+   * else on Work says a loop exists; the Area page has the full row.
+   */
+  function brainLoopMark(areaPath) {
+    const loops = (state.programs.processes ?? []).filter((item) => item.loop && item.area === areaPath && item.status === "active" && !item.error);
+    if (!loops.length) return "";
+    const title = loops.map((item) => `Loop every ${item.every}: ${String(item.body ?? "").split("\n")[0].slice(0, 60)}`).join("\n");
+    return `<span class="work-group-loop" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">↻</span>`;
+  }
+
+  /**
    * The group header row: Area, aggregate state, Goal count, and the one brain
    * route for every row below it. The Action column never repeats that route
    * (design-redesign-work-as-a-compact-table Decision 4).
@@ -1591,7 +1604,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const starred = areaFocusRoots().includes(area.path);
     const starButton = `<button class="work-star${starred ? " starred" : ""}" type="button" data-star-area="${escapeHtml(area.path)}" aria-pressed="${starred}" ${workCommandAttributes("starArea", `${starred ? "Unstar" : "Star"} ${areaLabel(area.path)} (f)`)} aria-label="${starred ? "Unstar" : "Star"} ${escapeHtml(areaLabel(area.path))}"><span aria-hidden="true">${starred ? "★" : "☆"}</span></button>`;
     const brainCommand = workCommand("openBrain");
-    const brainButton = `<button class="work-group-brain" type="button" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)} (${brainCommand.keyDisplay})`)} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span>${workKey("openBrain")}</button>`;
+    const brainButton = `<button class="work-group-brain" type="button" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)} (${brainCommand.keyDisplay})`)} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span>${workKey("openBrain")}</button>${brainLoopMark(area.path)}`;
     return `<tr class="work-group-row${sub ? " work-sub-area-row" : ""}${quiet ? " quiet" : ""}${folded ? " folded" : ""}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-search-text="${escapeHtml(`${name} ${area.path}`)}" data-work-area="${escapeHtml(area.path)}"${sub ? ` data-work-sub-area="${escapeHtml(area.path)}"` : ""}>
       <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="${sub ? "row" : "rowgroup"}" id="${workGroupId(area.path)}">
         <div class="work-group-layout">

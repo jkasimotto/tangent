@@ -13,17 +13,18 @@ function pipelineWithStoppedFirstStep(goal) {
     area: goal.area,
     slug: goal.slug,
     status: "running",
+    currentAssignmentId: "assignment-2",
     updatedAt: "t2",
     extraFiles: [],
     steps: [
       {
-        index: 1, instruction: "Branch the graphics commits.", launch: null, command: "pi-code", label: "Pi Code · GLM 5.2",
+        id: "assignment-1", index: 1, instruction: "Branch the graphics commits.", launch: null, command: "pi-code", label: "Pi Code · GLM 5.2",
         continueFrom: null, status: "stopped", session: "viz-branch-graphics", startedAt: "2026-08-25T11:03:37.588Z",
         endedAt: "2026-08-25T11:41:34.505Z", handover: null, handoverSource: null, live: false, state: null,
         stateDetail: null, idleSince: null,
       },
       {
-        index: 2, instruction: "Branch the graphics commits.", launch: null, command: "pi-code", label: "Pi Code · GLM 5.2",
+        id: "assignment-2", index: 2, instruction: "Branch the graphics commits.", launch: null, command: "pi-code", label: "Pi Code · GLM 5.2",
         continueFrom: null, status: "running", session: "viz-branch-graphics-s2", startedAt: "2026-08-25T19:31:20.765Z",
         endedAt: null, handover: null, handoverSource: null, live: true, state: "working",
         stateDetail: null, idleSince: null,
@@ -43,7 +44,10 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
     stateText: "", currentBrief: "", storyText: "", documents: [], why: [], subgoalItems: [], subgoals: [], depth: 0,
   };
   const pipeline = pipelineWithStoppedFirstStep(goal);
-  let sessions = [{ name: "viz-branch-graphics-s2", goal: goal.file, area: goal.area, kind: "goal", state: "working", command: "pi-code", pipeline: goal.file, step: 2 }];
+  let sessions = [
+    { name: "viz-branch-graphics", goal: goal.file, area: goal.area, kind: "goal", state: "working", command: "pi-code", pipeline: goal.file, step: 1 },
+    { name: "viz-branch-graphics-s2", goal: goal.file, area: goal.area, kind: "goal", state: "working", command: "pi-code", pipeline: goal.file, step: 2 },
+  ];
   let brains = [];
   const posts = [];
 
@@ -70,6 +74,19 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   assert.match(row().querySelector(".work-cell-agent").textContent, /2\/2/, "the step count names the step that runs");
   assert.match(row().querySelector(".work-cell-agent [data-open-goal-run]").getAttribute("aria-label"), /^Open step 2/);
   assert.equal(row().querySelector("[data-pipeline-control='restart']"), null, "a live step is not offered a restart of the dead one");
+
+  click(window, `[data-goal-anchor='${goal.file}'] [data-work-object-actions]`);
+  assert.equal(window.document.querySelector("[data-modal-action='stopAgent']").dataset.modalKey, "s");
+  click(window, "[data-modal-cancel]");
+  row().querySelector("[data-work-row-title]").focus();
+  row().querySelector("[data-work-row-title]").dispatchEvent(new window.KeyboardEvent("keydown", { key: "s", bubbles: true, cancelable: true }));
+  assert.match(window.document.querySelector("#modal-title").textContent, /Stop Agent/);
+  click(window, "[data-modal-confirm]");
+  await settle(window);
+  assert.deepEqual(posts.at(-1), {
+    pathname: "/api/goals/stop",
+    body: { goal: goal.file, expectedSession: "viz-branch-graphics-s2" },
+  }, "s fences the stop to the authoritative current pipeline session");
 
   // The For you row must not ask about step 1 either: the work moved past it.
   assert.equal(
@@ -98,6 +115,10 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   assert.match(row().querySelector(".work-cell-agent .work-agent-ref.past").textContent, /2\/2$/, "the newest attempt is the one to restart, printed muted");
   assert.equal(row().querySelector(".work-cell-agent [data-open-goal-run]"), null);
   assert.equal(row().querySelector("[data-pipeline-control='restart']"), null);
+  const postCount = posts.length;
+  row().querySelector("[data-work-row-title]").dispatchEvent(new window.KeyboardEvent("keydown", { key: "s", bubbles: true, cancelable: true }));
+  assert.equal(posts.length, postCount, "s does not post when the selected Goal has no live agent");
+  assert.match(window.document.querySelector("#toast").textContent, /no live agent/);
   assert.equal(row().querySelector("[data-goal-recovery]"), null, "guarded recovery does not reinterpret a stopped assignment as pending");
 
   // The run finishes past the step that died. The card must not fall back to

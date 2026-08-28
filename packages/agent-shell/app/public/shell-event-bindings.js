@@ -759,7 +759,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       }, () => {});
       return opened;
     }
-    if (id === "stopBrain") {
+    if (id === "stopAgent") {
+      if (goal) {
+        const session = sessionForGoal(goal);
+        if (!session) return showToast("This Goal has no live agent.");
+        rememberGoal(goal.file);
+        return confirmStop();
+      }
       const brain = brainForAreaCard(area);
       return area ? confirmStopBrain(area, brain?.currentAttemptId ?? brain?.session ?? "") : showToast("This row has no Area command header.");
     }
@@ -892,7 +898,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const searching = Boolean(state.searchPattern);
     const options = workCommandsFor().filter((command) => {
       if (command.id === "starArea") return Boolean(isArea || goal);
-      if (["stopBrain", "defaults", "messageBrain", "chooseAreas", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return isArea;
+      if (["defaults", "messageBrain", "chooseAreas", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return isArea;
+      if (command.id === "stopAgent") return Boolean(isArea || goal);
       if (["readGoal", "changeAgent", "goalStatus"].includes(command.id)) return Boolean(goal);
       if (command.id === "resumeAttempt") return Boolean(goal) && !isArea;
       if (["open", "session", "collapse", "expand"].includes(command.id)) return Boolean(row);
@@ -902,8 +909,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const replacement = command.id === "changeAgent" ? replacementTargetForGoal(goal) : null;
       const resumable = command.id === "resumeAttempt" ? resumeAvailabilityForGoal(goal) : null;
       const match = ["nextMatch", "previousMatch"].includes(command.id);
-      const enabled = command.id === "stopBrain" ? Boolean(brain?.live) : replacement ? replacement.enabled : resumable ? resumable.enabled : match ? searching : tree.enabled;
-      const reason = command.id === "stopBrain" && !brain?.live ? "This Area has no live brain." : replacement ? replacement.reason : resumable ? resumable.reason : match && !searching ? "Press / to search first." : tree.reason;
+      const stopLive = isArea ? Boolean(brain?.live) : Boolean(goal && sessionForGoal(goal));
+      const enabled = command.id === "stopAgent" ? stopLive : replacement ? replacement.enabled : resumable ? resumable.enabled : match ? searching : tree.enabled;
+      const reason = command.id === "stopAgent" && !stopLive ? (isArea ? "This Area has no live brain." : "This Goal has no live agent.") : replacement ? replacement.reason : resumable ? resumable.reason : match && !searching ? "Press / to search first." : tree.reason;
       const label = command.id === "starArea" && area && state.areaFocus.includes(area) ? "Unstar Area"
         : command.id === "starredOnly" && state.areaFocusOnly ? "Show every Area"
         : command.id === "activeOnly" && state.activeOnly ? "Show every Area" : command.label;
@@ -912,7 +920,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const record = goal ? pipelineRecordForGoal(goal) : null;
     const currentAssignment = record?.steps?.find((step) => !["complete", "skipped", "ended", "replaced"].includes(step.status));
     const stoppedAssignment = currentAssignment && (currentAssignment.status === "stopped" || (currentAssignment.status === "running" && !currentAssignment.live));
-    if (goal && sessionForGoal(goal)) options.splice(2, 0, { value: "stopWork", key: "", label: "End current agent", help: "Stop this exact agent while keeping the Goal and its notes.", enabled: true });
     // Area status on Julian's word (area-archive Decision 8): done is a finished
     // subject, archived a shelved one. Both fold away. A live brain blocks both.
     const areaRecord = isArea ? state.vault?.areas?.find((item) => item.path === area) : null;
@@ -933,11 +940,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     /** Resolves the repainted semantic object before it runs the chosen command. */
     const run = (id) => {
       const currentRow = visibleCursorRows().find((item) => item.dataset.workCursor === cursor) ?? row ?? cursorRow();
-      if (id === "stopWork" && goal) {
-        rememberGoal(goal.file);
-        confirmStop();
-        return false;
-      }
       if (id === "skipAssignment" && goal && currentAssignment) {
         controlGoalPipeline(goal.file, "skip", currentAssignment.index);
         return true;
@@ -2747,9 +2749,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         event.preventDefault();
         return executeWorkCommand("dismissPresentation", current);
       }
-      if (workCommandMatches(event, "stopBrain")) {
+      if (workCommandMatches(event, "stopAgent")) {
         event.preventDefault();
-        return executeWorkCommand("stopBrain", current);
+        return executeWorkCommand("stopAgent", current);
       }
       if (workCommandMatches(event, "defaults")) {
         event.preventDefault();

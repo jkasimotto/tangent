@@ -60,6 +60,7 @@ import { parseSkillNote, projectSkills, routeSkills, skillSlugFromFile } from ".
 import { createDocumentRoutes } from "./document-routes.mjs";
 import { projectDesk } from "./desk-projection.mjs";
 import { createShellControlRoutes } from "./shell-control-routes.mjs";
+import { goalStopTarget } from "./goal-stop.mjs";
 import { createShellStateRoutes } from "./shell-state-routes.mjs";
 import { createVoiceRoutes } from "./voice-routes.mjs";
 import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
@@ -6342,6 +6343,12 @@ const shellControlRoutes = createShellControlRoutes({
     } catch (error) {
       return { status: 500, error: String(error.stderr ?? error.message ?? error) };
     }
+  },
+  /** Fences a Goal stop to its exact projected live session. */
+  async stopGoal({ goal, expectedSession } = {}) {
+    const target = goalStopTarget(await listSessions(), { goal, expectedSession });
+    if (target.status !== 200) return target;
+    return shellControlOperations.kill(target.name);
   },
 });
 const shellStateRoutes = createShellStateRoutes({

@@ -178,7 +178,7 @@ test("a live brain has a direct Area stop control", async () => {
   const { dom, window, posts } = await bootShell(live);
   click(window, "[data-work-sub-area='otto/tangent'] [data-work-object-actions]");
   await settle(window);
-  const stop = window.document.querySelector("[data-modal-action='stopBrain']");
+  const stop = window.document.querySelector("[data-modal-action='stopAgent']");
   assert.ok(stop, "stop lives in the related Area action surface");
   assert.equal(stop.dataset.modalKey, "s", "the pointer teaches the stop shortcut");
   const menuText = stop.closest("[role='menu']").textContent;

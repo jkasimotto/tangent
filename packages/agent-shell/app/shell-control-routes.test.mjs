@@ -26,6 +26,8 @@ test("shell controls route exact and prefix endpoints", async () => {
     async agent(command) { return command; },
     /** Refuses the orchestrator kill. */
     async kill(name) { return { status: 400, error: `refuse ${name}` }; },
+    /** Records the fenced Goal stop. */
+    async stopGoal(body) { return { status: 200, value: { target: body.expectedSession, goal: body.goal } }; },
   });
   const agent = response();
   await routes.handle(request("POST", { cmd: "claude" }), agent, new URL("http://shell/api/agent"));
@@ -34,4 +36,7 @@ test("shell controls route exact and prefix endpoints", async () => {
   await routes.handle(request("POST"), killed, new URL("http://shell/api/kill/chat"));
   assert.equal(killed.status, 400);
   assert.equal(killed.body.error, "refuse chat");
+  const stopped = response();
+  await routes.handle(request("POST", { goal: "otto/tangent/goal-one.md", expectedSession: "agent-one" }), stopped, new URL("http://shell/api/goals/stop"));
+  assert.deepEqual(stopped.body, { target: "agent-one", goal: "otto/tangent/goal-one.md" });
 });

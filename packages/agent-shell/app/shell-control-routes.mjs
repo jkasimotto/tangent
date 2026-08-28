@@ -7,6 +7,7 @@ export function createShellControlRoutes(operations) {
     ["POST /api/caffeinate", caffeinate],
     ["POST /api/shell/rebuild", rebuild],
     ["POST /api/shell/migrate-launch-policy", migrateLaunchPolicy],
+    ["POST /api/goals/stop", stopGoal],
     ["POST /api/agent", agent],
   ]);
 
@@ -56,6 +57,12 @@ export function createShellControlRoutes(operations) {
     const command = String((await readJson(request)).cmd ?? "").trim();
     if (!command) { sendJson(response, 400, { error: "cmd required" }); return; }
     sendJson(response, 200, { ok: true, agent: await operations.agent(command) });
+  }
+
+  /** Stops the exact live session that the selected Goal displayed. */
+  async function stopGoal(request, response) {
+    const result = await operations.stopGoal(await readJson(request));
+    sendJson(response, result.status, result.status === 200 ? result.value : { error: result.error });
   }
 
   /** Kills one exact tmux session. */

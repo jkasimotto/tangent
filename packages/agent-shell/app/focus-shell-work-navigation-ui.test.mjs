@@ -355,13 +355,17 @@ test("the live shell restores context, defines work with an agent, and organizes
 
   click(window, `[data-goal-anchor='${goalFile}'] [data-work-object-actions]`);
   await settle(window);
-  assert.match(window.document.querySelector("[data-modal-action='stopWork']").textContent, /End current agent/);
-  click(window, "[data-modal-action='stopWork']");
+  const stopAction = window.document.querySelector("[data-modal-action='stopAgent']");
+  assert.match(stopAction.textContent, /Stop agent/);
+  assert.equal(stopAction.dataset.modalKey, "s", "the Goal action teaches the live stop key");
+  click(window, "[data-modal-cancel]");
+  goalRow.querySelector("[data-work-row-title]").focus();
+  goalRow.querySelector("[data-work-row-title]").dispatchEvent(new window.KeyboardEvent("keydown", { key: "s", bubbles: true, cancelable: true }));
   assert.match(window.document.querySelector("#modal-title").textContent, /Stop Codex/);
   assert.match(window.document.querySelector("#modal-copy").textContent, /work and its notes stay here/);
   click(window, "[data-modal-confirm]");
   await settle(window);
-  assert.ok(posts.some((entry) => entry.path === "/api/kill/tangent-vision"));
+  assert.ok(posts.some((entry) => entry.path === "/api/goals/stop" && entry.body.goal === goalFile && entry.body.expectedSession === "tangent-vision"));
 
   await openDocumentViaGoTo(window, "Tangent product design");
   assert.match(window.document.querySelector("#screen").textContent, /Document/);

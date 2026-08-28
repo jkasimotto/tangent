@@ -12,7 +12,7 @@ test("Work command records are unique, complete, and own the settled shortcuts",
     assert.match(command.help, /\S/);
     assert.ok(Object.isFrozen(command));
   }
-  const settled = ["previousArea", "nextArea", "stopBrain", "defaults", "messageBrain", "starArea", "starredOnly", "activeOnly", "collapse", "expand", "questions", "readGoal", "goalStatus", "search", "nextMatch", "previousMatch", "keys"];
+  const settled = ["previousArea", "nextArea", "stopAgent", "defaults", "messageBrain", "starArea", "starredOnly", "activeOnly", "collapse", "expand", "questions", "readGoal", "goalStatus", "search", "nextMatch", "previousMatch", "keys"];
   assert.deepEqual(settled.map((id) => workCommand(id).keyDisplay), ["{", "}", "s", "d", "a", "f", "F", "A", "h", "l", "r", "o", "x", "/", "n", "N", "?"]);
   assert.equal(workCommand("openBrain"), null, "the separate brain command and b shortcut are retired");
   assert.equal(workCommand("note").keyDisplay, "", "Capture note has no key (Julian, 2026-08-28); it stays in the ? sheet");
@@ -24,8 +24,8 @@ test("Work command records are unique, complete, and own the settled shortcuts",
 test("matching reads the registry and rejects unintended modifiers", () => {
   /** Test helper for event. */
   const event = (key, extra = {}) => ({ key, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...extra });
-  assert.equal(workCommandMatches(event("s"), "stopBrain"), true);
-  assert.equal(workCommandMatches(event("s", { metaKey: true }), "stopBrain"), false);
+  assert.equal(workCommandMatches(event("s"), "stopAgent"), true);
+  assert.equal(workCommandMatches(event("s", { metaKey: true }), "stopAgent"), false);
   assert.equal(workCommandMatches(event("d"), "defaults"), true);
   assert.equal(workCommandMatches(event("a"), "messageBrain"), true);
   assert.equal(workCommandMatches(event("h"), "collapse"), true);
@@ -50,6 +50,7 @@ test("sheet and help consumers receive structured records", () => {
   const sheet = workCommandsFor();
   assert.equal(sheet.length, WORK_COMMANDS.length, "the ? sheet lists every command");
   assert.deepEqual(workCommandsFor({ scope: "goal" }).map((command) => command.id), ["readGoal", "resumeAttempt", "changeAgent", "goalStatus"]);
+  assert.equal(workCommand("stopAgent").scope, "work", "the same stop command applies to selected Areas and Goals");
   const help = workCommandHelpRows();
   assert.equal(help.length, WORK_COMMANDS.length);
   assert.deepEqual(Object.keys(help[0]), ["id", "keyDisplay", "ariaKeyshortcuts", "scope", "label", "help", "kind"]);

@@ -15,7 +15,7 @@ const records = [
   { id: "previousArea", keyDisplay: "{", ariaKeyshortcuts: "Shift+[", scope: "area", kind: "navigation", label: "Previous Area", help: "Jump to the previous Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "{", shiftKey: "any" }] },
   { id: "nextArea", keyDisplay: "}", ariaKeyshortcuts: "Shift+]", scope: "area", kind: "navigation", label: "Next Area", help: "Jump to the next Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "}", shiftKey: "any" }] },
   { id: "open", keyDisplay: "↵", ariaKeyshortcuts: "Enter", scope: "work", kind: "action", label: "Open", help: "Open this Goal to read it, or read this Area's note. Escape comes back.", shortcuts: [{ key: "Enter" }] },
-  { id: "stopBrain", keyDisplay: "s", ariaKeyshortcuts: "s", scope: "area", kind: "action", label: "Stop brain", help: "Stop this Area brain without stopping its worker agents.", shortcuts: [{ key: "s" }] },
+  { id: "stopAgent", keyDisplay: "s", ariaKeyshortcuts: "s", scope: "work", kind: "action", label: "Stop agent", help: "Stop the selected Goal agent or Area brain without stopping unrelated agents.", shortcuts: [{ key: "s" }] },
   { id: "defaults", keyDisplay: "d", ariaKeyshortcuts: "d", scope: "area", kind: "action", label: "Defaults", help: "Change this Area's default Work and brain agents.", shortcuts: [{ key: "d" }] },
   { id: "messageBrain", keyDisplay: "a", ariaKeyshortcuts: "a", scope: "area", kind: "action", label: "Message brain", help: "Tell this Area's brain what you want. It starts if it is not running.", shortcuts: [{ key: "a" }] },
   { id: "session", keyDisplay: "⌘⇧↵", ariaKeyshortcuts: "Meta+Shift+Enter", scope: "work", kind: "navigation", label: "Enter the agent", help: "Enter this row's agent. For an Area, choose the brain agent when it is not live. The same key comes back.", shortcuts: [{ key: "Enter", metaKey: true, shiftKey: true }] },
@@ -65,6 +65,7 @@ export function workCommandsFor({ scope = "" } = {}) {
  */
 const captionKeysByRow = Object.freeze({
   area: [
+    { ids: ["stopAgent"], word: "stop" },
     { ids: ["session"], word: "agent" },
     { ids: ["messageBrain"], word: "message" },
     { ids: ["starArea"], word: "star" },
@@ -78,6 +79,7 @@ const captionKeysByRow = Object.freeze({
     { ids: ["open"], word: "open" },
     { ids: ["readGoal"], word: "read" },
     { ids: ["session"], word: "agent" },
+    { ids: ["stopAgent"], word: "stop" },
     { ids: ["starArea"], word: "star" },
     { ids: ["goalStatus"], word: "status" },
     { ids: ["changeAgent"], word: "agent" },

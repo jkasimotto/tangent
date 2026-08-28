@@ -635,7 +635,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
             operationId: crypto.randomUUID(),
           });
         } else {
-          await post(`/api/kill/${encodeURIComponent(session.name)}`, {});
+          await post("/api/goals/stop", { goal: goal.file, expectedSession: session.name });
         }
         actionTelemetry.record("stop", `kill-succeeded:${session.name}`);
       } catch (error) {

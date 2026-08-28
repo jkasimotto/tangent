@@ -97,7 +97,7 @@ test("every status carries a word, and every icon-only control carries a name", 
 
 test("Area pointers, toolbar help, and the state-owned action surface share one command registry", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
-  const ids = ["previousArea", "nextArea", "session", "stopBrain", "defaults", "messageBrain", "starArea", "chooseAreas", "collapse", "expand", "questions", "note"];
+  const ids = ["previousArea", "nextArea", "session", "stopAgent", "defaults", "messageBrain", "starArea", "chooseAreas", "collapse", "expand", "questions", "note"];
   document.querySelector("[data-work-group='otto/onboarding'] [data-work-object-actions]").click();
   await settle(window);
   for (const id of ids) {
@@ -114,7 +114,7 @@ test("Area pointers, toolbar help, and the state-owned action surface share one 
     assert.equal(pointer.querySelector("kbd").textContent, command.keyDisplay);
     assert.equal(pointer.getAttribute("aria-keyshortcuts"), command.ariaKeyshortcuts);
   }
-  document.querySelector("[data-modal-action='stopBrain']").click();
+  document.querySelector("[data-modal-action='stopAgent']").click();
   await settle(window);
   assert.match(document.querySelector("#modal-title").textContent, /Stop the Onboarding brain/, "action-surface stop runs the guarded confirmation");
   document.querySelector("[data-modal-cancel]").click();
@@ -465,10 +465,10 @@ test("Work keys expose their help and stay inert in text and terminal input", as
   assert.equal(document.querySelector("#modal-kicker").textContent, "Area keys", "? on an Area row opens that Area's sheet");
   const helpRows = [...document.querySelectorAll("[data-modal-action]")];
   const ids = helpRows.map((row) => row.dataset.modalAction);
-  for (const id of ["moveRows", "firstLast", "halfPage", "open", "session", "search", "stopBrain", "defaults", "starArea"]) assert.ok(ids.includes(id), `the sheet lists ${id}: ${ids.join(" ")}`);
+  for (const id of ["moveRows", "firstLast", "halfPage", "open", "session", "search", "stopAgent", "defaults", "starArea"]) assert.ok(ids.includes(id), `the sheet lists ${id}: ${ids.join(" ")}`);
   assert.equal(ids.includes("commands"), false, "there is no second command menu");
   assert.equal(ids.includes("keys"), false, "the sheet does not list itself");
-  assert.equal(helpRows.find((row) => row.dataset.modalKey === "s")?.querySelector("strong")?.textContent, "Stop brain");
+  assert.equal(helpRows.find((row) => row.dataset.modalKey === "s")?.querySelector("strong")?.textContent, "Stop agent");
   assert.equal(helpRows.find((row) => row.dataset.modalKey === "d")?.querySelector("strong")?.textContent, "Defaults");
   assert.equal(helpRows.find((row) => row.dataset.modalAction === "nextMatch")?.getAttribute("aria-disabled"), "true", "n waits for a search");
   const before = document.querySelector("[data-work-cursor].cursor").dataset.workCursor;

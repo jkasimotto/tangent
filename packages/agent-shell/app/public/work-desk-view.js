@@ -418,10 +418,16 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function sessionForGoal(goal) {
     if (!goal || ["done", "dropped", "parked", "deferred"].includes(goal.status)) return null;
     const bound = state.sessions.filter((session) => session.goal === goal.file || session.name === goal.session);
-    // A pipeline leaves earlier step sessions alive on the same Goal: the one
-    // Julian opened by name wins, then the Goal's bound session, then any.
-    return bound.find((session) => session.name === state.agentSessionName)
+    const record = pipelineRecordForGoal(goal);
+    const current = record?.steps?.find((step) => step.id === record.currentAssignmentId)
+      ?? record?.steps?.find((step) => step.status === "running");
+    const attempt = current?.attempts?.findLast?.((item) => !item.endedAt) ?? current?.attempts?.at?.(-1);
+    // The authoritative current attempt wins. This keeps an earlier pipeline
+    // session from becoming the target when more than one session is live.
+    return bound.find((session) => session.name === attempt?.session)
+      ?? bound.find((session) => session.name === current?.session)
       ?? bound.find((session) => session.name === goal.session)
+      ?? bound.find((session) => session.name === state.agentSessionName)
       ?? bound[0]
       ?? null;
   }

@@ -141,7 +141,7 @@ function printProcesses(detail: AreaShowDetail): void {
 }
 
 /**
- * Prints the skills a brain can hand to a worker (D20): every `skill-*.md`
+ * Prints the skills a brain can hand to a worker: every agent skill
  * on the route from the vault root to this Area, root first, then the
  * bound repository's own project skills. Names and descriptions only, the
  * way a harness lists skills. Nothing prints when there are none.

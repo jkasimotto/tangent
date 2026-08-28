@@ -23,21 +23,29 @@ test("name defaults to the slug and description to the first body line", () => {
   assert.equal(skillSlugFromFile("otto/dnd/skill-x.md"), "x");
 });
 
-test("route skills list root first and project skills read both harness folders", async () => {
+test("route skills use canonical agent folders and keep legacy notes compatible", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-skills-"));
   const trees = path.join(root, "trees");
   await mkdir(path.join(trees, "otto", "dnd"), { recursive: true });
+  await mkdir(path.join(trees, ".agents", "skills", "remember"), { recursive: true });
+  await mkdir(path.join(trees, "otto", ".agents", "skills", "review"), { recursive: true });
+  await mkdir(path.join(trees, "otto", "dnd", ".agents", "skills", "build"), { recursive: true });
+  await writeFile(path.join(trees, ".agents", "skills", "remember", "SKILL.md"), "---\ndescription: Save durable knowledge.\n---\nSteps.\n", "utf8");
+  await writeFile(path.join(trees, "otto", ".agents", "skills", "review", "SKILL.md"), "---\nname: review\ndescription: Review the canonical change.\n---\nSteps.\n", "utf8");
+  await writeFile(path.join(trees, "otto", "dnd", ".agents", "skills", "build", "SKILL.md"), "Build the game.\n", "utf8");
   await writeFile(path.join(trees, "otto", "skill-review.md"), "---\nname: review\ndescription: Review a change.\n---\nBody.\n", "utf8");
   await writeFile(path.join(trees, "otto", "dnd", "skill-b.md"), "---\ndescription: Second.\n---\nBody.\n", "utf8");
   await writeFile(path.join(trees, "otto", "dnd", "skill-a.md"), "First body line.\n", "utf8");
   await writeFile(path.join(trees, "otto", "dnd", "process-x.md"), "---\ntype: process\n---\nNot a skill.\n", "utf8");
   const route = await routeSkills(trees, "otto/dnd");
   assert.deepEqual(route.map((skill) => [skill.area, skill.name, skill.description]), [
-    ["otto", "review", "Review a change."],
+    ["", "remember", "Save durable knowledge."],
+    ["otto", "review", "Review the canonical change."],
+    ["otto/dnd", "build", "Build the game."],
     ["otto/dnd", "a", "First body line."],
     ["otto/dnd", "b", "Second."],
   ]);
-  assert.equal(route[0].path, path.join(trees, "otto", "skill-review.md"));
+  assert.equal(route[1].path, path.join(trees, "otto", ".agents", "skills", "review", "SKILL.md"));
   assert.deepEqual(await readAreaSkills(trees, "otto/none"), []);
 
   const repo = path.join(root, "repo");

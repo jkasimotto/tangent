@@ -58,6 +58,7 @@ The root-owned `service` command resolves inherited `.processes.json` definition
 Raw, debug, and CI commands remain callable but hidden from default help.
 
 Agent Shell centers each Area on one logical brain. The vault owns Area knowledge, and each bound repository owns code-agent instructions.
+Area skills live at `<area>/.agents/skills/<name>/SKILL.md`. Tangent creates `<area>/.claude/skills` as a relative link, so Codex and Claude discover the same inherited files. Legacy `skill-<slug>.md` Documents remain readable during migration. See ADR-0045.
 Agent Shell derives inherited sources by path. It owns bounded runtime projections, Journal delivery, Requests, Goal queues, presented-document attention, and Operation health.
 Each Area can declare allowed agent launches. Child policies intersect with parent policies. Agent Shell remembers the last successful Brain and Work launch separately.
 Presented-document records stay outside the vault and Goal queue. Opening a presented document clears its Work row. Closing the Goal removes its record.

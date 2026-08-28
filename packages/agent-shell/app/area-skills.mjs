@@ -1,9 +1,8 @@
-// A skill is a note: `<area>/skill-<slug>.md` (D20). Its frontmatter carries
-// `name:` and `description:` in the shape of a harness SKILL.md, and its body
-// says what to do. A brain sees every skill on the route from the vault root
-// to its Area through `tangent area show`, together with the project skills
-// of the bound repository, and hands one to a worker with `--source` or by
-// naming its path. This module reads and lists them; it keeps no state.
+// An Area skill uses the agent skill convention:
+// `<area>/.agents/skills/<name>/SKILL.md`. Claude sees the same files through
+// `<area>/.claude/skills`. Tangent lists skills from the vault root to the
+// Area, together with project skills from the bound repository. Legacy
+// `<area>/skill-<slug>.md` Documents remain readable during migration.
 
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -39,17 +38,33 @@ export function parseSkillNote(text, { file, area, path: absolute = null, slug =
   };
 }
 
-/** Reads every skill note of one Area, by file name. */
+/** Reads every canonical agent skill of one Area, by folder name. */
+async function readAgentSkills(treesRoot, area) {
+  const areaRoot = area ? path.join(treesRoot, area) : treesRoot;
+  const skills = [];
+  for (const item of await skillFilesUnder(path.join(areaRoot, ".agents", "skills"))) {
+    let text;
+    try { text = await readFile(item.path, "utf8"); } catch { continue; }
+    const file = path.relative(treesRoot, item.path);
+    skills.push(parseSkillNote(text, { file, area, path: item.path, slug: item.slug }));
+  }
+  return skills;
+}
+
+/** Reads canonical skills and compatible legacy skill Documents for one Area. */
 export async function readAreaSkills(treesRoot, area) {
+  const canonical = await readAgentSkills(treesRoot, area);
+  const names = new Set(canonical.map((skill) => skill.name));
   let entries = [];
   try { entries = await readdir(path.join(treesRoot, area)); } catch { return []; }
-  const skills = [];
+  const skills = [...canonical];
   for (const name of entries.filter((entry) => skillSlugFromFile(entry)).sort()) {
-    const file = `${area}/${name}`;
+    const file = area ? `${area}/${name}` : name;
     const absolute = path.join(treesRoot, file);
     let text = "";
     try { text = await readFile(absolute, "utf8"); } catch { continue; }
-    skills.push(parseSkillNote(text, { file, area, path: absolute }));
+    const skill = parseSkillNote(text, { file, area, path: absolute });
+    if (!names.has(skill.name)) skills.push(skill);
   }
   return skills;
 }
@@ -57,7 +72,7 @@ export async function readAreaSkills(treesRoot, area) {
 /** Every skill on the route from the vault root to one Area, root first. */
 export async function routeSkills(treesRoot, area) {
   const skills = [];
-  for (const candidate of areaAncestors(area).reverse()) skills.push(...await readAreaSkills(treesRoot, candidate));
+  for (const candidate of ["", ...areaAncestors(area).reverse()]) skills.push(...await readAreaSkills(treesRoot, candidate));
   return skills;
 }
 

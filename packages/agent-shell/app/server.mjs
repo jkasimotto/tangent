@@ -700,20 +700,19 @@ async function currentSectionChangedAt(file, text) {
 }
 
 /**
- * Gives every Area its note, `AGENTS.md`, and `CLAUDE.md` links, and the vault
- * root its AGENTS.md (ADR-0041). Idempotent; runs at each server start and
- * commits only what it wrote, one commit per Area.
+ * Gives every Area its instruction and skill-discovery links, and gives the
+ * vault root its AGENTS.md and skill link (ADR-0041, ADR-0045). Idempotent.
  */
 async function sweepAreaNoteLinks() {
   const rootChanged = await ensureVaultRootLinks({ treesRoot: TREES_ROOT, agentsText: await vaultRootAgentsText() });
   if (rootChanged.length) {
-    await runVaultGit(["add", "--", ...rootChanged]);
+    await runVaultGit(["add", "-f", "--", ...rootChanged]);
     await vaultCommit(rootChanged, "add: vault root AGENTS.md tells brains how to work", "", null);
   }
   for (const area of flattenAreaPaths(await readTree(TREES_ROOT))) {
     const changed = await ensureAreaNoteLinks({ treesRoot: TREES_ROOT, area });
     if (!changed.length) continue;
-    await runVaultGit(["add", "--", ...changed]);
+    await runVaultGit(["add", "-f", "--", ...changed]);
     await vaultCommit(changed, `add: ${area} AGENTS.md links`, area, null);
   }
 }
@@ -6021,7 +6020,7 @@ const areaRoutesOperations = {
   async create(body) {
     const created = await createArea({ treesRoot: TREES_ROOT, parent: body.parent, name: body.name });
     created.changedPaths.push(...await ensureAreaNoteLinks({ treesRoot: TREES_ROOT, area: created.area }));
-    await runVaultGit(["add", "--", ...created.changedPaths]);
+    await runVaultGit(["add", "-f", "--", ...created.changedPaths]);
     await vaultCommit(created.changedPaths, `add: ${created.area} Area`, created.area, null);
     await recordCommittedCommand({ operation: "area-create", actorSession: body.caller, targetArea: created.area });
     return created;

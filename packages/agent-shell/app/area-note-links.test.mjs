@@ -5,23 +5,24 @@ import path from "node:path";
 import test from "node:test";
 import { appendIdea, areaNoteTemplate, currentSectionKey, ensureAreaNoteLinks, ensureVaultRootLinks, ideasFromFile, noteSignal, orderGoals, removeGoalsSection, vaultRootAgentsText } from "./area-note-links.mjs";
 
-test("an Area gets its template note and two relative links once, and a real file is never replaced", async () => {
+test("an Area gets its note, instruction links, and Claude skill link once", async () => {
   const trees = await mkdtemp(path.join(os.tmpdir(), "area-note-links-"));
   await mkdir(path.join(trees, "otto", "dnd"), { recursive: true });
   const first = await ensureAreaNoteLinks({ treesRoot: trees, area: "otto/dnd" });
-  assert.deepEqual(first, ["otto/dnd/dnd.md", "otto/dnd/AGENTS.md", "otto/dnd/CLAUDE.md"]);
+  assert.deepEqual(first, ["otto/dnd/dnd.md", "otto/dnd/AGENTS.md", "otto/dnd/CLAUDE.md", "otto/dnd/.claude/skills"]);
   assert.equal(await readFile(path.join(trees, "otto", "dnd", "dnd.md"), "utf8"), areaNoteTemplate("Dnd"));
   assert.equal(await readlink(path.join(trees, "otto", "dnd", "AGENTS.md")), "dnd.md", "a relative link to the note");
   assert.equal(await readlink(path.join(trees, "otto", "dnd", "CLAUDE.md")), "AGENTS.md");
+  assert.equal(await readlink(path.join(trees, "otto", "dnd", ".claude", "skills")), "../.agents/skills");
   assert.deepEqual(await ensureAreaNoteLinks({ treesRoot: trees, area: "otto/dnd" }), [], "idempotent");
   await mkdir(path.join(trees, "otto", "real"), { recursive: true });
   await writeFile(path.join(trees, "otto", "real", "real.md"), "# Real\n", "utf8");
   await writeFile(path.join(trees, "otto", "real", "AGENTS.md"), "hand-written\n", "utf8");
-  assert.deepEqual(await ensureAreaNoteLinks({ treesRoot: trees, area: "otto/real" }), ["otto/real/CLAUDE.md"]);
+  assert.deepEqual(await ensureAreaNoteLinks({ treesRoot: trees, area: "otto/real" }), ["otto/real/CLAUDE.md", "otto/real/.claude/skills"]);
   assert.equal((await lstat(path.join(trees, "otto", "real", "AGENTS.md"))).isSymbolicLink(), false, "a real AGENTS.md stays");
   assert.equal(await readFile(path.join(trees, "otto", "real", "real.md"), "utf8"), "# Real\n", "an existing note is never rewritten");
   const root = await ensureVaultRootLinks({ treesRoot: trees, agentsText: await vaultRootAgentsText() });
-  assert.deepEqual(root, ["AGENTS.md", "CLAUDE.md"]);
+  assert.deepEqual(root, ["AGENTS.md", "CLAUDE.md", ".claude/skills"]);
   assert.match(await readFile(path.join(trees, "AGENTS.md"), "utf8"), /^# Brains\n/);
   assert.match(await readFile(path.join(trees, "AGENTS.md"), "utf8"), /tangent goal create --area <area> --title "<t>" --start --path <dir>/);
   assert.deepEqual(await ensureVaultRootLinks({ treesRoot: trees, agentsText: "other" }), [], "the root file is written once");
@@ -32,13 +33,13 @@ test("the known root instruction template upgrades without replacing hand-writte
   const oldTemplate = await readFile(new URL("./vault-root-AGENTS.md", import.meta.url), "utf8");
   const legacy = oldTemplate.replace(/\n## Journal memory[\s\S]*$/, "");
   await writeFile(path.join(trees, "AGENTS.md"), legacy, "utf8");
-  assert.deepEqual(await ensureVaultRootLinks({ treesRoot: trees, agentsText: oldTemplate }), ["AGENTS.md", "CLAUDE.md"]);
+  assert.deepEqual(await ensureVaultRootLinks({ treesRoot: trees, agentsText: oldTemplate }), ["AGENTS.md", "CLAUDE.md", ".claude/skills"]);
   assert.equal(await readFile(path.join(trees, "AGENTS.md"), "utf8"), oldTemplate);
 
   const custom = path.join(trees, "custom");
   await mkdir(custom);
   await writeFile(path.join(custom, "AGENTS.md"), "# My instructions\n", "utf8");
-  assert.deepEqual(await ensureVaultRootLinks({ treesRoot: custom, agentsText: oldTemplate }), ["CLAUDE.md"]);
+  assert.deepEqual(await ensureVaultRootLinks({ treesRoot: custom, agentsText: oldTemplate }), ["CLAUDE.md", ".claude/skills"]);
   assert.equal(await readFile(path.join(custom, "AGENTS.md"), "utf8"), "# My instructions\n");
 });
 

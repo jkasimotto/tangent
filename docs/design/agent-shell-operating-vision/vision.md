@@ -28,7 +28,7 @@ Three actors, two lines of contact. You talk to the brain. The brain talks to Ta
 | Restart a brain | Restart on the brain row | The row always shows the context fill so you can see when. |
 | Resume a conversation | `r` on the attempt row, or `tangent goal show <slug>` | A session opens in the right folder with the resume command typed, never submitted. |
 | Have work repeat | `process-<slug>.md` in the Area with a `schedule:` and a body | When due, Tangent tells the brain. The brain starts it. `tangent process list` shows what you have and when. |
-| Give an Area a skill | `skill-<slug>.md` in the Area folder | The brain prompt lists it. The brain names it in a worker's prompt. |
+| Give an Area a skill | `.agents/skills/<name>/SKILL.md` in the Area folder | Codex and Claude discover it. The brain names its path in a worker's prompt. |
 | Tell the brain where things are | `## Resources` in the Area note: `- Repository:`, `- Worktree:`, `- Branch:` | The brain prompt shows them. Workers start there. A start with no folder is refused. |
 
 ## What changes
@@ -49,7 +49,7 @@ Three actors, two lines of contact. You talk to the brain. The brain talks to Ta
 
 1. Brains are not blocked on you. Only a Goal you flagged waits for you.
 2. Brains open in the vault Area folder.
-3. Skills are `skill-<slug>.md`. No new concept.
+3. Skills use the agent `SKILL.md` convention. ADR-0045 supersedes the earlier file convention.
 4. `tangent process` becomes `tangent service`. "Process" is your repeatable work.
 5. No brain handover or rotation. You restart brains yourself.
 6. Brain questions do not notify. Only "check this finished work" does.

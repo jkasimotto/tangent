@@ -10,12 +10,16 @@
 
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile, lstat, readFile, readlink, symlink, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const PRE_JOURNAL_MEMORY_ROOT_AGENTS_SHA256 = "ccdb0bea5e2062651bd59b959541fc5b63a3ffe8edd52dca492ba498e75ca6e3";
+const KNOWN_ROOT_AGENTS_SHA256 = new Set([
+  "ccdb0bea5e2062651bd59b959541fc5b63a3ffe8edd52dca492ba498e75ca6e3",
+  "a33774d85bed7b636db43925e50583691ede9898397924f3df723656013163c0",
+  "bab789f8f60d1f0269cd7ea095be7234fcf2267607b8a4713a0603ea3c99cfb0",
+]);
 
 /** The text of the vault root AGENTS.md this build ships, for a vault that has none. */
 export async function vaultRootAgentsText() {
@@ -62,8 +66,8 @@ export async function linkPointsTo(absoluteDir, name, target) {
 }
 
 /**
- * Gives one Area its note (from the template when it has none) and its two
- * instruction links. Idempotent. Returns the vault-relative paths it wrote.
+ * Gives one Area its note, instruction links, and Claude's link to the
+ * canonical `.agents/skills` folder. Idempotent.
  */
 export async function ensureAreaNoteLinks({ treesRoot, area }) {
   const absoluteDir = path.join(treesRoot, area);
@@ -78,6 +82,10 @@ export async function ensureAreaNoteLinks({ treesRoot, area }) {
     const made = await ensureLink(absoluteDir, name, target);
     if (made) changed.push(`${area}/${made}`);
   }
+  const claudeDir = path.join(absoluteDir, ".claude");
+  await mkdir(claudeDir, { recursive: true });
+  const skillsLink = await ensureLink(claudeDir, "skills", "../.agents/skills");
+  if (skillsLink) changed.push(`${area}/.claude/${skillsLink}`);
   return changed;
 }
 
@@ -94,13 +102,17 @@ export async function ensureVaultRootLinks({ treesRoot, agentsText }) {
   } else {
     const current = await readFile(agents, "utf8");
     const currentHash = createHash("sha256").update(current).digest("hex");
-    if (currentHash === PRE_JOURNAL_MEMORY_ROOT_AGENTS_SHA256 && current !== agentsText) {
+    if (KNOWN_ROOT_AGENTS_SHA256.has(currentHash) && current !== agentsText) {
       await writeFile(agents, agentsText, "utf8");
       changed.push("AGENTS.md");
     }
   }
   const made = await ensureLink(treesRoot, "CLAUDE.md", "AGENTS.md");
   if (made) changed.push(made);
+  const claudeDir = path.join(treesRoot, ".claude");
+  await mkdir(claudeDir, { recursive: true });
+  const skillsLink = await ensureLink(claudeDir, "skills", "../.agents/skills");
+  if (skillsLink) changed.push(`.claude/${skillsLink}`);
   return changed;
 }
 

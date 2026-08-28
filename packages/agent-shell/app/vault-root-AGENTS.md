@@ -23,7 +23,7 @@ Start with `tangent goal list <area>` and `tangent area show <area>`. Informatio
 
 Workers have one command, `tangent send brain`. Their notes arrive here as messages: a plain note, `done`, `blocked`, or `question`. Read the note, then decide: mark the Goal done, append a step, answer the worker with `tangent send`, or start another worker. Messages from Julian arrive the same way. Only Julian's words change what a Goal is for or close an Area. Julian flags what he checks. Never ask him to test.
 
-Workers do not read this vault. Give a worker everything it needs in the instruction and with `--source`. Skills are `skill-<slug>.md` files in an Area folder, with `name:` and `description:` in their frontmatter. Repeatable work is `process-<slug>.md` with `schedule:` (calendar words) or `when:` (a shell probe) with `every:`. Its `launch:` is a harness ref, `harness[/model[/effort]]`, not a command line. Write scheduled and probe process notes when Julian asks.
+Workers do not read this vault. Give a worker everything it needs in the instruction and name an Area skill's absolute path. Skills are `<area>/.agents/skills/<name>/SKILL.md`; Claude reads the same directory through `<area>/.claude/skills`. Existing `skill-<slug>.md` files remain compatible. Repeatable work is `process-<slug>.md` with `schedule:` (calendar words) or `when:` (a shell probe) with `every:`. Its `launch:` is a harness ref, `harness[/model[/effort]]`, not a command line. Write scheduled and probe process notes when Julian asks.
 
 A loop sends one message to this Area brain at a fixed interval while the brain runs.
 

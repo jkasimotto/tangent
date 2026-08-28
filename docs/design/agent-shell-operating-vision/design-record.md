@@ -175,6 +175,8 @@ Julian's answers are marked (Julian).
 
 **D20. A skill is `<area>/skill-<slug>.md` (Julian).** An ordinary Document. Its frontmatter has `name:` and `description:` like a harness skill. `tangent area show` lists every skill on the Area route, root to leaf, as `- <name>: <description> (<abs path>)`. The root `AGENTS.md` tells brains to run it. The section also names the bound repository's own project skills. The brain hands a skill to a worker with `--source <vault-file>` or by naming the path in the instruction.
 
+ADR-0045 supersedes this file convention. Tangent still reads these Documents for compatibility.
+
 ### 5.7 Resume
 
 **D21. `harnesses.md` says how to resume.** `tangent.harnesses.v2` adds per harness `resume` (for example `{command} --resume {id}`), `sessionIdArg` (for example `--session-id {id}`), and `transcripts`. A harness without `resume` has no Resume verb. `saveRegistry` and `validateHarnessRegistry` keep the fields. The Document's "never rewrites" sentence names the two flags Tangent appends.

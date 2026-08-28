@@ -61,7 +61,7 @@ test("background polls never rebuild the screen under an editing surface or a re
   // No Goal control opens a chooser: only the brain starts workers (D8).
   assert.equal(window.document.querySelector(`[data-goal-anchor='${goal.file}'] [data-launch-for]`), null);
   // Starting a brain: the open popover survives a poll, focused or not.
-  click(window, "[data-work-group='otto/dnd'] .work-group-brain");
+  click(window, "[data-work-sub-area='otto/dnd'] .work-group-brain");
   await settle(window);
   await settle(window);
   const popover = window.document.querySelector("[data-launch-popover]");

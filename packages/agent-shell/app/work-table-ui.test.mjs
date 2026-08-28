@@ -709,10 +709,12 @@ test("the brain-only group header states the brain's state and opens that brain"
   assert.equal(pill.className, "desk-state waiting", "a waiting brain takes the waiting colour");
 });
 
-test("a stopped brain earns no empty group, while one live brain always remains visible", async () => {
+test("a stopped brain keeps its Area's quiet group, and one live brain always remains visible", async () => {
   const stopped = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { live: false }));
-  assert.equal(stopped.document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), null,
-    "only a running, live brain puts its Area on Work");
+  const quiet = stopped.document.querySelector("tbody.work-group[data-work-group='otto/quiet']");
+  assert.ok(quiet, "every top-level Area keeps its header, so a stopped brain stays reachable (every Area has a row)");
+  assert.equal(quiet.querySelector(".work-group-count").textContent, "0 open");
+  assert.match(quiet.querySelector(".work-group-brain").textContent, /Resume brain/);
 
   const withLive = await bootWorkTable(withBrainOnlyArea(plannedWorkFixture(), {}));
   assert.ok(withLive.document.querySelector("tbody.work-group[data-work-group='otto/quiet']"),

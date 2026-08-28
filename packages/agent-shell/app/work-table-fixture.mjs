@@ -35,8 +35,10 @@ export function workTableFixture(now = Date.now()) {
   const voice = goal("otto/tangent", "voice-dump", "Route one voice dump across Areas", { changedAt: now - MINUTE, session: "tangent--voice", firstStartAt: now - 7 * MINUTE });
   const online = goal("otto/tangent", "stays-online", "Agent Shell stays online during use", { status: "ready", changedAt: now - 67 * MINUTE, firstStartAt: now - 67 * MINUTE, lastEndAt: now - MINUTE });
   const goals = [walkthrough, docs, nesc, inconsistencies, table, voice, online];
+  // No `otto` root record: every Area has a row, so a root would make one
+  // group with three sub-headers. These tests are about keys and rows, and
+  // they read three peer groups. work-sub-area-headers-ui proves the root.
   const areas = [
-    { path: "otto", name: "otto", goals: [], documents: [] },
     { path: "otto/onboarding", name: "onboarding", goals: [walkthrough], documents: [] },
     { path: "otto/standards", name: "standards", goals: [docs, nesc], documents: [] },
     { path: "otto/tangent", name: "tangent", goals: [inconsistencies, table, voice, online], documents: [] },
@@ -158,7 +160,6 @@ export function plannedWorkFixture(now = Date.now()) {
   });
   const goals = [startable, blocked, broken, errored, first, second, dropped];
   const areas = [
-    { path: "otto", name: "otto", goals: [], documents: [] },
     { path: "otto/tangent", name: "tangent", goals: [...goals], documents: [] },
   ];
   return {

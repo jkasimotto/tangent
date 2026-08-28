@@ -111,7 +111,7 @@ test("Go to offers an unstarted Area brain and Work has no Browse or Describe to
   assert.ok(window.document.querySelector("[data-work-keys]"));
   assert.match(window.document.querySelector("[data-work-keys]").textContent, /Keys\s*\?/);
   assert.equal(window.document.querySelector("[data-work-filter]"), null, "Current and Planned controls are retired");
-  assert.equal(window.document.querySelector("[data-open-area-brain='otto/empty']"), null, "the empty Area has no Work row to act as a fallback anchor");
+  assert.ok(window.document.querySelector("[data-open-area-brain='otto/empty']"), "the empty Area keeps its Work row, so its brain stays reachable (every Area has a row)");
   await chooseBrain(window, "empty");
 
   assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0);
@@ -124,7 +124,8 @@ test("Go to offers an unstarted Area brain and Work has no Browse or Describe to
 test("the Work brain key opens the message box instead of starting a brain", async () => {
   const { dom, window, posts } = await bootShell(null);
 
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", bubbles: true }));
+  // j walks the Otto header, the quiet Empty sub-header, then the Tangent sub-header (every Area has a row).
+  for (let step = 0; step < 3; step += 1) window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", bubbles: true }));
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "b", bubbles: true }));
   await settle(window);
 
@@ -158,7 +159,8 @@ test("the Work brain key opens the message box instead of starting a brain", asy
 
 test("a brain picker sends a typed one-launch override and preserves the Area default", async () => {
   const { dom, window, posts } = await bootShell(null);
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", bubbles: true }));
+  // j walks the Otto header, the quiet Empty sub-header, then the Tangent sub-header (every Area has a row).
+  for (let step = 0; step < 3; step += 1) window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", bubbles: true }));
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "b", bubbles: true }));
   await settle(window);
 
@@ -186,7 +188,7 @@ test("a live brain has a direct Area stop control", async () => {
     state: "working", generation: 7, foundingInstruction: { text: "Run this Area." }, requests: [],
   };
   const { dom, window, posts } = await bootShell(live);
-  click(window, "[data-work-group='otto/tangent'] [data-work-object-actions]");
+  click(window, "[data-work-sub-area='otto/tangent'] [data-work-object-actions]");
   await settle(window);
   const stop = window.document.querySelector("[data-modal-action='stopBrain']");
   assert.ok(stop, "stop lives in the related Area action surface");

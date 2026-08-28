@@ -52,6 +52,26 @@ function subAreaFixture() {
   return fixture;
 }
 
+/**
+ * The real vault shape: top-level `otto` with no Goal of its own, a quiet
+ * `otto/tangent/notes` with nothing, a live brain at depth 3 on Shell, and a
+ * top-level `personal` with nothing under it at all. Julian could not see
+ * `otto` because it had no Goals (every Area has a row).
+ */
+function rootedFixture() {
+  const fixture = subAreaFixture();
+  const roots = [
+    { path: "otto", name: "otto", goals: [], documents: [] },
+    { path: "otto/tangent/notes", name: "notes", goals: [], documents: [] },
+    { path: "personal", name: "personal", goals: [], documents: [] },
+  ];
+  fixture.vault.areas.push(...roots);
+  fixture.brains = fixture.brains.filter((brain) => brain.area !== SHELL);
+  fixture.brains.push({ area: SHELL, status: "active", live: true, session: "otto-tangent-shell--brain", generation: 3, state: "working", forJulian: [], requests: [] });
+  fixture.sessions.push({ name: "otto-tangent-shell--brain", area: SHELL, kind: "brain", state: "working", command: "claude" });
+  return fixture;
+}
+
 /** The cursor row's id. */
 function cursorId(document) {
   return document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor;
@@ -219,4 +239,52 @@ test("b, a, and : on a sub-header act on that Area, and h/l walk one level deepe
   press(window, "a");
   await settle(window);
   assert.equal(document.querySelector("#describe-area").value, WORK, "a messages the sub-Area brain");
+});
+
+test("every not-done Area has a row: a quiet top-level Area, a quiet sub-Area, and a deep live brain", async () => {
+  const { window, document } = await bootWorkTable(rootedFixture(), { workFilter: "all" });
+  assert.deepEqual([...document.querySelectorAll("tbody[data-work-group]")].map((body) => body.dataset.workGroup), ["otto", "personal"], "one row group per top-level Area, no sub-Area is a peer group");
+
+  const personal = document.querySelector("tbody[data-work-group='personal']");
+  const personalHeader = personal.querySelector(".work-group-row");
+  assert.equal(personalHeader.querySelector(".work-group-count").textContent, "0 open", "a top-level Area with nothing under it keeps its header");
+  assert.equal(personalHeader.querySelector(".work-group-brain .work-group-brain-long").textContent, "Start brain");
+  assert.equal(personalHeader.querySelector(".work-group-brain kbd").textContent, "b");
+  assert.equal(personal.querySelectorAll("tr").length, 1, "and nothing under it");
+
+  const otto = document.querySelector("tbody[data-work-group='otto']");
+  const subHeaders = [...otto.querySelectorAll("tr[data-work-sub-area]")];
+  assert.deepEqual(subHeaders.map((row) => row.dataset.workSubArea), ["otto/onboarding", "otto/standards", "otto/tangent", "otto/tangent/notes", SHELL, WORK, KEYS], "every sub-Area is a sub-header in path order");
+  assert.match(otto.querySelector(".work-group-row .work-group-count").textContent, /^11 open/, "the top-level count sums every sub-Area");
+
+  const notes = subHeaders[3];
+  assert.ok(notes.classList.contains("quiet"), "a sub-Area with no work, no live brain, and no question is the muted row");
+  assert.equal(notes.querySelector(".work-group-count").textContent, "0 open");
+  assert.equal(notes.querySelector(".desk-state"), null, "no state on a quiet row");
+  assert.ok(notes.querySelector(".work-fold"), "it keeps its fold triangle");
+  assert.equal(notes.querySelector(".work-group-brain .work-group-brain-long").textContent, "Start brain");
+  assert.equal(notes.querySelector(".work-group-brain kbd").textContent, "b");
+  assert.equal(notes.querySelector(".desk-action-menu-trigger kbd").textContent, ":");
+  assert.equal(subHeaders.filter((row) => row.classList.contains("quiet")).length, 1, "a sub-Area with work is not muted");
+
+  const shell = subHeaders.find((row) => row.dataset.workSubArea === SHELL);
+  assert.equal(shell.querySelector(".work-group-brain .work-group-brain-long").textContent, "Open brain", "a live brain at depth 3 is a sub-header inside its top-level group");
+  assert.match(shell.querySelector(".desk-state").textContent, /Brain working/);
+
+  // } walks every header, the quiet ones included, and b on the quiet row
+  // starts its brain.
+  await clickRow(window, document.querySelector("tr[data-work-sub-area='otto/tangent']"));
+  const steps = [];
+  for (let index = 0; index < 5; index += 1) {
+    press(window, "}", { shiftKey: true });
+    await settle(window);
+    steps.push(cursorId(document));
+  }
+  assert.deepEqual(steps, ["area:otto/tangent/notes", `area:${SHELL}`, `area:${WORK}`, `area:${KEYS}`, "area:personal"], "} visits the quiet sub-header and the quiet top-level header");
+  await clickRow(window, document.querySelector("tr[data-work-sub-area='otto/tangent/notes']"));
+  press(window, "b");
+  await settle(window);
+  const popover = document.querySelector("[data-launch-popover]");
+  assert.ok(popover, "b on a quiet sub-Area opens the composer that starts its brain");
+  assert.match(popover.querySelector("header").textContent, /Notes/);
 });

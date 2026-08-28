@@ -933,13 +933,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
-   * Groups the Areas with open work into stable subject panels. Descendant
-   * Areas contribute Goal rows with path provenance instead of separate cards.
-   * An Area needs its own Goal
-   * trees or a live "Describe work" session to earn a panel or a section this
-   * way. An Area with only Documents and no goal-bearing ancestor already on
-   * the desk still gets its own flat panel, as before Decision 1: the desk
-   * must not go quiet on a subject that has notes but no open Goal yet.
+   * Groups every Area into stable subject panels: one panel per top-level
+   * Area, and one section per Area below it, whether or not it has open work
+   * (work-view-sub-areas, every Area has a row). Julian could not see Areas
+   * without Goals, so their brains were out of reach. A done Area, or one
+   * under a done Area, earns a row only while it still has open work.
    * Panels keep hierarchy order. Runtime activity never moves a subject.
    */
   function deskAreas(scope = null) {
@@ -955,6 +953,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // earns its sub-header under an open parent (work-view-sub-areas). Without
     // a Focus, a done Area still earns no top-level header of its own.
     const areaList = allAreas().filter((area) => inFocus(area.path));
+    const doneAreas = new Set(allAreas().filter((area) => area.status === "done").map((area) => area.path));
+    /** True when the Area or one of its ancestors is done. */
+    const underDoneArea = (path) => path.split("/").some((_part, index, parts) => doneAreas.has(parts.slice(0, index + 1).join("/")));
     const headerAreas = new Set((roots.length ? allAreas() : areas()).map((area) => area.path));
     /** The focus roots this pass renders as roots; a scoped pass has none. */
     const panelRoots = scope ? [] : roots;
@@ -978,11 +979,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       // (work-view-sub-areas Decision 1), never a peer panel of its parent.
       openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, liveBrainAreas.includes(area.path) ? 1 : 0, panelRoots.length ? areaPrograms.length : 0));
     }
-    // A live brain at or above the top level still owns its whole subtree as
-    // one group, as before. A live brain deeper down is a sub-header inside
-    // its top-level group, not a peer of it.
-    const liveBrainRoots = liveBrainAreas.filter((path) => path.split("/").length <= 2);
-    const panelDefs = core.deskPanels(openCounts, [...panelRoots, ...liveBrainRoots]).filter((panel) => headerAreas.has(panel.path));
+    // Every not-done Area earns a row. A done Area keeps its row only while
+    // it has open work under the current filter.
+    const rowCounts = new Map([...openCounts].filter(([path, count]) => count > 0 || !underDoneArea(path)));
+    const panelDefs = core.deskPanels(rowCounts, panelRoots).filter((panel) => headerAreas.has(panel.path));
     const covered = new Set(panelDefs.flatMap((panel) => [panel.path, ...panel.sections]));
     const panels = panelDefs.map((panel) => {
       const area = byPath.get(panel.path);
@@ -1548,9 +1548,14 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const cursor = `area:${area.path}`;
     const folded = sub ? subAreaIsFoldedOnWork(area.path) : areaIsFoldedOnWork(area.path);
     const showState = !sub || summary.questions || brain?.live;
+    // A quiet sub-Area (no open work, no live brain, no question) prints in
+    // the muted style so the eye skips it, and keeps its fold, brain button,
+    // and menu so its brain stays reachable.
+    const quiet = sub && !allTrees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status)))
+      && !allDescriptions.length && !summary.questions && !brain?.live;
     const brainCommand = workCommand("openBrain");
     const brainButton = `<button class="work-group-brain" type="button" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)} (${brainCommand.keyDisplay})`)} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span>${workKey("openBrain")}</button>`;
-    return `<tr class="work-group-row${sub ? " work-sub-area-row" : ""}${folded ? " folded" : ""}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}"${sub ? ` data-work-sub-area="${escapeHtml(area.path)}"` : ""}>
+    return `<tr class="work-group-row${sub ? " work-sub-area-row" : ""}${quiet ? " quiet" : ""}${folded ? " folded" : ""}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}"${sub ? ` data-work-sub-area="${escapeHtml(area.path)}"` : ""}>
       <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="${sub ? "row" : "rowgroup"}" id="${workGroupId(area.path)}">
         <div class="work-group-layout">
           <div class="work-group-identity">
@@ -1980,9 +1985,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** The complete work table: one caption, one header, one row group per Area. */
   function workTable(records, maxElapsedMs, others = []) {
     const facts = readinessFacts();
-    // An Area with no row of its own does not earn a header. A chosen Focus
-    // root is the one exception: it says that the Focus is what emptied it.
-    const shown = records.filter(workGroupHasRows);
+    // Every top-level Area keeps its header, with `0 open` when nothing is
+    // under it, so its brain and its sub-Areas stay reachable (work-view-
+    // sub-areas, every Area has a row). Only the folded `Other Areas` group
+    // drops the Areas that add no row to it.
+    const shown = records;
     const outside = others.filter(workGroupHasRows);
     const bodies = shown.map((record) => workGroupBody(record, facts, maxElapsedMs)).join("")
       + otherAreasGroupBody(outside, facts, maxElapsedMs);

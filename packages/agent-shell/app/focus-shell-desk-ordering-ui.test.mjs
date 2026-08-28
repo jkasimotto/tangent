@@ -59,6 +59,6 @@ test("one Work projection keeps a stable Area order", async () => {
   await settle(window);
 
   const headers = [...window.document.querySelectorAll(".work-table .work-group-name [data-work-cursor-control]")].map((node) => node.textContent);
-  assert.deepEqual(headers, ["D&D", "Megabranch", "Standards", "Tangent"], "activity leaves every Area visible in stable path order");
+  assert.deepEqual(headers, ["Otto", "D&D", "Megabranch", "Standards", "Tangent"], "activity leaves every Area visible in stable path order, the top-level Area first and its sub-Areas as rows under it");
   assert.equal(window.document.querySelector("[data-work-filter]"), null);
 });

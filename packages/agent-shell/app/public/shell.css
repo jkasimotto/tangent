@@ -560,6 +560,10 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-sub-area-row .work-group-layout { min-height: 24px; }
 .work-sub-area-row .work-group-name > button:not(.work-fold) { color: #b8c0c9; font-size: 12px; font-weight: 640; }
 .work-sub-area-row .work-group-brain { min-height: 20px; }
+.work-sub-area-row.quiet .work-group-name > button:not(.work-fold) { color: #6f7883; font-weight: 560; }
+.work-sub-area-row.quiet .work-group-count, .work-sub-area-row.quiet .work-fold { color: #59616b; }
+.work-sub-area-row.quiet .work-group-brain, .work-sub-area-row.quiet .desk-action-menu-trigger { color: #6f7883; }
+.work-sub-area-row.quiet .work-group-brain:hover, .work-sub-area-row.quiet .desk-action-menu-trigger:hover { color: #fff; }
 .work-row.under-sub-area .work-cell-work { padding-left: 26px; }
 .work-row.under-sub-area.subgoal .work-cell-work { padding-left: 46px; }
 .work-group-head .desk-state { margin-left: 12px; }

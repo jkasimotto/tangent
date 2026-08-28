@@ -13,7 +13,10 @@ export function projectDesk(vault, sessions) {
     const describing = descriptions.some((session) => session.area === area.path);
     return [area.path, Math.max(open, describing ? 1 : 0)];
   }));
-  const definitions = areaMapCore.deskPanels(openCounts);
+  // The server projection lists Areas with open work only. The browser desk
+  // gives every not-done Area a row on its own (work-desk-view deskAreas).
+  const withWork = new Map([...openCounts].filter(([, count]) => count > 0));
+  const definitions = areaMapCore.deskPanels(withWork);
   const covered = new Set(definitions.flatMap((panel) => [panel.path, ...panel.sections]));
   for (const area of areas) {
     if (covered.has(area.path) || !(area.documents ?? []).length) continue;

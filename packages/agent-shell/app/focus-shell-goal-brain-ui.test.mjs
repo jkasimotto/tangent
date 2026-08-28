@@ -102,7 +102,8 @@ test("Goal cards open only their exact Area brain and preserve Work context", as
   assert.equal(rootAction.getAttribute("aria-label"), "Open brain for Otto / Tangent");
   assert.equal(groupBrain(subgoal.file), rootAction, "a Subgoal reads the same group route as its parent");
   assert.equal(groupBrain(nested.file).dataset.openBrain, "nested-brain", "the live child owns its own sub-header inside the parent group");
-  assert.equal(window.document.querySelector(`[data-goal-anchor='${nested.file}']`).closest("tbody").dataset.workGroup, "otto/tangent", "a nested Area is never a peer group of its parent");
+  assert.equal(window.document.querySelector(`[data-goal-anchor='${nested.file}']`).closest("tbody").dataset.workGroup, "otto", "a nested Area is never a peer group: every Area sits in its top-level group");
+  assert.ok(window.document.querySelector("tbody[data-work-group='otto'] tr[data-work-sub-area='otto/tangent/nested']"), "the nested Area is a sub-header row");
   assert.equal(groupBrain(orphan.file).dataset.openBrain, undefined, "an Area with no brain offers Start instead");
   assert.equal(groupBrain(orphan.file).querySelector(".work-group-brain-long").textContent, "Start brain");
   assert.equal(window.document.querySelector(".desk-brain-action"), null, "no row repeats the group's brain route");

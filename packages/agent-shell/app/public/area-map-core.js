@@ -166,22 +166,24 @@
   }
 
   /**
-   * Desk panels. Each durable subject (the first Area below the namespace)
-   * owns the current work in its subtree. Descendants remain provenance, not
-   * peer panels. Areas without open work anywhere are left out. `openCounts`
-   * maps each Area path to its direct open-work count. Returns
-   * [{ path, sections: [path, ...] }] in path order.
+   * Desk panels. Every top-level Area (the first path part) is one panel and
+   * every Area below it is a section of that panel, work or no work: a quiet
+   * sub-Area still needs its row so its brain stays reachable (work-view-
+   * sub-areas, every Area has a row). A Focus root in `groupRoots` owns its
+   * subtree instead. Callers pass in `openCounts` only the Areas that earn a
+   * row, mapped to their direct open-work count. The shallowest Area in the
+   * map above a path is its top. Returns [{ path, sections: [path, ...] }] in
+   * path order.
    */
   function deskPanels(openCounts, groupRoots = []) {
     const paths = [...openCounts.keys()].sort();
-    const withWork = new Set(paths.filter((path) => (openCounts.get(path) ?? 0) > 0));
     const roots = [...groupRoots].filter((path) => openCounts.has(path)).sort();
     const panels = new Map();
     for (const path of paths) {
-      if (!withWork.has(path)) continue;
       const parts = path.split("/");
       const controllingRoot = roots.filter((candidate) => isInside(path, candidate)).sort((left, right) => right.length - left.length)[0];
-      const root = controllingRoot ?? (parts.length > 1 && openCounts.has(parts.slice(0, 2).join("/")) ? parts.slice(0, 2).join("/") : path);
+      const top = parts.map((_part, index) => parts.slice(0, index + 1).join("/")).find((prefix) => openCounts.has(prefix)) ?? path;
+      const root = controllingRoot ?? top;
       if (!panels.has(root)) panels.set(root, { path: root, sections: [] });
       if (path !== root) panels.get(root).sections.push(path);
     }

@@ -314,7 +314,8 @@ test("the live shell restores context, defines work with an agent, and organizes
   liveEditBrainStarted = false;
   await window.refresh();
   await settle(window);
-  const tangentRoot = window.document.querySelector('[data-work-group="otto/tangent"]');
+  // Every top-level Area is a row group and its sub-Areas are sub-header rows (every Area has a row).
+  const tangentRoot = window.document.querySelector('[data-work-group="otto"] tr[data-work-sub-area="otto/tangent"]');
   const tangentBrainAction = tangentRoot.querySelector('.work-group-brain[data-open-area-brain="otto/tangent"]');
   assert.equal(tangentBrainAction.querySelector(".work-group-brain-long").textContent, "Start brain", "a group header can start its exact Area brain");
   assert.equal(tangentBrainAction.getAttribute("aria-label"), "Start brain for Otto / Tangent");
@@ -323,7 +324,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.document.querySelector(".area-desk-section.documents"), null, "the Documents section left the work tab");
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
   assert.equal(window.document.querySelector("[data-work-filter]"), null, "Work has no Current/Planned mode switch");
-  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2, "Work includes live and reviewed work together");
+  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2, "one row group per top-level Area, Neara and Otto");
   assert.match(window.document.querySelector("#screen").textContent, /UX Product Vision/);
   assert.match(window.document.querySelector("#screen").textContent, /Waiting/, "the pill is one word now; the duration is on the facts line");
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);

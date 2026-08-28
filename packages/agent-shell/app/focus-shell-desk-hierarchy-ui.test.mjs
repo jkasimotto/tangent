@@ -76,22 +76,27 @@ test("a parent Area owns descendant work without a separate sub-Area section", a
   assert.match(group.querySelector(".work-group-brain .work-group-brain-long").textContent, /Open brain/);
   assert.equal(group.getAttribute("aria-labelledby"), group.querySelector(".work-group-head").id, "the row group is named by its header");
 
-  // Each descendant Area with its own Goals is one flat sub-header inside the
-  // parent's row group, named by its path below Neara, in path order
-  // (work-view-sub-areas Decision 1). It is not a second group.
+  // Each descendant Area, with Goals or without, is one flat sub-header
+  // inside the parent's row group, named by its path below Neara, in path
+  // order (work-view-sub-areas Decision 1, every Area has a row). It is not
+  // a second group. The quiet Hackathon row prints muted with 0 open.
   const subHeaders = [...group.querySelectorAll("tr[data-work-sub-area]")];
-  assert.deepEqual(subHeaders.map((row) => row.dataset.workSubArea), ["neara/hackathon/embedded-js", "neara/hackathon/embedded-js/storm-response"]);
-  assert.deepEqual(subHeaders.map((row) => row.querySelector("[data-work-cursor-control]").textContent), ["Hackathon / Embedded Js", "Hackathon / Embedded Js / Storm Response"],
+  assert.deepEqual(subHeaders.map((row) => row.dataset.workSubArea), ["neara/hackathon", "neara/hackathon/embedded-js", "neara/hackathon/embedded-js/storm-response"]);
+  assert.deepEqual(subHeaders.map((row) => row.querySelector("[data-work-cursor-control]").textContent), ["Hackathon", "Hackathon / Embedded Js", "Hackathon / Embedded Js / Storm Response"],
     "a sub-header prints the path below the group, not one short name");
+  assert.ok(subHeaders[0].classList.contains("quiet"), "a sub-Area with no work and no live brain is a muted row");
+  assert.equal(subHeaders[0].querySelector(".work-group-count").textContent, "0 open");
+  assert.equal(subHeaders[1].classList.contains("quiet"), false);
   assert.equal(group.querySelectorAll(".work-group-row:not([data-work-sub-area])").length, 1, "one top-level header");
 
   const stormRows = [...group.querySelectorAll("tr[data-work-area$='/storm-response']:not([data-work-sub-area])")];
   assert.ok(stormRows.length, "descendant Goals stay in the parent group");
   assert.equal(group.querySelector("tr[data-goal-anchor] .work-row-path"), null, "a Goal row under a sub-header carries no path tag: the sub-header names its Area");
   for (const row of stormRows) assert.equal(row.previousElementSibling.dataset.workSubArea ?? row.previousElementSibling.dataset.workArea, "neara/hackathon/embedded-js/storm-response", "storm-response rows sit under their sub-header");
-  assert.equal(window.document.querySelectorAll(".work-group-brain").length, 3, "every header, top-level and sub, prints its brain button");
-  assert.match(subHeaders[1].querySelector(".work-group-brain").textContent, /Resume brain/, "an inactive brain record says Resume");
-  assert.match(subHeaders[0].querySelector(".work-group-brain").textContent, /Start brain/, "no brain record says Start");
+  assert.equal(window.document.querySelectorAll(".work-group-brain").length, 4, "every header, top-level and sub, prints its brain button");
+  assert.match(subHeaders[2].querySelector(".work-group-brain").textContent, /Resume brain/, "an inactive brain record says Resume");
+  assert.match(subHeaders[1].querySelector(".work-group-brain").textContent, /Start brain/, "no brain record says Start");
+  assert.match(subHeaders[0].querySelector(".work-group-brain").textContent, /Start brain/, "a quiet sub-Area still offers to start its brain");
 
   const titles = stormRows.map((row) => row.querySelector(".work-row-title").textContent);
   assert.deepEqual(titles, ["Working goal", "Needs you goal", "Old ready goal"], "one projection keeps live, waiting, and unstarted descendant Goals together");

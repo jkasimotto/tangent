@@ -44,6 +44,7 @@ const {
   "shell-menu": shellMenu, "go-to-button": goToButton, "go-to-layer": goToLayer,
   "go-to-input": goToInput, "go-to-list": goToList,
   "session-layer": sessionLayer, "session-layer-title": sessionLayerTitle, "session-layer-terminal": sessionLayerTerminal,
+  "work-search": workSearch, "work-search-input": workSearchInput, "work-search-count": workSearchCount, "work-search-keys": workSearchKeys,
   "document-peek-layer": documentPeekLayer,
 } = shellDom();
 
@@ -625,7 +626,7 @@ function renderKey() {
   }
   return JSON.stringify([
     state.view, state.workCursor,
-    state.query,
+    state.searchPattern,
     state.caffeinate,
     state.document ? [state.document.file, state.document.hash, state.documentTrailIndex, state.documentTrail.length] : null,
     state.describeDraft,
@@ -870,6 +871,7 @@ function renderScreen() {
   restoreScreenScroll(scrollPositions);
   restoreScreenFocus(focusKey);
   if (state.view === "work") reconcileWorkCursor();
+  shellBindings?.paintWorkSearch?.();
   if (state.view === "document") {
     bindDocumentReader();
     mountMermaidDiagrams(screen.querySelector(".document-content"));
@@ -1160,7 +1162,7 @@ function paint(force = false) {
  */
 function editingSurfaceOnScreen() {
   const active = document.activeElement;
-  if (active && (["work-search", "launch-command-input"].includes(active.id) || ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))) return true;
+  if (active && (["work-search-input", "launch-command-input"].includes(active.id) || ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))) return true;
   return Boolean(screen.querySelector("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-harness-form], [data-launch-popover], [data-comment-composer]"));
 }
 
@@ -1463,11 +1465,13 @@ function selectModelConcept(concept) {
   paint(true);
 }
 
-bindShellEvents({
+/** The handles bindShellEvents returns; set once the bindings exist. */
+let shellBindings = null;
+shellBindings = bindShellEvents({
   shell: { state, post, paint, refresh, showToast },
   chrome: {
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
-    goToInput, modalLayer, documentPeekLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
+    goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
     confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, restoreReturnPoint,
     showDecision, showDescribe, toggleAwake, openModal, closeModal, modalConfirm: getModalConfirm, openSessionLayer, closeSessionLayer,
   },

@@ -80,6 +80,14 @@
       </section>
     </div>
 
+    <!-- The Work search line. It lives outside #screen so a repaint never
+         replaces the input while Julian types (design agent-shell-work-search). -->
+    <form id="work-search" class="work-search" hidden autocomplete="off">
+      <span class="work-search-slash" aria-hidden="true">/</span>
+      <input id="work-search-input" type="text" aria-label="Search Work" autocomplete="off" spellcheck="false">
+      <span id="work-search-count" class="work-search-count"></span>
+      <span class="work-search-keys" id="work-search-keys"></span>
+    </form>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <!-- Outlives every repaint, so a filter result announces. A live region
          created by the same paint that fills it announces nothing. -->

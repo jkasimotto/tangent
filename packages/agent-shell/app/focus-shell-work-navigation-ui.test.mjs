@@ -375,23 +375,21 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Already complete/);
   assert.match(window.document.querySelector("[data-work-tree-goal]").getAttribute("aria-label"), /Collapse or move to parent/);
 
-  const search = window.document.querySelector("#work-search");
+  window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true }));
+  const search = window.document.querySelector("#work-search-input");
+  assert.equal(window.document.activeElement, search, "/ opens the search line");
   search.value = "tangent";
   search.dispatchEvent(new window.Event("input", { bubbles: true }));
-  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 1, "typing filters the existing work table");
-  assert.match(window.document.querySelector(".work-table tbody").textContent, /Tangent/);
-  assert.equal(window.document.querySelector(".document-result"), null, "work filtering never switches to Document results");
-  assert.ok(window.document.querySelector("[data-work-commands]"), "Commands remain visible while filtering");
-  const joinedAreaSearch = window.document.querySelector("#work-search");
-  joinedAreaSearch.value = "liveedit";
-  joinedAreaSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
-  const matchingAreaPanel = window.document.querySelector(".work-table tbody");
-  assert.ok(matchingAreaPanel);
-  assert.match(matchingAreaPanel.textContent, /Live Edit/);
-  assert.match(matchingAreaPanel.textContent, /Define Live Edit collaboration/);
-  const clearedSearch = window.document.querySelector("#work-search");
-  clearedSearch.value = "";
-  clearedSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2, "search never hides a row");
+  assert.match(window.document.querySelector("[data-work-cursor].cursor").dataset.searchText, /tangent/i, "the cursor follows the first match");
+  assert.equal(window.document.querySelector(".document-result"), null, "Work search never switches to Document results");
+  assert.ok(window.document.querySelector("[data-work-commands]"), "Commands remain visible while searching");
+  search.value = "liveedit";
+  search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  assert.match(window.document.querySelector("[data-work-cursor].cursor").dataset.searchText, /Live Edit/, "a pattern typed without spaces still lands");
+  search.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await settle(window);
+  assert.equal(window.document.querySelector("#work-search").hidden, true, "Escape while typing closes the line");
 
   window.showDescribe();
   const describeArea = window.document.querySelector("#describe-area");

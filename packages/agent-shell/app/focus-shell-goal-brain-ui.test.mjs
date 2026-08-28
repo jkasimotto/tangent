@@ -115,17 +115,20 @@ test("Goal cards open only their exact Area brain and preserve Work context", as
   assert.equal(terminalFocusCount, 1, "opening from a Goal card focuses the terminal");
   assert.equal(window.document.activeElement.tagName, "TEXTAREA");
   click(window, "#session-layer");
-  assert.equal(window.document.querySelector("#work-search").value, "");
+  assert.equal(window.document.querySelector("#work-search").hidden, true, "no search is kept yet");
 
-  const workSearch = window.document.querySelector("#work-search");
+  window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true }));
+  const workSearch = window.document.querySelector("#work-search-input");
   workSearch.value = "parent";
   workSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  workSearch.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await settle(window);
   const filteredAction = groupBrain(parent.file);
   filteredAction.focus();
   await user.keyboard(" ");
   assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "tangent-brain");
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", metaKey: true, bubbles: true }));
-  assert.equal(window.document.querySelector("#work-search").value, "parent", "Command-J restores the Work filter");
+  assert.equal(window.document.querySelector("#work-search-input").value, "parent", "Command-J restores the kept Work search");
 
   groupBrain(parent.file).click();
   const terminal = window.document.querySelector("#session-layer-terminal[data-session='tangent-brain']");
@@ -134,7 +137,7 @@ test("Goal cards open only their exact Area brain and preserve Work context", as
   terminal.append(repeatedAction);
   repeatedAction.click();
   click(window, "#session-layer");
-  assert.equal(window.document.querySelector("#work-search").value, "parent", "a duplicate activation keeps the first return point");
+  assert.equal(window.document.querySelector("#work-search-input").value, "parent", "a duplicate activation keeps the first return point");
 
   sessionProjection.splice(sessionProjection.findIndex((item) => item.name === "tangent-brain"), 1);
   groupBrain(parent.file).click();

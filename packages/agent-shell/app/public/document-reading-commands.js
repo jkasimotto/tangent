@@ -4,7 +4,7 @@ export const documentReadingCommands = Object.freeze({
   lineUp: "line-up",
   halfPageDown: "half-page-down",
   halfPageUp: "half-page-up",
-  stageTop: "stage-top",
+  stageChord: "stage-chord",
   top: "top",
   bottom: "bottom",
   previousHeading: "previous-heading",
@@ -45,13 +45,15 @@ function exactModifiers(event, { shift = false, ctrl = false } = {}) {
 
 /**
  * Matches one key in normal Document reading mode. The caller owns the short
- * `g` timeout and passes `pendingG` back for the second key. Text entry, IME,
+ * chord timeout and passes `pendingChord` (`g`, `]`, or `[`) back for the
+ * second key: `gg` top, `]c` next comment, `[c` previous comment
+ * (design agent-shell-keymap 5.2). Text entry, IME,
  * and already-owned events return null without changing that caller state.
  * `resumableAttempt` gives `r` to the Goal reader's Resume verb (ADR-0042)
  * while no comment is active, so the printed key on that button works.
  */
 export function matchDocumentReadingCommand(event, {
-  pendingG = false,
+  pendingChord = "",
   commentNavigation = true,
   commentCreation = true,
   commentLifecycle = true,
@@ -70,14 +72,18 @@ export function matchDocumentReadingCommand(event, {
     if (code === "BracketRight" && exactModifiers(event, { shift: true })) return documentReadingCommands.nextHeading;
     if (code === "KeyH" && exactModifiers(event, { shift: true })) return documentReadingCommands.historyBack;
     if (code === "KeyL" && exactModifiers(event, { shift: true })) return documentReadingCommands.historyForward;
-    if (commentNavigation && code === "KeyN" && exactModifiers(event, { shift: true })) return documentReadingCommands.previousComment;
     if (code === "Slash" && exactModifiers(event, { shift: true })) return documentReadingCommands.help;
     return null;
   }
   if (code === "KeyJ") return documentReadingCommands.lineDown;
   if (code === "KeyK") return documentReadingCommands.lineUp;
-  if (code === "KeyG") return pendingG ? documentReadingCommands.top : documentReadingCommands.stageTop;
-  if (commentNavigation && code === "KeyN") return documentReadingCommands.nextComment;
+  if (code === "KeyG") return pendingChord === "g" ? documentReadingCommands.top : documentReadingCommands.stageChord;
+  if (code === "BracketRight" || code === "BracketLeft") return documentReadingCommands.stageChord;
+  if (commentNavigation && code === "KeyC" && pendingChord === "]") return documentReadingCommands.nextComment;
+  if (commentNavigation && code === "KeyC" && pendingChord === "[") return documentReadingCommands.previousComment;
+  // A staged chord takes its second key. A wrong second key aborts the chord
+  // and does nothing, as in Vim.
+  if (pendingChord) return null;
   if (commentCreation && code === "KeyC") return documentReadingCommands.createComment;
   if (commentLifecycle && activeComment && code === "KeyE") return documentReadingCommands.editComment;
   if (commentLifecycle && activeComment && code === "KeyR") return documentReadingCommands.replyComment;

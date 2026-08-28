@@ -189,10 +189,14 @@ test("Escape and pointer Cancel close the state-owned Work action surface", asyn
 
 test("Work Escape unwinds each state in the settled order", async () => {
   const { window, document } = await bootWorkTable(plannedWorkFixture(), { workFilter: "inactive", areaFocus: ["otto/tangent"] });
-  let search = document.querySelector("#work-search");
+  document.querySelector("[data-work-cursor-control]").focus();
+  press(window, "/");
+  const search = document.querySelector("#work-search-input");
   search.value = "sandbox";
   search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  press(window, "Enter");
   await settle(window);
+  assert.equal(document.querySelector("#work-search").hidden, false, "the kept search stays visible");
   document.querySelector("[data-work-cursor-control]").focus();
   press(window, "f");
   await settle(window);
@@ -207,8 +211,7 @@ test("Work Escape unwinds each state in the settled order", async () => {
   assert.equal(document.querySelector("[data-area-focus-picker]"), null, "2: staged Focus");
   press(window, "Escape");
   await settle(window);
-  search = document.querySelector("#work-search");
-  assert.equal(search.value, "", "3: Work query");
+  assert.equal(document.querySelector("#work-search").hidden, true, "3: Work search");
   assert.ok(document.querySelector("[data-clear-area-focus]"), "applied Focus remains until the next Escape");
   press(window, "Escape");
   await settle(window);

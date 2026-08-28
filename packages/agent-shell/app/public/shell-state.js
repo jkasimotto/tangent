@@ -24,7 +24,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     programs: { operations: [], processes: [], problems: [], areas: [], liveCount: 0 },
     sessions: [], contextHandoverTokens: 0,
     currentFile: requestedGoal || storage.getItem("agent-shell.current-goal") || "", view: initialView,
-    document: null, goalDetail: null, documentReturn: null, documentTrail: [], documentTrailIndex: -1, documentPositions: new Map(), documentPendingG: "",
+    document: null, goalDetail: null, documentReturn: null, documentTrail: [], documentTrailIndex: -1, documentPositions: new Map(),
     documentPeek: null,
     commentComposer: null, commentCursor: -1,
     describeReturn: null, describeDraft: storedDescribeDraft?.session ? null : storedDescribeDraft, describeSessionName: savedDescribeSession,
@@ -44,7 +44,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     verdictLines: new Set(), dismissedAskIds: readDismissedAskIds(storage), goTo: null, launchTarget: "", launchAnchor: null, whatHappened: null,
     // Work is one durable projection. Ignore the retired Current/Planned
     // browser choice so an old local-storage value cannot hide Goals.
-    harnessDraft: null, harnessReturnView: "work", query: "", workFilter: "all",
+    harnessDraft: null, harnessReturnView: "work", searchPattern: "", searchOrigin: null, searchNotice: "", workFilter: "all",
     workCursor: requestedGoal ? `goal:${requestedGoal}` : storage.getItem("agent-shell.work-cursor") || "",
     caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", agentReturn: null, rebuilding: false, rebuild: null, goalCleanups: [],
     connection: {

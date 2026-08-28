@@ -817,26 +817,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return terms.reduce((score, term) => score + 1 + (strong.includes(term) ? 4 : 0), 0) + Number(record.mtime || 0) / 1e15;
   }
 
-  /** Filters the existing work desk without changing its information hierarchy. */
-  function filteredDeskAreas(query, records = null) {
-    const terms = searchTerms(query);
-    const all = records ?? deskAreas();
-    if (!terms.length) return all;
-    return all.filter((record) => {
-      const parts = [record, ...record.sections];
-      const searchText = parts.flatMap((part) => [
-        part.area?.path,
-        part.area?.name,
-        part.area?.purpose,
-        part.area?.body,
-        ...part.trees.flatMap((tree) => tree.goals.flatMap((goal) => [goal.title, goal.doneWhen, goal.currentBrief, goal.stateText, goal.storyText])),
-        ...part.descriptions.flatMap((session) => [session.workTitle, session.description]),
-        ...(part.programs ?? []).flatMap((program) => [program.label, program.command, program.type]),
-      ]).join(" ");
-      return searchScore({ searchText }, terms, record.area?.path) > 0;
-    });
-  }
-
   /**
    * The open Questions of one Area and its child Areas. Only a brain writing
    * an explicit Request makes one. A waiting worker, a stopped step, and a
@@ -1559,7 +1539,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       && !allDescriptions.length && !summary.questions && !brain?.live;
     const brainCommand = workCommand("openBrain");
     const brainButton = `<button class="work-group-brain" type="button" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)} (${brainCommand.keyDisplay})`)} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span>${workKey("openBrain")}</button>`;
-    return `<tr class="work-group-row${sub ? " work-sub-area-row" : ""}${quiet ? " quiet" : ""}${folded ? " folded" : ""}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}"${sub ? ` data-work-sub-area="${escapeHtml(area.path)}"` : ""}>
+    return `<tr class="work-group-row${sub ? " work-sub-area-row" : ""}${quiet ? " quiet" : ""}${folded ? " folded" : ""}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-search-text="${escapeHtml(`${name} ${area.path}`)}" data-work-area="${escapeHtml(area.path)}"${sub ? ` data-work-sub-area="${escapeHtml(area.path)}"` : ""}>
       <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="${sub ? "row" : "rowgroup"}" id="${workGroupId(area.path)}">
         <div class="work-group-layout">
           <div class="work-group-identity">
@@ -1646,7 +1626,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       ? `<small class="work-subgoal-count">${escapeHtml(subgoalWord)}</small>`
       : "";
     const cursor = `goal:${goal.file}`;
-    return `<tr class="desk-goal work-row ${subgoal ? "subgoal" : "root-goal"}${subArea ? " under-sub-area" : ""} ${action.kind}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-goal-anchor="${escapeHtml(goal.file)}" data-work-area="${escapeHtml(goal.area)}"${subgoal ? ` data-subgoal-of="${escapeHtml(parent)}"` : ""}${hidden ? " hidden" : ""}>
+    const searchText = [goal.title, areaLabel(goal.area), action.state, action.stepShort].filter(Boolean).join(" ");
+    return `<tr class="desk-goal work-row ${subgoal ? "subgoal" : "root-goal"}${subArea ? " under-sub-area" : ""} ${action.kind}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-search-text="${escapeHtml(searchText)}" data-goal-anchor="${escapeHtml(goal.file)}" data-work-area="${escapeHtml(goal.area)}"${subgoal ? ` data-subgoal-of="${escapeHtml(parent)}"` : ""}${hidden ? " hidden" : ""}>
       <th class="work-cell-work" scope="row">
         <span class="work-cell-title">${disclosure}<span class="work-goal-copy"><span class="work-goal-primary"><button class="work-row-title" type="button" data-work-row-title ${titleRoute} data-focus-key="title:${escapeHtml(goal.file)}" title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</button>${subgoalNote}${path ? `<small class="work-row-path">${escapeHtml(path)}</small>` : ""}</span>${agentMeta ? `<small class="work-row-agent">${escapeHtml(agentMeta)}</small>` : ""}${stepMeta ? `<small class="work-row-step" title="${escapeHtml(action.stepTitle)}">${escapeHtml(stepMeta)}</small>` : ""}</span></span>
         <small class="work-cell-facts">${escapeHtml(compact)}</small>
@@ -1670,7 +1651,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const stateName = describeWorkStateLabel(session);
     const kind = session.state === "working" ? "working" : "waiting";
     const cursor = `definition:${session.name}`;
-    return `<tr class="desk-definition work-row definition ${kind}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(session.area ?? "")}">
+    return `<tr class="desk-definition work-row definition ${kind}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-search-text="${escapeHtml(`${name} ${stateName}`)}" data-work-area="${escapeHtml(session.area ?? "")}">
       <th class="work-cell-work" scope="row">
         <span class="work-cell-title">${WORK_FOLD_SPACE}<button class="work-row-title" type="button" data-work-row-title data-select-work-definition="${escapeHtml(session.name)}" data-focus-key="definition:${escapeHtml(session.name)}">${escapeHtml(session.workTitle || "Define new work")}</button><small class="work-row-path">Defining work</small></span>
         <small class="work-cell-facts">${escapeHtml(stateName)}</small>
@@ -2029,19 +2010,16 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Renders the complete Work screen: the direct-ask table, then the work table. */
   function renderWork() {
-    const query = state.query.trim();
-    const records = filteredDeskAreas(query);
+    const records = deskAreas();
     // Focus orders the desk; it never removes a subject. Everything outside it
     // stays reachable in one folded group after the focused Areas.
-    const others = filteredDeskAreas(query, otherDeskAreas());
+    const others = otherDeskAreas();
     // Every bar on this paint is scaled to the longest-elapsed Goal it draws
     // (deskGoalBar, design-compact-work-desk Decision 2).
     const maxElapsedMs = deskMaxElapsedMs([...records, ...others], Date.now());
     const roots = areaFocusRoots();
     const focusNames = areaFocusLabels(roots).join(" + ");
-    const emptyCopy = query
-      ? `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No work matches “${escapeHtml(query)}”.`
-      : `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No open work.`;
+    const emptyCopy = `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No open work.`;
     const content = `${records.length || others.length
       ? workTable(records, maxElapsedMs, others)
       : `<div class="empty-state">${emptyCopy}</div>`}${workProcessSections(records)}`;
@@ -2050,12 +2028,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       <section class="work-page">
         ${roots.length || state.areaFocusPicker ? areaFocusControl() : ""}
         <div class="work-tools">
-          <label class="search-field">
-            <span class="search-icon" aria-hidden="true">⌕</span>
-            <input id="work-search" type="search" value="${escapeHtml(state.query)}" placeholder="Filter work and Areas" autocomplete="off" />
-            ${shortcutKbd("findWork")}
-          </label>
           <div class="work-tool-actions">
+            <button class="quiet-button" type="button" data-work-search ${workCommandAttributes("search")}>${workCommandContent("search")}</button>
             <button class="quiet-button" type="button" data-work-commands ${workCommandAttributes("commands")}>${workCommandContent("commands")}</button>
             <button class="quiet-button" type="button" data-work-keys ${workCommandAttributes("keys")}>${workCommandContent("keys")}</button>
           </div>

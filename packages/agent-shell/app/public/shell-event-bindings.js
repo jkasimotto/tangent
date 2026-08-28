@@ -2,13 +2,15 @@ import { journalCaptureNeedsRetry, journalCaptureToast } from "./journal-capture
 import { keyboardEventIsComposing, resolveKeyboardContext } from "./keyboard-context.js";
 import { documentReadingCommands, documentReadingScrollTarget, matchDocumentReadingCommand } from "./document-reading-commands.js";
 import { workCommandHelpRows, workCommandMatches, workCommandsFor } from "./work-commands.js";
+import { createChordEngine, motions, resolveMotion } from "./motion-keys.js";
+import { createWorkSearchBar } from "./work-search-bar.js";
 
 /** Binds browser events through capability-owned feature ports. */
 export function bindShellEvents({ shell, chrome, prompts, work, areas, programs, launch, documents }) {
   const { state, post, paint, refresh, showToast } = shell;
   const {
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
-    goToInput, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
+    goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
     showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer,
   } = chrome;
@@ -48,9 +50,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     leaveQuickPath,
   } = documents;
   const awakeButton = document.querySelector("#awake-button");
-  let documentPendingGTimer = null;
-  let keySheetPendingG = false;
-  let keySheetPendingGTimer = null;
+  // One chord engine for every surface (design agent-shell-keymap 4.2).
+  const chords = createChordEngine(window.setTimeout.bind(window), window.clearTimeout.bind(window));
   let launchFocusObserver = null;
   let launchReturnPoint = null;
   let launchParentSurface = null;
@@ -67,22 +68,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const point = state.agentReturn;
     state.agentReturn = null;
     return point ? restoreReturnPoint(point) : showWork();
-  }
-
-  /**
-   * Says how many Goals the filter left, through the one live region that
-   * outlives the repaint. A filter that empties the table takes the focused row
-   * with it; focus is already back in the filter input, so the count is the
-   * only fact a screen reader would otherwise lose
-   * (design-redesign-work-as-a-compact-table, "Polls and stable focus").
-   */
-  function announceWorkCount() {
-    const region = document.querySelector("#filter-count");
-    if (!region) return;
-    const count = document.querySelector(".work-table .work-caption-count")?.textContent
-      ?? document.querySelector(".work-page .empty-state")?.textContent
-      ?? "";
-    region.textContent = count.trim();
   }
 
   /** Stores one cursor without rebuilding the element that received a pointer event. */
@@ -102,6 +87,52 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (focus) window.setTimeout(() => [...document.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === state.workCursor)?.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus(), 0);
     return true;
   }
+
+  /** Writes one sentence into the polite Work live region. */
+  function announceWork(text) {
+    const region = document.querySelector("#filter-count");
+    if (region) region.textContent = String(text ?? "");
+  }
+
+  /**
+   * Opens every fold that hides one Work row, so a search can land on it
+   * (design agent-shell-work-search decision 6). Each opened fold is recorded
+   * on the search origin, so Escape while typing can close it again.
+   */
+  function revealCursor(cursor) {
+    for (let guard = 0; guard < 8; guard += 1) {
+      const row = [...screen.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === cursor);
+      if (!row || !row.hidden) return Boolean(row);
+      const parentFile = row.dataset.subgoalOf;
+      const parentRow = parentFile ? [...screen.querySelectorAll("[data-goal-anchor]")].find((item) => item.dataset.goalAnchor === parentFile) : null;
+      if (parentRow && workRowIsCollapsed(parentRow)) {
+        setSubgoalsExpanded(parentFile, true);
+        state.searchOrigin?.openedFolds.push({ kind: "goal", id: parentFile });
+        continue;
+      }
+      if (parentRow?.hidden) { revealCursor(parentRow.dataset.workCursor); continue; }
+      const header = ownerHeaderRow(row);
+      if (header && workRowIsCollapsed(header)) {
+        const area = header.dataset.workArea;
+        setWorkAreaFolded(area, false);
+        state.searchOrigin?.openedFolds.push({ kind: "area", id: area });
+        continue;
+      }
+      return false;
+    }
+    return false;
+  }
+
+  /** Closes one fold a search opened, so Escape while typing restores the tree. */
+  function closeRevealedFold(fold) {
+    if (fold.kind === "goal") setSubgoalsExpanded(fold.id, false);
+    else setWorkAreaFolded(fold.id, true);
+  }
+
+  const searchBar = createWorkSearchBar({
+    state, document, bar: workSearch, input: workSearchInput, count: workSearchCount, keys: workSearchKeys, screen,
+    paint, setWorkCursor, revealCursor, closeRevealedFold, announce: announceWork,
+  });
 
   /**
    * True when Enter means the row, not the focused control. A focused button
@@ -698,7 +729,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const resumable = resumeAvailabilityForGoal(goal);
       return resumable.enabled ? resumeGoalAttempt(goal.file) : showToast(resumable.reason);
     }
-    if (id === "filter") return document.querySelector("#work-search")?.focus();
+    if (id === "search") return searchBar.open();
+    if (id === "nextMatch") return searchBar.step(1) || showToast("Press / to search first.");
+    if (id === "previousMatch") return searchBar.step(-1) || showToast("Press / to search first.");
     if (id === "keys") return openWorkKeySheet();
     if (id === "open") return openWorkRow(row);
     return undefined;
@@ -774,7 +807,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (["commands", "openBrain", "stopBrain", "defaults", "messageBrain", "focus", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return Boolean(isArea);
       if (["readGoal", "changeAgent", "goalStatus"].includes(command.id)) return Boolean(goal);
       if (command.id === "resumeAttempt") return Boolean(goal) && !isArea;
-      return ["collapse", "expand", "filter", "keys"].includes(command.id);
+      return ["collapse", "expand", "search", "keys"].includes(command.id);
     }).map((command) => {
       const tree = treeCommandAvailability(command.id, row);
       const replacement = command.id === "changeAgent" ? replacementTargetForGoal(goal) : null;
@@ -862,7 +895,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       { key: "gg / G", label: "Top or bottom", help: "Move to the start or end of this Document." },
       { key: "{ / }", label: "Move by heading", help: "Move to the previous or next heading." },
       { key: "H / L", label: "Document history", help: "Open the previous or next Document in your reading history." },
-      { key: "n / N", label: "Move by comment", help: "Move to the next or previous comment." },
+      { key: "]c / [c", label: "Move by comment", help: "Move to the next or previous comment." },
       { key: "c", label: "Write a comment", help: quick ? "Open the full reader to write a comment." : "Write a comment at the current text or Document." },
       ...(!quick ? [
         { key: "e", label: "Edit active comment", help: "Edit the active Julian comment." },
@@ -885,22 +918,19 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     else if (event.ctrlKey && !event.shiftKey && String(event.key).toLowerCase() === "d") target = scroller.scrollTop + scroller.clientHeight / 2;
     else if (event.ctrlKey && !event.shiftKey && String(event.key).toLowerCase() === "u") target = scroller.scrollTop - scroller.clientHeight / 2;
     else if (!event.ctrlKey && event.key === "G") target = maximum;
-    else if (!event.ctrlKey && !event.shiftKey && event.key === "g" && keySheetPendingG) target = 0;
+    else if (!event.ctrlKey && !event.shiftKey && event.key === "g" && chords.pendingFor("key-sheet") === "g") target = 0;
     else if (!event.ctrlKey && !event.shiftKey && event.key === "g") {
       event.preventDefault();
       event.stopPropagation();
-      keySheetPendingG = true;
-      window.clearTimeout(keySheetPendingGTimer);
-      keySheetPendingGTimer = window.setTimeout(() => { keySheetPendingG = false; }, 650);
+      chords.stage("key-sheet", "g");
       return true;
     } else {
-      keySheetPendingG = false;
+      chords.clear("key-sheet");
       return false;
     }
     event.preventDefault();
     event.stopPropagation();
-    keySheetPendingG = false;
-    window.clearTimeout(keySheetPendingGTimer);
+    chords.clear("key-sheet");
     scroller.scrollTop = Math.min(maximum, Math.max(0, target));
     return true;
   }
@@ -938,22 +968,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return Boolean((anchor && surface.contains(anchor)) || (focus && surface.contains(focus)));
   }
 
-  /** Clears a staged `g` without letting an older timeout clear a newer one. */
+  /** Clears a staged chord key on one reading surface. */
   function clearDocumentPendingG(surface = "") {
-    if (surface && state.documentPendingG !== surface) return;
-    state.documentPendingG = "";
-    if (documentPendingGTimer !== null) window.clearTimeout(documentPendingGTimer);
-    documentPendingGTimer = null;
+    chords.clear(surface ? `reader:${surface}` : "");
   }
 
-  /** Waits briefly for the second `g` on one exact reading surface. */
-  function stageDocumentTop(surface) {
-    clearDocumentPendingG();
-    state.documentPendingG = surface;
-    documentPendingGTimer = window.setTimeout(() => {
-      if (state.documentPendingG === surface) state.documentPendingG = "";
-      documentPendingGTimer = null;
-    }, 650);
+  /** Waits briefly for the second key of a chord on one exact reading surface. */
+  function stageDocumentChord(surface, key) {
+    chords.stage(`reader:${surface}`, key);
   }
 
   /** Absolute heading positions inside one Document scroll owner. */
@@ -1103,7 +1125,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       ? peekCommentIndex() >= 0 || Boolean(document.activeElement?.closest?.("#document-peek-layer .document-comment"))
       : Boolean(state.commentCursorIdentity) || Boolean(document.activeElement?.closest?.(".document-reader .document-comment"));
     const command = matchDocumentReadingCommand(event, {
-      pendingG: state.documentPendingG === surfaceKey,
+      pendingChord: chords.pendingFor(`reader:${surfaceKey}`),
       commentNavigation: true,
       commentCreation: !quick,
       commentLifecycle: !quick,
@@ -1112,13 +1134,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       resumableAttempt: Boolean(readerResumeAttemptButton(quick)),
     });
     if (!command) {
-      if (state.documentPendingG === surfaceKey && event.code !== "KeyG") clearDocumentPendingG(surfaceKey);
+      if (chords.pendingFor(`reader:${surfaceKey}`)) clearDocumentPendingG(surfaceKey);
       return false;
     }
     event.preventDefault();
     event.stopPropagation();
-    if (command === documentReadingCommands.stageTop) {
-      stageDocumentTop(surfaceKey);
+    if (command === documentReadingCommands.stageChord) {
+      stageDocumentChord(surfaceKey, event.key);
       return true;
     }
     clearDocumentPendingG(surfaceKey);
@@ -1187,34 +1209,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return false;
   }
 
-  /**
-   * Arrow, Home, and End move between the Goal titles of the table the focused
-   * title belongs to. Enter and Space keep their native button behavior, so the
-   * table needs no ARIA grid and still works when this handler does not run
-   * (design-redesign-work-as-a-compact-table Decision 9).
-   */
-  function moveBetweenWorkRows(event) {
-    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
-    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return false;
-    const title = event.target.closest?.("[data-work-row-title]");
-    if (!title) return false;
-    const table = title.closest("table");
-    if (!table) return false;
-    const titles = [...table.querySelectorAll("[data-work-row-title]")].filter((button) => !button.closest("tr[hidden]"));
-    if (titles.length < 2) return false;
-    const index = titles.indexOf(title);
-    const next = event.key === "Home" ? 0
-      : event.key === "End" ? titles.length - 1
-      : event.key === "ArrowDown" ? Math.min(titles.length - 1, index + 1)
-      : Math.max(0, index - 1);
-    if (next === index) {
-      event.preventDefault();
-      return true;
-    }
-    event.preventDefault();
-    titles[next].focus();
-    return true;
-  }
 
   /**
    * Opens one Area map from a breadcrumb or an Area row. The quick Document
@@ -1272,6 +1266,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const areaJump = target.closest?.("[data-move-work-area]");
     if (areaJump && state.view === "work") return moveAreaCursor(Number(areaJump.dataset.moveWorkArea), cursor ?? cursorRow());
     if (cursor && state.view === "work") rememberWorkCursor(cursor);
+    const workSearchButton = target.closest?.("[data-work-search]");
+    if (workSearchButton) return searchBar.open();
     const workKeys = target.closest?.("[data-work-keys]");
     if (workKeys) return openWorkKeySheet();
     if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: false });
@@ -2062,14 +2058,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       input?.setSelectionRange(cursor, cursor);
       return;
     }
-    if (event.target.id !== "work-search") return;
-    state.query = event.target.value;
-    const cursor = event.target.selectionStart;
-    screen.innerHTML = renderWork();
-    const input = document.querySelector("#work-search");
-    input?.focus();
-    input?.setSelectionRange(cursor, cursor);
-    announceWorkCount();
   });
 
   document.addEventListener("change", async (event) => {
@@ -2125,13 +2113,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       event.preventDefault();
       event.stopPropagation();
     };
-    if (resultsOwnKeys && event.key === "ArrowDown") {
+    const goToMotion = resolveMotion(event, { textOwned: true });
+    if (resultsOwnKeys && goToMotion === motions.next) {
       state.goTo.selected = Math.min(state.goTo.selected + 1, Math.max(rows.length - 1, 0));
       renderGoToList();
       if (focusedRow) goToLayer.querySelector(`[data-go-to-row="${state.goTo.selected}"]`)?.focus();
       return own();
     }
-    if (resultsOwnKeys && event.key === "ArrowUp") {
+    if (resultsOwnKeys && goToMotion === motions.previous) {
       state.goTo.selected = Math.max(state.goTo.selected - 1, 0);
       renderGoToList();
       if (focusedRow) goToLayer.querySelector(`[data-go-to-row="${state.goTo.selected}"]`)?.focus();
@@ -2184,7 +2173,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (findButton.dataset.action === "next-step") {
       return showDecision("agent");
     }
-    showWork({ focus: true });
+    showWork();
+    searchBar.open();
   });
 
   secondaryAction.addEventListener("click", () => confirmStop({ immediate: true }));
@@ -2265,6 +2255,32 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     });
   }
 
+  /**
+   * Moves the Work cursor for one Vim motion (design agent-shell-keymap 5.1).
+   * Arrows, Home, End, PageUp, and PageDown are synonyms through the same
+   * resolver, so click, arrow, and letter all move the one cursor.
+   */
+  function handleWorkMotion(event, rows, current) {
+    const motion = resolveMotion(event, { textOwned: false, pendingChord: chords.pendingFor("work") });
+    if (!motion) { chords.clear("work"); return false; }
+    event.preventDefault();
+    if (motion === motions.chordStart) { chords.stage("work", event.key); return true; }
+    chords.clear("work");
+    const index = rows.indexOf(current);
+    const pageRows = Math.max(1, Math.floor(screen.clientHeight / Math.max(1, current?.offsetHeight || 40) / 2));
+    if (motion === motions.next) return setWorkCursor(rows[index < 0 ? 0 : Math.min(rows.length - 1, index + 1)]);
+    if (motion === motions.previous) return setWorkCursor(rows[index < 0 ? 0 : Math.max(0, index - 1)]);
+    if (motion === motions.first) return setWorkCursor(rows[0]);
+    if (motion === motions.last) return setWorkCursor(rows.at(-1));
+    if (motion === motions.halfDown) return setWorkCursor(rows[Math.min(rows.length - 1, Math.max(0, index) + pageRows)]);
+    if (motion === motions.halfUp) return setWorkCursor(rows[Math.max(0, index - pageRows)]);
+    if (motion === motions.sectionNext) return moveAreaCursor(1, current);
+    if (motion === motions.sectionPrevious) return moveAreaCursor(-1, current);
+    if (motion === motions.parent) return executeWorkCommand("collapse", current);
+    if (motion === motions.child) return executeWorkCommand("expand", current);
+    return true;
+  }
+
   /** Runs one shell-wide shortcut, after the owning context permits it. */
   function handleGlobalShortcut(event) {
     if (shortcutMatches(event, KEYMAP.goTo)) {
@@ -2281,7 +2297,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (shortcutMatches(event, KEYMAP.findWork)) {
       event.preventDefault();
-      showWork({ focus: true });
+      if (state.sessionPeek) closeSessionLayer();
+      showWork();
+      searchBar.open();
       return true;
     }
     return false;
@@ -2347,18 +2365,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   /**
    * Unwinds Work one visible stage at a time. The order is deliberate: a
-   * temporary surface, staged Focus, query, applied Focus, and
+   * temporary surface, staged Focus, search, applied Focus, and
    * finally the Work tab.
    */
   function unwindWork() {
-    state.workPendingG = false;
+    chords.clear("work");
     if (closeTransientSurface()) return;
     if (state.areaFocusPicker) return cancelAreaFocusPicker();
-    if (state.query) {
-      state.query = "";
-      paint(true);
-      return window.setTimeout(() => document.querySelector("#work-search")?.focus(), 0);
-    }
+    if (searchBar.clear()) return;
     if (state.areaFocus.length) return clearAreaFocus();
     workTab.focus();
   }
@@ -2438,9 +2452,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (event.target.id !== "area-search") return false;
     const rows = [...screen.querySelectorAll("[data-select-area]")];
     const selected = rows.findIndex((row) => row.dataset.selectArea === state.areaSelection);
-    if (["ArrowDown", "ArrowUp"].includes(event.key) && rows.length) {
+    const listMotion = resolveMotion(event, { textOwned: true });
+    if ((listMotion === motions.next || listMotion === motions.previous) && rows.length) {
       event.preventDefault();
-      const next = event.key === "ArrowDown" ? Math.min(rows.length - 1, selected + 1) : Math.max(0, selected < 0 ? 0 : selected - 1);
+      const next = listMotion === motions.next ? Math.min(rows.length - 1, selected + 1) : Math.max(0, selected < 0 ? 0 : selected - 1);
       rows[next].focus();
       return true;
     }
@@ -2551,6 +2566,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return;
     }
     if (context === "text-entry") {
+      if (searchBar.handleInputKey(event)) return void event.stopPropagation();
       if (handleAreaSearchKey(event)) return;
       if (handleGlobalShortcut(event)) return;
       if (handleCommandEnter(event)) return;
@@ -2566,26 +2582,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       event.preventDefault();
       return leaveCurrentSurface();
     }
-    if (context === "work" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (context === "work" && !event.metaKey && !event.altKey) {
       const rows = visibleCursorRows();
       const current = cursorRow();
       const commandArea = commandAreaForRow(current);
-      if (workCommandMatches(event, "previousArea") || workCommandMatches(event, "nextArea")) {
-        event.preventDefault();
-        return moveAreaCursor(workCommandMatches(event, "previousArea") ? -1 : 1, current);
-      }
-      if (workCommandMatches(event, "moveRows")) {
-        event.preventDefault();
-        const found = rows.indexOf(current);
-        const index = found < 0 ? (event.key === "j" ? -1 : 1) : found;
-        return setWorkCursor(rows[event.key === "j" ? Math.min(rows.length - 1, index + 1) : Math.max(0, index - 1)]);
-      }
-      if (event.key === "G" || (event.key === "g" && state.workPendingG)) {
-        event.preventDefault(); state.workPendingG = false;
-        return setWorkCursor(event.key === "G" ? rows.at(-1) : rows[0]);
-      }
-      if (event.key === "g") { event.preventDefault(); state.workPendingG = true; window.setTimeout(() => { state.workPendingG = false; }, 650); return; }
-      state.workPendingG = false;
+      if (handleWorkMotion(event, rows, current)) return;
       if (workCommandMatches(event, "openBrain")) {
         event.preventDefault();
         return executeWorkCommand("openBrain", current);
@@ -2612,7 +2613,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         // Area header it reviews the brain's questions.
         return executeWorkCommand(current?.dataset.goalAnchor ? "resumeAttempt" : "questions", current);
       }
-      if (workCommandMatches(event, "note")) { event.preventDefault(); return executeWorkCommand("note", current); }
       if (workCommandMatches(event, "focus")) { event.preventDefault(); return executeWorkCommand("focus", current); }
       if (workCommandMatches(event, "readGoal")) {
         event.preventDefault();
@@ -2623,7 +2623,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return executeWorkCommand("changeAgent", current);
       }
       if (workCommandMatches(event, "goalStatus")) { event.preventDefault(); return executeWorkCommand("goalStatus", current); }
-      if (workCommandMatches(event, "filter")) { event.preventDefault(); return executeWorkCommand("filter", current); }
+      if (workCommandMatches(event, "search")) { event.preventDefault(); return executeWorkCommand("search", current); }
+      if (state.searchPattern && workCommandMatches(event, "nextMatch")) { event.preventDefault(); return executeWorkCommand("nextMatch", current); }
+      if (state.searchPattern && workCommandMatches(event, "previousMatch")) { event.preventDefault(); return executeWorkCommand("previousMatch", current); }
       if (workCommandMatches(event, "commands")) { event.preventDefault(); return openObjectActions(current); }
       if (workCommandMatches(event, "open") && !event.shiftKey && enterOwnsWorkRow(event.target, current)) {
         event.preventDefault();
@@ -2634,7 +2636,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return openWorkKeySheet();
       }
     }
-    if (moveBetweenWorkRows(event)) return;
     if (context === "document" && event.key === "Escape" && closeNearestOpenDetails(event.target)) {
       event.preventDefault();
       event.stopPropagation();
@@ -2649,10 +2650,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (event.code === "KeyM") {
         event.preventDefault();
         return openCommentComposer();
-      }
-      if (event.code === "KeyN" || event.code === "KeyP") {
-        event.preventDefault();
-        return stepComment(event.code === "KeyN" ? 1 : -1);
       }
     }
     if (event.key === "Escape" && context === "document") {
@@ -2673,5 +2670,5 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (state.view === "document") updateSelectionCommentButton();
   });
 
-  return {  };
+  return { paintWorkSearch: searchBar.paintBar };
 }

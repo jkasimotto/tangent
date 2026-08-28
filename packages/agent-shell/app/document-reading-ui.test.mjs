@@ -142,11 +142,13 @@ test("the quick reader owns navigation, read-only comments, help, and staged Esc
   assert.equal(layer.hidden, false, "c cannot mutate or promote the quick reader");
   assert.equal(window.document.querySelector("#screen .document-reader"), null);
 
-  press(window, "n", "KeyN");
+  press(window, "]", "BracketRight");
+  press(window, "c", "KeyC");
   const comments = [...layer.querySelectorAll(".document-comment")];
-  assert.equal(window.document.activeElement, comments[0], "n focuses the first read-only comment");
-  press(window, "N", "KeyN", { shiftKey: true });
-  assert.equal(window.document.activeElement, comments.at(-1), "N wraps to the previous comment");
+  assert.equal(window.document.activeElement, comments[0], "]c focuses the first read-only comment");
+  press(window, "[", "BracketLeft");
+  press(window, "c", "KeyC");
+  assert.equal(window.document.activeElement, comments.at(-1), "[c wraps to the previous comment");
 
   click(window, "#document-peek-layer [data-document-keys]");
   await settle(window);
@@ -268,8 +270,9 @@ test("the full reader moves semantically from pointer comments and lets c write"
 
   const comments = [...reader.querySelectorAll(".document-comment")];
   comments[1].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  press(window, "n", "KeyN");
-  assert.equal(window.document.activeElement.id, "document-comment-0", "pointer focus and n share the semantic cursor");
+  press(window, "]", "BracketRight");
+  press(window, "c", "KeyC");
+  assert.equal(window.document.activeElement.id, "document-comment-0", "pointer focus and ]c share the semantic cursor");
 
   press(window, "c", "KeyC");
   await settle(window);

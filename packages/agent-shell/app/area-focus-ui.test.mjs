@@ -188,45 +188,47 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
     schema: "agent-shell.area-focus.v1", areas: ["otto/alpha"],
   });
 
-  const focusedSearch = window.document.querySelector("#work-search");
+  window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true }));
+  const focusedSearch = window.document.querySelector("#work-search-input");
   focusedSearch.value = "alpha";
   focusedSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  focusedSearch.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await settle(window);
   window.document.querySelector("#screen").scrollTop = 137;
   click(window, `[data-open-goal-run="${alpha.file}"]`);
   assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, alpha.session);
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", metaKey: true, bubbles: true }));
   await settle(window);
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
-  assert.equal(window.document.querySelector("#work-search").value, "alpha");
+  assert.equal(window.document.querySelector("#work-search-input").value, "alpha");
   assert.equal(window.document.querySelector("#screen").scrollTop, 137, "Command-J restores the Work scroll position");
 
   await openDocumentViaGoTo(window, alphaDocument.title);
   assert.ok(window.document.querySelector(".document-reader"));
   click(window, "#back-button");
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
-  assert.equal(window.document.querySelector("#work-search").value, "alpha", "Document Back restores the focused Work query");
+  assert.equal(window.document.querySelector("#work-search-input").value, "alpha", "Document Back restores the kept Work search");
 
   click(window, `[data-open-goal-run="${alpha.file}"]`);
   click(window, "#back-button");
   await settle(window);
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
-  assert.equal(window.document.querySelector("#work-search").value, "alpha", "worker Back restores focused Work");
+  assert.equal(window.document.querySelector("#work-search-input").value, "alpha", "worker Back restores focused Work");
 
-  const workSearch = window.document.querySelector("#work-search");
   assert.ok(window.document.querySelector('[data-desk-area="otto/alpha"], [data-work-sub-area="otto/alpha"]'));
-  assert.equal(window.document.querySelector('[data-desk-area="otto/beta"], [data-work-sub-area="otto/beta"]'), null, "secondary filters cannot reveal an Area outside Focus");
+  assert.match(window.document.querySelector("[data-work-cursor].cursor").dataset.searchText, /alpha/i, "the search cursor sits on an Alpha row");
   assert.equal(window.document.querySelectorAll(`[data-goal-anchor="${child.file}"]`).length, 1, "overlapping staged roots do not duplicate descendant work");
 
   click(window, '[data-desk-area="otto/alpha"] [data-open-brain]');
   assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "Alpha-brain");
   click(window, "#session-layer");
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
-  assert.equal(window.document.querySelector("#work-search").value, "alpha");
+  assert.equal(window.document.querySelector("#work-search-input").value, "alpha");
   assert.equal(window.document.querySelector("[data-work-filter]"), null);
 
-  const returnedSearch = window.document.querySelector("#work-search");
-  returnedSearch.value = "";
-  returnedSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await settle(window);
+  assert.equal(window.document.querySelector("#work-search").hidden, true, "Escape clears the kept search");
   click(window, "[data-clear-area-focus]");
   assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null);
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"], [data-work-sub-area="otto/beta"]'), "Clear restores complete Work");

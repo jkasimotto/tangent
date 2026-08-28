@@ -142,6 +142,7 @@ async function lintAgentShellWorkflowContracts(ctx: LintContext): Promise<Govern
     { pattern: /setAppBadge|clearAppBadge|data-enable-dock-badge/, message: "restores the agent-count Dock badge." },
     { pattern: /askFrom(?:StoppedStep|DialogSession|WaitingOn)/, message: "restores an ask inferred from machine state." },
     { pattern: /from "\.\/ask-core\.js"/, message: "re-imports the retired For-you ask builder." },
+    { pattern: /moveBetweenWorkRows|id="work-search"\s+type="search"|filteredDeskAreas/, message: "restores the DOM-focus row walk or the Work filter field; arrows are cursor synonyms and / searches (design agent-shell-keymap 5.5)." },
   ];
   for (const rel of workTargets) {
     const file = path.join(ctx.root, rel);

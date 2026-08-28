@@ -250,49 +250,116 @@ test("Work carries no attention queue and infers no ask", async () => {
   assert.match(verb(counts[0]), /^\d+ questions?$/);
 });
 
-test("a filter keeps focus in its input and says how many Goals are left", async () => {
+test("slash search moves the cursor like Vim: incremental, n and N, Enter keeps, Escape restores", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
   assert.equal(titles(document).length, 7);
-  const search = document.querySelector("#work-search");
-  search.focus();
+  const origin = document.querySelector("[data-work-cursor].cursor").dataset.workCursor;
+  document.querySelector("[data-work-cursor-control]").focus();
+  press(window, "/");
+  const bar = document.querySelector("#work-search");
+  const search = document.querySelector("#work-search-input");
+  assert.equal(bar.hidden, false, "/ shows the search line");
+  assert.equal(document.activeElement, search, "/ gives the line the keyboard");
+  assert.match(document.querySelector("#work-search-keys").textContent, /jump.*next.*previous.*cancel/, "the line prints its keys");
+
   search.value = "walkthrough";
   search.dispatchEvent(new window.Event("input", { bubbles: true }));
   await settle(window);
-
-  assert.equal(document.activeElement.id, "work-search", "a filter that removes the focused row keeps focus in the filter");
-  assert.deepEqual(titles(document).map((button) => button.textContent), ["Redesign the onboarding walkthrough"]);
+  assert.equal(document.activeElement, search, "typing keeps the keyboard in the line");
+  assert.equal(titles(document).length, 7, "search never hides a row");
+  const landed = document.querySelector("[data-work-cursor].cursor");
+  assert.match(landed.dataset.searchText, /walkthrough/, "the cursor follows the first match");
+  assert.ok(landed.classList.contains("search-match"), "matches are marked");
+  assert.equal(document.querySelectorAll(".search-match").length, 1);
+  assert.equal(document.querySelector("#work-search-count").textContent, "1/1");
   const region = document.querySelector("#filter-count");
   assert.equal(region.getAttribute("aria-live"), "polite", "the count lives in a polite region");
-  assert.equal(region.textContent, "1 Goal", "the region states the result count");
+  assert.equal(region.textContent, "Match 1 of 1", "the region states the match position");
 
-  // The repaint replaced the input, so the second keystroke goes to the new one.
-  const refreshed = document.querySelector("#work-search");
-  refreshed.value = "zzzznothing";
-  refreshed.dispatchEvent(new window.Event("input", { bubbles: true }));
+  search.value = "zzzznothing";
+  search.dispatchEvent(new window.Event("input", { bubbles: true }));
   await settle(window);
-  assert.equal(titles(document).length, 0);
-  assert.match(document.querySelector("#filter-count").textContent, /No work matches/, "an empty result says so");
+  assert.equal(document.querySelector("#work-search-count").textContent, "no match");
+  assert.equal(document.querySelectorAll(".search-match").length, 0);
+  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, origin, "no match shows the cursor at the origin");
+
+  search.value = "otto";
+  search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await settle(window);
+  const matches = [...document.querySelectorAll(".search-match")].map((row) => row.dataset.workCursor);
+  assert.ok(matches.length >= 3, "several rows say otto");
+  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, matches[0]);
+  press(window, "ArrowDown");
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, matches[1], "Arrow Down steps to the next match while typing");
+  assert.equal(document.activeElement, search, "stepping never steals the keyboard from the line");
+
+  press(window, "Enter");
+  await settle(window);
+  assert.equal(bar.hidden, false, "Enter keeps the line visible with the pattern");
+  assert.ok(bar.classList.contains("quiet"));
+  assert.match(document.querySelector("#work-search-keys").textContent, /n.*next.*N.*previous.*esc.*clear/, "the kept line prints n, N, and Escape");
+  assert.ok(document.activeElement.closest("[data-work-cursor]"), "Enter hands the keyboard to the matched row");
+  press(window, "n");
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, matches[2], "n moves to the next match");
+  for (let step = 3; step < matches.length; step += 1) { press(window, "n"); await settle(window); }
+  press(window, "n");
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, matches[0], "n wraps to the first match");
+  assert.match(document.querySelector("#work-search-count").textContent, /wrapped/);
+  press(window, "N", { shiftKey: true });
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, matches.at(-1), "N wraps back to the last match");
+
+  press(window, "Escape");
+  await settle(window);
+  assert.equal(bar.hidden, true, "Escape clears the kept search");
+  assert.equal(document.querySelectorAll(".search-match").length, 0);
+  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, matches.at(-1), "clearing keeps the cursor where n left it");
+
+  press(window, "/");
+  search.value = "walkthrough";
+  search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await settle(window);
+  press(window, "Escape");
+  await settle(window);
+  assert.equal(bar.hidden, true);
+  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, matches.at(-1), "Escape while typing returns to the origin row");
 });
 
-test("arrows, Home, End, and Enter move and open without leaving the table", async () => {
+test("arrows, Home, End, PageDown, and Ctrl-D are synonyms of j, k, gg, G, and half a page on the one cursor", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
-  const rows = titles(document);
-  assert.equal(rows.length, 7, "seven Goal rows");
-  rows[0].focus();
-  press(window, "ArrowDown");
-  assert.equal(document.activeElement, rows[1], "Arrow Down moves to the next Goal title");
-  press(window, "ArrowUp");
-  assert.equal(document.activeElement, rows[0]);
-  press(window, "ArrowUp");
-  assert.equal(document.activeElement, rows[0], "the first row holds at the top");
-  press(window, "End");
-  assert.equal(document.activeElement, rows.at(-1), "End reaches the last visible Goal title");
+  /** The visible cursor id. */
+  const cursor = () => document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor;
+  const all = [...document.querySelectorAll("[data-work-cursor]")].filter((row) => !row.hidden).map((row) => row.dataset.workCursor);
+  document.querySelector("[data-work-cursor-control]").focus();
   press(window, "Home");
-  assert.equal(document.activeElement, rows[0], "Home returns to the first");
+  await settle(window);
+  assert.equal(cursor(), all[0], "Home is gg");
   const moved = press(window, "ArrowDown");
-  assert.equal(moved.defaultPrevented, true, "row navigation owns the arrow key");
+  await settle(window);
+  assert.equal(moved.defaultPrevented, true, "the cursor owns the arrow key");
+  assert.equal(cursor(), all[1], "Arrow Down is j");
+  assert.equal(document.activeElement.closest("[data-work-cursor]")?.dataset.workCursor, all[1], "focus follows the cursor");
+  press(window, "ArrowUp");
+  await settle(window);
+  assert.equal(cursor(), all[0], "Arrow Up is k");
+  press(window, "ArrowUp");
+  await settle(window);
+  assert.equal(cursor(), all[0], "the first row holds at the top");
+  press(window, "End");
+  await settle(window);
+  assert.equal(cursor(), all.at(-1), "End is G");
+  press(window, "u", { ctrlKey: true });
+  await settle(window);
+  const afterHalfUp = all.indexOf(cursor());
+  assert.ok(afterHalfUp < all.length - 1, "Ctrl-U moves up");
+  press(window, "PageDown");
+  await settle(window);
+  assert.ok(all.indexOf(cursor()) > afterHalfUp, "PageDown moves down like Ctrl-D");
 
-  rows[0].click();
+  titles(document)[0].click();
   await settle(window);
   assert.ok(document.querySelector(".document-reader, .work-page"), "Enter or a click on the title opens the Goal, never an agent");
 });
@@ -326,10 +393,11 @@ test("vim keys move the persistent Work cursor through brains and Goals and stay
   press(window, "G");
   await settle(window);
   assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, goals.at(-1).dataset.workCursor);
-  const filter = document.querySelector("#work-search");
-  filter.focus();
+  press(window, "/");
   press(window, "j");
-  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, goals.at(-1).dataset.workCursor, "a bare key in the filter does not move the cursor");
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, goals.at(-1).dataset.workCursor, "a bare key in the search line does not move the cursor");
+  press(window, "Escape");
+  await settle(window);
 });
 
 test("Command-J opens and closes the one session layer without destroying Work", async () => {
@@ -367,10 +435,11 @@ test("Work keys expose their help and stay inert in text and terminal input", as
   const { window, document } = await bootWorkTable(workTableFixture());
   const initial = document.querySelector("[data-work-cursor].cursor").dataset.workCursor;
   press(window, "/");
-  assert.equal(document.activeElement.id, "work-search", "slash focuses the Work filter");
+  assert.equal(document.activeElement.id, "work-search-input", "slash opens the Work search line");
   for (const key of ["j", "k", "g", "G", "b", "?"]) press(window, key);
-  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, initial, "bare Work keys do nothing in the filter");
-  document.activeElement.blur();
+  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, initial, "bare Work keys do nothing in the search line");
+  press(window, "Escape");
+  await settle(window);
   press(window, "?");
   assert.equal(document.querySelector("#modal-title").textContent, "Move around Work");
   const helpRows = [...document.querySelectorAll("#modal-copy .key-sheet > div")];

@@ -242,7 +242,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   function selectGoal(file) {
     const goal = rememberGoal(file);
     state.view = "work";
-    state.query = "";
+    state.searchPattern = "";
     state.document = null;
     state.goalDetail = null;
     state.documentTrail = [];
@@ -286,15 +286,14 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     openSessionLayer(session, "agent", state.agentReturn ?? captureReturnPoint());
   }
 
-  /** Returns to the work list and optionally focuses search. */
-  function showWork({ focus = false } = {}) {
+  /** Returns to the work list. */
+  function showWork() {
     state.view = "work";
     state.document = null;
     state.goalDetail = null;
     state.documentTrail = [];
     state.documentTrailIndex = -1;
     paint(true);
-    if (focus) window.setTimeout(() => document.querySelector("#work-search")?.focus(), 0);
   }
 
   /** Opens the temporary area hierarchy. */

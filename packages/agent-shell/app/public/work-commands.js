@@ -8,6 +8,7 @@
 const records = [
   { id: "moveRows", keyDisplay: "j / k", ariaKeyshortcuts: "j k", scope: "work", kind: "navigation", label: "Move between rows", help: "Move to the next or previous Work row.", shortcuts: [{ key: "j" }, { key: "k" }] },
   { id: "firstLast", keyDisplay: "gg / G", ariaKeyshortcuts: null, scope: "work", kind: "navigation", label: "First or last row", help: "Move to the first or last Work row." },
+  { id: "halfPage", keyDisplay: "^D / ^U", ariaKeyshortcuts: "Control+D Control+U", scope: "work", kind: "navigation", label: "Half a page", help: "Move the cursor half a screen of rows down or up.", shortcuts: [{ key: "d", ctrlKey: true }, { key: "u", ctrlKey: true }] },
   { id: "previousArea", keyDisplay: "{", ariaKeyshortcuts: "Shift+[", scope: "area", kind: "navigation", palette: true, label: "Previous Area", help: "Jump to the previous Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "{", shiftKey: "any" }] },
   { id: "nextArea", keyDisplay: "}", ariaKeyshortcuts: "Shift+]", scope: "area", kind: "navigation", palette: true, label: "Next Area", help: "Jump to the next Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "}", shiftKey: "any" }] },
   { id: "open", keyDisplay: "↵", ariaKeyshortcuts: "Enter", scope: "work", kind: "action", label: "Open", help: "Open the live session or the Goal reader for this row.", shortcuts: [{ key: "Enter" }] },
@@ -20,13 +21,15 @@ const records = [
   { id: "collapse", keyDisplay: "h", ariaKeyshortcuts: "h", scope: "work", kind: "navigation", palette: true, label: "Collapse or move to parent", help: "Collapse this tree node. From a collapsed node or leaf, move to its parent.", shortcuts: [{ key: "h" }] },
   { id: "expand", keyDisplay: "l", ariaKeyshortcuts: "l", scope: "work", kind: "navigation", palette: true, label: "Expand or move to child", help: "Expand this tree node. From an expanded node, move to its first child.", shortcuts: [{ key: "l" }] },
   { id: "questions", keyDisplay: "r", ariaKeyshortcuts: "r", scope: "area", kind: "action", palette: true, label: "Review questions", help: "Review the open questions from this Area's brains.", shortcuts: [{ key: "r" }] },
-  { id: "note", keyDisplay: "n", ariaKeyshortcuts: "n", scope: "area", kind: "action", palette: true, label: "Capture note", help: "Save a Journal note and send it to this Area brain.", shortcuts: [{ key: "n" }] },
+  { id: "note", keyDisplay: "", ariaKeyshortcuts: null, scope: "area", kind: "action", palette: true, label: "Capture note", help: "Save a Journal note and send it to this Area brain." },
   { id: "readGoal", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "goal", kind: "action", palette: true, label: "Read Goal", help: "Read this Goal, its notes, dependencies, queue, and attempts.", shortcuts: [{ key: "o" }] },
   { id: "resumeAttempt", keyDisplay: "r", ariaKeyshortcuts: "r", scope: "goal", kind: "action", palette: true, label: "Resume agent", help: "Attach to this Goal's live agent. When it is gone, open a new session in its folder with the resume command typed, not submitted.", shortcuts: [{ key: "r" }] },
   { id: "changeAgent", keyDisplay: "c", ariaKeyshortcuts: "c", scope: "goal", kind: "surface", palette: true, label: "Change agent", help: "Ask this Area's brain to replace the agent on the current attempt.", shortcuts: [{ key: "c" }] },
   { id: "goalStatus", keyDisplay: "x", ariaKeyshortcuts: "x", scope: "goal", kind: "surface", palette: true, label: "Goal status", help: "Choose Done, Check it myself, Won't do, Park, or Reopen for this Goal.", shortcuts: [{ key: "x" }] },
   { id: "commands", keyDisplay: ":", ariaKeyshortcuts: ":", scope: "work", kind: "surface", label: "Commands", help: "Open the commands for the current Work object.", shortcuts: [{ key: ":", shiftKey: "any" }] },
-  { id: "filter", keyDisplay: "/", ariaKeyshortcuts: "/", scope: "work", kind: "action", palette: true, label: "Filter Work", help: "Focus the Work search field.", shortcuts: [{ key: "/" }] },
+  { id: "search", keyDisplay: "/", ariaKeyshortcuts: "/", scope: "work", kind: "search", palette: true, label: "Search rows", help: "Type part of a row. The cursor follows the first match. Enter keeps the pattern, Escape returns to where you were.", shortcuts: [{ key: "/" }] },
+  { id: "nextMatch", keyDisplay: "n", ariaKeyshortcuts: "n", scope: "work", kind: "search", label: "Next match", help: "Move to the next row that matches the search, wrapping at the end.", shortcuts: [{ key: "n" }] },
+  { id: "previousMatch", keyDisplay: "N", ariaKeyshortcuts: "Shift+N", scope: "work", kind: "search", label: "Previous match", help: "Move to the previous row that matches the search, wrapping at the top.", shortcuts: [{ key: "N", shiftKey: "any" }] },
   { id: "keys", keyDisplay: "?", ariaKeyshortcuts: "?", scope: "work", kind: "surface", palette: true, label: "Keys", help: "Show every Work shortcut as a separate row.", shortcuts: [{ key: "?", shiftKey: "any" }] },
 ];
 
@@ -61,6 +64,7 @@ const captionKeysByRow = Object.freeze({
     { ids: ["collapse", "expand"], word: "fold" },
     { ids: ["previousArea", "nextArea"], word: "areas", join: " " },
     { ids: ["questions"], word: "questions" },
+    { ids: ["search"], word: "search" },
     { ids: ["commands"], word: "more" },
     { ids: ["keys"], word: "all" },
   ],
@@ -81,6 +85,7 @@ const captionKeysByRow = Object.freeze({
   ],
   none: [
     { ids: ["moveRows"], word: "rows" },
+    { ids: ["search"], word: "search" },
     { ids: ["session"], word: "session" },
     { ids: ["keys"], word: "all" },
   ],
@@ -99,7 +104,7 @@ export function workRowKind(cursor = "") {
  */
 export function workCaptionKeys(kind = "none") {
   const entries = captionKeysByRow[workRowKind(`${kind}:`)] ?? captionKeysByRow.none;
-  return entries.map(({ ids, word, join = "/" }) => ({ ids: [...ids], keyDisplay: ids.map((id) => workCommand(id).keyDisplay).join(join), word, join }));
+  return entries.map(({ ids, word, join = "/" }) => ({ ids: [...ids], keyDisplay: ids.map((id) => workCommand(id).keyDisplay).filter(Boolean).join(join), word, join }));
 }
 
 /** Rows for the `?` sheet. Each row stays separate; consumers never parse prose. */
@@ -112,7 +117,8 @@ export function workCommandMatches(event, id) {
   const command = workCommand(id);
   if (!command || !event) return false;
   return command.shortcuts.some((shortcut) => {
-    if (String(event.key ?? "") !== shortcut.key) return false;
+    const key = String(event.key ?? "");
+    if (shortcut.ctrlKey ? key.toLowerCase() !== shortcut.key : key !== shortcut.key) return false;
     if (Boolean(event.metaKey) !== Boolean(shortcut.metaKey)) return false;
     if (Boolean(event.ctrlKey) !== Boolean(shortcut.ctrlKey)) return false;
     if (Boolean(event.altKey) !== Boolean(shortcut.altKey)) return false;

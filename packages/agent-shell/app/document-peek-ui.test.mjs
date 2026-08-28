@@ -265,23 +265,27 @@ test("the finder above a session keeps that session, and the quick layer returns
   await settle(window);
   assert.equal(window.document.querySelector("#session-layer").hidden, true, "Command-J closed the session once the finder was gone");
 
-  // Case 3: over a filtered Work desk, nothing about that desk changes.
-  window.document.querySelector("#work-search").value = "ship";
-  window.document.querySelector("#work-search").dispatchEvent(new window.Event("input", { bubbles: true }));
+  // Case 3: over a Work desk with a kept search, nothing about that desk changes.
+  key(window, { key: "/" });
+  const searchInput = window.document.querySelector("#work-search-input");
+  searchInput.value = "ship";
+  searchInput.dispatchEvent(new window.Event("input", { bubbles: true }));
   await settle(window);
-  const search = window.document.querySelector("#work-search");
+  searchInput.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await settle(window);
+  const search = window.document.activeElement;
+  assert.ok(search.closest("[data-work-cursor]"), "Enter hands the keyboard to the matched row");
   const page = window.document.querySelector(".work-page");
   const screen = window.document.querySelector("#screen");
   screen.scrollTop = 73;
-  search.focus();
   await peekDocumentViaGoTo(window, design.title);
   assert.equal(window.document.querySelector(".work-page"), page, "the Work desk was never rebuilt");
-  assert.equal(window.document.querySelector("#work-search").value, "ship");
+  assert.equal(window.document.querySelector("#work-search-input").value, "ship");
   assert.equal(screen.scrollTop, 73, "the Work scroll did not move while the layer was open");
   key(window, { key: "Escape" });
   await settle(window);
   assert.equal(window.document.querySelector(".work-page"), page, "closing the layer rebuilt nothing");
-  assert.equal(window.document.querySelector("#work-search").value, "ship");
+  assert.equal(window.document.querySelector("#work-search-input").value, "ship", "the kept search survives the layer");
   assert.equal(screen.scrollTop, 73, "Escape restored the exact Work scroll");
   assert.equal(window.document.activeElement, search, "focus returned to the control the finder opened from");
 });

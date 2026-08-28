@@ -27,7 +27,7 @@ export async function settle(window, turns = 3) {
  * Renders the Work screen for one fixture and returns its window. `posts`
  * collects every mutation the page sends, so an action proof needs no server.
  */
-export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [], launchOptions = null, harnessRegistry = null, goalDetail = null, documentRecord = null, postHandler = null } = {}) {
+export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [], areaFocusOnly = false, launchOptions = null, harnessRegistry = null, goalDetail = null, documentRecord = null, postHandler = null } = {}) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -35,7 +35,7 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
   window.structuredClone = globalThis.structuredClone;
   window.HTMLCanvasElement.prototype.getContext = () => null;
   window.localStorage.setItem("agent-shell.work-filter", workFilter);
-  if (areaFocus.length) window.localStorage.setItem(AREA_FOCUS_KEY, JSON.stringify({ schema: AREA_FOCUS_SCHEMA, areas: areaFocus }));
+  if (areaFocus.length) window.localStorage.setItem(AREA_FOCUS_KEY, JSON.stringify({ schema: AREA_FOCUS_SCHEMA, areas: areaFocus, ...(areaFocusOnly ? { only: true } : {}) }));
   Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
   const posts = [];
   const gets = [];

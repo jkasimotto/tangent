@@ -1366,11 +1366,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (captureArea) return openAreaCapture(captureArea.dataset.captureArea || commandAreaForRow(cursor ?? cursorRow()));
     const starArea = target.closest?.("[data-star-area]");
     if (starArea) return toggleAreaStar(starArea.dataset.starArea);
-    const starredOnly = target.closest?.("[data-starred-only]");
-    if (starredOnly) return (starredOnly.dataset.starredOnly === "1") === Boolean(state.areaFocusOnly) ? undefined : toggleStarredOnly();
-    if (target.closest?.("[data-open-area-focus], [data-change-area-focus]")) return openAreaFocusPicker();
+    if (target.closest?.("[data-starred-only]")) return toggleStarredOnly();
     if (target.closest?.("[data-cancel-area-focus]")) return cancelAreaFocusPicker();
-    if (target.closest?.("[data-clear-area-focus]")) return clearAreaFocus();
     const stopBrain = target.closest("[data-stop-brain-area]");
     if (stopBrain) return confirmStopBrain(stopBrain.dataset.stopBrainArea, stopBrain.dataset.stopBrainAttempt);
     const areaBrain = target.closest("[data-open-area-brain]");

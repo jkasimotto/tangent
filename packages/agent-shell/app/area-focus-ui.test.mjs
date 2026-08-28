@@ -134,6 +134,10 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   betaChoice.dispatchEvent(new window.Event("change", { bubbles: true }));
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"], [data-work-sub-area="otto/beta"]'), "staged changes do not rebuild or scope Work");
   submit(window, "[data-area-focus-form]");
+  assert.ok(window.document.querySelector('[data-desk-area="otto"] [data-work-sub-area="otto/alpha"]'), "stars alone change nothing in the view");
+  assert.equal(window.document.querySelectorAll(".work-star.starred").length, 2, "the starred rows print their stars");
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "F", shiftKey: true, bubbles: true, cancelable: true }));
+  await settle(window);
 
   assert.ok(window.document.querySelector('[data-desk-area="otto/alpha"], [data-work-sub-area="otto/alpha"]'));
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"], [data-work-sub-area="otto/beta"]'), "independent selected roots remain visible together");
@@ -141,10 +145,10 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   assert.equal(new Set(panelPaths).size, panelPaths.length, "multiple roots do not duplicate Area panels");
   assert.equal(window.document.querySelectorAll(".desk-program").length, 0, "Operations stay off the Work table");
   assert.deepEqual(JSON.parse(window.localStorage.getItem("agent-shell.area-focus.v1")), {
-    schema: "agent-shell.area-focus.v1", areas: ["otto/alpha", "otto/beta"],
+    schema: "agent-shell.area-focus.v1", areas: ["otto/alpha", "otto/beta"], only: true,
   });
 
-  click(window, "[data-change-area-focus]");
+  openAreaFocus(window);
   const cancelSearch = window.document.querySelector("#area-focus-search");
   cancelSearch.value = "beta";
   cancelSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -154,7 +158,7 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   click(window, "[data-cancel-area-focus]");
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"], [data-work-sub-area="otto/beta"]'), "Cancel keeps the applied multi-Area scope");
 
-  click(window, "[data-change-area-focus]");
+  openAreaFocus(window);
   const changeSearch = window.document.querySelector("#area-focus-search");
   changeSearch.value = "beta";
   changeSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -163,22 +167,9 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   changeBeta.dispatchEvent(new window.Event("change", { bubbles: true }));
   submit(window, "[data-area-focus-form]");
 
-  assert.equal(window.document.querySelector('[data-desk-area="otto/beta"], [data-work-sub-area="otto/beta"]'), null);
-  // Focus orders attention; it removes nothing. Beta leaves the focused panels
-  // and arrives in the one folded Other Areas group, so Julian can see that
-  // work exists outside his Focus without clearing it.
-  const others = window.document.querySelector('[data-work-group="__other-areas"]');
-  assert.ok(others, "Areas outside Focus fold into one group instead of disappearing");
-  assert.ok(others.classList.contains("folded"), "the group opens folded");
-  assert.match(others.textContent, /Other Areas/);
-  assert.match(others.textContent, /1 open/, "the folded header stays truthful about what it holds");
-  assert.equal(others.querySelector(`[data-open-goal-run="${beta.file}"]`), null, "a folded group draws no rows");
-  assert.equal(others.querySelector("[data-open-area-brain]"), null, "the group spans many Areas, so it offers no brain");
-  click(window, '[data-work-group="__other-areas"] [data-work-tree-action="expand"]');
-  const expanded = window.document.querySelector('[data-work-group="__other-areas"]');
-  assert.ok(expanded.querySelector(`[data-open-goal-run="${beta.file}"]`), "expanding the group reveals the work outside Focus");
-  click(window, '[data-work-group="__other-areas"] [data-work-tree-action="collapse"]');
-  assert.match(window.document.querySelector(".area-focus-summary").textContent, /Starred:\s*Alpha/);
+  assert.equal(window.document.querySelector('[data-desk-area="otto/beta"], [data-work-sub-area="otto/beta"]'), null, "only starred: Beta leaves the desk");
+  assert.equal(window.document.querySelector('[data-work-group="__other-areas"]'), null, "no Other Areas group exists any more");
+  assert.equal(window.document.querySelector("[data-starred-only]").getAttribute("aria-pressed"), "true");
   assert.deepEqual(
     [...window.document.querySelectorAll(".desk-state[data-review-questions]")].map((button) => button.dataset.reviewQuestions),
     ["otto/alpha"],
@@ -186,7 +177,7 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   );
   assert.equal(window.document.querySelector("#work-tab").textContent, "Work");
   assert.deepEqual(JSON.parse(window.localStorage.getItem("agent-shell.area-focus.v1")), {
-    schema: "agent-shell.area-focus.v1", areas: ["otto/alpha"],
+    schema: "agent-shell.area-focus.v1", areas: ["otto/alpha"], only: true,
   });
 
   window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true }));
@@ -200,20 +191,20 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, alpha.session);
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true, bubbles: true }));
   await settle(window);
-  assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
+  assert.equal(window.document.querySelector("[data-starred-only]").getAttribute("aria-pressed"), "true");
   assert.equal(window.document.querySelector("#work-search-input").value, "alpha");
   assert.equal(window.document.querySelector("#screen").scrollTop, 137, "Command-J restores the Work scroll position");
 
   await openDocumentViaGoTo(window, alphaDocument.title);
   assert.ok(window.document.querySelector(".document-reader"));
   click(window, "#back-button");
-  assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
+  assert.equal(window.document.querySelector("[data-starred-only]").getAttribute("aria-pressed"), "true");
   assert.equal(window.document.querySelector("#work-search-input").value, "alpha", "Document Back restores the kept Work search");
 
   click(window, `[data-open-goal-run="${alpha.file}"]`);
   click(window, "#back-button");
   await settle(window);
-  assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
+  assert.equal(window.document.querySelector("[data-starred-only]").getAttribute("aria-pressed"), "true");
   assert.equal(window.document.querySelector("#work-search-input").value, "alpha", "worker Back restores focused Work");
 
   assert.ok(window.document.querySelector('[data-desk-area="otto/alpha"], [data-work-sub-area="otto/alpha"]'));
@@ -223,15 +214,19 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   click(window, '[data-desk-area="otto/alpha"] [data-open-brain]');
   assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "Alpha-brain");
   click(window, "#session-layer");
-  assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
+  assert.equal(window.document.querySelector("[data-starred-only]").getAttribute("aria-pressed"), "true");
   assert.equal(window.document.querySelector("#work-search-input").value, "alpha");
   assert.equal(window.document.querySelector("[data-work-filter]"), null);
 
   window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
   await settle(window);
   assert.equal(window.document.querySelector("#work-search").hidden, true, "Escape clears the kept search");
-  click(window, "[data-clear-area-focus]");
-  assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null);
+  window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await settle(window);
+  assert.equal(window.document.querySelector("[data-starred-only]").getAttribute("aria-pressed"), "false", "Escape shows every Area again");
+  window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await settle(window);
+  assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null, "Escape again clears the stars");
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"], [data-work-sub-area="otto/beta"]'), "Clear restores complete Work");
 
   openAreaFocus(window);
@@ -244,7 +239,11 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   submit(window, "[data-area-focus-form]");
   assert.equal(window.document.querySelectorAll('[data-program-area="otto/delta"] .desk-program').length, 0, "an Operation does not enter Work");
   assert.ok(window.document.querySelector('[data-desk-area="otto/delta"], [data-work-sub-area="otto/delta"]'), "the selected Area keeps its calm header");
-  click(window, "[data-clear-area-focus]");
+  for (let guard = 0; guard < 3 && window.localStorage.getItem("agent-shell.area-focus.v1"); guard += 1) {
+    window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle(window);
+  }
+  assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null, "Escape unwinds starred-only, then the stars");
 
   openAreaFocus(window);
   const pickerSearch = window.document.querySelector("#area-focus-search");
@@ -254,6 +253,8 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   gammaChoice.checked = true;
   gammaChoice.dispatchEvent(new window.Event("change", { bubbles: true }));
   submit(window, "[data-area-focus-form]");
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "F", shiftKey: true, bubbles: true, cancelable: true }));
+  await settle(window);
   assert.ok(window.document.querySelector('[data-desk-area="otto/gamma"], [data-work-sub-area="otto/gamma"]'), "a focused Area remains visible without matching work");
   assert.match(window.document.querySelector('[data-desk-area="otto/gamma"] .area-focus-empty').textContent, /No work matches/);
 
@@ -264,7 +265,7 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   await window.refresh();
   await settle(window);
   assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null, "the stale final root clears on refresh");
-  assert.equal(window.document.querySelector(".area-focus-summary"), null);
+  assert.equal(window.document.querySelector("[data-starred-only]").getAttribute("aria-pressed"), "false", "no stars, so starred-only is off");
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"], [data-work-sub-area="otto/beta"]'), "stale Focus recovery restores complete Work");
 
   openAreaFocus(window);
@@ -284,6 +285,6 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true, bubbles: true }));
   await settle(window);
   assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null, "return cannot restore a Focus root removed while the worker was open");
-  assert.equal(window.document.querySelector(".area-focus-summary"), null, "stale return context restores complete Work");
+  assert.equal(window.document.querySelector("[data-starred-only]").getAttribute("aria-pressed"), "false", "stale return context restores complete Work");
   dom.window.close();
 });

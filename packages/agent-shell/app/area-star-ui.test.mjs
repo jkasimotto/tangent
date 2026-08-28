@@ -19,7 +19,7 @@ async function clickRow(window, document, cursor) {
 
 test("f stars the Area under the cursor, from an Area row or a Goal row, and the row shows it", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
-  assert.equal(document.querySelector(".area-focus-summary"), null, "no bar without stars");
+  const before = [...document.querySelectorAll("[data-work-cursor]")].map((row) => row.dataset.workCursor);
   await clickRow(window, document, "goal:otto/standards/goal-framework-docs.md");
   press(window, "f");
   await settle(window);
@@ -29,16 +29,14 @@ test("f stars the Area under the cursor, from an Area row or a Goal row, and the
   assert.equal(star.getAttribute("aria-pressed"), "true");
   assert.equal(star.textContent, "★");
   assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, "goal:otto/standards/goal-framework-docs.md", "the cursor stays on its row");
-  assert.match(document.querySelector(".area-focus-summary").textContent, /Starred:\s*Standards/);
-  assert.ok(document.querySelector("[data-work-group='__other-areas']"), "the unstarred Areas fold into Other Areas");
-  assert.ok(!document.querySelector("[data-work-group='otto/standards']").classList.contains("folded"), "starring never folds a group");
+  assert.deepEqual([...document.querySelectorAll("[data-work-cursor]")].map((row) => row.dataset.workCursor), before, "a star changes nothing in the view until F");
+  assert.equal(document.querySelector("[data-starred-only]").getAttribute("aria-pressed"), "false");
+  assert.match(document.querySelector("[data-starred-only]").textContent, /Starred\s*1/);
 
-  document.querySelector("[data-work-group='__other-areas'] [data-work-tree-action='expand']").click();
-  await settle(window);
   await clickRow(window, document, "goal:otto/tangent/goal-compact-table.md");
   press(window, "f");
   await settle(window);
-  assert.deepEqual(storedFocus(window).areas, ["otto/standards", "otto/tangent"], "a Goal inside Other Areas stars its Area too");
+  assert.deepEqual(storedFocus(window).areas, ["otto/standards", "otto/tangent"]);
   assert.equal(document.querySelectorAll(".work-star.starred").length, 2);
   await clickRow(window, document, "area:otto/tangent");
   for (const button of document.querySelectorAll(".work-star")) assert.equal(button.dataset.workCommand, "starArea", "the pointer teaches the key");
@@ -49,7 +47,6 @@ test("f stars the Area under the cursor, from an Area row or a Goal row, and the
   document.querySelector("[data-work-cursor='area:otto/standards'] .work-star").click();
   await settle(window);
   assert.equal(storedFocus(window), null, "the star button is the pointer way, and the last unstar removes the record");
-  assert.equal(document.querySelector(".area-focus-summary"), null);
 });
 
 test("F shows only the starred Areas and Escape unwinds it before the stars", async () => {
@@ -57,8 +54,9 @@ test("F shows only the starred Areas and Escape unwinds it before the stars", as
   document.querySelector("[data-work-cursor-control]").focus();
   press(window, "F", { shiftKey: true });
   await settle(window);
-  assert.equal(document.querySelector("[data-work-group='__other-areas']"), null, "only starred: Other Areas is gone");
-  assert.equal(document.querySelector("[data-starred-only='1']").getAttribute("aria-pressed"), "true");
+  assert.equal(document.querySelector("[data-work-group='otto/standards']"), null, "only starred: the unstarred Areas are gone");
+  assert.ok(document.querySelector("[data-work-group='otto/tangent']"));
+  assert.equal(document.querySelector("[data-starred-only]").getAttribute("aria-pressed"), "true");
   assert.deepEqual(storedFocus(window), { schema: "agent-shell.area-focus.v1", areas: ["otto/tangent"], only: true });
 
   await clickRow(window, document, "area:otto/tangent");
@@ -71,12 +69,12 @@ test("F shows only the starred Areas and Escape unwinds it before the stars", as
   assert.match(document.querySelector("#toast").textContent, /Star an Area first/);
   document.querySelector("[data-work-cursor='area:otto/onboarding'] .work-star").click();
   await settle(window);
-  document.querySelector("[data-starred-only='1']").click();
+  document.querySelector("[data-starred-only]").click();
   await settle(window);
-  assert.equal(document.querySelector("[data-work-group='__other-areas']"), null, "the switch is the pointer way");
-  document.querySelector("[data-starred-only='0']").click();
+  assert.equal(document.querySelector("[data-work-group='otto/tangent']"), null, "the toolbar switch is the pointer way");
+  document.querySelector("[data-starred-only]").click();
   await settle(window);
-  assert.ok(document.querySelector("[data-work-group='__other-areas']"), "All brings the other Areas back");
+  assert.ok(document.querySelector("[data-work-group='otto/tangent']"), "the switch again brings every Area back");
 });
 
 test("f on an Area inside a starred ancestor refuses and names the ancestor", async () => {

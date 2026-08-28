@@ -245,7 +245,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function cancelAreaFocusPicker() {
     state.areaFocusPicker = null;
     paint(true);
-    window.setTimeout(() => document.querySelector(areaFocusRoots().length ? "[data-change-area-focus]" : "[data-open-area-focus]")?.focus(), 0);
+    focusWorkCursor();
   }
 
   /** Adds or removes one staged Area root without changing the Work projection. */
@@ -294,11 +294,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     state.areaFocusPicker = null;
     persistAreaFocus();
     paint(true);
-    window.setTimeout(() => {
-      const summary = state.areaFocus.length ? document.querySelector("[data-change-area-focus]") : null;
-      const row = document.querySelector("[data-work-cursor].cursor [data-work-row-title], [data-work-cursor].cursor [data-work-cursor-control]");
-      (summary ?? row ?? document.querySelector("#work-tab"))?.focus();
-    }, 0);
+    focusWorkCursor();
   }
 
   /** Clears the local scope and restores the complete Work projection. */
@@ -334,18 +330,20 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     </form>`;
   }
 
-  /** Renders the applied Focus summary or the control that opens the picker. */
-  function areaFocusControl() {
+  /**
+   * The one switch between every Area and the starred ones, in the Work
+   * toolbar. Stars alone never change the desk, so the switch is the only
+   * place the view changes, and it is always in the same spot.
+   */
+  function starredOnlyButton() {
     const roots = areaFocusRoots();
-    const labels = areaFocusLabels(roots);
-    const short = labels.length > 2 ? `${labels.slice(0, 2).join(" + ")} +${labels.length - 2}` : labels.join(" + ");
-    const accessible = roots.map((path, index) => `${labels[index]}, ${path}`).join("; ");
     const only = Boolean(state.areaFocusOnly);
-    const control = roots.length
-      ? `<div class="area-focus-summary" aria-label="Area Focus: ${escapeHtml(accessible)}${only ? ", only starred Areas" : ""}"><span><b>★ Starred:</b> ${escapeHtml(short)}</span><span class="area-focus-switch" role="group" aria-label="Which Areas Work shows"><button type="button" data-starred-only="0" aria-pressed="${!only}" ${workCommandAttributes("starredOnly", "Show every Area, the starred ones first (F)")}>All</button><button type="button" data-starred-only="1" aria-pressed="${only}" ${workCommandAttributes("starredOnly")}>Starred${workKey("starredOnly")}</button></span><button type="button" data-change-area-focus ${workCommandAttributes("chooseAreas")}>Change</button><button type="button" data-clear-area-focus>Clear</button></div>`
-      : `<button class="area-focus-open" type="button" data-open-area-focus ${workCommandAttributes("chooseAreas")}>${workCommandContent("chooseAreas")}</button>`;
+    const labels = areaFocusLabels(roots);
+    const title = roots.length
+      ? `${only ? "Show every Area" : "Show only the starred Areas"}: ${labels.join(", ")} (F)`
+      : "Star an Area with f, then F shows only the starred Areas";
     const storageNote = state.areaFocusStorageError ? `<p class="area-focus-storage-note">Area Focus persistence is unavailable in this browser.</p>` : "";
-    return `<div class="area-focus-control">${control}${storageNote}${areaFocusPickerMarkup()}</div>`;
+    return `<span class="area-focus-control"><button class="quiet-button area-focus-switch${only ? " on" : ""}" type="button" data-starred-only aria-pressed="${only}" ${workCommandAttributes("starredOnly", title)}>${only ? "★" : "☆"} Starred${roots.length ? ` <span class="area-focus-count">${roots.length}</span>` : ""}${workKey("starredOnly")}</button>${storageNote}${areaFocusPickerMarkup()}</span>`;
   }
 
   /** Expands the ancestors of one area so the selected row stays visible. */
@@ -988,7 +986,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * Panels keep hierarchy order. Runtime activity never moves a subject.
    */
   function deskAreas(scope = null) {
-    const roots = areaFocusRoots();
+    // Stars alone never change the desk (Julian, 2026-08-28: "I don't want my
+    // view to change unless I press F"). Only starred-only scopes it.
+    const roots = state.areaFocusOnly ? areaFocusRoots() : [];
     /** True when one projected record stays inside the applied scope. */
     const inFocus = scope ?? ((path) => isInAreaFocus(path, roots));
     const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"))
@@ -1058,23 +1058,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return core.orderPanels(panels, panelActivity).map((record, index) => ({ ...record, index }));
   }
 
-  /**
-   * The Areas outside Area Focus, as panels for the one folded `Other Areas`
-   * group.
-   *
-   * Focus orders attention; it does not delete a subject. Work used to drop
-   * every nonfocused Area, so Julian's own Focus made the rest of his work
-   * invisible and he had to clear the Focus to check whether anything moved.
-   * The accepted order is the primary focused Area expanded, the other
-   * focused Areas folded, and one folded `Other Areas` group after them
-   * (design-record-tangent-around-the-area-brain, "Area Focus controls
-   * importance").
-   */
-  function otherDeskAreas() {
-    const roots = areaFocusRoots();
-    if (!roots.length || state.areaFocusOnly) return [];
-    return deskAreas((path) => !isInAreaFocus(path, roots));
-  }
 
   /**
    * Whether the work on one Goal is over: its pipeline ran every step, or it
@@ -1826,9 +1809,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // A star never changes which groups are open (area-star-focus Decision 5):
     // with stars added one at a time, "only the first root opens" folded the
     // Area Julian had just starred whenever it sorted after another root.
-    // Only the synthetic Other Areas group still opens folded by design
-    // (work-view-sub-areas), until Julian unfolds it.
-    if (path === OTHER_AREAS_KEY) return state.foldedWorkAreas.has(path) || !state.expandedAreas.has(path);
     return state.foldedWorkAreas.has(path);
   }
 
@@ -1991,49 +1971,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     setSubgoalsExpanded(file, state.collapsedGoalTrees.has(file));
   }
 
-  // The fold key of the one group that holds every Area outside Area Focus.
-  // No Area path can collide with it: a path has no leading underscores.
-  const OTHER_AREAS_KEY = "__other-areas";
-
-  /**
-   * The one folded `Other Areas` group: every Area outside Area Focus, as one
-   * row group after the focused ones.
-   *
-   * Folded it states its own totals, so Julian can see that work exists
-   * outside his Focus without leaving it. Expanded it lists those Goals with
-   * their Area beside them. It has no brain button: the group is a view over
-   * many Areas, and a brain belongs to exactly one.
-   */
-  function otherAreasGroupBody(records, facts, maxElapsedMs) {
-    if (!records.length) return "";
-    const parts = records.flatMap((record) => [
-      { area: record.area, trees: record.trees, descriptions: record.descriptions },
-      ...record.sections,
-    ]);
-    const allTrees = parts.flatMap((part) => part.trees);
-    const allDescriptions = parts.flatMap((part) => part.descriptions);
-    const goals = allTrees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status));
-    const moving = [...goals.map(sessionForGoal).filter(Boolean), ...allDescriptions].filter((session) => session.state === "working").length;
-    const areaCount = new Set(parts.map((part) => part.area.path)).size;
-    const summary = [`${areaCount} ${areaCount === 1 ? "Area" : "Areas"}`, `${goals.length} open`, ...(moving ? [`${moving} moving`] : [])].join(" · ");
-    const folded = areaIsFoldedOnWork(OTHER_AREAS_KEY);
-    const labels = new Map(parts.map((part) => [part.area.path, areaLabel(part.area.path)]));
-    const body = folded ? "" : parts.flatMap((part) => [
-      ...part.descriptions.map((session) => workDefinitionRow(session)),
-      ...orderedGoalTrees(part.trees).map((tree) => workTreeRows(tree, OTHER_AREAS_KEY, labels, facts, maxElapsedMs)),
-    ]).join("");
-    const cursor = `area:${OTHER_AREAS_KEY}`;
-    return `<tbody class="work-group other-areas${folded ? " folded" : ""}" data-work-group="${OTHER_AREAS_KEY}" aria-labelledby="${workGroupId(OTHER_AREAS_KEY)}">
-      <tr class="work-group-row${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${OTHER_AREAS_KEY}">
-        <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="rowgroup" id="${workGroupId(OTHER_AREAS_KEY)}">
-          <span class="work-group-name">${workFoldTriangle({ open: !folded, area: OTHER_AREAS_KEY, name: "the Areas outside Focus" })}<span class="work-group-other">Other Areas</span></span>
-          <span class="work-group-count">${escapeHtml(summary)}</span>
-          <span class="desk-state quiet">Outside Focus</span>
-        </th>
-      </tr>${body}
-    </tbody>`;
-  }
-
   /**
    * The caption's key line follows the cursor row (work-view-affordances D6):
    * an Area row prints `b brain · h/l fold · : more`, a Goal row `↵ open · o
@@ -2056,16 +1993,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** The complete work table: one caption, one header, one row group per Area. */
-  function workTable(records, maxElapsedMs, others = []) {
+  function workTable(records, maxElapsedMs) {
     const facts = readinessFacts();
     // Every top-level Area keeps its header, with `0 open` when nothing is
     // under it, so its brain and its sub-Areas stay reachable (work-view-
-    // sub-areas, every Area has a row). Only the folded `Other Areas` group
-    // drops the Areas that add no row to it.
+    // sub-areas, every Area has a row).
     const shown = records;
-    const outside = others.filter(workGroupHasRows);
-    const bodies = shown.map((record) => workGroupBody(record, facts, maxElapsedMs)).join("")
-      + otherAreasGroupBody(outside, facts, maxElapsedMs);
+    const bodies = shown.map((record) => workGroupBody(record, facts, maxElapsedMs)).join("");
     const rowCount = shown.reduce((count, record) => count + [record, ...record.sections]
       .reduce((inner, part) => inner + part.trees.reduce((goals, tree) => goals + tree.goals.filter((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status)).length, 0), 0), 0);
     // The column group carries the widths. A narrow layout hides three cells,
@@ -2082,24 +2016,21 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** Renders the complete Work screen: the direct-ask table, then the work table. */
   function renderWork() {
     const records = deskAreas();
-    // Focus orders the desk; it never removes a subject. Everything outside it
-    // stays reachable in one folded group after the focused Areas.
-    const others = otherDeskAreas();
     // Every bar on this paint is scaled to the longest-elapsed Goal it draws
     // (deskGoalBar, design-compact-work-desk Decision 2).
-    const maxElapsedMs = deskMaxElapsedMs([...records, ...others], Date.now());
+    const maxElapsedMs = deskMaxElapsedMs(records, Date.now());
     const roots = areaFocusRoots();
     const focusNames = areaFocusLabels(roots).join(" + ");
-    const emptyCopy = `${roots.length ? `${state.areaFocusOnly ? "Starred Areas" : "Area Focus"} (${escapeHtml(focusNames)}): ` : ""}No open work.`;
-    const content = `${records.length || others.length
-      ? workTable(records, maxElapsedMs, others)
+    const emptyCopy = `${state.areaFocusOnly ? `Starred Areas (${escapeHtml(focusNames)}): ` : ""}No open work.`;
+    const content = `${records.length
+      ? workTable(records, maxElapsedMs)
       : `<div class="empty-state">${emptyCopy}</div>`}${workProcessSections(records)}`;
 
     return `
       <section class="work-page">
-        ${roots.length || state.areaFocusPicker ? areaFocusControl() : ""}
         <div class="work-tools">
           <div class="work-tool-actions">
+            ${starredOnlyButton()}
             <button class="quiet-button" type="button" data-work-search ${workCommandAttributes("search")}>${workCommandContent("search")}</button>
             <button class="quiet-button" type="button" data-work-commands ${workCommandAttributes("commands")}>${workCommandContent("commands")}</button>
             <button class="quiet-button" type="button" data-work-keys ${workCommandAttributes("keys")}>${workCommandContent("keys")}</button>
@@ -2111,5 +2042,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea, otherDeskAreas, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, renderWork, paintWorkCaption };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, renderWork, paintWorkCaption };
 }

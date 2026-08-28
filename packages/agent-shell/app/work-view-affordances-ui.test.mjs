@@ -30,7 +30,7 @@ function captionKeys(document) {
   return [...hint.querySelectorAll("kbd")].map((kbd) => kbd.textContent);
 }
 
-test("one rotating triangle folds Areas, Other Areas, and Goals with Subgoals; the pill is gone", async () => {
+test("one rotating triangle folds Areas and Goals with Subgoals; the pill is gone", async () => {
   const { fixture, parent, child } = withSubgoal(workTableFixture());
   const { window, document } = await bootWorkTable(fixture);
   assert.equal(document.querySelector(".work-tree-toggle, .work-subgoal-toggle"), null, "no `+`/`−` pill remains");

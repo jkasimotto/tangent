@@ -315,14 +315,9 @@ summary:focus-visible {
 .work-intro-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .work-intro-button { flex: none; margin-bottom: 5px; }
 
-.area-focus-control { position: relative; width: fit-content; max-width: 100%; margin: 0 0 12px; }
-.area-focus-open { min-height: 38px; padding: 0 14px; border: 1px solid #526171; border-radius: 3px; background: #151b22; color: #dce8f5; cursor: pointer; font-size: 12px; font-weight: 700; }
-.area-focus-open:hover, .area-focus-open:focus-visible { outline: 0; border-color: var(--blue); background: #192330; }
-.area-focus-summary { display: flex; align-items: center; gap: 10px; min-height: 42px; max-width: min(760px, calc(100vw - 64px)); padding: 7px 9px 7px 13px; border: 1px solid #4d6580; border-left: 4px solid var(--blue); border-radius: 3px; background: #131b25; color: #dce8f5; font-size: 12px; }
-.area-focus-summary > span { min-width: 0; overflow: hidden; margin-right: 8px; text-overflow: ellipsis; white-space: nowrap; }
-.area-focus-summary b { color: var(--blue); }
-.area-focus-summary button { padding: 5px 8px; border: 1px solid #43566d; border-radius: 3px; background: transparent; color: #b8c9dc; cursor: pointer; font-size: 11px; font-weight: 690; }
-.area-focus-summary button:hover, .area-focus-summary button:focus-visible { outline: 0; border-color: var(--blue); color: #fff; }
+.area-focus-control { position: relative; display: inline-flex; }
+.area-focus-switch.on { border-color: var(--blue); color: #fff; }
+.area-focus-switch .area-focus-count { color: var(--blue); font-weight: 760; }
 .area-focus-picker { position: absolute; z-index: 90; top: calc(100% + 7px); left: 0; display: grid; width: min(520px, calc(100vw - 64px)); padding: 15px; border: 1px solid #526171; border-radius: 5px; background: #171b20; box-shadow: 0 20px 48px rgba(0, 0, 0, .55); }
 .area-focus-picker > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .area-focus-picker > header .kicker { margin: 0 0 2px; color: var(--blue); }
@@ -545,18 +540,11 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-star.starred { color: var(--blue); opacity: 1; }
 .work-group-row:hover .work-star, .work-group-row.cursor .work-star, .work-star:focus-visible { opacity: 1; }
 .work-star:hover, .work-star:focus-visible { outline: 0; color: #fff; background: #242a31; }
-.area-focus-switch { display: inline-flex; flex: none; border: 1px solid #43566d; border-radius: 3px; overflow: hidden; }
-.area-focus-summary .area-focus-switch button { border: 0; border-radius: 0; }
-.area-focus-summary .area-focus-switch button + button { border-left: 1px solid #43566d; }
-.area-focus-summary .area-focus-switch button[aria-pressed="true"] { background: #1f2f44; color: #fff; }
-.area-focus-summary .area-focus-switch button kbd { margin-left: 5px; font-size: 10px; opacity: .8; }
 .work-fold, .work-fold-space { display: inline-grid; flex: none; width: 16px; height: 18px; place-items: center; }
 .work-fold { padding: 0; border: 0; border-radius: 2px; background: transparent; color: #8b949f; cursor: pointer; font-size: 14px; line-height: 1; }
 .work-group-head .desk-state kbd { color: inherit; opacity: .7; }
 .work-fold:hover, .work-fold:focus-visible { color: #fff; background: #242a31; }
 /* The one group of Areas outside Area Focus: present, quiet, never a link. */
-.work-group-name .work-group-other { color: #9aa3ad; font-size: 13px; font-weight: 720; letter-spacing: -.01em; }
-.work-group.other-areas .work-group-head { opacity: .82; }
 .work-group-count { margin-left: 10px; color: #7c8590; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* A sub-Area header: one thin indented row inside an open Area group, named
    by its path below the parent. Same triangle, count, brain button, and menu
@@ -1594,7 +1582,6 @@ body.work-search-open .screen { padding-bottom: 48px; }
 
 @media (max-width: 900px) {
   .area-focus-control { width: 100%; }
-  .area-focus-open, .area-focus-summary { width: 100%; }
   .area-focus-picker { width: 100%; }
   .work-tools { grid-template-columns: 1fr; }
   .work-tool-actions .quiet-button { flex: 1; }

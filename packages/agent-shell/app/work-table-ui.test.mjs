@@ -198,36 +198,6 @@ test("Shift-brackets and their pointer actions jump between real Area headers", 
   assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, tangent, "the final Area holds at the boundary");
 });
 
-test("Area jumps skip the synthetic Other Areas group", async () => {
-  const { window, document } = await bootWorkTable(workTableFixture(), { areaFocus: ["otto/onboarding"] });
-  document.querySelector("[data-work-group='__other-areas'] [data-work-tree-action='expand']").click();
-  await settle(window);
-  const outsideGoal = document.querySelector("[data-goal-anchor='otto/standards/goal-framework-docs.md']");
-  outsideGoal.querySelector(".work-row-agent").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  await settle(window);
-
-  press(window, "{", { shiftKey: true });
-  await settle(window);
-  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, "area:otto/onboarding", "previous finds the nearest real Area instead of the synthetic group");
-  press(window, "}", { shiftKey: true });
-  await settle(window);
-  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, "area:otto/onboarding", "next never enters Other Areas");
-});
-
-test("Area keys refuse a Goal in Other Areas because it has no matching pointer header", async () => {
-  const fixture = workTableFixture();
-  const { window, document } = await bootWorkTable(fixture, { areaFocus: ["otto/onboarding"] });
-  document.querySelector("[data-work-group='__other-areas'] [data-work-tree-action='expand']").click();
-  await settle(window);
-  const row = document.querySelector("[data-goal-anchor='otto/standards/goal-framework-docs.md']");
-  assert.equal(row.closest("[data-work-group]").dataset.workGroup, "__other-areas");
-  row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  await settle(window);
-  press(window, "d");
-  assert.equal(document.querySelector("[data-launch-popover]"), null);
-  assert.match(document.querySelector("#toast").textContent, /no Area command header/);
-});
-
 test("Work carries no attention queue and infers no ask", async () => {
   const { document } = await bootWorkTable(withDirectAsks(workTableFixture()));
   // The For you strip and its Dock badge are gone. A brain's Question is a
@@ -803,8 +773,8 @@ test("working agents and open Questions still outrank the brain word", async () 
   assert.equal(asked.dataset.reviewQuestions, "otto/tangent", "the count opens the deliberate review");
 });
 
-test("an Area Focus that excludes the brain's Area hides its group", async () => {
-  const { document } = await bootWorkTable(withBrainOnlyArea(workTableFixture()), { areaFocus: ["otto/standards"] });
+test("starred-only hides a live brain whose Area is not starred", async () => {
+  const { document } = await bootWorkTable(withBrainOnlyArea(workTableFixture()), { areaFocus: ["otto/standards"], areaFocusOnly: true });
   assert.equal(document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), null,
     "a live brain outside the Focus stays hidden");
   assert.ok(document.querySelector("tbody.work-group[data-work-group='otto/standards']"), "the focused Area stays");

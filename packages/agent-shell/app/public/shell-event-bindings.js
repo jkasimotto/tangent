@@ -2381,9 +2381,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return false;
   }
 
-  /** Submits a form that advertises Command-Enter without stealing plain Enter. */
+  /**
+   * Submits a form that advertises Command-Enter without stealing plain Enter
+   * or Command-Shift-Enter, which enters and leaves the live session.
+   */
   function handleCommandEnter(event) {
-    if (event.key !== "Enter" || !event.metaKey || event.ctrlKey || event.altKey) return false;
+    if (event.key !== "Enter" || !event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
     const form = event.target.closest?.("[data-command-enter-submit]");
     if (!form && state.view === "harnesses") {
       event.preventDefault();
@@ -2603,7 +2606,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return;
     }
     // The terminal/tmux session receives every key except the visible
-    // Command-J leave action. This handler runs in capture so xterm never sees
+    // Command-Shift-Enter leave action. This handler runs in capture so xterm never sees
     // that one shell command first.
     if (context === "session") {
       if (shortcutMatches(event, KEYMAP.session) && state.sessionPeek) {

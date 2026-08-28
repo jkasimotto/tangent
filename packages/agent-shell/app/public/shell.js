@@ -55,12 +55,15 @@ const {
 const KEYMAP = {
   goTo: { key: "k", label: "⌘K" },
   findWork: { key: "/", label: "⌘/" },
-  session: { key: "j", label: "⌘J" },
+  session: { key: "enter", shift: true, label: "⌘⇧↵" },
 };
 
-/** True when the event is this binding: ⌘ plus the key, no other modifier. */
+/**
+ * True when the event is this binding: ⌘ plus the key, Shift only when the
+ * binding asks for it, no other modifier.
+ */
 function shortcutMatches(event, binding) {
-  return event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey
+  return event.metaKey && !event.altKey && !event.ctrlKey && Boolean(event.shiftKey) === Boolean(binding.shift)
     && String(event.key).toLowerCase() === binding.key;
 }
 

@@ -31,8 +31,9 @@ test("matching reads the registry and rejects unintended modifiers", () => {
   assert.equal(workCommandMatches(event("z"), "collapse"), false);
   assert.equal(workCommandMatches(event("o"), "readGoal"), true);
   assert.equal(workCommandMatches(event("x"), "goalStatus"), true);
-  assert.equal(workCommandMatches(event("j", { metaKey: true }), "session"), true);
-  assert.equal(workCommandMatches(event("j"), "session"), false);
+  assert.equal(workCommandMatches(event("Enter", { metaKey: true, shiftKey: true }), "session"), true);
+  assert.equal(workCommandMatches(event("Enter", { metaKey: true }), "session"), false, "Command-Enter alone submits forms");
+  assert.equal(workCommandMatches(event("Enter", { shiftKey: true }), "session"), false);
   assert.equal(workCommandMatches(event(":", { shiftKey: true }), "commands"), true);
   assert.equal(workCommandMatches(event("?", { shiftKey: true }), "keys"), true);
   assert.equal(workCommandMatches(event("{", { shiftKey: true }), "previousArea"), true);

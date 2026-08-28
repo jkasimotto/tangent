@@ -30,7 +30,7 @@ One context owns each keyboard event. The priority is:
 
 IME composition and dead keys always stay with their input owner.
 
-A terminal session gives command keys to xterm and tmux. The visible `Command-J` action leaves the terminal. `Command-C` copies a visible terminal selection. `Shift-Enter` sends the Meta-Enter byte sequence that embedded tmux preserves as a composer newline. Agent Shell cannot run Work commands behind the terminal.
+A terminal session gives command keys to xterm and tmux. The visible `Command-Shift-Enter` action leaves the terminal. `Command-C` copies a visible terminal selection. `Shift-Enter` sends the Meta-Enter byte sequence that embedded tmux preserves as a composer newline. Agent Shell cannot run Work commands behind the terminal.
 
 The terminal waits for a positive measured row and column proposal before it connects. The first PTY size therefore matches the visible frame.
 
@@ -46,7 +46,7 @@ The same operation drives the visible Back control. A screen cannot implement a 
 
 Escape never saves or submits. A registry editor keeps its unsaved draft in memory until Julian saves or discards it.
 
-The terminal is the deliberate Back exception. Tmux owns Escape, and the visible `Command-J` action leaves the terminal.
+The terminal is the deliberate Back exception. Tmux owns Escape, and the visible `Command-Shift-Enter` action leaves the terminal.
 
 Escape unwinds only the top Work constraint. It closes a transient surface, cancels staged Focus, clears selection, clears search, or clears applied Focus.
 

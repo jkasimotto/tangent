@@ -197,7 +197,7 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   window.document.querySelector("#screen").scrollTop = 137;
   click(window, `[data-open-goal-run="${alpha.file}"]`);
   assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, alpha.session);
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", metaKey: true, bubbles: true }));
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true, bubbles: true }));
   await settle(window);
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
   assert.equal(window.document.querySelector("#work-search-input").value, "alpha");
@@ -280,7 +280,7 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
     areas: vault.areas.filter((area) => !area.path.startsWith("otto/alpha")),
   };
   await window.refresh();
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", metaKey: true, bubbles: true }));
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true, bubbles: true }));
   await settle(window);
   assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null, "return cannot restore a Focus root removed while the worker was open");
   assert.equal(window.document.querySelector(".area-focus-summary"), null, "stale return context restores complete Work");

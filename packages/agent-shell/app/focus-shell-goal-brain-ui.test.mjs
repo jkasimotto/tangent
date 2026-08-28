@@ -127,7 +127,7 @@ test("Goal cards open only their exact Area brain and preserve Work context", as
   filteredAction.focus();
   await user.keyboard(" ");
   assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "tangent-brain");
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", metaKey: true, bubbles: true }));
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true, bubbles: true }));
   assert.equal(window.document.querySelector("#work-search-input").value, "parent", "Command-J restores the kept Work search");
 
   groupBrain(parent.file).click();

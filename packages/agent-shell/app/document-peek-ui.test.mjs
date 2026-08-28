@@ -201,11 +201,11 @@ function key(window, init) {
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, ...init }));
 }
 
-/** Puts the Work cursor on one Goal row and enters its live session with ⌘J. */
+/** Puts the Work cursor on one Goal row and enters its live session with ⌘⇧↵. */
 async function openSession(window, file) {
   click(window, `[data-work-cursor='goal:${file}']`);
   await settle(window);
-  key(window, { key: "j", metaKey: true });
+  key(window, { key: "Enter", metaKey: true, shiftKey: true });
   await settle(window);
 }
 
@@ -232,7 +232,7 @@ test("the quick layer reads a Document above a live session and reveals that exa
   assert.ok(window.document.querySelector("#session-layer").hasAttribute("inert"), "the session below is inert");
 
   // Case 9 and 12: a command for a lower layer cannot reach past the Document.
-  key(window, { key: "j", metaKey: true });
+  key(window, { key: "Enter", metaKey: true, shiftKey: true });
   key(window, { key: "/", metaKey: true });
   await settle(window);
   assert.equal(layer.hidden, false, "Command-J did not close the quick Document");
@@ -254,14 +254,14 @@ test("the finder above a session keeps that session, and the quick layer returns
 
   // Case 14: while the finder holds the keyboard no lower command runs.
   click(window, "#go-to-button");
-  key(window, { key: "j", metaKey: true });
+  key(window, { key: "Enter", metaKey: true, shiftKey: true });
   await settle(window);
   assert.equal(window.document.querySelector("#go-to-layer").hidden, false, "the finder is still open");
   assert.equal(window.document.querySelector("#session-layer").hidden, false, "Command-J did not close the session");
   assert.equal(terminals.at(-1), terminal, "the terminal was not disposed");
   // The finder owns Escape on its own input, which is where its focus lives.
   window.document.querySelector("#go-to-input").dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  key(window, { key: "j", metaKey: true });
+  key(window, { key: "Enter", metaKey: true, shiftKey: true });
   await settle(window);
   assert.equal(window.document.querySelector("#session-layer").hidden, true, "Command-J closed the session once the finder was gone");
 

@@ -1,734 +1,663 @@
-# Agent Shell Work Briefing: reorientation before reprioritization
+# Agent Shell orientation: a Root brain remembers my perspective
 
 Date: 2026-08-28
 
-Status: proposed product vision. This record does not include implementation work.
+Status: revised product vision. This record supersedes the structured Work Briefing from commit `074a98d`.
 
-Lens applied: UI/UX.
+Lenses applied: UI/UX, and architecture, types, and data.
 
-Architecture, storage, and model ownership remain outside this product-vision decision. A later design must preserve the product contract in this record.
+This record does not select an implementation plan.
 
 ## 1. Decision summary
 
-Add an on-demand **Work Briefing** to Agent Shell. Its visible entry action is **Orient me**.
+Try a conversation-only product before Tangent adds a visual presentation system.
 
-The briefing gives Julian a guided story before it asks him to choose work. It reconstructs intent, change, causality, time, and responsibility.
+Make **Root** a visible Area above every current top-level Area. Its brain provides one place for thoughts and orientation across all work.
 
-The briefing starts with the bottom line. It then shows evidence and alternative readings on demand.
+Add an explicit **Spew** action inside every Area-brain conversation. It accepts long typed text or dictated speech.
 
-The briefing ends with a short working plan that Julian accepts or changes. Agent Shell then returns him to Work at the first chosen item.
+Tangent saves the complete Spew in that Area's Journal before the brain interprets it. Ordinary chat does not enter the Journal by default.
 
-The briefing does not rank work from activity, age, or Goal count alone. It states missing facts instead of inventing importance, dates, or responsibility.
+The brain can find passages that belong in other Areas. It proposes one batch of exact excerpts after the full Spew is safe.
 
-Work remains the fast execution surface. The briefing is a separate reorientation surface for moments when the project model is missing from Julian's mind.
+Julian approves the batch before Tangent writes those excerpts to other Area Journals. Routing never blocks the original capture.
 
-## 2. Problem contract
+Later, Julian says “orient me” to an Area brain. The brain reads saved perspective, current work, and reliable activity evidence.
 
-Julian described the root need directly: “I need to be told a story to reprioritize.”
+It tells a natural story in the normal conversation. Activity explains attention. It does not define priority.
 
-Work is effective after Julian knows his intended work. Work is ineffective when he must first reconstruct the project situation.
+Do not add a briefing screen, a fixed report, or A2UI to the first trial.
 
-The blocked outcome is not task retrieval. The blocked outcome is a sound priority decision under reduced attention and working-memory capacity.
+A later **Show me** experiment can turn a good story into a paced visual presentation. A2UI is one candidate format for that layer.
 
-That decision requires answers to six questions:
+## 2. Why the design changed
 
-1. What are the main Areas now?
-2. Why does each Area matter?
-3. What changed, and what caused the current state?
-4. What must happen by which date or event?
-5. Who has the next move?
-6. What can wait, return, or move as one batch?
+Julian rejected the first example because it was an inventory, not a story.
 
-The current screen provides pieces of these answers. Julian must assemble the pieces while he has the least capacity to do so.
+It led with Goal counts, old dates, duplicate titles, dependencies, and missing fields. Those facts did not contain Julian's meaning.
 
-### 2.1 Constraints
+The first correction was simple:
 
-- The default path must work for a tired reader.
-- The briefing must provide value before it asks a question.
-- The briefing must show information in a deliberate sequence.
-- Every priority suggestion must include a reason.
-- Every reason must lead to recorded evidence.
-- Missing or stale evidence must remain visible.
-- The user must accept all changes to work state or the working plan.
-- The briefing must remain quiet until Julian opens it.
-- The briefing must preserve the fast path from Work into an agent or brain.
-- The briefing scope must always be visible.
+> I can talk out loud about my perspective on the projects. That gets saved and read later when I want orientating.
 
-### 2.2 Non-goals
+The second correction made capture and scope clearer:
 
-- A denser Work table.
-- A universal numeric priority score.
+> I would want to really just have a brain spew option when chatting to brains.
+
+> We can just add a Root Area that contains all other Areas.
+
+Julian also raised agent-controlled visual presentation, including A2UI. He prefers a nonvisual trial first.
+
+The revised design follows that order. First preserve personal meaning. Then prove that a brain can return it as a useful story.
+
+Only then test a richer presentation.
+
+## 3. Problem contract
+
+### 3.1 Root problem
+
+Fatigue, illness, deep work, and context changes can remove the felt model of a project from working memory.
+
+The missing model contains more than state. It contains importance, intent, doubts, temporary detours, and promises to return.
+
+Agent Shell preserves project facts. It does not reliably preserve Julian's interpretation of those facts for a future brain.
+
+The blocked outcome is continuity with an earlier self.
+
+### 3.2 Success
+
+The product succeeds after Julian can do these things:
+
+1. Open Root and speak about all current work without preparing an outline.
+2. Make one aside about another Area without losing it.
+3. Return with a fresh brain and say “orient me.”
+4. Receive a short story that restores the important tension and next decision.
+5. Continue the same conversation into questions or work.
+
+A useful answer explains:
+
+- What Julian last thought mattered.
+- Which work received attention after that point.
+- Why attention moved, if the Journal contains a reason.
+- Which important thread stayed unfinished.
+- Which older work now connects to a current concern.
+- Which decision controls the next move.
+
+It sounds like a colleague who remembers the work. It does not sound like a database query.
+
+### 3.3 Constraints
+
+- Spew must accept ordinary speech or text.
+- Tangent must save the complete input before model work.
+- Capture must not ask for classification or routing first.
+- One source Journal must retain the complete Spew.
+- Cross-Area routes must preserve exact excerpts and source identity.
+- One approval can authorize one proposed routing batch.
+- Routing must create no Goal and grant no work authority.
+- The selected Area and its descendants define the reading scope.
+- Root must cover the complete Area tree.
+- Activity can describe attention. It cannot define importance.
+- Text must remain the complete first experience.
+
+### 3.4 Non-goals
+
+- Saving every terminal message to a Journal.
+- A separate Work Briefing application.
+- A fixed narrative template in the interface.
+- A universal priority score.
 - Automatic reprioritization.
-- Automatic detection of fatigue or illness.
-- A replacement for an Area brain.
-- A project-management calendar.
-- A mandatory daily or weekly review.
-- A new ontology for Areas, Goals, Documents, or agents.
-- A decision about the technical narrator or storage format.
+- Automatic creation of Goals from a Spew.
+- Silent writes to another Area.
+- A new agent type above Area brains.
+- Agent-generated UI in the first trial.
+- Automatic fatigue detection.
 
-### 2.3 Observable success
+## 4. Current system
 
-The design succeeds when Julian can reconstruct the project without opening many Goal rows.
+All statements in this section are Observed.
 
-After the short version, Julian can name the main Areas, pressure points, and missing facts. He can explain why each item appeared.
+### 4.1 Area brains already provide the conversation
 
-After the complete briefing, Julian can identify the next actor and time horizon for chosen work. He can also identify one useful batch.
+One Area brain belongs to one exact Area. Agent Shell shows its complete native agent terminal through xterm.
 
-The briefing can surface an old Goal without calling age “value.” It must explain the current reason for reconsideration.
+The browser does not parse brain output into host UI components. The brain can render terminal text and terminal-native interfaces only.
 
-The final working plan states what happens, when or after which event, and who acts. Julian can change it before acceptance.
+Work exposes **Open brain**, **Message brain**, and **Capture note** for an Area.
 
-## 3. Current system
+### 4.2 Journal capture already provides the notebook
 
-All statements in this section are Observed unless another label appears.
+**Capture note** accepts typed or dictated text.
 
-### 3.1 Work is an execution index
+The server writes the exact text to the selected Area's `journal.md`. Each entry includes its time and source.
 
-The screenshot shows 31 open Goals, two blockers, one due process, and no `Current` text for Neara.
+The vault commit finishes before the brain receives the notice. A failed commit does not claim that the brain heard durable words.
 
-The dominant structure is Area, Goal, state, elapsed time, and action. This structure answers where Julian can act.
+The Journal archives itself after its size limit. Voice capture uses the same Journal-first route.
 
-Area headers summarize open, moving, blocked, and question counts. They also expose a brain route and the Area-note age signal.
+### 4.3 Cross-Area Journal routing already exists
 
-The summary code explicitly omits waits and handovers from the count. This rule protects Julian from agent-volume noise.
+A live brain can create a Question with an exact `route-journal` effect.
 
-Work therefore solves a different problem well. It supports selection and execution after the user has a priority model.
+The effect names one destination Area and exact text. Julian must authorize its hashed revision.
 
-### 3.2 The source material for a story already exists
+After authorization, the server writes and commits the destination Journal entry. It records the source Area and notifies the destination brain.
 
-Each Goal can carry a result, state, current brief, story, waiting party, due value, session, Subgoals, and dependencies.
+The notice explicitly grants no authority.
 
-Each Area can carry a purpose, `Current` text, people, Documents, Goals, and note-age signal.
+This path already proves the core routing behavior. A later design can add one batch for more than one exact route.
 
-The Goal reader reduces one Goal to its requested result and five recent story moments. This memory is local to one Goal.
+### 4.4 The hierarchy has no single visible Root
 
-The Area note signal reports missing or old `Current` text. Work shows the signal, but it does not show the Area story.
+The current Area list starts with top-level Areas such as `neara` and `otto`.
 
-The existing “What happened” view shows Goal closures from the last 12 hours. It does not connect those events to future choices.
+The vault root supplies inherited brain instructions. It is not a selectable Area with its own Journal and brain.
 
-The system also knows recent changes, dependencies, agent history, open questions, processes, and current brain state.
+The product needs a first-class Root identity above the current paths. It does not need to move every current Area below a new folder.
 
-### 3.3 The current Neara snapshot exposes the synthesis burden
+The durable representation of Root remains an implementation Unknown.
 
-The `tangent goal list neara --subtree --status open --json` result contained 31 Goals across 11 Areas on 2026-08-28.
+### 4.5 Fixed visual surfaces already exist
 
-PG&E contained 21 Goals. Hackathon contained eight. Essential and Portland contained one each.
+Agent Shell owns fixed browser views for Work, Areas, Documents, and the Area map.
 
-Eight Viz Input Goals last changed on 2026-08-09. Four approval Goals identify Tom, Eric, Toby, Sami, or Sahan in titles or results.
+The Area map uses a fixed graph renderer and fixed interaction rules. A brain cannot compose or change that view.
 
-Two Hackathon Goals have the same title, “Deployed instance for hackathon.” The list does not explain whether both remain valid.
+These surfaces prove that Tangent can render visual information. They do not provide an agent-controlled presentation channel.
 
-Three leaf Goals explicitly unlock later Goals. Two leaves belong to benchmarking, and one belongs to autodesign.
+### 4.6 The brain has factual sources
 
-The screenshot also shows a due PG&E speedrun process whose brain is not running.
+Area notes contain purpose, current work, knowledge, and resources.
 
-These facts support several plausible stories. They do not establish which story matters most to Julian today.
+Goal files contain results, short stories, state, dependencies, and linked Documents.
 
-### 3.4 Root diagnosis
+The brain runtime records material milestones. Usage records agent activity and duration. The worklog records named focus time.
 
-The information is distributed by storage object and execution state. Julian needs it organized by decision.
+These records explain activity and change. The Journal supplies the personal interpretation that they lack.
 
-Counts provide perception without comprehension. Recent activity provides movement without purpose. Dependencies provide causality without value.
+Usage and worklog entries do not always map cleanly to an Area. Exact time by Area is an Unknown.
 
-A Goal story restores one local context. It does not restore the relationship between Areas, commitments, people, and time horizons.
+## 5. Research and transfer limits
 
-The screen also lacks a comparison point. It cannot say what changed since Julian last formed a complete project model.
+### 5.1 Memory and interruption
 
-The missing product function is a structured self-handoff. The system must hand the project back to Julian before he takes control again.
+Altmann and Trafton found a delay after task interruption. Relevant cues near the task reduced that delay.
 
-## 4. Research findings and transfer limits
+**Consequence:** Julian's own earlier words are strong return cues. The orientation answer starts from them.
 
-The research supports design principles, not a formula for priority. Most studies did not examine software project work.
+Endsley separates situation awareness into facts, meaning, and likely next states.
 
-### 4.1 Reduced capacity changes the interface requirement
+**Consequence:** Project records supply facts. The brain connects those facts to Julian's meaning before it suggests a next move.
 
-Lim and Dinges found broad cognitive effects from short-term total sleep deprivation. Attention lapses showed the largest reported effect in their meta-analysis.
+Masicampo and Baumeister found less interference from unfinished goals after people made specific plans.
 
-This evidence does not represent ordinary tiredness or sickness exactly. It still supports a low-capacity design target.
+**Consequence:** The conversation can end in a concrete next move. Tangent does not need a new stored plan object.
 
-**Product consequence:** The briefing must reduce search, recall, comparison, and self-directed sequencing. It cannot require those abilities before it helps.
+Hullman and Diakopoulos show that narrative selection can steer a conclusion.
 
-### 4.2 Interrupted goals need retrieval cues
+**Consequence:** The brain distinguishes Julian's words, recorded activity, and its own interpretation in normal language.
 
-Altmann and Trafton measured a resumption lag after interruptions. External cues near the interrupted task reduced that lag in their experiment.
+### 5.2 Agent-controlled UI
 
-Their earlier memory-for-goals model also emphasizes goal activation and associative cues. A title alone is a weak cue for a complex project state.
+A2UI lets an agent send declarative JSON that describes a UI. A client maps those descriptions to its own trusted components.
 
-**Product consequence:** Each Area story needs intent, last meaningful change, and next move. The briefing must restore the thread, not only name it.
+The protocol supports streaming component and data updates. It does not run arbitrary agent code in the client.
 
-### 4.3 Situation awareness has three layers
+As of 2026-08-28, A2UI names v0.9.1 as current and v1.0 as a candidate.
 
-Endsley models situation awareness as perception, comprehension, and projection. Attention and working memory constrain all three layers.
+The basic catalogue contains text, layout, media, cards, tabs, and form controls. Rich charts need a custom catalogue component.
 
-The current Work table strongly supports perception. It shows objects and states. Julian still performs comprehension and projection himself.
+**Consequence:** A2UI can support a Tangent presentation layer. It does not decide which story is useful or which visual is honest.
 
-**Product consequence:** The briefing sequence must move from facts, to meaning, to likely next states. Action selection comes after those layers.
+Tangent still needs a structured agent-to-browser channel, a trusted component catalogue, and stable interaction rules.
 
-### 4.4 Stories build situation models
+### 5.3 Why text comes first
 
-Zwaan and Radvansky describe situation models across time, space, causation, intention, and protagonist.
+The failed briefing had a meaning problem, not a rendering problem.
 
-These dimensions transfer cleanly to project work. Area supplies place, Goal supplies intention, dependencies supply cause, and people supply protagonists.
+A polished visual can make the same weak story more persuasive. It can also hide omissions behind pace and visual emphasis.
 
-**Product consequence:** A useful project story must connect these dimensions. A chronological activity feed is not sufficient.
+Text gives the cheapest test of memory, synthesis, and correction. A visual layer earns its place only after that test passes.
 
-### 4.5 External representations reduce memory demand
+Sources remain in section 14.
 
-Risko and Gilbert define cognitive offloading as changing the environment to reduce information-processing demand.
+## 6. Candidate decisions
 
-Masicampo and Baumeister found that specific plans reduced interference from unfinished goals. Their effective plans named how, when, and where action occurred.
-
-**Product consequence:** The briefing must end with an external working plan. A summary without a plan leaves the next decision inside Julian's memory.
-
-### 4.6 Near and distant work need different detail
-
-Construal-level research links near events to concrete representation. Distant events use more abstract representation.
-
-**Product consequence:** Near work needs an exact action, actor, and date or event. Later work needs purpose and a return condition.
-
-### 4.7 Cues and batches reduce switching work
-
-Rubinstein, Meyer, and Evans found task-switching costs that grew with rule complexity. Explicit task cues reduced those costs.
-
-This research does not prove that every batch improves project work. It supports grouping work that shares an actor, tool, or decision mode.
-
-**Product consequence:** The briefing can propose batches, but urgency and causal order outrank batching convenience.
-
-### 4.8 Guided narrative and exploration need balance
-
-Segel and Heer describe interactive slideshows and a guided-then-exploratory structure. Their study examined 58 narrative visualizations.
-
-Shneiderman's information-seeking sequence starts with an overview. It then supports filtering and details on demand.
-
-**Product consequence:** The briefing needs a guided opening and constrained drill-down. A dashboard offers exploration before orientation.
-
-### 4.9 Narrative framing is a product risk
-
-Hullman and Diakopoulos show that narrative presentation can prioritize an interpretation. Omission and visual emphasis can change the reader's conclusion.
-
-Fuzzy-trace research also distinguishes bottom-line meaning from exact detail. The reviewed evidence comes mainly from health decisions.
-
-**Product consequence:** Show gist and exact evidence together. Also show uncertainty, omitted work, and credible alternative readings.
-
-### 4.10 A briefing is a useful handoff analogy
-
-The I-PASS handoff program uses a standard structure for situation, action, contingency, and receiver synthesis.
-
-A multicenter study associated the complete program with fewer medical errors. That result does not prove benefits for a personal project briefing.
-
-**Product consequence:** Use one stable story grammar. End with Julian's synthesis and acceptance, not the narrator's final word.
-
-## 5. Candidate designs
+### 6.1 Which messages become memory
 
 | Candidate | Strength | Decisive problem |
 |---|---|---|
-| Add priority, owner, and date columns to Work | Keeps one surface and supports fast scanning | Julian still performs synthesis across rows |
-| Ask a brain for a summary | Supports dialogue and follow-up questions | Julian must choose scope, form a prompt, and validate an unstructured answer |
-| Make the Area map or timeline primary | Shows history, structure, or dependencies well | No single view explains intention, trade-offs, responsibility, and time |
-| Send a scheduled digest | Can prepare context before the user opens Work | It interrupts, becomes stale, and arrives without knowing the decision moment |
-| Add an on-demand Work Briefing | Rebuilds context in sequence and ends in action | Adds one product surface and a narrative-authority risk |
+| Save every brain message | No explicit capture action | Journals fill with questions, commands, and temporary chat |
+| Brain summarizes the transcript later | Low interruption during chat | The durable record starts with a model interpretation |
+| Explicit Spew | Clear user intent and exact source words | Julian must select the action |
 
-### 5.1 Decision
+Select explicit **Spew**.
 
-Select the on-demand Work Briefing.
+### 6.2 Where all-work perspective lives
 
-The briefing creates the missing transition between “I arrived” and “I know what to do.” Work keeps the transition from choice to execution.
+| Candidate | Strength | Decisive problem |
+|---|---|---|
+| Separate global narrator | Independent all-work product | It duplicates the Area-brain model |
+| Choose one existing top-level Area | No new root identity | It makes unrelated work a child of the wrong subject |
+| Visible Root Area | Same mental model at every scope | Root needs a new durable identity |
 
-The strongest alternative is a conversation with a brain. It loses because the blank user must still initiate and structure the reconstruction.
+Select the visible Root Area.
 
-The briefing can open a conversation after the guided story. Conversation is a drill-down tool, not the first cognitive requirement.
+### 6.3 How a Spew reaches other Areas
 
-## 6. Product vision
+| Candidate | Strength | Decisive problem |
+|---|---|---|
+| Read only the source Journal later | One stored copy | A child brain can miss perspective captured elsewhere |
+| Route silently | No later user action | A model can write the wrong Area memory |
+| Propose exact routes after capture | Safe source plus useful distribution | Adds one small review after the conversation starts |
 
-### 6.1 Entry and scope
+Select proposed exact routes. Group them into one optional batch.
 
-Work has one visible **Orient me** action. The briefing never opens because of a timer, stale note, process event, or agent event.
+### 6.4 How the brain presents orientation
 
-The default scope is the current Work scope. The first line always names that scope and the evidence time.
+| Candidate | Strength | Decisive problem |
+|---|---|---|
+| Normal text conversation | Fastest proof of the story | Complex relationships can need more inspection |
+| Fixed briefing visual | Predictable rendering | It recreates a report before the story works |
+| Agent-controlled UI | Adapts presentation to the story | It adds a renderer, catalogue, protocol, and new failure modes |
 
-Julian can widen or narrow the scope without losing his place. The briefing never hides a scope choice inside the generated text.
+Select normal text for the first trial. Keep agent-controlled UI as a later experiment.
 
-An expert can skip directly to Work, the complete outline, or the evidence. The guided path remains the default.
+## 7. Selected product
 
-### 6.2 The briefing sequence
+### 7.1 Mental model
 
-The briefing uses five chapters. Each chapter presents one dominant idea within one viewport.
+The product has one sentence:
+
+> Spew what the work feels like into a brain. Ask that brain to give it back after the context is gone.
+
+The Journal is the notebook. The Area brain is the reader and conversation partner. Root is the notebook for everything.
+
+### 7.2 Root
+
+Agent Shell shows **Root** above the current Area tree.
+
+Root has the same brain actions and conversation as any other Area. It contains Neara, Otto, and every other top-level Area.
+
+The Root brain can read the complete tree for orientation. Existing child-brain boundaries still govern work actions.
+
+Julian uses Root for broad project perspective, personal attention, and thoughts that cross current Area boundaries.
+
+He can still use Neara, Tangent, or any smaller Area for a focused Spew.
+
+### 7.3 Spew
+
+The brain session header includes **Spew**.
+
+It opens one large text and voice input. Julian speaks or types without choosing a type, Goal, or route.
+
+Tangent saves the complete input to the current brain's Journal. It then sends the same words into the brain conversation.
+
+The brain can respond before Julian reviews any routes. The original thought is already safe.
+
+Ordinary chat stays ordinary chat. Julian uses Spew again for a correction that must survive a fresh brain.
+
+### 7.4 Cross-Area routing
+
+The brain can find exact passages that matter to another Area.
+
+After its normal response, it can offer one compact routing batch:
 
 ```text
-Recorded work
-     |
-     v
-1. The short version       What matters in this scope?
-     |
-     v
-2. How we got here         What changed since the last orientation?
-     |
-     v
-3. Where pressure sits     What has a date, dependency, risk, or next actor?
-     |
-     v
-4. What can move together  What can batch, wait, or return now?
-     |
-     v
-5. A proposed next chapter What working plan makes sense, and why?
-     |
-     v
-Julian accepts or changes the plan -> Work opens at the first chosen item
+Also remember elsewhere?
+
+Neara  “PG&E still matters most…”
+Tangent “The tool was blocking how I work…”
+
+Route both · Change · Leave here
 ```
 
-The sequence follows situation awareness. It also follows a narrative from setting, through change and tension, into possible action.
+Approval copies the shown excerpts to the destination Journals with a link to the source Spew.
 
-### 6.3 Chapter one: The short version
+The brain does not paraphrase a route as if Julian said it. It can propose a longer exact passage after Julian selects **Change**.
 
-The first chapter contains three to five short statements. Each statement connects an Area to a consequence or an unknown.
+Ignoring the offer loses nothing. The complete Spew remains in its source Journal.
 
-The chapter answers the six problem questions at gist level. It does not list every open Goal.
+### 7.5 Orientation
 
-The footer states how much work the story omitted. **All open work** remains one action away.
+The first product adds no **Orient me** button.
 
-### 6.4 Chapter two: How we got here
+Julian opens a brain and says “orient me,” “where was I,” or another natural version.
 
-This chapter starts from the last completed briefing. On the first use, it starts from the latest reliable Area stories and meaningful changes.
+The brain reads:
 
-It shows only events that changed intention, state, ownership, dependency, or time. Raw agent activity does not qualify by itself.
+1. Recent Spews and later corrections in the selected Area subtree.
+2. Area Purpose and `Current` sections.
+3. Open Goals and Goals changed after the last saved perspective.
+4. Material milestones and completed work after that point.
+5. Activity evidence with a reliable link to the scope.
 
-Finished work appears when it changes the present story. A list of closures remains available as evidence.
+Root reads the complete tree. A smaller Area brain reads its own subtree and relevant routed excerpts.
 
-### 6.5 Chapter three: Where pressure sits
+The first answer gives the main arc. Julian can interrupt, correct it, ask for evidence, or tell the brain to act.
 
-This chapter groups pressure by time horizon and next actor. It does not group pressure by generic status.
+### 7.6 What makes the answer a story
 
-The time horizon has four forms:
+The answer starts with Julian's last meaningful view.
 
-- An exact date.
-- An event condition, such as “after Dan's branch is available.”
-- A user-accepted horizon, such as now, this week, or later.
-- Unknown.
+It relates later activity to that view:
 
-The next actor names the person or system with the next move. It does not repeat a broad owner when that owner cannot act now.
+- Work that received attention.
+- A recorded reason for an attention shift.
+- An important thread that remained open.
+- An older idea with a current connection.
+- The tension or decision that controls the next move.
 
-Valid actor labels include Julian, a named person, an Area brain, an agent, an external dependency, and unknown.
+The answer can recommend a direction. It does not cover every Area or Goal.
 
-The chapter also shows likely consequences from explicit dates and dependencies. It labels all other forecasts as interpretations.
+Counts and dates appear only to explain the story. They never become the story.
 
-### 6.6 Chapter four: What can move together
+Attribution stays conversational:
 
-This chapter proposes small batches that reduce context changes. It never merges the underlying Goals.
+- “You told me that…”
+- “The recent work shows…”
+- “I cannot tell whether…”
+- “My read is…”
 
-A batch can share one of four contexts:
+### 7.7 Representative scenario
 
-- The same person or communication.
-- The same repository, branch, or tool.
-- The same mode, such as reading, validation, or decision.
-- The same dependency chain.
+Julian opens Root and selects **Spew**:
 
-An urgent action leaves a batch when waiting creates risk. The briefing explains that exception.
+> PG&E is still the job that matters. I spent this week on Tangent because the tool was blocking how I work. Viz Input waits on reviews. Hackathon felt urgent before, but I no longer know whether it is. I want to batch the people work before I return to code.
 
-This chapter also surfaces forgotten work. Age alone never makes an old Goal valuable.
+Root saves the complete passage. The brain offers exact routes to Neara and Tangent after it responds.
 
-An old Goal earns reconsideration when current evidence gives it a reason. Examples include a newly available dependency or a renewed Area outcome.
+After more work and another context change, Julian tells Root to orient him.
 
-Each resurfaced Goal states why it returned now. Julian can keep it, defer it to a date or event, or remove it from the working plan.
+The brain can answer:
 
-### 6.7 Chapter five: A proposed next chapter
+> Your last clear view was that PG&E still mattered most. Tangent temporarily took your attention because the tool itself was blocking you.
+>
+> The recent work supports the second part. Most recorded activity moved through Tangent. I cannot tell whether that detour now has a good stopping point.
+>
+> Inside Neara, Viz Input still appears to wait at the reviewer stage. That remains a natural people batch. You already questioned the old Hackathon urgency, so I do not revive it from age alone.
+>
+> The first decision is whether Tangent is now good enough to leave. After that, the clean return is the reviewer batch and the PG&E thread with the nearest external date.
 
-The final chapter proposes a short, ordered working plan. It uses no universal score.
+This answer uses Julian's meaning as the spine. Work records explain what changed around it.
 
-The proposal compares six factors in plain language:
+## 8. Visual presentation after the text trial
 
-1. Julian's stated outcomes and current commitments.
-2. Exact dates and event conditions.
-3. Actions that only Julian can take.
-4. Work that unlocks other work.
-5. Useful batches.
-6. Old work with a current reason to return.
+### 8.1 Product position
 
-Every ordering statement uses this form: do this before that, because this recorded constraint changes the outcome.
+A visual story is a possible second layer, not a replacement for conversation.
 
-If the system lacks importance or timing, it asks one focused question after it gives the useful context.
+The brain first forms a useful text story. Julian can then say **Show me**.
 
-The working plan gives each item an action, next actor, and date or event. A later item can use an abstract return condition.
+The presentation uses the same claims and evidence. It adds no new priority logic.
 
-Julian can accept, reorder, edit, or decline the plan. No Goal, Area, date, actor, or focus changes before acceptance.
+### 8.2 Visuals that can earn a place
 
-### 6.8 Return to Work
+| Relationship | Useful visual | Reason |
+|---|---|---|
+| Perspective and attention across time | Short timeline | Shows a detour and return point |
+| One concern across Areas | Highlighted Area tree | Shows scope and routing |
+| One decision with two or more consequences | Small decision fork | Shows what each choice changes |
+| A few facts with no important relation | No visual | Prose is faster |
 
-After acceptance, Work opens at the first plan item. A compact **Working plan** line keeps the accepted sequence visible.
+Time bars must say **attention**, never **priority**.
 
-The plan line is not another dashboard. It shows the current item, the next item, and the next return condition.
+The presentation advances only after Julian starts it. He controls pause, next, back, and stop.
 
-The normal Area structure remains below it. Work outside the plan remains reachable and visibly outside the current focus.
+Every frame has a complete text equivalent. The last frame returns to the brain conversation.
 
-The plan persists across sessions because forgetting across sessions is part of the problem. A later design decides its storage.
+### 8.3 A2UI fit
 
-When recorded facts change, the line marks the affected plan item. It does not silently reorder the plan.
+A2UI is a credible format for a later Tangent renderer because the agent sends data, not executable browser code.
 
-## 7. Story and evidence contract
+Tangent keeps control of style, accessibility, components, and allowed actions through its catalogue.
 
-### 7.1 Stable story grammar
+A small Tangent catalogue can contain a story frame, Area trail, timeline, decision fork, and evidence link.
 
-Each Area story uses the same fields:
+The basic A2UI catalogue alone does not provide these project visuals. Tangent must define and test them.
 
-| Field | Question |
+The current terminal connection also has no structured A2UI side channel. A later implementation design must define one.
+
+Do not adopt the protocol before a fixed visual prototype proves useful.
+
+## 9. UI/UX lens
+
+### 9.1 First trial path
+
+1. Julian opens the visible Root Area or another Area brain.
+2. He selects **Spew** in the session header.
+3. He types or dictates one long thought.
+4. Tangent saves it and sends it to the current brain.
+5. The brain responds in the native conversation.
+6. The brain offers optional exact routes after the response.
+7. Later, Julian opens a brain and asks for orientation in normal language.
+
+No new navigation mode appears.
+
+### 9.2 Important states
+
+**No saved perspective:** The brain says that it has project records but no personal view to restore.
+
+**Mixed Spew:** The full input stays in the source Journal. Route proposals separate only exact excerpts.
+
+**Wrong route:** Julian changes or declines it. No destination write occurs.
+
+**Ignored route:** The complete source remains available to the source brain.
+
+**No destination brain:** The routed Journal entry remains. A future brain reads it.
+
+**Live child brain:** Root can read its records for orientation. Existing territory rules still control work mutations.
+
+**No recent activity:** The brain uses saved perspective and current notes. It states that activity evidence is absent.
+
+**Incomplete Area mapping:** The brain avoids exact time claims.
+
+**Capture error:** The Spew stays in the composer. The surface does not claim that it was saved.
+
+**Model error:** The Journal remains safe. Julian can retry with a fresh brain.
+
+### 9.3 Cognitive cost
+
+The first trial adds two visible elements: Root and Spew.
+
+It adds no orientation questionnaire, chapter controls, evidence badges, plan editor, or generated dashboard.
+
+The route review comes after value and never blocks capture.
+
+## 10. Architecture, types, and data lens
+
+### 10.1 One owner for each fact
+
+| Fact | Authority |
 |---|---|
-| Intent | What result matters here? |
-| Position | Where is the Area now? |
-| Change | What changed since the last orientation? |
-| Cause | What enabled, blocked, or changed this position? |
-| Next actor | Who can move it now? |
-| Time horizon | By which date or after which event? |
-| Outlook | What changes if this moves or does not move? |
+| Complete freeform Spew | Source Area Journal |
+| Exact routed excerpt | Destination Area Journal with source identity |
+| Present Area purpose and situation | Area note |
+| Goal result, state, story, and dependencies | Goal files |
+| Brain delivery and lifecycle | Area-brain runtime records |
+| Agent activity and duration | Usage index |
+| Named personal focus time | Worklog |
+| Orientation story | Derived brain response |
+| Visual presentation | Derived transient surface |
 
-This grammar maps project facts to the dimensions of a situation model. It prevents a story from becoming polished activity prose.
+### 10.2 Invariants
 
-### 7.2 Three claim types
+1. Tangent saves a Spew before it delivers or interprets the Spew.
+2. One source Journal retains the complete input.
+3. A route contains exact user text, destination Area, and source identity.
+4. No destination write occurs before Julian approves the route batch.
+5. Routing a Journal excerpt grants no work authority.
+6. Root can read the complete tree for orientation.
+7. Existing live brain territories govern work mutations.
+8. Activity evidence never changes recorded purpose or priority.
+9. An orientation response changes no durable state by itself.
+10. A generated visual changes no durable state by itself.
+11. A user correction becomes a later Spew, not a silent rewrite.
 
-The briefing distinguishes three claim types:
+### 10.3 Existing leverage
 
-- **Recorded:** A source states the fact directly.
-- **Inferred:** The system connects recorded facts and names the inference.
-- **Suggested:** The system proposes a priority, batch, or plan.
+Journal capture already provides commit-before-delivery, archives, idempotency, voice input, and brain wake behavior.
 
-The default prose remains clean. A visible evidence action exposes the claim type, source, source time, and exact supporting fact.
+The `route-journal` Request effect already provides exact text, explicit authorization, destination commit, provenance, and destination notice.
 
-A stale `Current` section remains stale in the briefing. A recent agent event cannot silently make the Area story current.
+The first implementation can compose these capabilities. It does not need a new memory database.
 
-A conflict between sources appears as a conflict. The briefing can propose a clarification action, but it cannot choose a convenient source.
+### 10.4 Material unknowns
 
-### 7.3 Narrative framing controls
+The vault root has no ordinary Area identity today. A later design must add Root without changing every current Area path.
 
-The briefing always provides these controls:
+The existing route effect handles one destination. A product-quality Spew needs one compact batch for more than one destination.
 
-- **Why this is here** shows evidence and the selection reason.
-- **Another reading** shows a credible alternative when the interpretation changes priority.
-- **All open work** shows the complete inventory for the scope.
-- **Not enough information** lists missing purpose, date, actor, or dependency facts.
+Usage sessions do not have complete Area identity. A later design must define which activity claims are safe.
 
-The story never presents omission as completion. The short version states the omitted Goal and Area counts.
+The native terminal carries bytes, not structured UI messages. An A2UI experiment needs a separate trusted channel.
 
-### 7.4 Corrections
+## 11. Detailed decisions
 
-Julian can correct a fact from its evidence view. The briefing sends the proposed correction through the owning brain or existing edit path.
+1. **Try text first.** Do not build visual presentation before a real orientation trial passes.
+2. **Add Root as an Area in the product model.** Use the normal Area-brain experience at all-work scope.
+3. **Keep child brains.** Root does not replace focused brains or their work authority.
+4. **Add explicit Spew inside brain chat.** Do not save every ordinary message.
+5. **Save the complete input first.** Classification and routing happen later.
+6. **Use the existing Journal.** Do not create a perspective schema.
+7. **Propose exact cross-Area excerpts.** Do not silently distribute model summaries.
+8. **Approve routes as one batch.** Do not make capture wait for that approval.
+9. **Keep “orient me” as language in the first trial.** Add a button only after repeated use proves its value.
+10. **Start from Julian's words.** State and activity explain change around them.
+11. **Treat time as attention, not priority.** Keep unknown mapping explicit.
+12. **Keep generated stories transient.** Durable truth stays in Journals, Area notes, Goals, and Documents.
+13. **Consider “Show me” later.** A visual presentation is optional and user-started.
+14. **Treat A2UI as a candidate format.** It is not the product decision.
+15. **Use trusted visual components.** An agent never sends executable browser code.
 
-The correction remains a proposal until Julian accepts its exact effect. The current briefing marks affected statements as changed.
+## 12. Rejected alternatives
 
-## 8. Example from the observed snapshot
+### 12.1 Keep the five-stage briefing
 
-This example shows the product form. It does not claim to know Julian's actual priority.
+This direction forces a tired user through a review ritual. It also fills a structure from weak system signals.
 
-```text
-NEARA WORK BRIEFING                                snapshot 2026-08-28
-The short version                                             1 of 5
+### 12.2 Save every brain message
 
-PG&E contains 21 of 31 open Goals, but Neara has no recorded Current story.
+This direction removes one explicit action. It also mixes durable perspective with transient questions and commands.
 
-Viz Input contains eight Goals last changed on August 9. If landing still
-matters, four reviewer actions form one communication batch.
+### 12.3 Make Root a separate narrator product
 
-Benchmarking has two startable leaves that unlock its benchmark. Autodesign
-has one startable leaf that unlocks element-level suppression.
+This direction creates a second agent model and a new authority boundary.
 
-Hackathon contains two Goals named “Deployed instance for hackathon.” Their
-relationship is unknown, so the Area needs clarification before more deployment work.
+Root is an Area. It uses the same brain, Journal, and conversation rules.
 
-The speedrun process is due, but its brain is not running. Its business deadline
-is not recorded here.
+### 12.4 Let Root silently rewrite child memory
 
-Missing for a responsible priority: the current Neara outcome and the nearest
-external date.
+This direction removes routing friction. It also lets a model misquote Julian inside another subject.
 
-[Why this story]  [All 31 Goals]                    [Continue ->]
-```
+Exact routes with one later approval keep capture fast and memory honest.
 
-This briefing already reduces reconstruction work. It also refuses the final rank because the value and date evidence is incomplete.
+### 12.5 Read all Journals from every brain
 
-One focused question can follow: “Which commitment has the nearest external date?” The answer changes the proposed working plan.
+This direction avoids routing. It exposes unrelated personal context and increases retrieval noise.
 
-## 9. Complete UI workflow
+Area scope plus routed excerpts gives each brain relevant memory.
 
-1. Julian opens Work and selects **Orient me**.
-2. Agent Shell shows the current scope and evidence time.
-3. The short version appears without a setup question.
-4. Julian reads forward or opens evidence for one surprising statement.
-5. The briefing shows changes, pressure, next actors, batches, and return candidates.
-6. The briefing proposes a working plan with reasons.
-7. Julian changes one item and accepts the plan.
-8. Work returns with the first plan item selected.
-9. The compact working-plan line preserves the next move across later context changes.
+### 12.6 Build A2UI first
 
-Escape returns to the prior Work position. Reopening the briefing restores its chapter and scroll position until the evidence changes.
+This direction creates an impressive demo before Tangent proves the story.
 
-## 10. UI/UX lens analysis
+It also adds protocol generation errors, rendering errors, interaction state, accessibility work, and visual framing risk.
 
-### 10.1 Intent and common path
+### 12.7 Let activity generate the story
 
-The primary intent is reorientation before action. The common path is Work, briefing, accepted plan, then Work at the selected Goal.
+Time and recency show attention, not value.
 
-The secondary intent is explanation. Julian opens evidence, an alternative reading, an Area, a Goal, or a brain without losing briefing position.
+The rejected Neara example already demonstrated the result: correct facts with no human meaning.
 
-### 10.2 Context, navigation, and editing
+## 13. Risks, reconsideration, and validation
 
-The briefing keeps the Work scope, prior cursor, folds, and return point. It never replaces the terminal or an active agent.
+### 13.1 Risks
 
-Chapter navigation uses visible Back and Continue actions. Keyboard commands use the existing ownership and shortcut-display contracts.
+- Julian can forget to use Spew for a durable correction.
+- A long Root Journal can contain noise and temporary thoughts.
+- A brain can select the wrong passage for a route.
+- Route approval can become a chore after every Spew.
+- Root can produce a broad story with too little depth.
+- Activity evidence can miss human work.
+- A natural story can sound persuasive while it is wrong.
+- A visual story can amplify that persuasion.
 
-The exact shortcut remains a later navigation decision. The entry action must show its shortcut when one exists.
+Exact source words, optional routing, normal conversation, and staged validation reduce these risks.
 
-Editing occurs only in the final plan or an explicit fact-correction flow. All edits show their consequence before acceptance.
+### 13.2 Reconsideration conditions
 
-### 10.3 State that remains visible
+If Julian often forgets Spew, let the brain offer to save a clear correction after normal chat.
 
-The header shows scope, evidence time, chapter position, and freshness. Each suggestion shows its reason.
+If route review becomes repetitive, test a narrow standing rule for named Areas. Do not make silent routing the default.
 
-The final plan shows action, next actor, and time horizon. Unknown values use the word `Unknown`.
+If Root becomes too broad, orient from one selected Area and use Root only for cross-work capture.
 
-The Work return keeps the accepted plan visible without hiding the complete Work structure.
+If Journal noise harms orientation, add a brain-maintained summary with links to exact entries.
 
-### 10.4 Loading, partial, stale, and conflict states
+If text repeatedly hides a timeline, tree, or decision relation, prototype one fixed visual.
 
-**Loading:** The frame, scope, and chapter titles remain stable. The body uses one calm loading state.
+If that prototype helps, compare a Tangent-native format with A2UI before protocol adoption.
 
-**No prior briefing:** Chapter two uses reliable recorded history. It labels the missing comparison point.
+### 13.3 First validation: memory and story
 
-**Partial runtime data:** The story uses vault facts and labels live agent state unavailable. It does not convert unavailable into idle.
+Use Root, Neara, and Tangent over three real days.
 
-**Missing `Current`:** The short version states the missing Area story. It uses lower-level facts without pretending that they express current importance.
+Julian records:
 
-**Stale source:** The statement shows the source date. A stale source cannot support an unmarked current-state claim.
+1. One all-work Spew in Root.
+2. One Neara Spew with a Tangent aside.
+3. One later correction.
+4. One approved route and one declined route.
 
-**Conflict:** Both facts remain visible. Plan acceptance pauses only for the affected item.
+Then a fresh Root brain and a fresh Neara brain each receive a natural orientation request.
 
-**Facts change during reading:** The header shows that the story changed. Julian can refresh or keep reading the timestamped snapshot.
+The design passes after the answers do these things:
 
-**Empty scope:** The briefing says that no Goals are open. It can still show due processes, recent closures, and the accepted working plan.
+1. Start from Julian's latest meaningful perspective.
+2. Relate an attention shift without treating time as value.
+3. Recall the routed Tangent aside in the correct scope.
+4. Treat the correction as current and the earlier view as history.
+5. Name one material unknown.
+6. Lead to a useful conversation without a setup questionnaire.
 
-**Large scope:** The first chapter stays bounded. Complete inventory and Area drill-down remain available.
+The need to repeat the old context means that the design fails.
 
-**Interrupted briefing:** Reentry restores the chapter and evidence drawer. No unaccepted plan edit survives as a work-state change.
+An inventory that project counts alone can produce also means that the design fails.
 
-### 10.5 Feedback and consequence
+### 13.4 Second validation: visual value
 
-Chapter navigation is instant and reversible. It needs no confirmation.
+Run this validation only after the text trial passes.
 
-Accepting a working plan has a visible scope and an Undo action. Any source edit uses its existing consequence and acceptance contract.
+Use one real story with a meaningful sequence or Area relationship. Compare the text answer with one read-only visual prototype.
 
-Starting an agent remains a separate action in Work. Orientation never starts work by itself.
+The visual earns a second iteration only after Julian prefers it for orientation and can explain the relationship more easily.
 
-### 10.6 Accessibility and expert efficiency
+Beauty alone is not a pass condition.
 
-Each chapter has one heading and a logical reading order. Claim types and freshness never depend on color alone.
+## 14. Sources
 
-The interface supports keyboard navigation, screen readers, zoom, reduced motion, and visible focus. No timed advance exists.
+### 14.1 Repository and vault evidence
 
-An expert can open the complete outline, jump to any chapter, or return to Work. Progressive disclosure never traps the user in a tutorial.
+- [Root Area-brain instructions](/Users/julianotto/.tangent/trees/AGENTS.md)
+- [Tangent Area note](/Users/julianotto/.tangent/trees/otto/tangent/tangent.md)
+- [Journal domain](../../../packages/agent-shell/app/area-brain-domain.mjs)
+- [Journal and message routes](../../../packages/agent-shell/app/server.mjs)
+- [Request effects](../../../packages/agent-shell/app/brain-requests.mjs)
+- [Journal production-path tests](../../../packages/agent-shell/app/area-brain-production-path-http.test.mjs)
+- [Brain terminal view](../../../packages/agent-shell/app/public/goal-launch-view.js)
+- [Terminal controller](../../../packages/agent-shell/app/public/terminal-controller.js)
+- [Area map](../../../packages/agent-shell/app/public/area-map.js)
+- [Capture composer](../../../packages/agent-shell/app/public/work-desk-view.js)
+- [Voice route](../../../packages/agent-shell/app/voice-routes.mjs)
+- [Area brain design](/Users/julianotto/.tangent/trees/otto/tangent/design-area-brain.md)
+- [Audited Area-brain workflow](/Users/julianotto/.tangent/trees/otto/tangent/design-audited-area-brain-workflow.md)
 
-### 10.7 Product-wide cognitive cost
+### 14.2 External evidence
 
-The design adds one entry action, one temporary surface, and one compact working-plan line. It does not add fields to every Work row.
-
-The new surface earns its cost because it serves a distinct mental state. It also leaves the existing high-speed path unchanged.
-
-## 11. Pressure tests and counterexamples
-
-### 11.1 Recency is not priority
-
-The API-key Goal changed most recently in the observed snapshot. The Viz Input approvals are much older.
-
-A recency rank favors the API key. It cannot know whether the megabranch has the more important external commitment.
-
-**Decision:** Recency can explain change and staleness. It cannot establish value.
-
-### 11.2 Dependency leaves are not the whole story
-
-The snapshot contains three explicit leaves that unlock other Goals. The Viz Input approval chain appears mainly in titles and result text.
-
-A dependency-only story misses important causal relationships when the graph is incomplete.
-
-**Decision:** Explicit dependencies support recorded claims. Text can support labeled inferences, but not silent graph facts.
-
-### 11.3 Age does not make forgotten work valuable
-
-Old Viz Input and Hackathon Goals can represent neglected value, obsolete intent, duplicate records, or completed work with stale state.
-
-**Decision:** Resurface old work only with a current reason. Otherwise, place it under missing information or complete inventory.
-
-### 11.4 A polished story can hide a wrong frame
-
-A narrator can describe PG&E as the main story because it has 21 Goals. Count does not establish importance.
-
-**Decision:** The story must expose selection reasons, omitted work, alternatives, and missing priority evidence.
-
-### 11.5 More progressive steps can become more work
-
-Five mandatory screens can burden a user who only needs one reminder sentence.
-
-**Decision:** The first chapter must stand alone. Every later chapter is skippable, and the complete outline is directly available.
-
-### 11.6 Batching can delay an urgent item
-
-Four reviewer actions look batchable. One approval can still have an earlier deadline or a separate causal path.
-
-**Decision:** Exact urgency and causal order split a batch. Convenience never outranks recorded risk.
-
-### 11.7 A persistent plan can become another stale source
-
-A working plan can outlive its assumptions. Silent persistence then recreates the original problem.
-
-**Decision:** The plan preserves its accepted reasons and source times. Changed assumptions mark the item for reorientation.
-
-## 12. Detailed decisions
-
-1. **Add a separate Work Briefing.** Do not turn Work into a narrative dashboard.
-2. **Use the label `Orient me`.** The user intent is mental reorientation, not report generation.
-3. **Keep the briefing on demand.** Do not open it from schedules, inactivity, stale notes, or agent events.
-4. **Default to a guided five-chapter sequence.** Keep every chapter skippable.
-5. **Make the first chapter independently useful.** It contains the bottom line and missing priority facts.
-6. **Use one story grammar.** Intent, position, change, cause, next actor, time horizon, and outlook form each Area story.
-7. **Separate recorded, inferred, and suggested claims.** Every claim has evidence and a source time.
-8. **Expose omitted work and alternative readings.** Narrative clarity cannot hide the frame.
-9. **Represent responsibility as the next actor.** A broad owner remains secondary context.
-10. **Represent time with dates, event conditions, accepted horizons, or unknown.** Do not invent a due date.
-11. **Offer batches by shared context.** Urgency and causal order can split them.
-12. **Resurface old work only with a current reason.** Age alone is not a value signal.
-13. **Use explicit reasons instead of a score.** A suggestion compares commitment, time, agency, leverage, batch value, and renewed relevance.
-14. **End with a user-accepted working plan.** Each item states action, next actor, and date or event.
-15. **Persist the working plan across sessions.** A later design decides its technical representation.
-16. **Return to Work at the first plan item.** Keep a compact plan line visible until revision or completion.
-17. **Do not start work during orientation.** Starting remains an explicit Work action.
-
-## 13. Rejected alternatives
-
-### 13.1 More columns and smarter sorting
-
-This alternative is the cheapest visual change. It also preserves the exact synthesis burden that blocks Julian.
-
-Columns can support the evidence view later. They cannot replace the briefing.
-
-### 13.2 Free conversation as the primary path
-
-Conversation is the strongest alternative because it can adapt to Julian's questions. It also requires a question before orientation begins.
-
-The answer length, coverage, and evidence can vary by agent. Use conversation after the guided opening.
-
-### 13.3 A timeline-first product
-
-A timeline answers when events occurred. It does not explain why an Area matters, who acts next, or which future condition changes priority.
-
-Use time as one briefing dimension, not the organizing product model.
-
-### 13.4 A dependency graph-first product
-
-A graph shows explicit causal structure well. The current graph is incomplete, and value does not follow from graph position.
-
-Use dependencies as evidence and leverage signals. Keep the narrative responsible for explaining their meaning.
-
-### 13.5 A scheduled daily or weekly review
-
-A schedule can help form a habit. It cannot solve the acute reorientation need after sickness, fatigue, or context switching.
-
-It also violates the quiet-work contract when it appears automatically. A process can open the briefing only after Julian explicitly chooses that behavior.
-
-### 13.6 An audio-first briefing
-
-Audio can feel more like being told a story. It also prevents fast scanning and makes evidence comparison harder.
-
-Keep text as the core contract. Optional read-aloud can reuse the same sequence later.
-
-## 14. Risks, assumptions, and unknowns
-
-### 14.1 Risks
-
-- The narrator can create a persuasive but wrong frame.
-- Sparse `Current`, due, actor, and dependency data can weaken the story.
-- Five chapters can become another review ritual.
-- A persistent working plan can become stale.
-- Batch suggestions can overvalue convenience.
-- A model can infer causality from names that only imply a relationship.
-- The briefing can duplicate an Area brain's own planning story.
-
-The evidence contract, omitted-work control, source times, and explicit acceptance reduce these risks. They do not remove them.
-
-### 14.2 Assumptions
-
-- Julian wants one cross-Area story within the current Work scope.
-- Area Purpose and `Current` remain the best recorded sources for value and position.
-- Goal results, dependencies, people, and due values can support the detailed chapters.
-- One short accepted plan helps more than a transient recommendation.
-- Work remains the preferred execution surface after reorientation.
-
-### 14.3 Unknowns
-
-- Which component authors a cross-Area story without breaking Area-brain ownership.
-- Which existing object stores the working plan.
-- How often the source material contains enough value and time evidence.
-- Whether Julian prefers the five-step path or mostly uses the short version.
-- Whether the plan line belongs in Work after several days.
-
-These unknowns affect implementation and validation. They do not change the selected product model.
-
-### 14.4 Reconsideration conditions
-
-If Julian usually leaves after the short version, reconsider the separate surface. The short version can then become a controlled Work disclosure.
-
-If Julian often corrects causal or priority suggestions, reduce interpretation. The product can shift toward a recorded-facts briefing.
-
-If batch proposals rarely change action, remove them. Preserve actor and time grouping as comprehension aids.
-
-If the working plan often becomes stale before reuse, make it temporary. Keep the accepted plan in briefing history.
-
-Add optional audio only after the text flow succeeds. Audio must never contain evidence that the text view omits.
-
-## 15. Validation
-
-Use the observed 31-Goal Neara snapshot as the first validation fixture. Preserve the missing `Current`, due process, duplicate title, and old approvals.
-
-Ask Julian to do these tasks in Work and in the proposed briefing:
-
-1. Explain the main project situation.
-2. Name the nearest recorded commitment.
-3. Identify the next actor for selected work.
-4. Find one action that unlocks other work.
-5. Find one useful batch.
-6. Reconsider one old Goal without treating age as value.
-7. Choose the next work and explain the choice.
-
-Run at least one validation during a real low-energy period. Do not manufacture sleep deprivation or illness.
-
-If the briefing takes longer than manual reconstruction, the design fails. It also fails when Julian must read a chapter twice.
-
-If a hidden omission changes the chosen priority, the design fails. It also fails when a suggestion cannot show evidence and reason.
-
-The design passes only when the accepted working plan feels like Julian's synthesis. The narrator's recommendation is not the success measure.
-
-## 16. Sources
-
-### 16.1 Repository evidence
-
-- [Agent Shell daily product](../../decisions/ADR-0017-agent-shell-daily-product.md)
-- [Agent Shell operating vision](../agent-shell-operating-vision/design-record.md)
-- [Compressed Work hierarchy](../agent-shell-compressed-work-hierarchy.md)
-- [Work-view sub-Areas](../work-view-sub-areas/design-record.md)
-- [Goal narrative projection](../../../packages/agent-shell/app/public/goal-narrative.js)
-- [Area-note freshness signal](../../../packages/agent-shell/app/area-note-links.mjs)
-- [Work Desk projection](../../../packages/agent-shell/app/public/work-desk-view.js)
-- [Recent closures view](../../../packages/agent-shell/app/public/what-happened-view.js)
-- [Vault index and Goal fields](../../../packages/agent-shell/app/server.mjs)
-- Screenshot supplied by Julian on 2026-08-28.
-- `tangent area list` and `tangent goal list neara --subtree --status open --json`, observed on 2026-08-28.
-
-### 16.2 External evidence
-
-- Lim and Dinges, [short-term sleep deprivation meta-analysis](https://pubmed.ncbi.nlm.nih.gov/20438143/), 2010.
-- Altmann and Trafton, [Memory for goals](https://doi.org/10.1016/S0364-0213(01)00058-1), 2002.
-- Altmann and Trafton, [Task interruption, resumption lag, and cues](https://interruptions.net/literature/Altmann-CogSci04.pdf), 2004.
-- Endsley, [Situation awareness in dynamic systems](https://doi.org/10.1518/001872095779049543), 1995.
-- Zwaan and Radvansky, [Situation models in comprehension and memory](https://doi.org/10.1037/0033-2909.123.2.162), 1998.
-- Risko and Gilbert, [Cognitive offloading](https://doi.org/10.1016/j.tics.2016.07.002), 2016.
-- Masicampo and Baumeister, [Plan making and unfinished goals](https://doi.org/10.1037/a0024192), 2011.
-- Trope and Liberman, [Construal-level theory of psychological distance](https://pmc.ncbi.nlm.nih.gov/articles/PMC3152826/), 2010.
-- Rubinstein, Meyer, and Evans, [Executive control in task switching](https://pubmed.ncbi.nlm.nih.gov/11518143/), 2001.
-- Shneiderman, [The Eyes Have It](https://hci.stanford.edu/courses/cs448b/papers/shneiderman96eyes.pdf), 1996.
-- Segel and Heer, [Narrative visualization](https://homes.cs.washington.edu/~jheer/files/narrative.pdf), 2010.
-- Hullman and Diakopoulos, [Framing effects in narrative visualization](https://www.hullmanlab.northwestern.edu/paper/2011/02/01/vis-rhetoric.html), 2011.
-- Blalock and Reyna, [Fuzzy-trace theory review](https://pmc.ncbi.nlm.nih.gov/articles/PMC4979567/), 2016.
-- Starmer and colleagues, [I-PASS handoff program](https://pubmed.ncbi.nlm.nih.gov/25372088/), 2014.
+- Altmann and Trafton, [task interruption, resumption lag, and cues](https://interruptions.net/literature/Altmann-CogSci04.pdf), 2004.
+- Endsley, [situation awareness in dynamic systems](https://doi.org/10.1518/001872095779049543), 1995.
+- Masicampo and Baumeister, [plan making and unfinished goals](https://doi.org/10.1037/a0024192), 2011.
+- Hullman and Diakopoulos, [framing effects in narrative visualization](https://www.hullmanlab.northwestern.edu/paper/2011/02/01/vis-rhetoric.html), 2011.
+- A2UI project, [architecture and project status](https://github.com/a2ui-project/a2ui).
+- A2UI project, [v1.0 candidate protocol](https://github.com/a2ui-project/a2ui/blob/main/specification/v1_0/docs/a2ui_protocol.md).
+- A2UI project, [basic catalogue concepts](https://a2ui.org/concepts/catalogs/).

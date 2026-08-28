@@ -57,6 +57,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   let launchReturnPoint = null;
   let launchParentSurface = null;
   let harnessReturnPoint = null;
+  let areaProcessesReturnPoint = null;
 
   /** Returns from one worker agent to its exact Work or Document context. */
   function leaveGoalAgent() {
@@ -1348,6 +1349,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    * same screen (design-quick-returnable-document-search 5.3).
    */
   function openAreaRoute(area) {
+    areaProcessesReturnPoint = null;
     if (state.view === "document" && state.document?.file) state.mapSelectFile = state.document.file;
     state.areaSelection = area;
     state.areaHistory = false;
@@ -1356,6 +1358,23 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     state.whatHappened = null;
     revealArea(state.areaSelection);
     return paint(true);
+  }
+
+  /** Opens one Area's existing process table and remembers its Work opener. */
+  function openAreaProcesses(area, trigger) {
+    areaProcessesReturnPoint = captureNavigationPoint(trigger);
+    state.areaSelection = area;
+    state.areaHistory = false;
+    state.whatHappened = null;
+    localStorage.setItem("agent-shell.last-area", area);
+    state.view = "areas";
+    revealArea(area);
+    paint(true);
+    window.setTimeout(() => {
+      const heading = document.querySelector("#area-processes-heading") ?? document.querySelector("#area-heading");
+      heading?.focus?.({ preventScroll: true });
+      heading?.closest?.(".area-processes")?.scrollIntoView?.({ block: "start" });
+    }, 0);
   }
 
   /**
@@ -1525,7 +1544,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     const select = target.closest("[data-select-goal]");
     if (select) return selectGoal(select.dataset.selectGoal);
-    if (target.closest("[data-show-areas]")) return showAreas();
+    if (target.closest("[data-show-areas]")) { areaProcessesReturnPoint = null; return showAreas(); }
     const areaToggle = target.closest("[data-toggle-area]");
     if (areaToggle) {
       const area = areaToggle.dataset.toggleArea;
@@ -1546,11 +1565,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     const area = target.closest("[data-select-area]");
     if (area) {
+      areaProcessesReturnPoint = null;
       state.areaSelection = area.dataset.selectArea;
       localStorage.setItem("agent-shell.last-area", state.areaSelection);
       paint(true);
       return window.setTimeout(() => document.querySelector("#area-work-heading")?.focus(), 0);
     }
+    const openProcesses = target.closest("[data-open-area-processes]");
+    if (openProcesses) return openAreaProcesses(openProcesses.dataset.openAreaProcesses, openProcesses);
     const kindOnly = target.closest("[data-area-kind-only]");
     if (kindOnly) {
       state.areaDocumentOnly = state.areaDocumentOnly === kindOnly.dataset.areaKindOnly ? "" : kindOnly.dataset.areaKindOnly;
@@ -2239,6 +2261,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   backButton.addEventListener("click", async () => {
     if (closeNearestOpenDetails()) return;
+    if (state.view === "areas" && areaProcessesReturnPoint) return leaveCurrentSurface();
     if (["work", "areas", "prompts"].includes(state.view)) return toggleShellMenu();
     return leaveCurrentSurface();
   });
@@ -2316,9 +2339,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     renderGoToList();
   });
 
-  workTab.addEventListener("click", showWork);
-  areasTab.addEventListener("click", showAreas);
-  promptsTab.addEventListener("click", showPrompts);
+  workTab.addEventListener("click", () => { areaProcessesReturnPoint = null; showWork(); });
+  areasTab.addEventListener("click", () => { areaProcessesReturnPoint = null; showAreas(); });
+  promptsTab.addEventListener("click", () => { areaProcessesReturnPoint = null; showPrompts(); });
 
   findButton.addEventListener("click", () => {
     if (findButton.dataset.action === "next-step") {
@@ -2583,6 +2606,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (state.view === "document") {
       leaveReader();
+      return true;
+    }
+    if (state.view === "areas" && areaProcessesReturnPoint) {
+      const point = areaProcessesReturnPoint;
+      areaProcessesReturnPoint = null;
+      state.view = point.view;
+      paint(true);
+      restoreNavigationPoint(point);
       return true;
     }
     if (state.view === "decision") {

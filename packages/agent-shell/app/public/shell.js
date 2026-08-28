@@ -643,6 +643,7 @@ function renderKey() {
     state.programId,
     state.programDraft,
     state.programs.operations.map((item) => [item.id, item.paused, item.lastRunAt, item.nextRunAt, item.session?.state]),
+    state.programs.processes.map((item) => [item.area, item.slug, item.loop, item.status, item.error, item.brainLive, item.state, item.nextRunAt, item.lastRunAt]),
     vaultRenderProjection(),
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
     [state.launch.area, state.launch.kind, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, state.launch.options, state.launch.instruction, state.launch.assignmentKind, state.launch.assignmentPath, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],

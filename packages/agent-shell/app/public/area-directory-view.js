@@ -242,7 +242,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
       </tr>`).join("");
     return `
       <section class="area-workspace-section area-processes" aria-labelledby="area-processes-heading">
-        <div class="area-section-heading"><div><p class="kicker">Processes</p><h3 id="area-processes-heading">${processes.length === 1 ? "One process" : `${processes.length} processes`}</h3></div><small>Pause or resume with <code>tangent process pause|resume &lt;slug&gt;</code></small></div>
+        <div class="area-section-heading"><div><p class="kicker">Processes</p><h3 id="area-processes-heading" tabindex="-1">${processes.length === 1 ? "One process" : `${processes.length} processes`}</h3></div><small>Pause or resume with <code>tangent process pause|resume &lt;slug&gt;</code></small></div>
         <div class="table-scroll"><table class="process-table"><thead><tr><th>Process</th><th>When</th><th>Next run</th><th>Last run</th><th>State</th></tr></thead><tbody>${rows}</tbody></table></div>
       </section>`;
   }
@@ -262,7 +262,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
         <header class="area-contents-heading">
           <div>
             ${areaPath(area.path)}
-            <h2>${escapeHtml(humanName(area.name))}${area.status ? `<span class="area-status ${escapeHtml(area.status)}">${escapeHtml(area.status)}</span>` : ""}</h2>
+            <h2 id="area-heading" tabindex="-1">${escapeHtml(humanName(area.name))}${area.status ? `<span class="area-status ${escapeHtml(area.status)}">${escapeHtml(area.status)}</span>` : ""}</h2>
             ${area.purpose ? `<p class="area-purpose">${escapeHtml(area.purpose)}</p>` : ""}
             ${current ? `<p class="area-current">${escapeHtml(current)}</p>` : ""}
             ${area.noteSignal ? `<p class="area-note-signal${area.noteSignal.warning ? " warning" : ""}" title="The brain reads this note every turn. Keep it under 100 lines and rewrite Current every two weeks.">${escapeHtml(area.noteSignal.text)}</p>` : ""}

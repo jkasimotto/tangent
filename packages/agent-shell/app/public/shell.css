@@ -621,7 +621,9 @@ button.work-agent-ref:hover, button.work-agent-ref:focus-visible { color: #fff; 
 .process-state.due { color: var(--amber); font-weight: 620; }
 .process-state.paused { color: var(--quiet); }
 .process-state.loop { color: #9ebbe0; }
-.work-group-loop { margin-left: 2px; color: #9ebbe0; font-size: 11px; opacity: 0.8; cursor: default; }
+.work-group-loop { margin-left: 2px; padding: 1px 4px; border: 0; border-radius: 3px; background: transparent; color: #9ebbe0; font: inherit; font-size: 11px; opacity: 0.8; cursor: pointer; }
+.work-group-loop:hover { background: #263343; opacity: 1; }
+.work-group-loop:focus-visible { outline: 2px solid #8fc4ff; outline-offset: 1px; opacity: 1; }
 .process-row.paused td { color: var(--quiet); }
 
 .work-table :focus-visible, .ask-table :focus-visible { outline: 2px solid #8fc4ff; outline-offset: 1px; }

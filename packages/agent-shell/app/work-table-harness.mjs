@@ -56,7 +56,7 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
     if (pathname === "/api/sessions") {
       return jsonResponse({ boot: "boot-1", caffeinate: false, pipelines: fixture.pipelines, sessions: fixture.sessions, brains: fixture.brains });
     }
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse(fixture.programs ?? { operations: [], processes: [], problems: [], areas: [], liveCount: 0 });
     if (pathname === "/api/launch/options" && launchOptions) {
       return jsonResponse(typeof launchOptions === "function" ? launchOptions(requestUrl) : launchOptions);
     }

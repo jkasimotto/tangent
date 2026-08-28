@@ -234,7 +234,15 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     for (const brain of state.brains ?? []) if (brain.status === "active" && brain.live) paths.add(brain.area);
     for (const tree of goalTrees()) if (goalTreeIsActive(tree)) paths.add(tree.path);
     for (const session of describeWorkSessions()) if (session.area) paths.add(session.area);
+    for (const item of state.programs.processes ?? []) {
+      if (item.loop && item.status === "active" && !item.error) paths.add(item.area);
+    }
     return paths;
+  }
+
+  /** The valid active loops owned by one exact Area. */
+  function activeLoopsForArea(areaPath) {
+    return (state.programs.processes ?? []).filter((item) => item.area === areaPath && item.loop === true && item.status === "active" && !item.error);
   }
 
   /** The Area that owns the current cursor row, read from the painted desk. */
@@ -1105,7 +1113,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       // A live brain counts as work, the way a Describe session does: its
       // Area earns a header at the top level and a sub-header below one
       // (work-view-sub-areas Decision 1), never a peer panel of its parent.
-      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, liveBrainAreas.includes(area.path) ? 1 : 0, panelRoots.length ? areaPrograms.length : 0));
+      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, liveBrainAreas.includes(area.path) ? 1 : 0, activeLoopsForArea(area.path).length ? 1 : 0, panelRoots.length ? areaPrograms.length : 0));
     }
     // Every not-done Area earns a row. A done Area keeps its row only while
     // it has open work under the current filter. Active-only keeps only the
@@ -1125,6 +1133,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       const focusHasWork = !focusRoot || trees.some((tree) => core.isInside(tree.path, panel.path))
         || descriptions.some((session) => core.isInside(session.area, panel.path))
         || liveBrainAreas.some((path) => core.isInside(path, panel.path))
+        || (state.programs.processes ?? []).some((item) => activeLoopsForArea(item.area).includes(item) && core.isInside(item.area, panel.path))
         || state.programs.operations.some((program) => core.isInside(program.area, panel.path));
       return { area, trees: own.trees, descriptions: own.descriptions, sections, programs, brain, focusRoot, focusHasWork };
     }).filter((record) => record.area);
@@ -1596,10 +1605,14 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * else on Work says a loop exists; the Area page has the full row.
    */
   function brainLoopMark(areaPath) {
-    const loops = (state.programs.processes ?? []).filter((item) => item.loop && item.area === areaPath && item.status === "active" && !item.error);
+    const loops = activeLoopsForArea(areaPath);
     if (!loops.length) return "";
     const title = loops.map((item) => `Loop every ${item.every}: ${String(item.body ?? "").split("\n")[0].slice(0, 60)}`).join("\n");
-    return `<span class="work-group-loop" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">↻</span>`;
+    const count = loops.length;
+    const runtime = loops[0].brainLive ? "on" : "waiting";
+    const noun = count === 1 ? "loop" : "loops";
+    const label = `${areaLabel(areaPath)} has ${count} active ${noun}, ${runtime}. Open Processes.`;
+    return `<button class="work-group-loop" type="button" data-open-area-processes="${escapeHtml(areaPath)}" data-focus-key="loops:${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(label)}">↻ ${count} ${noun} · ${runtime}</button>`;
   }
 
   /**
@@ -1643,7 +1656,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // the muted style so the eye skips it, and keeps its fold, brain button,
     // and menu so its brain stays reachable.
     const quiet = sub && !allTrees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status)))
-      && !allDescriptions.length && !summary.questions && !brain?.live;
+      && !allDescriptions.length && !summary.questions && !brain?.live && !activeLoopsForArea(area.path).length;
     const starred = areaFocusRoots().includes(area.path);
     const starButton = `<button class="work-star${starred ? " starred" : ""}" type="button" data-star-area="${escapeHtml(area.path)}" aria-pressed="${starred}" ${workCommandAttributes("starArea", `${starred ? "Unstar" : "Star"} ${areaLabel(area.path)} (f)`)} aria-label="${starred ? "Unstar" : "Star"} ${escapeHtml(areaLabel(area.path))}"><span aria-hidden="true">${starred ? "★" : "☆"}</span></button>`;
     // The visible text identifies the agent as the brain. The shared agent

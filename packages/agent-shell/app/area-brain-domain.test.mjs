@@ -6,6 +6,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { promisify } from "node:util";
 import { appendJournalEntry, appendMilestone, emergencyStartProblem, exportLegacyAudit, JOURNAL_LIMIT_BYTES, MILESTONE_SUMMARY_LIMIT, newGoalQueue, operationFromProgram, querySubtreeMilestones, startNextAssignment, submitWorkerReport } from "./area-brain-domain.mjs";
+import { ROOT_AREA } from "./area-identity.mjs";
 
 test("a stored milestone summary is clipped where it is written", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-milestone-clip-"));
@@ -30,6 +31,15 @@ test("Journal intake saves exact text once before delivery", async () => {
   assert.equal(first.duplicate, false);
   assert.equal(again.duplicate, true);
   assert.equal((await readFile(first.file, "utf8")).match(/Exact words\./g).length, 1);
+});
+
+test("Root Journal capture writes at the vault root without creating a root folder", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-root-journal-"));
+  const text = "Remember this.\nI am not sure yet.";
+  const entry = await appendJournalEntry({ treesRoot: root, area: ROOT_AREA, text, idempotencyKey: "native-message-1" });
+  assert.equal(entry.file, path.join(root, "journal.md"));
+  assert.equal((await readFile(entry.file, "utf8")).includes(text), true);
+  await assert.rejects(readFile(path.join(root, "root", "journal.md"), "utf8"));
 });
 
 test("Journal intake stays exactly once after a rollover archives the entry", async () => {

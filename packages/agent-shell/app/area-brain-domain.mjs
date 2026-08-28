@@ -4,6 +4,7 @@ import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs
 import path from "node:path";
 import zlib from "node:zlib";
 import { queryTerms, recencyBound } from "./goal-query-filters.mjs";
+import { areaDirectory, isRootArea } from "./area-identity.mjs";
 import { promisify } from "node:util";
 
 export const MILESTONE_SUMMARY_LIMIT = 240;
@@ -30,7 +31,7 @@ export function clipSummary(text, limit = MILESTONE_SUMMARY_LIMIT) {
 }
 /** Resolves the active Journal path for an Area. */
 export function journalPath(treesRoot, area) {
-  return path.join(treesRoot, cleanArea(area), "journal.md");
+  return path.join(areaDirectory(treesRoot, area), "journal.md");
 }
 
 /**
@@ -46,7 +47,7 @@ export async function appendJournalEntry({ treesRoot, area, text, idempotencyKey
   const clean = cleanArea(area);
   const value = String(text ?? "").trim();
   const key = String(idempotencyKey ?? "").trim();
-  if (!clean || !value || !key) throw new Error("Area, text, and idempotency key are required.");
+  if ((!clean && !isRootArea(area)) || !value || !key) throw new Error("Area, text, and idempotency key are required.");
   const file = journalPath(treesRoot, clean);
   await mkdir(path.dirname(file), { recursive: true });
   let current = "";
@@ -289,7 +290,7 @@ export async function appendMilestone({ root, area, kind, summary, ref = null, i
  */
 export async function querySubtreeMilestones({ root, area, areas, since = "", query = "", limit = 12, now = Date.now() }) {
   const prefix = `${cleanArea(area)}/`;
-  const scope = areas.filter((item) => item === cleanArea(area) || item.startsWith(prefix));
+  const scope = isRootArea(area) ? areas : areas.filter((item) => item === cleanArea(area) || item.startsWith(prefix));
   const records = await Promise.all(scope.map((item) => readMilestones(root, item)));
   const bound = recencyBound(since, now);
   const after = bound === null ? "" : new Date(bound).toISOString();

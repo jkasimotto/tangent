@@ -13,6 +13,7 @@ import { execFile, spawn } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { newBrain, readBrain, writeBrain } from "./brain-record.mjs";
+import { ROOT_AREA } from "./area-identity.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
@@ -135,6 +136,27 @@ test("a brain starts in its Area folder with Julian's message as its first messa
   assert.equal(await readFile(path.join(area, "probefirst.md"), "utf8"), "---\ntype: area\n---\n\n# Probe first\n\n## Purpose\n\nThe probe.\n", "the sweep never rewrites a note");
 });
 
+test("Root appears first and its brain starts in the existing vault root", async (context) => {
+  const server = await startServer(context, { areaName: "otto/proberoot" });
+  if (!server) return;
+  const { base, trees, brains, openedSessions } = server;
+  const tree = await fetch(`${base}/api/tree`).then((response) => response.json());
+  assert.equal(tree.areas[0].path, ROOT_AREA);
+  assert.equal(tree.areas[0].name, "Root");
+  assert.ok(tree.areas.some((area) => area.path === "otto"), "the existing top-level Area path did not move");
+
+  const started = await post(base, "/api/brains/start", {
+    area: ROOT_AREA,
+    instruction: "Orient me from the complete tree.",
+    choice: { harness: "brain" },
+  });
+  assert.ok(started.session, JSON.stringify(started));
+  openedSessions.push(started.session);
+  const record = await readBrain(brains, ROOT_AREA);
+  assert.equal(record.generations.at(-1).cwd, trees);
+  assert.equal(record.planFile, "plan-root.md");
+});
+
 test("a message to an Area with no brain founds one, and to a live brain it is queued", async (context) => {
   const server = await startServer(context, { areaName: "otto/probedescribe" });
   if (!server) return;
@@ -239,4 +261,3 @@ test("a worker prompt ends with the one send command and no typed report contrac
   assert.doesNotMatch(serverSource, /tangent handover|tangent goal handover|tangent agent send/, "old worker verbs are gone from the server");
   assert.doesNotMatch(serverSource, /rationaleDossierContract|tangent process list|tangent document resolve/, "the worker prompt teaches no other command");
 });
-

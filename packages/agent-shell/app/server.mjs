@@ -78,6 +78,7 @@ import { withDefaultModel } from "./agent-command.mjs";
 import { findCodexRollouts, launchWithConversation, newConversation, resumeCommand } from "./harness-conversation.mjs";
 import { clearGoalCleanup, readAllGoalCleanups, readGoalCleanup, writeGoalCleanup } from "./goal-cleanup-record.mjs";
 import { appendJournalEntry, appendMilestone, emergencyStartProblem, exportLegacyAudit, journalFiles, querySubtreeMilestones, readMilestones } from "./area-brain-domain.mjs";
+import { areaDirectory, areaFilePrefix, isRootArea, ROOT_AREA, rootAreaRow } from "./area-identity.mjs";
 import { materialOperationEvents, markOperationEventDelivered, readOperationEvents, writeOperationEvents } from "./operation-events.mjs";
 import { agentShellInstanceId, createSessionOwnership, SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 import { appendWorkerHandoverReceipt, pendingWorkerHandoverReceipts, recordWorkerHandoverNotice, workerHandoverReceipt } from "./worker-handover-receipt.mjs";
@@ -1036,6 +1037,7 @@ async function buildVaultIndex() {
       goals,
     });
   }
+  out.unshift(rootAreaRow(entries.filter(({ n }) => !n.path.includes("/")).map(({ n }) => n.path)));
   // The unified map: every goal exactly once, at its topmost position.
   // A root is a Goal that no other Goal links as a Subgoal.
   const groups = [];
@@ -4461,7 +4463,7 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
   // A brain always sits in its Area folder in the vault, whatever the Area
   // binds: its work is the Area's notes, Goals, and Documents, and the
   // folder's AGENTS.md chain is its standing instruction.
-  const directory = path.join(TREES_ROOT, record.area);
+  const directory = areaDirectory(TREES_ROOT, record.area);
   const message = brainFirstMessage(firstMessage);
   const held = notices.map((notice) => ({ area: notice.area, id: notice.id }));
   let target = "";
@@ -4555,8 +4557,8 @@ function startBrain(area, options = {}) {
 
 /** Performs one exact-Area start, resume, or reattachment. */
 async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "", choice = null, resume = false, automaticRecovery = false, messageRecorded = false } = {}) {
-  if (!area || !existsSync(path.join(TREES_ROOT, area))) return { status: 404, error: `no Area ${area || "(none)"}` };
-  const hidden = await hiddenAreaStatus(area);
+  if (!area || (!isRootArea(area) && !existsSync(areaDirectory(TREES_ROOT, area)))) return { status: 404, error: `no Area ${area || "(none)"}` };
+  const hidden = isRootArea(area) ? null : await hiddenAreaStatus(area);
   if (hidden) return { status: 409, code: "area-hidden", error: `Area ${area} is ${hidden}. Reopen it first: tangent area reopen ${area}` };
   const existing = await readBrain(BRAINS_ROOT, area);
   if (existing?.status === "inactive" && unsettledBrainStop(existing)) {
@@ -4613,13 +4615,13 @@ async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "",
   if (existing) return { status: 409, error: `the ${area} brain already exists; resume it so its founding instruction stays immutable` };
   const invalid = validateInstruction(instruction);
   if (invalid) return { status: 400, error: invalid };
-  const leaf = area.split("/").pop();
+  const leaf = isRootArea(area) ? "root" : area.split("/").pop();
   let record;
   try {
     record = newBrain({
       area,
       instruction,
-      planFile: `${area}/plan-${leaf}.md`,
+      planFile: `${areaFilePrefix(area)}plan-${leaf}.md`,
     });
   } catch (error) {
     return { status: 400, error: String(error.message ?? error) };
@@ -5813,10 +5815,24 @@ const agentRoutes = createAgentRoutes({
 const areaRoutesOperations = {
   /** Returns the complete Area tree. */
   async tree() {
-    return { root: TREES_ROOT, areas: await withAreaStatus(await readTree(TREES_ROOT)) };
+    const physical = await withAreaStatus(await readTree(TREES_ROOT));
+    return { root: TREES_ROOT, areas: [rootAreaRow(physical.map((area) => area.path)), ...physical] };
   },
   /** Returns one Area's note sections and own Goals. */
   async show(area) {
+    if (isRootArea(area)) return {
+      area,
+      status: "",
+      purpose: "The complete Tangent vault.",
+      resources: "",
+      resolved: {},
+      workFolder: null,
+      skills: [],
+      projectSkills: [],
+      goals: [],
+      ideas: [],
+      processes: [],
+    };
     if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) return null;
     const text = await areaNote(area);
     const workFolder = await areaWorkFolder(area);
@@ -5841,13 +5857,13 @@ const areaRoutesOperations = {
   },
   /** Returns archived and active Journal text in chronological file order. */
   async journal(area) {
-    if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) return null;
+    if (!area || (!isRootArea(area) && !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area))) return null;
     const files = await journalFiles(TREES_ROOT, area);
     return { area, files: await Promise.all(files.map(async (file) => ({ file: path.relative(TREES_ROOT, file), text: await readFile(file, "utf8") }))) };
   },
   /** Returns the durable recent-context projection for an Area and its children. */
   async milestones(area, options) {
-    const areas = flattenAreaPaths(await readTree(TREES_ROOT));
+    const areas = [ROOT_AREA, ...flattenAreaPaths(await readTree(TREES_ROOT))];
     if (!area || !areas.includes(area)) return null;
     return querySubtreeMilestones({ root: BRAINS_ROOT, area, areas, ...options });
   },
@@ -5866,7 +5882,7 @@ const areaRoutesOperations = {
   /** Commits exact capture text and its rollover archive, then wakes the logical Area brain. An uncommitted capture wakes nothing. */
   async capture(body) {
     const area = String(body.area ?? "");
-    if (!flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) throw new Error("The destination Area does not exist.");
+    if (!isRootArea(area) && !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) throw new Error("The destination Area does not exist.");
     const entry = await appendJournalEntry({ treesRoot: TREES_ROOT, area, text: body.text, idempotencyKey: body.idempotencyKey || body.id, source: body.source || "capture" });
     if (entry.duplicate && await journalProcessingComplete(area, entry)) return { ...entry, route: "duplicate", files: [] };
     const pending = entry.duplicate ? await pendingJournalChangedPaths(area, entry) : { paths: journalChangedPaths(entry), persisted: false };

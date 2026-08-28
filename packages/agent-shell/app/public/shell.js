@@ -441,7 +441,7 @@ const {
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
   forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers,
   goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea,
-  openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork, paintWorkCaption,
+  openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, renderWork, paintWorkCaption,
 } = workDeskView;
 
 const programView = createProgramView({
@@ -635,7 +635,7 @@ function renderKey() {
     state.describeSessionName,
     state.areaSelection,
     [...state.expandedAreas].sort(),
-    [state.workFilter, state.areaFocus, [...state.collapsedDeskSections].sort(), [...state.collapsedGoalTrees].sort(), Boolean(state.areaFocusPicker)],
+    [state.workFilter, state.areaFocus, state.areaFocusOnly, [...state.collapsedDeskSections].sort(), [...state.collapsedGoalTrees].sort(), Boolean(state.areaFocusPicker)],
     // The card's durations count up, so a repaint is due once a minute even
     // when nothing else changed.
     Math.floor(Date.now() / 60_000),
@@ -1053,7 +1053,8 @@ function reconcileCurrentAreaFocus() {
   const reconciled = reconcileAreaFocus(state.areaFocus, (state.vault?.areas ?? []).map((area) => area.path));
   if (JSON.stringify(reconciled) === JSON.stringify(state.areaFocus)) return;
   state.areaFocus = reconciled;
-  if (!writeAreaFocus(localStorage, state.areaFocus)) state.areaFocusStorageError = true;
+  if (!reconciled.length) state.areaFocusOnly = false;
+  if (!writeAreaFocus(localStorage, state.areaFocus, state.areaFocusOnly)) state.areaFocusStorageError = true;
 }
 
 /** Captures the screen Julian is on, so the reader or the brain view can bring him back. */
@@ -1487,7 +1488,7 @@ shellBindings = bindShellEvents({
     openDescribeSession, addDescribeSource,
     openGoalAgent, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
-    applyAreaFocus, clearAreaFocus, renderWork, paintWorkCaption, describeLaunchArea, describeWorkSessions,
+    applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, renderWork, paintWorkCaption, describeLaunchArea, describeWorkSessions,
     goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea,
   },
   areas: {

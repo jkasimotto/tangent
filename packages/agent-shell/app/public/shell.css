@@ -541,6 +541,15 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-group-name > button:not(.work-fold):hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
 /* The one fold glyph: a triangle at the far left that rotates. It prints no
    key; the caption line teaches `h` and `l`. */
+.work-star { display: inline-grid; flex: none; width: 16px; height: 18px; place-items: center; padding: 0; border: 0; border-radius: 2px; background: transparent; color: #59616b; cursor: pointer; font-size: 13px; line-height: 1; opacity: 0; }
+.work-star.starred { color: var(--blue); opacity: 1; }
+.work-group-row:hover .work-star, .work-group-row.cursor .work-star, .work-star:focus-visible { opacity: 1; }
+.work-star:hover, .work-star:focus-visible { outline: 0; color: #fff; background: #242a31; }
+.area-focus-switch { display: inline-flex; flex: none; border: 1px solid #43566d; border-radius: 3px; overflow: hidden; }
+.area-focus-summary .area-focus-switch button { border: 0; border-radius: 0; }
+.area-focus-summary .area-focus-switch button + button { border-left: 1px solid #43566d; }
+.area-focus-summary .area-focus-switch button[aria-pressed="true"] { background: #1f2f44; color: #fff; }
+.area-focus-summary .area-focus-switch button kbd { margin-left: 5px; font-size: 10px; opacity: .8; }
 .work-fold, .work-fold-space { display: inline-grid; flex: none; width: 16px; height: 18px; place-items: center; }
 .work-fold { padding: 0; border: 0; border-radius: 2px; background: transparent; color: #8b949f; cursor: pointer; font-size: 14px; line-height: 1; }
 .work-group-head .desk-state kbd { color: inherit; opacity: .7; }

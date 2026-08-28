@@ -1,9 +1,10 @@
 import test from "node:test";
 import { assert, readFile, path, JSDOM, shellBundle, here, settle, click, submit, openDocumentViaGoTo, jsonResponse } from "./focus-shell-ui-fixture.mjs";
 
-/** Opens the Area Focus surface through its keyboard-owned command. */
+/** Opens the bulk Area picker from an Area's command menu; `f` itself stars the row (area-star-focus). */
 function openAreaFocus(window) {
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "f", bubbles: true, cancelable: true }));
+  click(window, "[data-work-object-actions]");
+  click(window, '[data-modal-action="chooseAreas"]');
 }
 
 /** Builds one Goal for the Work projection. */
@@ -112,7 +113,7 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   assert.ok(window.document.querySelector("[data-review-questions]"), "an Area whose brain asked shows its question count");
 
   click(window, '[data-work-sub-area="otto/alpha"] [data-work-object-actions]');
-  click(window, '[data-modal-action="focus"]');
+  click(window, '[data-modal-action="chooseAreas"]');
   await settle(window);
   const search = window.document.querySelector("#area-focus-search");
   assert.equal(window.document.activeElement, search);
@@ -177,7 +178,7 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   const expanded = window.document.querySelector('[data-work-group="__other-areas"]');
   assert.ok(expanded.querySelector(`[data-open-goal-run="${beta.file}"]`), "expanding the group reveals the work outside Focus");
   click(window, '[data-work-group="__other-areas"] [data-work-tree-action="collapse"]');
-  assert.match(window.document.querySelector(".area-focus-summary").textContent, /Focus:\s*Alpha/);
+  assert.match(window.document.querySelector(".area-focus-summary").textContent, /Starred:\s*Alpha/);
   assert.deepEqual(
     [...window.document.querySelectorAll(".desk-state[data-review-questions]")].map((button) => button.dataset.reviewQuestions),
     ["otto/alpha"],

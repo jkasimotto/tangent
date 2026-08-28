@@ -183,7 +183,7 @@ test("a live brain has a direct Area stop control", async () => {
   assert.ok(stop, "stop lives in the related Area action surface");
   assert.equal(stop.dataset.modalKey, "s", "the pointer teaches the stop shortcut");
   const menuText = stop.closest("[role='menu']").textContent;
-  for (const taught of ["Open brain", "Defaults", "Message brain", "Focus Area", "Review questions", "Capture note"]) assert.match(menuText, new RegExp(taught));
+  for (const taught of ["Open brain", "Defaults", "Message brain", "Star Area", "Review questions", "Capture note"]) assert.match(menuText, new RegExp(taught));
   assert.equal(window.document.querySelector("[data-modal-action='describeArea']"), null, "the removed Describe-work route is not renamed as New task");
   stop.click();
   assert.match(window.document.querySelector("#modal-title").textContent, /Stop the Tangent brain/);

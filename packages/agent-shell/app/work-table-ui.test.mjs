@@ -76,7 +76,7 @@ test("every status carries a word, and every icon-only control carries a name", 
 
 test("Area pointers, toolbar help, and the state-owned action surface share one command registry", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
-  const ids = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "messageBrain", "focus", "collapse", "expand", "questions", "note"];
+  const ids = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "messageBrain", "starArea", "chooseAreas", "collapse", "expand", "questions", "note"];
   document.querySelector("[data-work-group='otto/onboarding'] [data-work-object-actions]").click();
   await settle(window);
   for (const id of ids) {

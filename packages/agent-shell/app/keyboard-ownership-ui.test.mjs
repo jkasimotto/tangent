@@ -198,7 +198,10 @@ test("Work Escape unwinds each state in the settled order", async () => {
   await settle(window);
   assert.equal(document.querySelector("#work-search").hidden, false, "the kept search stays visible");
   document.querySelector("[data-work-cursor-control]").focus();
-  press(window, "f");
+  press(window, "F", { shiftKey: true });
+  await settle(window);
+  assert.equal(document.querySelector("[data-starred-only='1']").getAttribute("aria-pressed"), "true", "F shows only the starred Areas");
+  document.querySelector("[data-change-area-focus]").click();
   await settle(window);
   document.querySelector("#back-button").click();
   assert.equal(document.querySelector("#shell-menu").hidden, false);
@@ -212,13 +215,17 @@ test("Work Escape unwinds each state in the settled order", async () => {
   press(window, "Escape");
   await settle(window);
   assert.equal(document.querySelector("#work-search").hidden, true, "3: Work search");
+  assert.equal(document.querySelector("[data-starred-only='1']").getAttribute("aria-pressed"), "true", "only starred remains until the next Escape");
+  press(window, "Escape");
+  await settle(window);
+  assert.equal(document.querySelector("[data-starred-only='1']").getAttribute("aria-pressed"), "false", "4: only starred");
   assert.ok(document.querySelector("[data-clear-area-focus]"), "applied Focus remains until the next Escape");
   press(window, "Escape");
   await settle(window);
-  assert.equal(document.querySelector("[data-clear-area-focus]"), null, "4: applied Focus");
+  assert.equal(document.querySelector("[data-clear-area-focus]"), null, "5: applied Focus");
   assert.ok(document.activeElement.closest("[data-work-cursor]"), "clearing Focus restores a visible Work row, not a closed-menu control");
   press(window, "Escape");
-  assert.equal(document.activeElement, document.querySelector("#work-tab"), "5: Work tab");
+  assert.equal(document.activeElement, document.querySelector("#work-tab"), "6: Work tab");
 });
 
 test("keyboard x and pointer actions share the Goal status surface", async () => {

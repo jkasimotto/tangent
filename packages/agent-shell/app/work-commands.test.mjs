@@ -6,14 +6,14 @@ test("Work command records are unique, complete, and own the settled shortcuts",
   assert.equal(new Set(WORK_COMMANDS.map((command) => command.id)).size, WORK_COMMANDS.length);
   for (const command of WORK_COMMANDS) {
     assert.match(command.id, /^[a-z][A-Za-z]+$/);
-    if (command.id !== "note") assert.match(command.keyDisplay, /\S/);
+    if (!["note", "chooseAreas"].includes(command.id)) assert.match(command.keyDisplay, /\S/);
     assert.match(command.scope, /^(work|area|goal)$/);
     assert.match(command.label, /\S/);
     assert.match(command.help, /\S/);
     assert.ok(Object.isFrozen(command));
   }
-  const settled = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "messageBrain", "focus", "collapse", "expand", "questions", "readGoal", "goalStatus", "commands", "search", "nextMatch", "previousMatch", "keys"];
-  assert.deepEqual(settled.map((id) => workCommand(id).keyDisplay), ["{", "}", "b", "s", "d", "a", "f", "h", "l", "r", "o", "x", ":", "/", "n", "N", "?"]);
+  const settled = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "messageBrain", "starArea", "starredOnly", "collapse", "expand", "questions", "readGoal", "goalStatus", "commands", "search", "nextMatch", "previousMatch", "keys"];
+  assert.deepEqual(settled.map((id) => workCommand(id).keyDisplay), ["{", "}", "b", "s", "d", "a", "f", "F", "h", "l", "r", "o", "x", ":", "/", "n", "N", "?"]);
   assert.equal(workCommand("note").keyDisplay, "", "Capture note has no key (Julian, 2026-08-28); it stays in the : menu");
   assert.equal(workCommand("filter"), null, "the Work filter is gone; / searches");
   assert.equal(workCommand("fold"), null, "z and the toggle command have left Work");

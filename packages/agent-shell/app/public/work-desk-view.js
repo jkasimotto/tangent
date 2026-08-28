@@ -3,7 +3,7 @@ import goalCardCore from "./goal-card-core.js";
 import areaWorkCore from "./area-work-core.js";
 import goToCore from "./go-to-core.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
-import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
+import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, toggleAreaFocusRoot, writeAreaFocus } from "./area-focus-core.js";
 import { journalCaptureNeedsRetry, journalCaptureToast } from "./journal-capture-core.js";
 import { workCommand, workCaptionKeys, workRowKind } from "./work-commands.js";
 
@@ -161,11 +161,77 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Stores the applied Focus without changing any durable work record. */
   function persistAreaFocus() {
-    const saved = writeAreaFocus(localStorage, state.areaFocus);
+    if (!state.areaFocus.length) state.areaFocusOnly = false;
+    const saved = writeAreaFocus(localStorage, state.areaFocus, state.areaFocusOnly);
     state.areaFocusStorageError = !saved;
     if (!saved) showToast(state.areaFocus.length
       ? "Area Focus changed only for this tab. Reload can restore the prior Work scope."
       : "Focus cleared only for this tab. Reload can restore the prior Focus.");
+  }
+
+  /**
+   * Stars or unstars one Area from its row (design area-star-focus, Decision
+   * 1). The cursor names its row by path, so it survives the reorder. When
+   * the row leaves the desk (unstar while only starred Areas show) the cursor
+   * moves to the nearest row that stays (Decision 8).
+   */
+  function toggleAreaStar(path) {
+    const result = toggleAreaFocusRoot(state.areaFocus, path);
+    if (result.change === "insideAncestor") return showToast(`Inside starred ${areaLabel(result.ancestor)}. Unstar ${areaLabel(result.ancestor)} first.`);
+    if (result.change === "none") return showToast("Choose an Area row first.");
+    if (result.change === "removed" && state.areaFocusOnly) moveCursorOffArea(path);
+    state.areaFocus = result.roots;
+    persistAreaFocus();
+    paint(true);
+    showToast(result.change === "added" ? `Starred ${areaLabel(path)}.` : `Unstarred ${areaLabel(path)}.`);
+    return focusWorkCursor();
+  }
+
+  /** Shows only the starred Areas, or every Area again (Decision 2). */
+  function toggleStarredOnly() {
+    if (!areaFocusRoots().length) return showToast("Star an Area first with f.");
+    state.areaFocusOnly = !state.areaFocusOnly;
+    const cursorArea = commandAreaOfCursor();
+    if (state.areaFocusOnly && cursorArea && !isInAreaFocus(cursorArea, areaFocusRoots())) moveCursorOffArea(cursorArea);
+    persistAreaFocus();
+    paint(true);
+    return focusWorkCursor();
+  }
+
+  /** The Area that owns the current cursor row, read from the painted desk. */
+  function commandAreaOfCursor() {
+    const row = document.querySelector("[data-work-cursor].cursor");
+    return row?.closest("tbody[data-work-group]")?.dataset.workGroup ?? "";
+  }
+
+  /** Moves the cursor to the row after one Area's group, or the row before it. */
+  function moveCursorOffArea(path) {
+    const rows = [...document.querySelectorAll("[data-work-cursor]")].filter((row) => !row.hidden);
+    const index = rows.findIndex((row) => row.classList.contains("cursor"));
+    if (index < 0) return;
+    const group = rows[index].closest("tbody[data-work-group]");
+    const after = rows.slice(index + 1).find((row) => row.closest("tbody[data-work-group]") !== group && !isInsideGroupOf(row, path));
+    const before = rows.slice(0, index).reverse().find((row) => row.closest("tbody[data-work-group]") !== group && !isInsideGroupOf(row, path));
+    const next = after ?? before;
+    if (!next) return;
+    state.workCursor = next.dataset.workCursor;
+    localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+  }
+
+  /** True when a row sits in the group of one Area path or of an Area below it. */
+  function isInsideGroupOf(row, path) {
+    const group = row.closest("tbody[data-work-group]")?.dataset.workGroup ?? "";
+    return group === path || group.startsWith(`${path}/`);
+  }
+
+  /** Puts keyboard focus back on the cursor row after a paint. */
+  function focusWorkCursor() {
+    window.setTimeout(() => {
+      const row = document.querySelector("[data-work-cursor].cursor [data-work-row-title], [data-work-cursor].cursor [data-work-cursor-control]");
+      (row ?? document.querySelector("#work-tab"))?.focus();
+      row?.scrollIntoView?.({ block: "nearest" });
+    }, 0);
+    return undefined;
   }
 
   /** Opens a staged copy of the applied Area Focus. */
@@ -238,6 +304,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** Clears the local scope and restores the complete Work projection. */
   function clearAreaFocus() {
     state.areaFocus = [];
+    state.areaFocusOnly = false;
     state.areaFocusPicker = null;
     persistAreaFocus();
     paint(true);
@@ -273,9 +340,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const labels = areaFocusLabels(roots);
     const short = labels.length > 2 ? `${labels.slice(0, 2).join(" + ")} +${labels.length - 2}` : labels.join(" + ");
     const accessible = roots.map((path, index) => `${labels[index]}, ${path}`).join("; ");
+    const only = Boolean(state.areaFocusOnly);
     const control = roots.length
-      ? `<div class="area-focus-summary" aria-label="Area Focus: ${escapeHtml(accessible)}"><span><b>Focus:</b> ${escapeHtml(short)}</span><button type="button" data-change-area-focus ${workCommandAttributes("focus")}>${workCommandContent("focus", "Change")}</button><button type="button" data-clear-area-focus>Clear</button></div>`
-      : `<button class="area-focus-open" type="button" data-open-area-focus ${workCommandAttributes("focus")}>${workCommandContent("focus")}</button>`;
+      ? `<div class="area-focus-summary" aria-label="Area Focus: ${escapeHtml(accessible)}${only ? ", only starred Areas" : ""}"><span><b>★ Starred:</b> ${escapeHtml(short)}</span><span class="area-focus-switch" role="group" aria-label="Which Areas Work shows"><button type="button" data-starred-only="0" aria-pressed="${!only}" ${workCommandAttributes("starredOnly", "Show every Area, the starred ones first (F)")}>All</button><button type="button" data-starred-only="1" aria-pressed="${only}" ${workCommandAttributes("starredOnly")}>Starred${workKey("starredOnly")}</button></span><button type="button" data-change-area-focus ${workCommandAttributes("chooseAreas")}>Change</button><button type="button" data-clear-area-focus>Clear</button></div>`
+      : `<button class="area-focus-open" type="button" data-open-area-focus ${workCommandAttributes("chooseAreas")}>${workCommandContent("chooseAreas")}</button>`;
     const storageNote = state.areaFocusStorageError ? `<p class="area-focus-storage-note">Area Focus persistence is unavailable in this browser.</p>` : "";
     return `<div class="area-focus-control">${control}${storageNote}${areaFocusPickerMarkup()}</div>`;
   }
@@ -1004,7 +1072,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    */
   function otherDeskAreas() {
     const roots = areaFocusRoots();
-    if (!roots.length) return [];
+    if (!roots.length || state.areaFocusOnly) return [];
     return deskAreas((path) => !isInAreaFocus(path, roots));
   }
 
@@ -1537,13 +1605,15 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // and menu so its brain stays reachable.
     const quiet = sub && !allTrees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status)))
       && !allDescriptions.length && !summary.questions && !brain?.live;
+    const starred = areaFocusRoots().includes(area.path);
+    const starButton = `<button class="work-star${starred ? " starred" : ""}" type="button" data-star-area="${escapeHtml(area.path)}" aria-pressed="${starred}" ${workCommandAttributes("starArea", `${starred ? "Unstar" : "Star"} ${areaLabel(area.path)} (f)`)} aria-label="${starred ? "Unstar" : "Star"} ${escapeHtml(areaLabel(area.path))}"><span aria-hidden="true">${starred ? "★" : "☆"}</span></button>`;
     const brainCommand = workCommand("openBrain");
     const brainButton = `<button class="work-group-brain" type="button" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)} (${brainCommand.keyDisplay})`)} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span>${workKey("openBrain")}</button>`;
     return `<tr class="work-group-row${sub ? " work-sub-area-row" : ""}${quiet ? " quiet" : ""}${folded ? " folded" : ""}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-search-text="${escapeHtml(`${name} ${area.path}`)}" data-work-area="${escapeHtml(area.path)}"${sub ? ` data-work-sub-area="${escapeHtml(area.path)}"` : ""}>
       <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="${sub ? "row" : "rowgroup"}" id="${workGroupId(area.path)}">
         <div class="work-group-layout">
           <div class="work-group-identity">
-            <span class="work-group-name">${workFoldTriangle({ open: !folded, area: area.path, name })}<button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)}`)}>${escapeHtml(name)}</button></span>
+            <span class="work-group-name">${workFoldTriangle({ open: !folded, area: area.path, name })}<button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)}`)}>${escapeHtml(name)}</button>${starButton}</span>
             <span class="work-group-count">${escapeHtml(summary.text)}</span>
             ${!sub && area.noteSignal ? `<span class="area-note-signal work-group-note${area.noteSignal.warning ? " warning" : ""}" title="The brain reads this note every turn. Keep it under 100 lines and rewrite Current every two weeks.">${escapeHtml(area.noteSignal.text)}</span>` : ""}
             ${!showState
@@ -1753,11 +1823,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * open and the rest stay quiet, so `z` works on the plain desk too.
    */
   function areaIsFoldedOnWork(path) {
-    const roots = areaFocusRoots();
-    if (roots.length) {
-      if (state.foldedWorkAreas.has(path)) return true;
-      return path !== roots[0] && !state.expandedAreas.has(path);
-    }
+    // A star never changes which groups are open (area-star-focus Decision 5):
+    // with stars added one at a time, "only the first root opens" folded the
+    // Area Julian had just starred whenever it sorted after another root.
+    // Only the synthetic Other Areas group still opens folded by design
+    // (work-view-sub-areas), until Julian unfolds it.
+    if (path === OTHER_AREAS_KEY) return state.foldedWorkAreas.has(path) || !state.expandedAreas.has(path);
     return state.foldedWorkAreas.has(path);
   }
 
@@ -2019,7 +2090,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const maxElapsedMs = deskMaxElapsedMs([...records, ...others], Date.now());
     const roots = areaFocusRoots();
     const focusNames = areaFocusLabels(roots).join(" + ");
-    const emptyCopy = `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No open work.`;
+    const emptyCopy = `${roots.length ? `${state.areaFocusOnly ? "Starred Areas" : "Area Focus"} (${escapeHtml(focusNames)}): ` : ""}No open work.`;
     const content = `${records.length || others.length
       ? workTable(records, maxElapsedMs, others)
       : `<div class="empty-state">${emptyCopy}</div>`}${workProcessSections(records)}`;
@@ -2040,5 +2111,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea, otherDeskAreas, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork, paintWorkCaption };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea, otherDeskAreas, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, renderWork, paintWorkCaption };
 }

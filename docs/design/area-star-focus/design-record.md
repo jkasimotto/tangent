@@ -1,6 +1,6 @@
 # Area star focus: design record
 
-Date: 2026-08-28. Status: designed, not implemented.
+Date: 2026-08-28. Status: implemented on 2026-08-28. Three deviations from the text below, all from evidence found while implementing: the star sits after the Area name, not before the fold triangle, because `work-view-affordances-ui.test.mjs` pins the triangle at the far left of the name. The `Other Areas` group still opens folded by default (Decision 5 applies to real Areas only), because the sub-areas design and `area-focus-ui.test.mjs` pin that. `f` on a Goal inside `Other Areas` stars the Goal's own Area, since that group has no Area header and this is exactly where a star brings an Area in.
 
 Lenses: UI/UX, architecture and state (client state and its stored record). No API, migration, or operations lens: the change stays inside the browser client and one localStorage record.
 

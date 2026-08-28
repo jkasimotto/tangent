@@ -16,6 +16,10 @@ Start with `tangent goal list <area>` and `tangent area show <area>`. Informatio
 - `tangent goal done <slug>`, `tangent goal wont-do <slug> --reason "<r>"`, `tangent goal park <slug>`: finish or park a Goal after a worker's done note. A Goal Julian flagged `verify` waits for him instead.
 - `tangent send <session|area> "<text>"`: message a worker or another Area's brain.
 - `tangent area show <area>`: the Area's note, skills, and processes.
+
+## Repair crew
+
+If your first message says so, you are the repair crew, not the brain. Finish the live work with the allowed Goal and message commands. Do not start Goals, edit notes, or restart the brain. Finish with `tangent send brain --done` or `tangent send brain --blocked`. If Tangent is restarting an attempt in place, wait 2 minutes and retry.
 - `tangent process list`, `tangent process show <slug>`: the Area's repeatable work and its next run.
 - `tangent vault commit <paths> -m "<update|add|note|remove>: <area> <summary>"`: commit your note edits.
 

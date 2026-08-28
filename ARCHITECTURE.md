@@ -98,6 +98,10 @@ Detached audit exports preserve old generation and pipeline records.
 A worker assignment that names no harness takes the calling brain's own launch, and the server discloses that choice in the queue record before it creates the session; a caller that is not the exact live brain is still refused.
 The old Program API is available only with `TANGENT_LEGACY_PROGRAM_API=1`.
 Each Agent Shell runtime has one stable instance identity. Every new tmux worker and brain carries that identity in `@tangent_agent_shell_instance`. Explicit resume can claim an exact pre-marker brain when its durable record matches all live brain tags.
+
+The controller derives one server-authoritative state word for each worker and Area brain. Durable queue facts take priority over fresh transcript and pane observations. Stale observations become `Unknown`. Work and `tangent agent list` use the same word, owner, evidence, and next actor.
+
+A stopped Area brain does not strand live work. The controller can dispatch one leased repair crew for the exact Area after a three-minute grace period. The crew has bounded authority, a durable command audit, immutable tmux fencing, and a two-attempt stop budget. A live Area brain supersedes it. A block or spent budget creates one existing Work blocker instead of a separate request pile. See ADR-0047.
 Only the session ownership capability can terminate tmux sessions, and it verifies the immutable tmux session ID before termination.
 Foreign and arbitrary markerless sessions remain alive. Reconciliation uses durable owner sidecars only for the current instance.
 See ADR-0033, ADR-0034, ADR-0035, and ADR-0036.

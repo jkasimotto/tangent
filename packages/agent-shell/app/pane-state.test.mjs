@@ -6,6 +6,24 @@ import { fileURLToPath } from "node:url";
 
 import { classifyStaticPane, classifyWorkingComposer, hasRunningBackgroundShell, parseContextFill, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
 
+test("Codex numbered approval is a dialog and never an idle composer", () => {
+  const text = "Would you like to run the following command?\n  1. Yes, proceed (y)\n› 2. Yes, and don't ask again\n  3. No";
+  assert.equal(classifyStaticPane({ text, cursorX: 2, cursorY: 2, harness: "codex" }).kind, "decision");
+  assert.equal(classifyWorkingComposer({ text, cursorX: 2, cursorY: 2, harness: "codex" }), null);
+});
+
+test("Claude quota and login walls are named", () => {
+  const quota = classifyStaticPane({ text: "You've reached your Fable 5 limit", harness: "claude" });
+  assert.equal(quota.kind, "wall");
+  assert.equal(quota.wall.model, "Fable 5");
+  assert.equal(classifyStaticPane({ text: "Authentication required. Run /login.", harness: "claude" }).wall.kind, "auth");
+});
+
+test("a pi prose line that says Do you want is not a dialog", () => {
+  const text = "The guide asks: Do you want retries?\n────────────\n\n────────────";
+  assert.notEqual(classifyStaticPane({ text, cursorX: 0, cursorY: 2, harness: "pi-code" }).kind, "decision");
+});
+
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "panes");
 
 /** Loads a fixture and derives the cursor row from its composer prompt line. */

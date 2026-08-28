@@ -14,6 +14,7 @@ type AgentSummary = {
   stateDetail: string | null;
   stateQuestion: string;
   queued: number;
+  agentState?: { word: string; since: number; owner: string; evidence?: { source?: string; text?: string }; next?: string } | null;
 };
 
 /** Dispatches `tangent agent` subcommands. */
@@ -87,16 +88,25 @@ async function sendCommand(args: Args): Promise<void> {
 }
 
 /** One human word for an agent's refined state. */
-function describeState(agent: AgentSummary): string {
+export function describeState(agent: AgentSummary): string {
+  if (agent.agentState?.word) return `${agent.agentState.word} · ${stateAge(agent.agentState.since)} · owner ${agent.agentState.owner}`;
   if (agent.state === "waiting" && agent.stateDetail === "decision") return "needs decision";
   if (agent.state === "waiting" && agent.stateDetail === "idle") return "idle";
   if (agent.state === "waiting" && agent.stateDetail === "draft") return "draft";
   return agent.state ?? "unknown";
 }
 
+/** Formats the age of one server-authoritative state word. */
+export function stateAge(since: number): string {
+  const elapsed = Math.max(0, Date.now() - Number(since || Date.now()));
+  if (elapsed < 60_000) return "0m";
+  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}m`;
+  return `${Math.floor(elapsed / 3_600_000)}h`;
+}
+
 type AgentContext = {
   session: string;
-  role: "brain" | "worker" | "unassigned";
+  role: "brain" | "worker" | "repair" | "unassigned";
   area: string | null;
   current: boolean;
   source: string;
@@ -106,6 +116,7 @@ type AgentContext = {
     foundingInstruction?: string;
     checkpoint?: string;
   };
+  repair?: { result?: string | null; report?: string | null; leaseUntil?: string; resolvedLaunch?: { command?: string } };
   unreadNotices?: Array<{ id?: string; area?: string; text?: string }>;
   goal?: { title?: string; file?: string; status?: string; doneWhen?: string };
   queue?: { status?: string; revision?: number; currentAssignmentId?: string | null } | null;
@@ -134,6 +145,12 @@ function printContext(context: AgentContext): void {
     for (const notice of notices) console.log(`- ${notice.id ?? "notice"}${notice.area ? ` [${notice.area}]` : ""}: ${notice.text ?? ""}`);
     if (context.prompt) console.log(`\nRebuilt prompt:\n${context.prompt}`);
     else if (context.promptError) console.log(`\nPrompt rebuild unavailable: ${context.promptError}`);
+    return;
+  }
+  if (context.role === "repair") {
+    console.log(`repair: ${context.current ? "current" : context.repair?.result ?? "ended"}`);
+    if (context.repair?.leaseUntil) console.log(`lease: ${context.repair.leaseUntil}`);
+    if (context.repair?.report) console.log(`report: ${context.repair.report}`);
     return;
   }
   if (context.goal) {

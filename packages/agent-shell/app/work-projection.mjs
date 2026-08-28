@@ -75,6 +75,8 @@ export function projectWorkAssignment(step) {
     idleSince: step.idleSince ?? null,
     waitingSince: step.waitingSince ?? null,
     context: step.context ?? null,
+    observation: step.observation ?? null,
+    attemptState: step.attemptState ?? null,
     attemptCount: step.attempts?.length ?? 0,
     reportCount: step.reports?.length ?? 0,
   };
@@ -83,7 +85,8 @@ export function projectWorkAssignment(step) {
 /** Projects queue state for Work without serializing its historical text. */
 export function projectWorkQueue(record) {
   const source = record?.assignments ?? record?.steps ?? [];
-  const steps = source.filter((step) => !FINAL_ASSIGNMENT.has(step.status)).map(projectWorkAssignment);
+  const reported = [...source].reverse().find((step) => (step.reports?.length ?? 0) > 0) ?? null;
+  const steps = source.filter((step) => !FINAL_ASSIGNMENT.has(step.status) || step === reported).map(projectWorkAssignment);
   return {
     schema: "agent-shell-work-queue.v1",
     goal: record.goal,
@@ -107,8 +110,8 @@ export function projectWorkQueue(record) {
 export function projectWorkBrain(brain) {
   const fields = [
     "area", "status", "session", "generation", "currentAttemptId", "updatedAt", "resolvedLaunch",
-    "live", "state", "stateDetail", "stateQuestion", "idleSince", "waitingSince", "health", "recovery",
-    "forJulian", "requests",
+    "live", "state", "stateDetail", "stateQuestion", "idleSince", "waitingSince", "observation", "health", "recovery",
+    "forJulian", "requests", "agentState", "lastAction", "repair",
   ];
   return Object.fromEntries(fields.filter((field) => brain?.[field] !== undefined).map((field) => [field, brain[field]]));
 }

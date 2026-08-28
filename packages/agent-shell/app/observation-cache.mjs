@@ -3,7 +3,7 @@
  * later refresh fails. A stale snapshot is safer than reporting that every
  * durable session disappeared because one tmux command timed out.
  */
-export function createObservationCache({ load, ttlMs = 500, retryMs = 1_000, now = Date.now, report = console.error }) {
+export function createObservationCache({ load, ttlMs = 500, retryMs = 1_000, now = Date.now, report = console.error, markStale = null }) {
   let value;
   let loadedAt = 0;
   let inFlight = null;
@@ -39,7 +39,7 @@ export function createObservationCache({ load, ttlMs = 500, retryMs = 1_000, now
         retryAt = now() + retryMs;
         if (value !== undefined) {
           report("observation refresh:", error?.message ?? error);
-          return value;
+          return typeof markStale === "function" ? markStale(value, loadedAt) : value;
         }
         throw error;
       } finally {

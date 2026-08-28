@@ -467,7 +467,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Every live brain session. */
   function brainSessions() {
-    return state.sessions.filter((session) => session.kind === "brain");
+    return state.sessions.filter((session) => session.kind === "brain" || session.kind === "repair");
   }
 
   /** The brain record of exactly this Area, or null. A parent card never shows a child brain. */
@@ -478,7 +478,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** The desk word for a brain's logical lifecycle and separate runtime health. */
   function brainStateLabel(brain) {
     if (!brain) return "No brain";
-    if (brain.status === "inactive") return "Brain inactive";
+    if (brain.agentState?.word) return brain.agentState.word;
+    if (brain.status === "inactive") return "Brain stopped";
     if (brain.live) {
       if (brain.state === "working") return "Brain working";
       if (brain.state === "waiting") return brain.stateDetail === "decision" ? "Brain needs a decision" : "Brain waiting for you";
@@ -500,11 +501,14 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** The brain icon in the Area card header: dim without a brain, stateful with one. */
   function deskBrainButton(areaPath) {
     const brain = brainForAreaCard(areaPath);
+    const crew = brain?.repair?.current ?? null;
     const kind = brainKind(brain);
     const open = state.launchTarget === BRAIN_LAUNCH_TARGET && state.brainDraft?.area === areaPath;
     const title = !brain
       ? "Start a brain for this Area"
-      : brain.live
+      : crew
+        ? `Open the repair crew (${brainStateLabel(brain).toLowerCase()})`
+        : brain.live
         ? `Open the brain (${brainStateLabel(brain).toLowerCase()})`
         : `${brainStateLabel(brain)}: send it a message to resume, or start over`;
     return `<span class="area-brain-controls"><button class="area-brain ${kind}${open ? " open" : ""}" type="button" data-launch-for="${BRAIN_LAUNCH_TARGET}" data-brain-area="${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}" aria-expanded="${open}"><span aria-hidden="true">🧠</span></button>${brain?.live ? `<button class="quiet-button" type="button" data-stop-brain-area="${escapeHtml(areaPath)}" data-stop-brain-attempt="${escapeHtml(brain.currentAttemptId ?? brain.session ?? "")}">Stop brain</button>` : ""}</span>`;
@@ -530,7 +534,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    */
   async function openOrStartBrain(area, trigger = null) {
     const existing = brainForAreaCard(area);
-    const live = brainSessions().find((session) => session.area === area || session.name === existing?.session);
+    const live = brainSessions().find((session) => session.name === existing?.repair?.current?.session || (session.area === area && session.kind === "brain") || session.name === existing?.session);
     if (live) return openBrainSession(live.name);
     // A brain the record still calls live lost its process, not its orders.
     // Reattaching it is runtime recovery, not a cold wake, so it needs no new
@@ -581,6 +585,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function toggleBrainPopover(button) {
     const area = button.dataset.brainArea;
     const brain = brainForAreaCard(area);
+    if (brain?.repair?.current?.session) return openBrainSession(brain.repair.current.session);
     if (brain?.live) return openBrainSession(brain.session);
     if (state.launchTarget === BRAIN_LAUNCH_TARGET && state.brainDraft?.area === area) {
       state.launchTarget = "";
@@ -974,10 +979,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       .filter((item) => ["blocked", "broken", "error"].includes(item.fact?.kind))
       .map((item) => ({ owner: "Dependency", cause: `${item.goal.title}: ${readinessLabel(item.fact).toLowerCase()}`, rank: 1 }));
     const brain = brainForAreaCard(path);
-    const recovery = brain?.health?.status === "failed" || brain?.health?.status === "recovering"
-      ? [{ owner: `${humanName(path.split("/").pop())} brain`, cause: brain.health.problem || "recovering", rank: 2 }]
+    const attemptBlockers = goals.flatMap((goal) => (pipelineRecordForGoal(goal)?.steps ?? []))
+      .filter((step) => step.attemptState?.owner === "you")
+      .map((step) => ({ owner: "You", cause: step.attemptState.evidence?.text || step.attemptState.word, rank: 0 }));
+    const brainBlocker = brain?.agentState?.owner === "you"
+      ? [{ owner: "You", cause: brain.agentState.evidence?.text || brain.agentState.word, rank: 0 }]
       : [];
-    return [...questions, ...dependencies, ...recovery].sort((left, right) => left.rank - right.rank);
+    return [...questions, ...attemptBlockers, ...brainBlocker, ...dependencies].sort((left, right) => left.rank - right.rank);
   }
 
   /**
@@ -1012,6 +1020,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     "Brain did not start": "The brain's session opened but no agent runs in it.",
     "Brain has a problem": "The brain's last start failed. Enter its agent with Command-Shift-Enter to see why.",
     "Brain recovering": "Tangent is bringing the brain back after a failure.",
+    "Brain idle": "Nothing waits for the brain. Entering it will not help.",
+    "Brain stopped": "The brain is stopped. Its live work continues under the repair crew.",
+    "Brain hit a wall": "The brain cannot continue. The repair crew handles its live work.",
+    "Brain unknown": "Tangent's last observation is stale. Open the brain only if this state lasts for ten minutes.",
+    "repair crew working": "The repair crew is finishing live work in this Area.",
+    "repair crew idle": "The repair crew has stopped producing output.",
+    "repair crew needs your decision": "The repair crew shows a decision dialog.",
   });
 
   /**
@@ -1031,7 +1046,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // is the case Julian cannot see otherwise. A brain resting at its
     // composer says nothing: that is not a condition.
     const brain = brainForAreaCard(path);
-    const brainWord = brain?.live ? brainStateLabel(brain) : brain?.health?.status ? brainStateLabel(brain) : "";
+    const recentRepair = brain?.repair?.history?.at(-1);
+    if (!brain?.live && recentRepair?.endedAt && Date.now() - Date.parse(recentRepair.endedAt) < 60 * 60_000) {
+      return { kind: recentRepair.result === "blocked" ? "waiting" : "fact", label: `Brain stopped · repair crew ${recentRepair.result}`, title: recentRepair.report || `The repair crew ${recentRepair.result} ${shortStateAge(Date.parse(recentRepair.endedAt))} ago.` };
+    }
+    const brainWord = brain?.agentState || brain?.live || brain?.health?.status ? brainStateLabel(brain) : "";
     if (AREA_BRAIN_PILLS[brainWord]) return { kind: brainKind(brain), label: brainWord, title: AREA_BRAIN_PILLS[brainWord] };
     const ready = goals.filter((goal) => !sessionForGoal(goal)).length;
     if (ready) return { kind: "ready", label: `${ready} ${ready === 1 ? "Goal" : "Goals"} ready`, title: "Open Goals with no agent on them." };
@@ -1419,6 +1438,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * the readiness line (design-redesign-work-as-a-compact-table Decision 11).
    */
   function idleGoalState(goal) {
+    if (goal.status === "verify") return "Check it";
     if (goal.status === "ready" || goalHasOpenTest(goal)) return "Ready for validation";
     if (goalRunEnded(goal)) return "Preparing validation";
     return goalNeedsYou(goal) ? "Waiting" : "Open";
@@ -1479,6 +1499,19 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * Decision 3).
    */
   function deskStepAction(step, idle) {
+    if (step.attemptState) {
+      const route = step.live ? "run" : "";
+      const ownerKind = step.attemptState.owner === "you" ? "waiting" : step.attemptState.word === "Working" ? "working" : "fact";
+      return {
+        state: `${step.attemptState.word} · ${shortStateAge(step.attemptState.since)}`,
+        action: route ? `Open step ${step.index}` : "",
+        launch: route ? launchRefText(step.launch) : "",
+        cwd: route ? step.launchDisclosure?.cwd ?? "" : "",
+        kind: ownerKind,
+        route,
+        title: `${step.attemptState.evidence?.text ?? ""} Next: ${step.attemptState.next ?? ""}`.trim(),
+      };
+    }
     if (step.status === "stopped" || (step.status === "running" && !step.live)) return { state: "Stopped", action: "", launch: "", cwd: "", kind: idle, route: "" };
     if (step.status === "pending") return { state: "Not started", action: "", launch: "", cwd: "", kind: idle, route: "" };
     const launch = launchRefText(step.launch);
@@ -1489,6 +1522,15 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     if (step.state === "waiting") return { state: waitingLabel(step), action: `Open step ${step.index}`, launch, cwd, kind: idle, route: "run" };
     if (step.state === "shell") return { state: "Stopped", action: `Open step ${step.index}`, launch, cwd, kind: idle, route: "run" };
     return { state: "Open", action: `Open step ${step.index}`, launch, cwd, kind: "ready", route: "run" };
+  }
+
+  /** Formats the time since a server-derived word started. */
+  function shortStateAge(since) {
+    const elapsed = Math.max(0, Date.now() - Number(since || Date.now()));
+    if (elapsed < 60_000) return "0m";
+    if (elapsed < 60 * 60_000) return `${Math.floor(elapsed / 60_000)}m`;
+    if (elapsed < 24 * 60 * 60_000) return `${Math.floor(elapsed / 3_600_000)}h`;
+    return `${Math.floor(elapsed / 86_400_000)}d`;
   }
 
   /** Rare pipeline actions shown inside the Goal action menu, only when valid. */
@@ -1723,7 +1765,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * hover keeps the start time; a wait's hover keeps its reason.
    */
   function workStatusCell(action, facts, now) {
-    const reason = facts?.waiting?.title && action.kind !== "working" ? `${workStateTitle(action.state, action.kind)}\n${facts.waiting.title}` : workStateTitle(action.state, action.kind);
+    const stateReason = action.title || workStateTitle(action.state, action.kind);
+    const reason = facts?.waiting?.title && action.kind !== "working" ? `${stateReason}\n${facts.waiting.title}` : stateReason;
     const word = `<span class="desk-state ${action.kind}" title="${escapeHtml(reason)}">${escapeHtml(action.state)}</span>`;
     const elapsed = deskGoalElapsed(facts, now);
     return `<td class="work-cell-status">${word}${elapsed ? `<span class="work-status-sep" aria-hidden="true"> · </span>${elapsed}` : ""}</td>`;
@@ -1846,7 +1889,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // Every other filter does, "all" included: that view shows more than
     // Current, so it must not be the one place a live brain disappears.
     if (state.workFilter !== "inactive" && record.brain?.live) return true;
+    if (state.workFilter !== "inactive" && (record.brain?.repair?.current || record.brain?.agentState?.owner === "you")) return true;
     if (state.workFilter !== "inactive" && record.sections.some((section) => brainForAreaCard(section.area.path)?.live)) return true;
+    if (state.workFilter !== "inactive" && record.sections.some((section) => {
+      const brain = brainForAreaCard(section.area.path);
+      return brain?.repair?.current || brain?.agentState?.owner === "you";
+    })) return true;
     return [record, ...record.sections].some((part) => part.descriptions.length
       || part.trees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status))));
   }

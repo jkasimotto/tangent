@@ -83,3 +83,24 @@ test("pane observer reports the composer of a brain that keeps working", async (
   assert.equal(composing.state, "working");
   assert.equal(composing.composer, "draft");
 });
+
+test("one unchanged quota wall keeps its original observation time", async () => {
+  let at = 1_000;
+  const observer = createPaneObserver({
+    /** Returns one deterministic pane sample for this fixture. */
+    runTmux: async (args) => args[0] === "capture-pane" ? { stdout: "You've reached your Opus limit" } : { stdout: "0 0" },
+    shellCommands: new Set(["zsh"]),
+    minSampleMs: 10,
+    waitStableMs: 0,
+    /** Returns the fixture clock. */
+    now: () => at,
+  });
+  const session = { name: "agent", command: "claude", kind: "goal", launchRef: "claude-otto/opus" };
+  await observer.enrich([session]);
+  at += 20;
+  const first = (await observer.enrich([session]))[0];
+  assert.equal(first.observation.wall.since, 1_000);
+  at += 20;
+  const second = (await observer.enrich([session]))[0];
+  assert.equal(second.observation.wall.since, 1_000);
+});

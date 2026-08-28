@@ -24,16 +24,17 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
   }
 
   /** Classifies one session against its previous sample. */
-  async function classify(name, command, at) {
+  async function classify(name, command, at, harness = null) {
     const previous = samples.get(name);
     if (shellCommands.has(command)) {
       const shellSince = previous?.state === "shell" ? previous.staticSince ?? at : at;
-      samples.set(name, { hash: "", at, state: "shell", detail: null, question: "", staticSince: shellSince, context: null });
-      return { state: "shell", detail: null, question: "", idleSince: null, waitingSince: shellSince, context: null };
+      const observation = observationOf({ at, harness, process: "shell", state: "shell", detail: null, question: "", context: null, composer: "none", lastOutputAt: previous?.lastOutputAt ?? null, activitySource: "none" });
+      samples.set(name, { hash: "", at, state: "shell", detail: null, question: "", staticSince: shellSince, context: null, observation, lastOutputAt: previous?.lastOutputAt ?? null });
+      return { state: "shell", detail: null, question: "", idleSince: null, waitingSince: shellSince, context: null, observation };
     }
     if (previous && at - previous.at < minSampleMs) {
       const waitingSince = previous.state === "waiting" || previous.state === "shell" ? previous.staticSince ?? null : null;
-      return { state: previous.state, detail: previous.detail ?? null, question: previous.question ?? "", idleSince: previous.idleSince ?? null, waitingSince, context: previous.context ?? null, composer: previous.composer ?? null };
+      return { state: previous.state, detail: previous.detail ?? null, question: previous.question ?? "", idleSince: previous.idleSince ?? null, waitingSince, context: previous.context ?? null, composer: previous.composer ?? null, observation: previous.observation ?? null };
     }
     const { stdout: text } = await runTmux(["capture-pane", "-p", "-t", `=${name}:`]);
     const nextHash = createHash("sha1").update(text).digest("hex");
@@ -47,7 +48,7 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
     let quietSince = null;
     if (state === "waiting") {
       const stable = stabilizeStaticPane({
-        classification: classifyStaticPane({ text, ...(await cursorOnce()) }),
+        classification: classifyStaticPane({ text, ...(await cursorOnce()), harness }),
         quietSince: previous?.hash === nextHash ? previous?.quietSince : null,
         now: at,
         thresholdMs: waitStableMs,
@@ -62,11 +63,31 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
     // A repainting pane still has a composer, and the message queue needs to
     // know whether it is empty: an agent that works for an hour would
     // otherwise never be told anything (agent-messages.mjs, deliveryDecision).
-    const composer = state === "working" ? classifyWorkingComposer({ text, ...(await cursorOnce()) }) : detail;
+    const composer = state === "working" ? classifyWorkingComposer({ text, ...(await cursorOnce()), harness }) : detail;
     const idleSince = state === "waiting" && (detail === "idle" || detail === null) ? (previous?.idleSince ?? at) : null;
     const staticSince = staticSinceOf({ previous, hash: nextHash, now: at });
-    samples.set(name, { hash: nextHash, at, state, detail, question, idleSince, quietSince, staticSince, context, composer });
-    return { state, detail, question, idleSince, waitingSince: state === "waiting" ? staticSince : null, context, composer };
+    const changed = !previous || previous.state === "shell" || nextHash !== previous.hash;
+    const lastOutputAt = changed || state === "working" ? at : previous?.lastOutputAt ?? null;
+    const classified = classifyStaticPane({ text, ...(await cursorOnce()), harness });
+    const wall = classified.kind === "wall" ? {
+      ...classified.wall,
+      since: sameWall(previous?.observation?.wall, classified.wall) ? previous.observation.wall.since ?? previous.observation.at : at,
+    } : null;
+    const observation = observationOf({
+      at,
+      harness,
+      process: "harness",
+      state,
+      detail,
+      question,
+      wall,
+      context,
+      composer: composer === "idle" || detail === "idle" ? "idle" : composer === "draft" || detail === "draft" ? "draft" : "none",
+      lastOutputAt,
+      activitySource: state === "working" ? (hasRunningMarker(classified) ? "busy-marker" : "screen") : "none",
+    });
+    samples.set(name, { hash: nextHash, at, state, detail, question, idleSince, quietSince, staticSince, context, composer, observation, lastOutputAt });
+    return { state, detail, question, idleSince, waitingSince: state === "waiting" ? staticSince : null, context, composer, observation };
   }
 
   /** Adds observed state to sessions and forgets panes that no longer exist. */
@@ -77,10 +98,13 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
         return { ...session, state: shellCommands.has(session.command) ? "stopped" : "service", stateDetail: null, stateQuestion: "", context: null, composer: null };
       }
       try {
-        const observed = await classify(session.name, session.command, at);
-        return { ...session, state: observed.state, stateDetail: observed.detail, stateQuestion: observed.question, idleSince: observed.idleSince ?? null, waitingSince: observed.waitingSince ?? null, context: observed.context ?? null, composer: observed.composer ?? null };
+        const harness = String(session.launchRef ?? "").split("/")[0] || null;
+        const observed = await classify(session.name, session.command, at, harness);
+        return { ...session, state: observed.state, stateDetail: observed.detail, stateQuestion: observed.question, idleSince: observed.idleSince ?? null, waitingSince: observed.waitingSince ?? null, context: observed.context ?? null, composer: observed.composer ?? null, observedAt: at, fresh: true, observation: observed.observation };
       } catch {
-        return { ...session, state: null, stateDetail: null, stateQuestion: "", context: null, composer: null };
+        const previous = samples.get(session.name);
+        const observation = previous?.observation ? { ...previous.observation, fresh: false } : { at, fresh: false, harness: String(session.launchRef ?? "").split("/")[0] || null, process: "other", activity: { lastOutputAt: null, source: "none" }, composer: "none", dialog: null, wall: null, context: null, transcript: null };
+        return { ...session, state: previous?.state ?? null, stateDetail: previous?.detail ?? null, stateQuestion: previous?.question ?? "", context: previous?.context ?? null, composer: previous?.composer ?? null, observedAt: observation.at, fresh: false, observation };
       }
     });
     const live = new Set(sessions.map((session) => session.name));
@@ -94,4 +118,30 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
   }
 
   return { context, enrich, hash };
+}
+
+/** Keeps the start time of one unchanged terminal wall across pane samples. */
+function sameWall(previous, current) {
+  return Boolean(previous && current && previous.kind === current.kind && previous.model === current.model && previous.text === current.text);
+}
+
+/** Converts one passive pane sample into the observation contract. */
+function observationOf({ at, harness, process, state, detail, question, wall = null, context, composer, lastOutputAt, activitySource }) {
+  return {
+    at,
+    fresh: true,
+    harness,
+    process,
+    activity: { lastOutputAt, source: activitySource },
+    composer,
+    dialog: detail === "decision" ? { question, source: "screen" } : null,
+    wall,
+    context,
+    transcript: null,
+  };
+}
+
+/** Returns whether the harness shows positive running output. */
+function hasRunningMarker(classification) {
+  return classification?.kind === "working";
 }

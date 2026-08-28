@@ -51,6 +51,10 @@ import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
 import { resolveAgentContext, unassignedAgentContext } from "./agent-context.mjs";
 import { workerShellExitNotice } from "./agent-recovery.mjs";
+import { deriveAttemptState, deriveBrainState, latestAttemptReport } from "./attempt-state.mjs";
+import { beginRecoveryStep, expireRecoverySteps, finishRecoveryStep, nextRecoveryAction } from "./recovery-ladder.mjs";
+import { REPAIR_REFUSAL, endRepair, extendRepairLease, liveRepair, newRepair, readAllRepairs, readRepair, repairDispatchDecision, writeRepair } from "./repair-crew.mjs";
+import { observeTranscript } from "./transcript-tail.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
@@ -215,6 +219,9 @@ const ATTEMPT_REPLACEMENTS_ROOT = process.env.TANGENT_ATTEMPT_REPLACEMENTS_ROOT 
 // One JSON record per exact Area brain: logical lifecycle, founding
 // instruction, checkpoint, launch, and runtime attempt diagnostics.
 const BRAINS_ROOT = process.env.TANGENT_BRAINS_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "brains");
+// One server-authoritative lease and bounded history per Area repair crew.
+const REPAIRS_ROOT = process.env.TANGENT_REPAIRS_ROOT
+  ?? (process.env.TANGENT_BRAINS_ROOT ? path.join(path.dirname(process.env.TANGENT_BRAINS_ROOT), "repairs") : path.join(os.homedir(), ".tangent", "agent-shell", "repairs"));
 // One JSON record per process note (`<area>/process-<slug>.md`): when it was
 // last due, when the brain was told, and the Goal it created (ADR-0043).
 const PROCESSES_ROOT = process.env.TANGENT_PROCESSES_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "processes");
@@ -240,6 +247,9 @@ const BRAIN_IDLE_NOTICE_MS = Number(process.env.TANGENT_BRAIN_IDLE_MINUTES ?? 10
 // must never notify.
 const BRAIN_WAIT_NOTICE_MS = Number(process.env.TANGENT_BRAIN_WAIT_MINUTES ?? 5) * 60_000;
 const RECONCILE_INTERVAL_MS = Math.max(10, Number(process.env.TANGENT_RECONCILE_INTERVAL_MS ?? 10_000));
+const REPAIR_CREW_ENABLED = process.env.TANGENT_REPAIR_CREW !== "0";
+const REPAIR_CREW_LIMIT = Math.max(1, Number(process.env.TANGENT_REPAIR_CREW_LIMIT ?? 3));
+const REPAIR_GRACE_MS = Math.max(0, Number(process.env.TANGENT_REPAIR_GRACE_MINUTES ?? 3) * 60_000);
 /**
  * The closing section of every worker prompt: the one Tangent command a
  * worker has (D5). The same four lines close a review step; --done on a
@@ -411,6 +421,12 @@ function isNoTmuxServer(error) {
 const sessionObservation = createObservationCache({
   load: loadSessions,
   ttlMs: Number(process.env.TANGENT_SESSION_OBSERVATION_TTL_MS ?? 500),
+  /** Makes a cache fallback explicit on every returned observation. */
+  markStale: (sessions, loadedAt) => sessions.map((session) => ({
+    ...session,
+    fresh: false,
+    observation: session.observation ? { ...session.observation, at: loadedAt || session.observation.at, fresh: false } : null,
+  })),
 });
 
 /** Creates one tmux session and records this instance before any caller can use it. */
@@ -2486,6 +2502,7 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
   }
   reconciling = true;
   try {
+    await attachTranscriptObservations(sessions);
     const live = new Set(sessions.map((s) => s.name));
     const byFile = new Map();
     for (const area of flattenAreaPaths(await readTree(TREES_ROOT))) {
@@ -2520,6 +2537,7 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
     }
     await reconcilePipelines(sessions, snapshotAt);
     await reconcileBrains(sessions);
+    await reconcileRepairs(sessions);
     const missingFinishedGoals = new Set();
     for (const s of sessions) {
       if (!s.goal) continue;
@@ -3422,6 +3440,8 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
   const o = await goalByFile(goalFile);
   trace?.mark("goal resolved");
   if (!o) return { status: 404, error: `no goal file ${goalFile}` };
+  const controlActor = options.caller ? await commandProvenance(options.caller) : null;
+  if (controlActor?.role === "repair" && !await liveCallingOrganizer(options.caller, o.area)) return { status: 403, error: REPAIR_REFUSAL };
   if (["restart", "send"].includes(action) && !options.caller) {
     return { status: 403, error: action === "restart"
       ? "Use guarded Goal recovery after automatic recovery is exhausted."
@@ -3518,7 +3538,7 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   const byFile = await goalsByFile();
   const o = byFile.get(goalFile);
   if (!o) return { status: 404, error: `no goal file ${goalFile}` };
-  const caller = await liveCallingBrain(options.caller);
+  const caller = await liveCallingOrganizer(options.caller, o.area);
   if (!caller) return { status: 403, error: brainOnlyStartRefusal(o.area) };
   if (["done", "dropped", "parked"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
@@ -3799,7 +3819,7 @@ async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
   if (!goal) return { status: 404, error: `no goal file ${goalFile}` };
   // Everything starts through the brain (D8): a replacement is a new worker
   // attempt, so only a live brain requests one.
-  if (!await liveCallingBrain(options.caller)) return { status: 403, error: brainOnlyStartRefusal(goal.area) };
+  if (!await liveCallingOrganizer(options.caller, goal.area)) return { status: 403, error: brainOnlyStartRefusal(goal.area) };
   if (["done", "dropped", "parked"].includes(goal.status)) return { status: 409, error: `goal is ${goal.status}` };
   const operationId = String(options.operationId ?? "").trim();
   if (!operationId) return { status: 400, code: "operation-required", error: "an operation ID is required" };
@@ -3831,6 +3851,8 @@ async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
   const assignment = record.steps.find((item) => item.id === options.assignmentId);
   const attempt = assignment?.attempts?.at(-1);
   if (!assignment || !attempt) return { status: 409, code: "stale-assignment", error: "the requested assignment has no current attempt", pipeline: record };
+  const inPlace = (attempt.recovery ?? []).find((step) => step.kind === "resume-in-place" && !step.result && Date.parse(step.leaseUntil) > Date.now());
+  if (inPlace) return { status: 409, code: "recovery-in-place", error: "Tangent is restarting this attempt in place. Retry in 2 minutes or end it.", pipeline: record };
   const source = await inspectCurrentGoalAttemptTarget(goal, record, assignment, attempt);
   if (source.error) return { status: 409, code: source.code, error: source.error, pipeline: record };
   const chosen = await launchCatalog.requested({ choice: options.launch });
@@ -3943,12 +3965,48 @@ async function resumeAttemptReplacements() {
   }
 }
 
+/** Adds durable transcript progress to live observations for supported harnesses. */
+async function attachTranscriptObservations(sessions) {
+  const byName = new Map((sessions ?? []).map((session) => [session.name, session]));
+  if (!byName.size) return sessions;
+  const registry = await launchCatalog.registry();
+  if (registry.error) return sessions;
+  const sources = [];
+  for (const queue of await readAllPipelines(PIPELINES_ROOT)) {
+    for (const assignment of queue.steps ?? []) {
+      const attempt = assignment.attempts?.at(-1);
+      if (attempt?.session && byName.has(attempt.session)) sources.push({ session: attempt.session, attempt });
+    }
+  }
+  for (const brain of await readAllBrains(BRAINS_ROOT)) {
+    const attempt = currentGeneration(brain);
+    if (attempt?.session && byName.has(attempt.session)) sources.push({ session: attempt.session, attempt: { ...attempt, cwd: areaDirectory(TREES_ROOT, brain.area) } });
+  }
+  for (const record of await readAllRepairs(REPAIRS_ROOT)) {
+    const attempt = liveRepair(record);
+    if (attempt?.session && byName.has(attempt.session)) sources.push({ session: attempt.session, attempt });
+  }
+  await Promise.all(sources.map(async ({ session: name, attempt }) => {
+    const session = byName.get(name);
+    const harness = registry.harnesses.find((item) => item.id === attempt.resolvedLaunch?.ref?.harness);
+    const transcript = await observeTranscript({ harness, conversation: attempt.providerSession, cwd: attempt.cwd, startedAt: attempt.startedAt });
+    if (!transcript || !session?.observation) return;
+    session.observation.transcript = transcript;
+    if (transcript.lastEventAt > Number(session.observation.activity?.lastOutputAt ?? 0)) {
+      session.observation.activity = { lastOutputAt: transcript.lastEventAt, source: "transcript" };
+    }
+  }));
+  return sessions;
+}
+
 /**
  * Every pipeline record with live facts folded in: whether each step's
  * session exists, its pane state, and the derived pipeline status.
  */
 async function pipelinesView(sessions) {
-  const brainSessions = brainSessionNames(await readAllBrains(BRAINS_ROOT));
+  await attachTranscriptObservations(sessions);
+  const [brainRecords, repairRecords] = await Promise.all([readAllBrains(BRAINS_ROOT), readAllRepairs(REPAIRS_ROOT)]);
+  const brainSessions = brainSessionNames(brainRecords);
   const byName = new Map(sessions.filter((item) => item.kind !== "brain" && !brainSessions.has(item.name)).map((item) => [item.name, item]));
   const records = await readAllPipelines(PIPELINES_ROOT);
   return records.map((record) => ({
@@ -3956,7 +4014,17 @@ async function pipelinesView(sessions) {
     status: pipelineStatus(record, (name) => byName.has(name)),
     steps: record.steps.map((step) => {
       const live = step.session ? byName.get(step.session) : null;
-      return { ...step, live: Boolean(live), state: live?.state ?? null, stateDetail: live?.stateDetail ?? null, idleSince: live?.idleSince ?? null, waitingSince: live?.waitingSince ?? null, context: live?.context ?? null };
+      const brain = brainRecords.find((item) => item.area === record.area) ?? null;
+      const repair = repairRecords.find((item) => item.area === record.area) ?? null;
+      const projectedBrain = brain ? { ...brain, live: Boolean(brain.session && sessions.some((session) => session.name === brain.session)) } : null;
+      const attemptState = deriveAttemptState({
+        assignment: step,
+        observation: live?.observation ?? live,
+        recovery: step.attempts?.at(-1)?.recovery ?? [],
+        brain: projectedBrain,
+        repair,
+      });
+      return { ...step, live: Boolean(live), state: live?.state ?? null, stateDetail: live?.stateDetail ?? null, idleSince: live?.idleSince ?? null, waitingSince: live?.waitingSince ?? null, context: live?.context ?? null, observation: live?.observation ?? null, attemptState };
     }),
   }));
 }
@@ -4046,12 +4114,30 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
       // The last context fill seen while live stays on the attempt, so a
       // dead attempt still says how full its conversation was (D22).
       const liveAttempt = step.attempts?.findLast?.((item) => item.session === step.session);
+      if (liveAttempt && expireRecoverySteps(liveAttempt, now)) changed = true;
       if (liveAttempt && live.context && contextFillChanged(liveAttempt.contextFill, live.context)) {
         liveAttempt.contextFill = { usedTokens: live.context.usedTokens, windowTokens: live.context.windowTokens, at: new Date().toISOString() };
         changed = true;
       }
-      const shellExit = workerShellExitNotice(record, step, live);
-      if (shellExit && shellExitNoticed.get(key) !== shellExit.sourceId) {
+      const recoveryAction = liveAttempt ? nextRecoveryAction({
+        record,
+        assignment: step,
+        observation: live.observation,
+        promptArrived: !promptPending(step.session),
+        now,
+      }) : null;
+      if (recoveryAction) {
+        const recovered = await runAttemptRecovery(record, step, live, recoveryAction);
+        changed = recovered.changed || changed;
+      }
+      if (live.observation?.wall) {
+        const wall = live.observation.wall;
+        const source = createHash("sha256").update(`${wall.kind}\0${wall.model ?? ""}\0${wall.text}`).digest("hex").slice(0, 20);
+        await routeBrainNotice(record.area, `Goal ${record.slug}: assignment ${step.index} hit a wall${wall.model ? ` on ${wall.model}` : ""}: "${wall.text}". Replace the agent on another model, or end the assignment.`, { idempotencyKey: `worker-wall:${record.goal}:${step.id}:${source}` });
+      }
+      const shellExit = latestAttemptReport(step) ? null : workerShellExitNotice(record, step, live);
+      const resumeTried = liveAttempt?.recovery?.some((item) => item.kind === "resume-in-place") ?? false;
+      if (shellExit && resumeTried && shellExitNoticed.get(key) !== shellExit.sourceId) {
         try {
           await routeBrainNotice(record.area, shellExit.text, { idempotencyKey: shellExit.sourceId });
           shellExitNoticed.set(key, shellExit.sourceId);
@@ -4095,6 +4181,60 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
 const idleNoticed = new Set();
 const waitNoticed = new Map();
 const shellExitNoticed = new Map();
+const observedLaunchWalls = new Map();
+
+/** Runs one bounded attempt-recovery effect after its durable intent exists. */
+async function runAttemptRecovery(record, assignment, session, action) {
+  const attempt = assignment.attempts?.at(-1);
+  if (!attempt) return { changed: false };
+  const inspected = await sessionOwnership.inspect(session.name);
+  if (inspected.state !== "live" || inspected.instanceId !== INSTANCE_ID || (attempt.target && inspected.target !== attempt.target)) return { changed: false };
+  const started = beginRecoveryStep({
+    record: attempt,
+    goal: record.goal,
+    assignment: assignment.id,
+    attempt: attempt.id,
+    kind: action.kind,
+    ordinal: action.ordinal,
+    instanceId: INSTANCE_ID,
+    target: inspected.target,
+  });
+  if (started.repeated) return { changed: false };
+  await writePipeline(PIPELINES_ROOT, record);
+  let result = "done";
+  let terminal = false;
+  try {
+    if (action.kind === "nudge") {
+      const text = `You stopped 3 minutes ago and sent no note. If the work is done: tangent send brain --done "<what changed, how you proved it>". If you cannot continue: tangent send brain --blocked "<why>". If you need a decision: tangent send brain --question "<ask>". Otherwise continue.`;
+      const delivered = await messages.dispatch(session, { from: "tangent", area: record.area, text, durable: true, queuedAt: new Date().toISOString() });
+      if (delivered.status !== 200) throw new Error(delivered.error);
+    } else if (action.kind === "resume-in-place") {
+      const harness = await registryHarness(attempt.resolvedLaunch?.ref?.harness);
+      const id = attempt.providerSession?.id;
+      if (!harness?.resume || !id) {
+        terminal = true;
+        throw new Error(`harness ${attempt.resolvedLaunch?.ref?.harness ?? "(unknown)"} has no resumable conversation`);
+      }
+      const command = resumeCommand(harness, { command: attempt.resolvedLaunch?.command ?? "", id });
+      await typeInto(session.name, command, true);
+      await messages.queueDurable(session.name, { from: "tangent", area: record.area, text: "Your harness exited and Tangent reopened your conversation. Continue the assignment.", queuedAt: new Date().toISOString() });
+    } else if (action.kind === "re-arm") {
+      const goal = (await goalsByFile()).get(record.goal);
+      if (!goal) throw new Error(`no Goal ${record.goal}`);
+      const prompt = await pipelineStepPrompt(record.area, goal, record, assignment.index, [], assignment.session, null, await promptWorkFolder(record.area, attempt));
+      await armSession(assignment.session, { submit: true, prompt });
+    }
+  } catch (error) {
+    result = "failed";
+    terminal ||= action.kind !== "nudge";
+    console.error("attempt recovery:", JSON.stringify({ goal: record.goal, assignment: assignment.id, action: action.kind, error: String(error.message ?? error) }));
+  }
+  finishRecoveryStep(attempt, started.step.operationId, result, { terminal });
+  await writePipeline(PIPELINES_ROOT, record);
+  await messages.log({ event: "recovery", goal: record.goal, assignment: assignment.id, attempt: attempt.id, step: action.kind, target: inspected.target, result });
+  stateEvents.changed("recovery");
+  return { changed: true };
+}
 
 // ---- Area brains ----
 // One long-lived orchestrating agent per Area (design-area-brain-solution in
@@ -4120,6 +4260,30 @@ async function exactLiveBrainForArea(area) {
   if (!record) return null;
   const live = await sessionOwnership.inspect(record.session);
   return live.state === "live" && live.instanceId === INSTANCE_ID ? record : null;
+}
+
+/** The live repair crew for one exact Area, fenced by its durable lease and target. */
+async function liveRepairForArea(area, now = Date.now()) {
+  const record = await readRepair(REPAIRS_ROOT, area);
+  const repair = liveRepair(record, now);
+  if (!repair?.session || repair.instanceId !== INSTANCE_ID) return null;
+  const inspected = await sessionOwnership.inspect(repair.session);
+  if (inspected.state !== "live" || inspected.instanceId !== INSTANCE_ID || (repair.target && inspected.target !== repair.target)) return null;
+  return { record, repair, target: inspected.target };
+}
+
+/** The live addressee for one Area: its usable brain first, then its crew. */
+async function liveAddresseeForArea(area) {
+  const brain = await exactLiveBrainForArea(area);
+  if (brain) {
+    const session = (await listSessions()).find((item) => item.name === brain.session);
+    const word = deriveBrainState({ brain: { ...brain, live: Boolean(session) }, observation: session?.observation ?? session }).word;
+    if (!["Brain hit a wall", "Brain needs a decision", "Brain has a problem"].includes(word)) {
+      return { role: "brain", session: brain.session, generation: brain.generation ?? null, brain };
+    }
+  }
+  const crew = await liveRepairForArea(area);
+  return crew ? { role: "repair", session: crew.repair.session, generation: null, repair: crew.repair } : null;
 }
 
 /** Running brain records whose current sessions exist in this snapshot. */
@@ -4248,25 +4412,25 @@ async function routeBrainNotice(area, text, { idempotencyKey = null, sender = nu
   if (notice.duplicate && (notice.deliveredAt || noticesInFlight(records).has(noticeKey({ area, id: notice.id })))) {
     return { addressed: Boolean(owner), notice, session: notice.deliveredTo ?? owner?.session ?? null, generation: notice.deliveredGeneration ?? owner?.generation ?? null };
   }
-  if (!owner) {
+  const addressee = await liveAddresseeForArea(area);
+  if (!owner && !addressee) {
     await messages.log({ event: "kept", to: `${area} brain`, from: senderName || "tangent", area: senderArea, text: body, reason: "Area brain has not started yet" });
     return { addressed: false, notice, session: null, generation: null };
   }
-  const record = await liveBrainForArea(area);
-  if (!record) {
+  if (!addressee) {
     await messages.log({ event: "kept", to: `${owner.area} brain`, from: senderName || "tangent", area: senderArea, text: body, reason: "no live brain; waits for the next generation" });
     return { addressed: false, notice, session: null, generation: null };
   }
   const notices = [{ area, id: notice.id }];
-  await queueBrainNotice(record.session, {
+  await queueBrainNotice(addressee.session, {
     from: senderName || "tangent",
     area: senderName ? senderArea : null,
     text: senderName ? body : message,
     notices,
-    generation: record.generation ?? null,
+    generation: addressee.generation,
   });
-  await messages.log({ event: "sent", to: record.session, from: senderName || "tangent", area: senderArea, text: body, disposition: "queued", reason: "brain event" });
-  return { addressed: true, notice, session: record.session, generation: record.generation ?? null };
+  await messages.log({ event: "sent", to: addressee.session, from: senderName || "tangent", area: senderArea, text: body, disposition: "queued", reason: addressee.role === "repair" ? "repair crew event" : "brain event" });
+  return { addressed: true, notice, session: addressee.session, generation: addressee.generation, role: addressee.role };
 }
 
 /**
@@ -4287,6 +4451,16 @@ const WORKER_REFUSED_ROUTES = new Set([
 const WORKER_MUTATION_REFUSAL = 'workers only send. Use: tangent send brain "<note>"';
 /** The 403 text when a worker sends to anything but its brain (D5). */
 const WORKER_SEND_TARGET_REFUSAL = 'workers only send to their brain. Use: tangent send brain "<note>"';
+const REPAIR_REFUSED_ROUTES = new Set([
+  "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/start",
+  "/api/goals/depend", "/api/goals/undepend", "/api/goals/accept", "/api/goals/understanding", "/api/goals/cleanup",
+  "/api/goals/attempts/resume", "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/areas/journal",
+  "/api/idea/new", "/api/document/resolve", "/api/document", "/api/brains/start", "/api/brains/stop", "/api/brains/reply",
+  "/api/brains/verdict", "/api/brains/verdict/undo", "/api/brains/requests", "/api/brains/requests/withdraw",
+  "/api/brains/requests/answer", "/api/brains/requests/dismiss", "/api/operations/new", "/api/operations/control",
+  "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control",
+  "/api/processes/check", "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
+]);
 
 /**
  * The 403 text for a mutating route called from a worker session, or null
@@ -4299,6 +4473,15 @@ async function refuseWorkerMutation(req, url) {
   if (!session) return null;
   const actor = await commandProvenance(session);
   return actor.role === "worker" ? WORKER_MUTATION_REFUSAL : null;
+}
+
+/** Refuses commands that can widen or redefine work when a repair crew calls them. */
+async function refuseRepairMutation(req, url) {
+  if (req.method !== "POST" || !REPAIR_REFUSED_ROUTES.has(url.pathname)) return null;
+  const session = String(req.headers["x-tangent-session"] ?? "").trim();
+  if (!session) return null;
+  const actor = await commandProvenance(session);
+  return actor.role === "repair" ? REPAIR_REFUSAL : null;
 }
 
 /** Resolves one command's audit identity without using it as permission. */
@@ -4335,6 +4518,18 @@ async function recordCommittedCommand({ operation, actorSession = "", targetArea
     operationId,
     result,
   });
+  const brain = await readBrain(BRAINS_ROOT, targetArea);
+  if (brain) {
+    brain.lastAction = { command: operation, target: goal || targetArea, at: new Date().toISOString(), operationId };
+    await writeBrain(BRAINS_ROOT, brain);
+  }
+  if (actor.role === "repair") {
+    const repairRecord = await readRepair(REPAIRS_ROOT, actor.area);
+    if (repairRecord.current?.session === actor.session && extendRepairLease(repairRecord.current)) {
+      repairRecord.current.audit = [...(repairRecord.current.audit ?? []), { operation, targetArea, goal: goal || null, assignment: assignment || null, operationId, result, at: new Date().toISOString() }].slice(-50);
+      await writeRepair(REPAIRS_ROOT, repairRecord);
+    }
+  }
   return routeBrainNotice(
     targetArea,
     `${subject}${assignment ? ` assignment ${assignment}` : ""}: command ${operation} ${result} by ${origin}.`,
@@ -4492,15 +4687,17 @@ async function deliverJournalToBrain(area, message, idempotencyKey) {
  * and the inbox say what is on its way; nothing is kept in memory alone.
  */
 async function flushBrainNotices(sessions = null, reason = "unread notices after a server start") {
-  const records = await liveBrainRecords(sessions);
+  const records = await readAllBrains(BRAINS_ROOT);
   const inFlight = noticesInFlight(records);
-  for (const record of records) {
-    const unread = (await unreadBrainNotices(record.area, records)).filter((notice) => !inFlight.has(noticeKey(notice)));
+  for (const inbox of await readAllInboxes(BRAINS_ROOT)) {
+    const addressee = await liveAddresseeForArea(inbox.area);
+    if (!addressee) continue;
+    const unread = unreadNotices(inbox).map((notice) => ({ ...notice, area: inbox.area })).filter((notice) => !inFlight.has(noticeKey(notice)));
     if (!unread.length) continue;
     const text = unread.length === 1 ? unread[0].text : noticeDigest(unread);
     const notices = unread.map((notice) => ({ area: notice.area, id: notice.id }));
-    await queueBrainNotice(record.session, { text, notices, generation: record.generation ?? null });
-    await messages.log({ event: "sent", to: record.session, from: "tangent", text, disposition: "queued", reason });
+    await queueBrainNotice(addressee.session, { text, notices, generation: addressee.generation });
+    await messages.log({ event: "sent", to: addressee.session, from: "tangent", text, disposition: "queued", reason: addressee.role === "repair" ? `${reason}; repair crew` : reason });
   }
 }
 
@@ -4544,8 +4741,16 @@ async function unreadNoticesAsFirstMessage(area, record) {
   // the new attempt reads either way. A notice queued for the attempt that
   // died is not on its way anywhere, so it is typed too.
   const unread = await unreadBrainNotices(area, [...others, { ...record, status: "active" }]);
-  if (!unread.length) return { text: "", notices: [] };
-  return { text: unread.length === 1 ? unread[0].text : noticeDigest(unread), notices: unread };
+  const repairRecord = await readRepair(REPAIRS_ROOT, area);
+  const generationBoundary = Date.parse(currentGeneration(record)?.startedAt ?? currentGeneration(record)?.endedAt ?? 0);
+  const handled = (repairRecord.history ?? []).filter((repair) => Date.parse(repair.endedAt ?? repair.startedAt) > generationBoundary);
+  const repairLines = handled.flatMap((repair) => [
+    `Repair ${repair.id.slice(0, 8)} ended ${repair.result}${repair.report ? `: ${repair.report}` : "."}`,
+    ...(repair.audit ?? []).map((item) => `- ${item.operation}${item.goal ? ` on Goal ${item.goal}` : ""}: ${item.result}`),
+  ]);
+  const noticeText = unread.length ? (unread.length === 1 ? unread[0].text : noticeDigest(unread)) : "";
+  const repairText = repairLines.length ? `## Handled by the repair crew\n\n${repairLines.join("\n")}` : "";
+  return { text: [noticeText, repairText].filter(Boolean).join("\n\n"), notices: unread };
 }
 
 /**
@@ -4641,6 +4846,251 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
   }
 }
 
+/** Builds the bounded factual first message for one Area repair crew. */
+function repairFirstMessage(area, brainState, waiting, notices) {
+  const lines = [
+    `Repair crew for ${area}. The Area brain is ${brainState.word.toLowerCase()} since ${new Date(brainState.since).toISOString()}.`,
+    `You are not the brain. Finish the live work below, then run: tangent send brain --done "<what you did>".`,
+    `If you cannot finish, run: tangent send brain --blocked "<why>".`,
+    "",
+    "Work that waits for a brain:",
+  ];
+  waiting.slice(0, 20).forEach((item, index) => lines.push(`${index + 1}. Goal ${item.slug}: ${item.word}. ${item.summary || "No report summary."}`));
+  if (notices.length) {
+    lines.push("", "Notes you have not read:", noticeBlock(notices));
+  }
+  return lines.join("\n").slice(0, 12_000);
+}
+
+/** Starts one crew from a record already written under the exact-Area lock. */
+async function spawnRepairSession(record, repair, firstMessage, notices) {
+  let target = "";
+  let armed = false;
+  try {
+    repair.firstMessage = firstMessage;
+    if ((await listAllSessions({ fresh: true })).some((session) => session.name === repair.session)) throw new Error(`session ${repair.session} already exists`);
+    target = await createOwnedTmuxSession(repair.session, ["-d", "-s", repair.session, "-c", repair.cwd]);
+    repair.target = target;
+    for (const [key, value] of Object.entries({ area: record.area, kind: "repair", repair: repair.id, cwd: repair.cwd, launch: repair.resolvedLaunch.label ?? "", launch_ref: launchRef(repair.resolvedLaunch.ref) })) {
+      if (value) await execFileAsync("tmux", ["set-option", "-t", repair.session, `@tangent_${key}`, String(value)]);
+    }
+    const registry = await launchCatalog.registry();
+    if (registry.error) throw new Error(registry.error);
+    const harness = registry.harnesses.find((item) => item.id === repair.resolvedLaunch.ref.harness);
+    if (!harness) throw new Error(`harness ${repair.resolvedLaunch.ref.harness} is no longer registered`);
+    const conversation = newConversation(harness);
+    repair.providerSession = conversation ? structuredClone(conversation) : null;
+    record.current = repair;
+    await writeRepair(REPAIRS_ROOT, record);
+    if (process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") {
+      if (notices.length) await markBrainNoticesDelivered(notices, repair.session, null);
+      await messages.log({ event: "repair", action: "dispatched", area: record.area, repair: repair.id, session: repair.session, target });
+      return { status: 200, session: repair.session, firstMessage };
+    }
+    /** Marks only the notes proved visible inside the crew's first message. */
+    const onTyped = (arrived) => {
+      if (arrived && notices.length) void markBrainNoticesDelivered(notices, repair.session, null);
+    };
+    await armSession(repair.session, { submit: true, prompt: firstMessage, onTyped });
+    armed = true;
+    await typeInto(repair.session, launchWithConversation(harness, withDefaultModel(repair.resolvedLaunch.command), conversation), false);
+    await execFileAsync("tmux", ["send-keys", "-t", `=${repair.session}:`, "Enter"]);
+    await messages.log({ event: "repair", action: "dispatched", area: record.area, repair: repair.id, session: repair.session, target });
+    stateEvents.changed("repair-dispatched");
+    return { status: 200, session: repair.session, firstMessage };
+  } catch (error) {
+    if (armed) {
+      armedSessions.delete(repair.session);
+      await clearArmedPrompt(ARMED_ROOT, repair.session).catch(() => {});
+    }
+    if (target) await sessionOwnership.terminate(repair.session, target).catch(() => {});
+    endRepair(record, "failed", String(error.message ?? error));
+    await writeRepair(REPAIRS_ROOT, record);
+    await messages.log({ event: "repair", action: "ended", area: record.area, repair: repair.id, result: "failed", reason: String(error.message ?? error) });
+    return { status: 500, error: String(error.message ?? error) };
+  }
+}
+
+/** Ends one crew under the exact-Area lifecycle lock and fences its session. */
+async function endRepairCrewUnlocked(area, result, report = "") {
+  const record = await readRepair(REPAIRS_ROOT, area);
+  const repair = record.current;
+  if (!repair) return null;
+  const ended = endRepair(record, result, report);
+  await writeRepair(REPAIRS_ROOT, record);
+  if (repair.target) await sessionOwnership.terminate(repair.session, repair.target).catch(() => {});
+  armedSessions.delete(repair.session);
+  await clearArmedPrompt(ARMED_ROOT, repair.session).catch(() => {});
+  await messages.log({ event: "repair", action: "ended", area, repair: repair.id, session: repair.session, result, reason: report || null });
+  stateEvents.changed("repair-ended");
+  return ended;
+}
+
+/** The rows whose next organizer is the Area brain or its repair crew. */
+function repairWaitingWork(area, pipelines, sessions, brain, repair, now = Date.now()) {
+  const byName = new Map(sessions.map((session) => [session.name, session]));
+  const waiting = [];
+  for (const queue of pipelines.filter((item) => item.area === area)) {
+    for (const assignment of queue.steps ?? []) {
+      const report = latestAttemptReport(assignment);
+      const live = assignment.session ? byName.get(assignment.session) : null;
+      const state = deriveAttemptState({ assignment, observation: live?.observation ?? live, recovery: assignment.attempts?.at(-1)?.recovery ?? [], brain, repair, now });
+      if (!["Reported done", "Reported blocked", "Asked the brain", "Stuck", "Hit a wall", "Stopped"].some((word) => state.word.startsWith(word))) continue;
+      waiting.push({
+        goal: queue.goal,
+        slug: queue.slug,
+        assignment: assignment.id,
+        word: state.word,
+        since: state.since,
+        summary: report?.summary ?? state.evidence?.text ?? "",
+        instanceId: assignment.attempts?.at(-1)?.instanceId ?? queue.instanceId ?? null,
+      });
+    }
+  }
+  return waiting;
+}
+
+/** Reconciles crew leases, failure, supersession, and dispatch. */
+async function reconcileRepairs(sessions) {
+  if (!REPAIR_CREW_ENABLED) return;
+  const now = Date.now();
+  for (const [ref, at] of observedLaunchWalls) if (now - at >= 60 * 60_000) observedLaunchWalls.delete(ref);
+  for (const session of sessions) if (session.observation?.wall && session.launchRef) observedLaunchWalls.set(session.launchRef, now);
+  const [repairs, brains, pipelines, tree] = await Promise.all([readAllRepairs(REPAIRS_ROOT), readAllBrains(BRAINS_ROOT), readAllPipelines(PIPELINES_ROOT), readTree(TREES_ROOT)]);
+  const byName = new Map(sessions.map((session) => [session.name, session]));
+  for (const repairRecord of repairs) {
+    const repair = repairRecord.current;
+    if (!repair) continue;
+    const session = byName.get(repair.session);
+    const brain = brains.find((item) => item.area === repairRecord.area) ?? null;
+    const brainSession = brain?.session ? byName.get(brain.session) : null;
+    const brainState = deriveBrainState({ brain: brain ? { ...brain, live: Boolean(brainSession) } : null, observation: brainSession?.observation ?? brainSession });
+    let result = null;
+    let reason = "";
+    if (["Brain working", "Brain idle"].includes(brainState.word)) result = "superseded";
+    else if (Date.parse(repair.leaseUntil) <= now) result = "expired";
+    else if (!session) result = "failed";
+    else if ((process.env.AGENT_SHELL_TEST_NO_LAUNCH !== "1" && session.observation?.process === "shell") || session.observation?.wall) result = "failed";
+    const waiting = repairWaitingWork(repairRecord.area, pipelines, sessions, brain ? { ...brain, live: Boolean(brainSession) } : null, repairRecord, now);
+    const lastCrewOutput = Number(session?.observation?.activity?.lastOutputAt) || Number(session?.observation?.transcript?.lastEventAt) || Date.parse(repair.startedAt);
+    if (!result && waiting.length > 0 && session?.observation?.composer === "idle" && now - lastCrewOutput >= 180_000 && !repair.idleNudgedAt) {
+      const nudge = await messages.dispatch(session, { from: "tangent", area: repairRecord.area, text: "You stopped 3 minutes ago. Finish the waiting work, then send --done or --blocked.", durable: true, queuedAt: new Date().toISOString() });
+      if (nudge.status === 200) {
+        repair.idleNudgedAt = new Date(now).toISOString();
+        await writeRepair(REPAIRS_ROOT, repairRecord);
+      }
+    }
+    if (!result && waiting.length === 0 && session?.observation?.composer === "idle") {
+      repair.settleSince ??= new Date(now).toISOString();
+      if (!repair.nudgedAt) {
+        const nudge = await messages.dispatch(session, { from: "tangent", area: repairRecord.area, text: "No live work now waits for the brain. Finish with tangent send brain --done, or report a block.", durable: true, queuedAt: new Date().toISOString() });
+        if (nudge.status === 200) repair.nudgedAt = new Date(now).toISOString();
+      }
+      await writeRepair(REPAIRS_ROOT, repairRecord);
+      if (now - Date.parse(repair.settleSince) >= 120_000 && repair.nudgedAt) result = "settled";
+    } else if (!result && waiting.length > 0 && repair.settleSince) {
+      delete repair.settleSince;
+      await writeRepair(REPAIRS_ROOT, repairRecord);
+    }
+    if (!result) continue;
+    reason = result === "superseded" ? "the Area brain became live" : result === "expired" ? "the repair lease expired" : result === "settled" ? "nothing waits for the brain" : "the repair session stopped";
+    await withBrainMutation(repairRecord.area, () => endRepairCrewUnlocked(repairRecord.area, result, reason));
+  }
+
+  const refreshedRepairs = await readAllRepairs(REPAIRS_ROOT);
+  let runningMachine = refreshedRepairs.filter((record) => liveRepair(record, now)).length;
+  const areas = [...new Set([...flattenAreaPaths(tree), ...pipelines.map((record) => record.area)])]
+    .sort((left, right) => oldestQueueFact(pipelines, left, now) - oldestQueueFact(pipelines, right, now));
+  for (const area of areas) {
+    const brain = brains.find((item) => item.area === area) ?? null;
+    const brainSession = brain?.session ? byName.get(brain.session) : null;
+    const repairRecord = refreshedRepairs.find((item) => item.area === area) ?? await readRepair(REPAIRS_ROOT, area);
+    const repair = liveRepair(repairRecord, now) ? repairRecord : repairRecord;
+    const brainState = deriveBrainState({ brain: brain ? { ...brain, live: Boolean(brainSession) } : null, observation: brainSession?.observation ?? brainSession, repair });
+    const waiting = repairWaitingWork(area, pipelines, sessions, brain ? { ...brain, live: Boolean(brainSession) } : null, repairRecord, now);
+    const owned = waiting.length > 0 && waiting.every((item) => !item.instanceId || item.instanceId === INSTANCE_ID);
+    const decision = repairDispatchDecision({
+      area,
+      brainWord: brainState.word,
+      brainSince: brain ? brainState.since : null,
+      waiting,
+      record: repairRecord,
+      hidden: Boolean(await hiddenAreaStatus(area)),
+      owned,
+      runningMachine,
+      machineLimit: REPAIR_CREW_LIMIT,
+      graceMs: REPAIR_GRACE_MS,
+      now,
+    });
+    if (!decision.dispatch) continue;
+    await withBrainMutation(area, async () => {
+      const currentRecord = await readRepair(REPAIRS_ROOT, area);
+      if (liveRepair(currentRecord, now)) return;
+      const selected = await selectRepairLaunch(area, currentRecord, decision.stopSince);
+      if (!selected || selected.error || !selected.command || !selected.harness) {
+        await messages.log({ event: "repair", action: "not dispatched", area, reason: selected?.error ?? "no remembered or allowed brain launch" });
+        return;
+      }
+      const resolvedLaunch = {
+        ref: { harness: selected.harness, model: selected.model ?? null, effort: selected.effort ?? null },
+        label: selected.label || selected.command,
+        command: selected.command,
+        sourceArea: selected.source ?? null,
+        mode: selected.via ?? "memory",
+      };
+      const stop = {
+        since: decision.stopSince,
+        cause: !brain ? "no-record" : brainState.word === "Brain hit a wall" ? "wall" : brain.health?.status === "failed" ? "recovery-failed" : brainSession?.observation?.process === "shell" ? "shell" : "inactive",
+      };
+      const notices = unreadNotices(await readInbox(BRAINS_ROOT, area)).map((notice) => ({ ...notice, area }));
+      const crew = newRepair({
+        area,
+        stop,
+        trigger: { goals: [...new Set(waiting.map((item) => item.goal))], reports: waiting.filter((item) => item.word.startsWith("Reported")).map((item) => item.assignment), notices: notices.map((notice) => notice.id), oldestSince: new Date(decision.oldestSince).toISOString() },
+        ordinal: decision.ordinal,
+        instanceId: INSTANCE_ID,
+        cwd: areaDirectory(TREES_ROOT, area),
+        resolvedLaunch,
+        now,
+      });
+      currentRecord.current = crew;
+      await writeRepair(REPAIRS_ROOT, currentRecord);
+      const firstMessage = repairFirstMessage(area, brainState, waiting, notices);
+      const started = await spawnRepairSession(currentRecord, crew, firstMessage, notices);
+      if (started.status === 200) runningMachine += 1;
+    });
+  }
+}
+
+/** Selects remembered policy first, then skips launches that recently failed. */
+async function selectRepairLaunch(area, record, stopSince) {
+  const excluded = new Set((record.history ?? [])
+    .filter((item) => item.stop?.since === stopSince && ["failed", "expired"].includes(item.result))
+    .map((item) => launchRef(item.resolvedLaunch?.ref))
+    .filter(Boolean));
+  for (const ref of observedLaunchWalls.keys()) excluded.add(ref);
+  const remembered = await launchCatalog.forBrain(area);
+  if (remembered && !remembered.error && !excluded.has(launchRef(remembered))) return remembered;
+  const policy = await launchCatalog.policyFor(area);
+  if (policy.error) return policy;
+  for (const ref of policy.launches ?? []) {
+    if (excluded.has(launchRef(ref))) continue;
+    const selected = await launchCatalog.allowed(area, ref);
+    if (!selected.error) return selected;
+  }
+  return { error: excluded.size ? "every remembered or allowed repair launch hit a wall" : `${area}: no remembered or allowed brain launch` };
+}
+
+/** Sorts repair candidates by their oldest durable queue or recovery fact. */
+function oldestQueueFact(pipelines, area, fallback) {
+  const values = pipelines.filter((record) => record.area === area).flatMap((record) => (record.steps ?? []).flatMap((assignment) => {
+    const report = latestAttemptReport(assignment);
+    const recovery = assignment.attempts?.at(-1)?.recovery?.at(-1);
+    return [Date.parse(report?.reportedAt ?? ""), Date.parse(recovery?.startedAt ?? ""), Date.parse(assignment.startedAt ?? "")].filter(Number.isFinite);
+  }));
+  return values.length ? Math.min(...values) : fallback;
+}
+
 /**
  * Starts a brain from its founding instruction, or reattaches to its current
  * attempt. One logical brain exists per exact Area.
@@ -4677,6 +5127,7 @@ async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "",
   if (!area || (!isRootArea(area) && !existsSync(areaDirectory(TREES_ROOT, area)))) return { status: 404, error: `no Area ${area || "(none)"}` };
   const hidden = isRootArea(area) ? null : await hiddenAreaStatus(area);
   if (hidden) return { status: 409, code: "area-hidden", error: `Area ${area} is ${hidden}. Reopen it first: tangent area reopen ${area}` };
+  await endRepairCrewUnlocked(area, "superseded", "the Area brain started");
   const existing = await readBrain(BRAINS_ROOT, area);
   if (existing?.status === "inactive" && unsettledBrainStop(existing)) {
     return { status: 409, code: "stop-unsettled", error: `the ${area} brain is still settling stop ${existing.stopOperation.id}; retry stop before you resume it` };
@@ -4784,6 +5235,25 @@ function actingSession(body) {
 async function liveCallingBrain(session) {
   const name = String(session ?? "").trim();
   return name ? liveBrainForSession(name) : null;
+}
+
+/** Returns a live brain, or the unexpired repair crew of the exact Goal Area. */
+async function liveCallingOrganizer(session, area) {
+  const name = String(session ?? "").trim();
+  if (!name) return null;
+  const brain = await liveBrainForSession(name);
+  if (brain) return brain;
+  const crew = await liveRepairForArea(area);
+  if (!crew || crew.repair.session !== name) return null;
+  return {
+    area,
+    status: "active",
+    session: name,
+    generation: 1,
+    currentAttemptId: name,
+    generations: [{ generation: 1, session: name, resolvedLaunch: crew.repair.resolvedLaunch }],
+    role: "repair",
+  };
 }
 
 /**
@@ -4999,6 +5469,34 @@ async function reconcileBrain(area, { allByName, live, index }) {
     await reportUnshownForJulian(record, index).catch(reportUnshownFailure);
   }
   if (record.status !== "active") return;
+  if (observed?.state === "shell" && entry) {
+    const attempts = (entry.recovery ?? []).filter((step) => step.kind === "resume-in-place").length;
+    if (attempts >= BRAIN_RECOVERY_LIMIT) {
+      record.health = { status: "failed", problem: `The brain harness exited after ${attempts} in-place recovery attempts.`, updatedAt: new Date().toISOString() };
+      await writeBrain(BRAINS_ROOT, record);
+      return;
+    }
+    const inspected = await sessionOwnership.inspect(record.session);
+    if (inspected.state !== "live" || inspected.instanceId !== INSTANCE_ID || (entry.target && inspected.target !== entry.target)) return;
+    const started = beginRecoveryStep({ record: entry, goal: `brain:${area}`, assignment: area, attempt: entry.session, kind: "resume-in-place", ordinal: attempts + 1, instanceId: INSTANCE_ID, target: inspected.target });
+    if (started.repeated) return;
+    record.health = { status: "recovering", problem: "The brain harness exited to its shell.", updatedAt: new Date().toISOString() };
+    await writeBrain(BRAINS_ROOT, record);
+    let outcome = "done";
+    try {
+      const harness = await registryHarness(entry.resolvedLaunch?.ref?.harness);
+      const id = entry.providerSession?.id;
+      if (!harness?.resume || !id) throw new Error(`harness ${entry.resolvedLaunch?.ref?.harness ?? "(unknown)"} has no resumable brain conversation`);
+      await typeInto(record.session, resumeCommand(harness, { command: entry.resolvedLaunch.command, id }), true);
+    } catch (error) {
+      outcome = "failed";
+      record.health = { status: attempts + 1 >= BRAIN_RECOVERY_LIMIT ? "failed" : "recovering", problem: String(error.message ?? error), updatedAt: new Date().toISOString() };
+    }
+    finishRecoveryStep(entry, started.step.operationId, outcome, { terminal: outcome === "failed" && attempts + 1 >= BRAIN_RECOVERY_LIMIT });
+    await writeBrain(BRAINS_ROOT, record);
+    await messages.log({ event: "recovery", target: "brain", area, session: record.session, step: "resume-in-place", ordinal: attempts + 1, result: outcome });
+    return;
+  }
   const deliveryFailed = entry?.deliveryStatus === "failed";
   if (record.session && live.has(record.session) && deliveryFailed) {
     const stopped = await terminateOwnedSession(record.session);
@@ -5158,9 +5656,14 @@ async function noteReplySubject(area, subject) {
 async function brainsView(sessions, { includeForJulian = true } = {}) {
   const byName = new Map(sessions.map((item) => [item.name, item]));
   const index = includeForJulian ? await vaultIndex() : null;
-  const records = await readAllBrains(BRAINS_ROOT);
-  return Promise.all(records.map(async (record) => {
+  const [records, repairs] = await Promise.all([readAllBrains(BRAINS_ROOT), readAllRepairs(REPAIRS_ROOT)]);
+  const projected = await Promise.all(records.map(async (record) => {
     const live = record.session ? byName.get(record.session) : null;
+    const storedRepair = repairs.find((item) => item.area === record.area) ?? null;
+    const repairSession = storedRepair?.current?.session ? byName.get(storedRepair.current.session) : null;
+    const repair = storedRepair?.current ? { ...storedRepair, current: { ...storedRepair.current, observation: repairSession?.observation ?? null } } : storedRepair;
+    const unread = unreadNotices(await readInbox(BRAINS_ROOT, record.area));
+    const agentState = deriveBrainState({ brain: { ...record, live: Boolean(live) }, observation: live?.observation ?? live, unread, repair });
     return {
       ...record,
       resolvedLaunch: currentGeneration(record)?.resolvedLaunch ?? null,
@@ -5170,11 +5673,33 @@ async function brainsView(sessions, { includeForJulian = true } = {}) {
       stateQuestion: live?.stateQuestion ?? "",
       idleSince: live?.idleSince ?? null,
       waitingSince: live?.waitingSince ?? null,
+      observation: live?.observation ?? null,
+      agentState,
+      repair,
       latestHandover: latestHandover(record),
       forJulian: includeForJulian ? await forJulianItems(record, index) : [],
       requests: openBrainRequests(await readBrainRequests(BRAINS_ROOT, record.area)),
     };
   }));
+  for (const repair of repairs) {
+    if (records.some((record) => record.area === repair.area)) continue;
+    const crew = liveRepair(repair);
+    if (!crew && !repair.history.length) continue;
+    const session = crew ? byName.get(crew.session) : null;
+    projected.push({
+      area: repair.area,
+      status: "inactive",
+      session: null,
+      live: false,
+      health: null,
+      recovery: null,
+      repair,
+      agentState: deriveBrainState({ brain: null, repair: crew ? { ...repair, current: { ...crew, observation: session?.observation ?? null } } : repair }),
+      forJulian: [],
+      requests: [],
+    });
+  }
+  return projected;
 }
 
 /** Stops one accepted assignment without claiming that its goal is done. */
@@ -5729,14 +6254,14 @@ const brainRoutes = createBrainRoutes({
       return [];
     });
     const brains = await brainsView(sessions);
-    return brains.find((item) => (area && item.area === area) || (session && item.session === session)) ?? null;
+    return brains.find((item) => (area && item.area === area) || (session && (item.session === session || item.repair?.current?.session === session))) ?? null;
   },
   /** Returns the plan lines that the parser could not classify. */
   async unparsed(brain) {
     return unparsedForJulianLines(await brainPlanText(brain)).map((item) => item.line);
   },
   /** The first message the current attempt was typed: there is no generated prompt (ADR-0041). */
-  prompt: (brain) => currentGeneration(brain)?.firstMessage ?? brainFirstMessage(brain.foundingInstruction?.text),
+  prompt: (brain) => brain.repair?.current?.firstMessage ?? currentGeneration(brain)?.firstMessage ?? brainFirstMessage(brain.foundingInstruction?.text),
 });
 const pipelineRoutes = createPipelineRoutes({
   normalizeMessage,
@@ -5786,7 +6311,12 @@ function recoveredExtraGoals(projected, goalIndex) {
 const agentRoutes = createAgentRoutes({
   /** Returns every live non-process session with its delivery state. */
   async list() {
-    return (await listSessions())
+    const sessions = await listSessions();
+    const [pipelines, brains] = await Promise.all([pipelinesView(sessions), brainsView(sessions, { includeForJulian: false })]);
+    const attempts = new Map(pipelines.flatMap((queue) => queue.steps.filter((step) => step.session).map((step) => [step.session, step.attemptState])));
+    const brainStates = new Map(brains.filter((brain) => brain.session).map((brain) => [brain.session, brain.agentState]));
+    const repairStates = new Map(brains.flatMap((brain) => brain.repair?.current?.session ? [[brain.repair.current.session, brain.agentState]] : []));
+    return sessions
       .filter((session) => !["process", "service", "command"].includes(session.kind ?? ""))
       .map((session) => ({
         name: session.name,
@@ -5796,12 +6326,15 @@ const agentRoutes = createAgentRoutes({
         state: session.state,
         stateDetail: session.stateDetail ?? null,
         stateQuestion: session.stateQuestion ?? "",
+        agentState: attempts.get(session.name) ?? brainStates.get(session.name) ?? repairStates.get(session.name) ?? null,
         queued: messages.queuedCount(session.name),
       }));
   },
   /** Resolves durable recovery facts, then distinguishes an unknown session with one read-only live check. */
   async context(session) {
-    const brains = await readAllBrains(BRAINS_ROOT);
+    const [brains, repairs] = await Promise.all([readAllBrains(BRAINS_ROOT), readAllRepairs(REPAIRS_ROOT)]);
+    const repair = repairs.flatMap((record) => [record.current, ...(record.history ?? [])]).find((item) => item?.session === session);
+    if (repair) return { session, role: "repair", area: repairs.find((record) => record.current === repair || record.history?.includes(repair))?.area ?? null, current: !repair.endedAt, source: "area-repair", repair, prompt: null };
     let projected = resolveAgentContext({ session, brains });
     if (projected?.role === "brain") {
       if (!projected.current) return { ...projected, prompt: null };
@@ -5841,6 +6374,13 @@ const agentRoutes = createAgentRoutes({
     const kind = body.kind == null ? null : String(body.kind);
     if (kind !== null && !WORKER_SEND_KINDS.has(kind)) return { status: 400, error: `Unknown send kind "${kind}". Use --done, --blocked, --question, or no flag.` };
     const actor = await commandProvenance(session);
+    if (actor.role === "repair") {
+      if (!actor.area || !["done", "blocked", "question"].includes(kind)) return { status: 400, error: "the repair crew finishes with tangent send brain --done or --blocked" };
+      const result = kind === "done" ? "done" : "blocked";
+      const ended = await withBrainMutation(actor.area, () => endRepairCrewUnlocked(actor.area, result, text));
+      if (!ended || ended.session !== session) return { status: 409, error: "this repair crew is no longer current" };
+      return { status: 200, value: { status: "sent", to: actor.area, kind, state: result, repair: ended.id } };
+    }
     const queued = session && (await readAllPipelines(PIPELINES_ROOT)).some((record) => record.steps.some((step) => step.session === session || step.attempts?.some((attempt) => attempt.session === session)));
     if (actor.role !== "worker" && !queued) return { status: 400, error: "tangent send brain works inside a worker session. Name a session or an Area path." };
     const goal = await workerGoalForSession(session);
@@ -5873,6 +6413,7 @@ const agentRoutes = createAgentRoutes({
     const sender = commandActor(body.from, { sessions, brains });
     // Workers have one command (D5): their notes go to their own brain.
     if (sender.role === "worker") return { status: 403, error: WORKER_SEND_TARGET_REFUSAL };
+    if (sender.role === "repair" && live?.kind === "goal" && live.area !== sender.area) return { status: 403, error: REPAIR_REFUSAL };
     const entry = { from: sender.session ?? "unknown sender", area: sender.area, text, durable: true, queuedAt: new Date().toISOString() };
     if (!live) {
       const inbox = areaInboxTarget(requested, { areas: [ROOT_AREA, ...flattenAreaPaths(tree)], brains });
@@ -6198,6 +6739,7 @@ const goalPresentationRoutes = createGoalPresentationRoutes({
     const session = String(body.session ?? body.caller ?? "").trim();
     const actor = await commandProvenance(session);
     if (actor.role === "worker" && (await workerGoalForSession(session))?.file !== goal.file) return { status: 403, error: "a worker can present only on its assigned Goal" };
+    if (actor.role === "repair" && !await liveCallingOrganizer(session, goal.area)) return { status: 403, error: REPAIR_REFUSAL };
     const files = Array.isArray(body.files) ? body.files : [body.file];
     const resolved = [];
     for (const file of files) {
@@ -6987,6 +7529,14 @@ const workMutationRoutes = createWorkMutationRoutes({
     const file = String(body.file ?? "");
     const goal = (await goalsByFile()).get(file);
     if (!goal) return { status: 404, error: `no goal file ${file}` };
+    const editSession = actingSession(body);
+    const editProvenance = editSession ? await commandProvenance(editSession) : null;
+    if (editProvenance?.role === "repair") {
+      const allowedKeys = new Set(["file", "status", "note", "session", "caller", "operationId", "idempotencyKey"]);
+      if (editProvenance.area !== goal.area || String(body.status ?? "") !== "done" || Object.keys(body).some((key) => !allowedKeys.has(key))) {
+        return { status: 403, error: REPAIR_REFUSAL };
+      }
+    }
     const fields = {};
     let lifecycle = null;
     const actorSession = body.session ? String(body.session).trim() : "";
@@ -7073,6 +7623,7 @@ async function statusActor(session) {
   if (!session) return "julian";
   if (await liveCallingBrain(session)) return "brain";
   const live = (await listSessions()).find((item) => item.name === session);
+  if (live?.kind === "repair" && await liveCallingOrganizer(session, live.area)) return "brain";
   return live?.kind === "goal" ? "worker" : "julian";
 }
 
@@ -7163,6 +7714,11 @@ const server = http.createServer(async (req, res) => {
     const refusal = await refuseWorkerMutation(req, url);
     if (refusal) {
       sendJson(res, 403, { error: refusal });
+      return;
+    }
+    const repairRefusal = await refuseRepairMutation(req, url);
+    if (repairRefusal) {
+      sendJson(res, 403, { error: repairRefusal });
       return;
     }
     if (await shellStateRoutes.handle(req, res, url)) return;

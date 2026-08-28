@@ -260,37 +260,6 @@ async function lintAgentShellWorkflowContracts(ctx: LintContext): Promise<Govern
       ],
     });
   }
-  const nativeMemoryContracts = [
-    {
-      file: "packages/agent-shell/app/brain-native-turns.mjs",
-      applies: "requestsTurnMemory",
-      required: ['["usage", "native", "messages"', "message.id", "message.text"],
-    },
-    {
-      file: "packages/agent-shell/app/server.mjs",
-      applies: "sweepRememberedBrainTurns",
-      required: ["newConversation(harness)", "entry.providerSession", "areaRoutesOperations.capture"],
-    },
-  ];
-  for (const contract of nativeMemoryContracts) {
-    const file = path.join(ctx.root, contract.file);
-    if (!await pathExists(file)) continue;
-    const text = await readFile(file, "utf8");
-    if (!text.includes(contract.applies)) continue;
-    const missing = contract.required.filter((marker) => !text.includes(marker));
-    if (!missing.length) continue;
-    findings.push({
-      rule: "agent-shell/native-turn-memory-contract",
-      severity: "error",
-      file: contract.file,
-      message: `loses required native-turn memory markers: ${missing.join(", ")}.`,
-      fix: [
-        "Normalize one provider transcript through the Usage CLI.",
-        "Use the native message identifier and text for Journal capture.",
-        "Store the native conversation locator with the brain attempt.",
-      ],
-    });
-  }
   return findings;
 }
 

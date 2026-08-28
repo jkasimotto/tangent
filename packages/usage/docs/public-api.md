@@ -49,6 +49,5 @@ Human CLI:
 - Legacy `usage report <session|latest> --json` still prints `usage.conversation.v1`.
 - Raw telemetry views live under explicit `usage raw events --json`, `usage export`, and hidden `data archive`.
 - Native transcripts are the default human query source. Native-log schema scaffolding lives under hidden `usage native schemas`, `usage native inspect <path>`, and `usage native status`. Hook install and hook record commands are retired.
-- `usage native messages <path> --provider <provider> --json` returns normalized messages from one native transcript in a `UsageResult` envelope.
 
 Agents must import through these public exports, not package src internals.

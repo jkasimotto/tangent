@@ -79,7 +79,6 @@ import { findCodexRollouts, launchWithConversation, newConversation, resumeComma
 import { clearGoalCleanup, readAllGoalCleanups, readGoalCleanup, writeGoalCleanup } from "./goal-cleanup-record.mjs";
 import { appendJournalEntry, appendMilestone, emergencyStartProblem, exportLegacyAudit, journalFiles, querySubtreeMilestones, readJournalEntry, readMilestones } from "./area-brain-domain.mjs";
 import { areaDirectory, areaFilePrefix, isRootArea, ROOT_AREA, rootAreaRow } from "./area-identity.mjs";
-import { createRememberedTurnMonitor } from "./brain-native-turns.mjs";
 import { materialOperationEvents, markOperationEventDelivered, readOperationEvents, writeOperationEvents } from "./operation-events.mjs";
 import { agentShellInstanceId, createSessionOwnership, SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 import { appendWorkerHandoverReceipt, pendingWorkerHandoverReceipts, recordWorkerHandoverNotice, workerHandoverReceipt } from "./worker-handover-receipt.mjs";
@@ -2141,8 +2140,6 @@ const messages = createMessageDelivery({
   wake: () => runtimeScheduler.wake(),
 });
 
-let rememberedTurnMonitor = null;
-
 const runtimeScheduler = createRuntimeScheduler([
   {
     name: "goal reconciliation", intervalMs: RECONCILE_INTERVAL_MS,
@@ -2168,12 +2165,6 @@ const runtimeScheduler = createRuntimeScheduler([
     /** Runs only while at least one target has queued messages. */
     active: messages.active,
     run: messages.tick,
-  },
-  {
-    name: "remembered brain turns", intervalMs: 1_000,
-    /** Native transcripts remain the exact user-message authority. */
-    active: () => true,
-    run: sweepRememberedBrainTurns,
   },
   {
     name: "processes", intervalMs: 10_000,
@@ -5950,38 +5941,6 @@ const areaRoutesOperations = {
   },
 };
 
-/** Captures each explicit complete-turn save request from its native transcript. */
-async function sweepRememberedBrainTurns() {
-  rememberedTurnMonitor ??= createRememberedTurnMonitor({
-    /** Resolves the generation's registered harness without caching policy. */
-    async harnessFor(id) {
-      const registry = await launchCatalog.registry();
-      return registry.error ? null : registry.harnesses.find((harness) => harness.id === id) ?? null;
-    },
-    /** Commits the exact native turn through the existing Journal route. */
-    async capture(record, turn) {
-      const source = isRootArea(record.area) ? "Root brain conversation" : `Area ${record.area} brain conversation`;
-      try {
-        return await areaRoutesOperations.capture({
-          area: record.area,
-          text: turn.text,
-          idempotencyKey: turn.id,
-          createdAt: turn.createdAt,
-          source,
-        });
-      } catch (error) {
-        return { route: "not-committed", commitError: String(error.stderr ?? error.message ?? error) };
-      }
-    },
-    /** Gives the brain an honest retry notice after an unsuccessful commit. */
-    async failure(record, turn, result) {
-      await notifyBrain(record.area, `Tangent could not save remembered turn ${turn.id} to the Journal: ${result.commitError || "the vault commit failed"}. It will retry; no success receipt was recorded.`, { idempotencyKey: `journal-save-error:${turn.id}` });
-    },
-  });
-  for (const record of await readAllBrains(BRAINS_ROOT)) {
-    await rememberedTurnMonitor.check(record).catch((error) => console.error("remembered turn capture:", record.area, error.message ?? error));
-  }
-}
 const areaRoutes = createAreaRoutes(areaRoutesOperations);
 
 /** Persists each material Operation edge and delivers it to the exact Area inbox once. */

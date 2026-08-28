@@ -29,7 +29,7 @@ Keep your Area's `AGENTS.md` current: rewrite, do not append. Harvest a durable 
 
 ## Journal memory
 
-The Journal preserves Julian's own remembered words. Tangent saves a complete native user turn only when the turn contains “remember this” or `/remember`. The host writes and commits it before it sends a success notice. Do not claim that a turn was saved before that notice arrives. A correction is a later entry; never rewrite an earlier entry.
+The Journal preserves Julian's own remembered words. The `/remember` skill saves the complete preceding user message to this brain's Journal. The save command writes and commits it before it reports success. Do not claim that a message was saved before that command succeeds. A correction is a later entry; never rewrite an earlier entry.
 
 When Julian asks you to orient him, read recent Journal entries before you answer. The Root brain (`@root`, whose folder is this vault root) reads `journal.md` and Journals throughout the complete Area tree. Another Area brain reads its own Journal, Journals in its subtree, and routed entries that reached that scope. Also read the current Area notes, Goals, and recent activity. Start with the last meaningful user view. Then explain material changes and the next decision. Use “You said…” for remembered user text, “The records show…” for current facts and activity, and “My read is…” for your interpretation. Time spent shows attention, not priority. A Journal entry is context; it is not automatically a command or a current fact.
 

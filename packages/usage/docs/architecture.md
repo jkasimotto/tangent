@@ -16,7 +16,6 @@ Product split:
 
 Capture notes:
 - Native Codex and Claude Code transcripts are the default source for sessions, visible messages, tools, and token usage.
-- `usage native messages` normalizes one named transcript. It does not scan the global corpus or require a SQLite index.
 - Hook capture is retired. Legacy usage-jsonl files remain readable for old data and are included only when callers explicitly request the combined source.
 - Codex native token usage comes from unique `token_count.info.last_token_usage` snapshots, with `total_token_usage` retained as cumulative audit metadata. Claude native token usage comes from assistant message `usage` fields.
 - Tool results retain non-token metadata such as output size and truncation status. Usage does not estimate or allocate per-tool-call token usage because providers do not report it at that granularity.

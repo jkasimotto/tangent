@@ -2,11 +2,11 @@
 
 Date: 2026-08-28
 
-Status: implemented. This record supersedes the structured Work Briefing from commit `074a98d`.
+Status: revised product vision. This record supersedes the structured Work Briefing from commit `074a98d`.
 
 Lenses applied: UI/UX, architecture, types and data, and migration and compatibility.
 
-The implementation decision is in ADR-0044.
+This record does not select an implementation plan.
 
 ## 1. Decision summary
 
@@ -553,23 +553,13 @@ One normal conversation question preserves user control.
 - Voice transcription can change spoken words.
 - The current terminal boundary does not expose semantic user turns to Agent Shell.
 
-### 14.2 Selected capture path
+### 14.2 Material unknown
 
-Each brain attempt stores its native conversation locator. Claude gets an identifier before launch. Codex uses the attempt folder and start time.
+The product contract requires exact submitted text from the native user message.
 
-Agent Shell polls the exact native transcript for active Claude and Codex brains. It does not read xterm output.
+The current terminal transport carries bytes and the provider transcript records messages later.
 
-The `usage native messages` command normalizes one transcript file. Agent Shell uses this command instead of provider-schema code.
-
-The normalized user message supplies the complete text, message boundary, creation time, and stable native identifier.
-
-The monitor selects a turn only when its text contains “remember this” or starts with `/remember`.
-
-The stable native identifier is the Journal idempotency key. The existing Journal route commits the entry before it sends a receipt.
-
-Claude has a deterministic transcript path from its conversation identifier and working directory. Codex uses its existing exact rollout lookup.
-
-Gemini and Pi are not supported by this capture path. Tangent makes no exact-capture claim for these harnesses.
+A later implementation design must select a reliable message boundary and save trigger. It cannot use a model-generated copy.
 
 ### 14.3 Reconsideration conditions
 

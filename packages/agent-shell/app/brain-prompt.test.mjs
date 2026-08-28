@@ -14,7 +14,6 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { newBrain, readBrain, writeBrain } from "./brain-record.mjs";
 import { ROOT_AREA } from "./area-identity.mjs";
-import { claudeTranscriptPath } from "./brain-native-turns.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
@@ -166,44 +165,6 @@ test("Root appears first and its brain starts in the existing vault root", async
   const addressed = await post(base, "/api/agents/send", { to: ROOT_AREA, text: "A message addressed to Root." });
   assert.equal(addressed.target, "area");
   assert.equal(addressed.to, ROOT_AREA, "the special Root identity is a normal Area inbox target");
-});
-
-test("the production brain path saves one marked native turn and ignores an unmarked turn", async (context) => {
-  const server = await startServer(context, {
-    areaName: "otto/nativecapture",
-    /** Gives the production server a deterministic native transcript root. */
-    registry: (root) => `\`\`\`tangent.harnesses.v2\n${JSON.stringify({
-      version: 2,
-      harnesses: [{
-        id: "claude-test",
-        command: "brain-agent",
-        sessionIdArg: "--session-id {id}",
-        transcripts: path.join(root, "native", "projects"),
-      }],
-    })}\n\`\`\`\n`,
-  });
-  if (!server) return;
-  const { base, root, trees, brains, openedSessions } = server;
-  const area = "otto/nativecapture";
-  const started = await post(base, "/api/brains/start", { area, instruction: "Start.", choice: { harness: "claude-test" } });
-  assert.ok(started.session, JSON.stringify(started));
-  openedSessions.push(started.session);
-  const generation = (await readBrain(brains, area)).generations.at(-1);
-  assert.ok(generation.providerSession?.id, "the brain owns its native conversation before launch");
-  const transcript = claudeTranscriptPath(path.join(root, "native", "projects"), generation.cwd, generation.providerSession.id);
-  await mkdir(path.dirname(transcript), { recursive: true });
-  const remembered = "I said this first.\nRemember this.\nI am still uncertain.";
-  await writeFile(transcript, [
-    JSON.stringify({ type: "user", timestamp: "2026-08-28T04:00:00.000Z", uuid: "unmarked-native", sessionId: generation.providerSession.id, message: { role: "user", content: "This ordinary turn stays out." } }),
-    JSON.stringify({ type: "user", timestamp: "2026-08-28T04:01:00.000Z", uuid: "remembered-native", sessionId: generation.providerSession.id, message: { role: "user", content: remembered } }),
-  ].join("\n") + "\n", "utf8");
-
-  const journal = path.join(trees, "otto", "nativecapture", "journal.md");
-  assert.equal(await waitForFile(journal), true, "the live transcript sweep wrote the Area Journal");
-  const saved = await readFile(journal, "utf8");
-  assert.match(saved, /<!-- tangent-journal:remembered-native -->/);
-  assert.ok(saved.includes(remembered), "the complete cue-bearing turn and its line breaks are exact");
-  assert.doesNotMatch(saved, /This ordinary turn stays out\./);
 });
 
 test("a message to an Area with no brain founds one, and to a live brain it is queued", async (context) => {

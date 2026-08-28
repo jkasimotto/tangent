@@ -2,7 +2,7 @@
 
 Start here when changing architecture, package boundaries, or agent workflow.
 
-Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `packages/agent-shell/app/`. A stable gateway owns the UI and terminal edge while a supervised controller owns workflows (ADR-0032). Gateway and controller share one runtime identity. They can attach to or stop only tmux sessions with that identity (ADR-0036). Each exact Area has one logical brain and durable inbox. Area paths organize records; they do not grant command permission. Any local caller can act directly on work in any Area. The server records actor provenance and sends a durable event to the target Area after commit. One Goal queue, revisions, live ownership, exact attempts, and immutable tmux targets prevent conflicting execution. A worker's `tangent send brain` writes the Goal queue and its exact-Area notice receipt before it reports success. Everything starts through the Area brain, which runs until the user restarts it and reads its Area note chain as its instruction (ADR-0041). Each attempt records its harness conversation so it can be resumed (ADR-0042). Root maps `@root` to the vault root. Explicit native brain turns become exact Journal memory through ADR-0044. See ADR-0033, ADR-0034, ADR-0036, ADR-0041, ADR-0042, and ADR-0044.
+Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `packages/agent-shell/app/`. A stable gateway owns the UI and terminal edge while a supervised controller owns workflows (ADR-0032). Gateway and controller share one runtime identity. They can attach to or stop only tmux sessions with that identity (ADR-0036). Each exact Area has one logical brain and durable inbox. Area paths organize records; they do not grant command permission. Any local caller can act directly on work in any Area. The server records actor provenance and sends a durable event to the target Area after commit. One Goal queue, revisions, live ownership, exact attempts, and immutable tmux targets prevent conflicting execution. A worker's `tangent send brain` writes the Goal queue and its exact-Area notice receipt before it reports success. Everything starts through the Area brain, which runs until the user restarts it and reads its Area note chain as its instruction (ADR-0041). Each attempt records its harness conversation so it can be resumed (ADR-0042). See ADR-0033, ADR-0034, ADR-0036, ADR-0041, and ADR-0042.
 
 Human CLI defaults are `setup`, `status`, `service`, `usage`, `rollup`, `search`, `eval`, `doctor`, and `completion`.
 `tangent service` runs servers and watchers from inherited, ignored `.processes.json` files in Tangent Areas. Services use Area-bound tmux sessions so they remain visible and inspectable in the hierarchy. `tangent process start|stop|restart|close` still reach it for one release with a hint.
@@ -38,7 +38,6 @@ Decisions:
 - decisions/ADR-0038-agent-shell-keyboard-ownership.md
 - decisions/ADR-0039-durable-generic-agent-message-queue.md
 - decisions/ADR-0030-area-triggers.md (amended by ADR-0043)
-- decisions/ADR-0044-native-brain-turn-memory.md
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md
 - ui/adr/0006-svelte-usage-ui.md

@@ -115,24 +115,6 @@ test("agent lint requires the durable worker handover markers", async () => {
   }
 });
 
-test("agent lint requires the native brain-turn memory boundary", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
-  try {
-    await writeMinimalRootAgentDocs(root);
-    const app = path.join(root, "packages", "agent-shell", "app");
-    await mkdir(app, { recursive: true });
-    await writeFile(path.join(app, "brain-native-turns.mjs"), "function requestsTurnMemory() {}\n", "utf8");
-
-    const result = await lintGovernance({ root, groups: ["docs"] });
-    const finding = result.findings.find((candidate) => candidate.rule === "agent-shell/native-turn-memory-contract");
-    assert.ok(finding);
-    assert.equal(finding.file, "packages/agent-shell/app/brain-native-turns.mjs");
-    assert.match(finding.message, /usage.*native.*messages.*message\.id.*message\.text/);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test("agent lint rejects tmux termination outside the Agent Shell ownership capability", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
   try {

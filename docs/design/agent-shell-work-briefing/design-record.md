@@ -1,56 +1,52 @@
-# Agent Shell orientation: a Root brain remembers my perspective
+# Agent Shell orientation: brains remember complete user turns
 
 Date: 2026-08-28
 
 Status: revised product vision. This record supersedes the structured Work Briefing from commit `074a98d`.
 
-Lenses applied: UI/UX, and architecture, types, and data.
+Lenses applied: UI/UX, architecture, types and data, and migration and compatibility.
 
 This record does not select an implementation plan.
 
 ## 1. Decision summary
 
-Try a conversation-only product before Tangent adds a visual presentation system.
+Use normal brain conversation. Do not add a Spew button, composer, mode, or new screen.
 
-Make **Root** a visible Area above every current top-level Area. Its brain provides one place for thoughts and orientation across all work.
+An explicit phrase such as “remember this” marks the complete current user turn for durable capture.
 
-Add an explicit **Spew** action inside every Area-brain conversation. It accepts long typed text or dictated speech.
+Tangent saves the exact submitted text before the brain interprets it. The brain then responds as it normally responds.
 
-Tangent saves the complete Spew in that Area's Journal before the brain interprets it. Ordinary chat does not enter the Journal by default.
+Root saves its complete turns in `~/.tangent/trees/journal.md`.
 
-The brain can find passages that belong in other Areas. It proposes one batch of exact excerpts after the full Spew is safe.
+An Area brain saves its complete turns in `~/.tangent/trees/<area>/journal.md`.
 
-Julian approves the batch before Tangent writes those excerpts to other Area Journals. Routing never blocks the original capture.
+The source Journal entry is the canonical record of what Julian said. Tangent does not replace those words with a model summary.
 
-Later, Julian says “orient me” to an Area brain. The brain reads saved perspective, current work, and reliable activity evidence.
+The brain can route an exact excerpt to another Area Journal after Julian approves that route in conversation.
 
-It tells a natural story in the normal conversation. Activity explains attention. It does not define priority.
+Area notes and Goals remain the current project truth. Journals preserve perspective, corrections, and history.
 
-Do not add a briefing screen, a fixed report, or A2UI to the first trial.
+Root remains the visible all-work Area. It maps to the vault root instead of a new folder around all current Areas.
 
-A later **Show me** experiment can turn a good story into a paced visual presentation. A2UI is one candidate format for that layer.
+Orientation remains normal conversation. Visual presentation remains a later experiment.
 
 ## 2. Why the design changed
 
-Julian rejected the first example because it was an inventory, not a story.
+The first design created a structured briefing from Goal counts, dates, and other project facts.
 
-It led with Goal counts, old dates, duplicate titles, dependencies, and missing fields. Those facts did not contain Julian's meaning.
+Julian rejected that result because it was an inventory without his meaning.
 
-The first correction was simple:
+The next design added an explicit Spew action. Julian rejected the new UI concept:
 
-> I can talk out loud about my perspective on the projects. That gets saved and read later when I want orientating.
+> If I say a keyword while talking to a brain, it just does spew.
 
-The second correction made capture and scope clearer:
+> We need to save my exact words.
 
-> I would want to really just have a brain spew option when chatting to brains.
+> It is probably good to save the entirety of what I was saying in one place. And then the rest can get routed as well.
 
-> We can just add a Root Area that contains all other Areas.
+The corrected design removes Spew as a product object.
 
-Julian also raised agent-controlled visual presentation, including A2UI. He prefers a nonvisual trial first.
-
-The revised design follows that order. First preserve personal meaning. Then prove that a brain can return it as a useful story.
-
-Only then test a richer presentation.
+The durable event is one ordinary user turn. The user can mark that turn with ordinary save language.
 
 ## 3. Problem contract
 
@@ -58,7 +54,7 @@ Only then test a richer presentation.
 
 Fatigue, illness, deep work, and context changes can remove the felt model of a project from working memory.
 
-The missing model contains more than state. It contains importance, intent, doubts, temporary detours, and promises to return.
+The missing model contains importance, intent, doubts, temporary detours, and promises to return.
 
 Agent Shell preserves project facts. It does not reliably preserve Julian's interpretation of those facts for a future brain.
 
@@ -68,576 +64,548 @@ The blocked outcome is continuity with an earlier self.
 
 The product succeeds after Julian can do these things:
 
-1. Open Root and speak about all current work without preparing an outline.
-2. Make one aside about another Area without losing it.
-3. Return with a fresh brain and say “orient me.”
+1. Talk to a brain in the normal terminal.
+2. Say “remember this” during one important user turn.
+3. Return with a fresh brain and ask for orientation.
 4. Receive a short story that restores the important tension and next decision.
-5. Continue the same conversation into questions or work.
+5. Find the complete original words in one readable Markdown file.
 
-A useful answer explains:
-
-- What Julian last thought mattered.
-- Which work received attention after that point.
-- Why attention moved, if the Journal contains a reason.
-- Which important thread stayed unfinished.
-- Which older work now connects to a current concern.
-- Which decision controls the next move.
-
-It sounds like a colleague who remembers the work. It does not sound like a database query.
+A mixed-Area turn also succeeds after an approved exact excerpt appears in the correct destination Journal.
 
 ### 3.3 Constraints
 
-- Spew must accept ordinary speech or text.
-- Tangent must save the complete input before model work.
-- Capture must not ask for classification or routing first.
-- One source Journal must retain the complete Spew.
-- Cross-Area routes must preserve exact excerpts and source identity.
-- One approval can authorize one proposed routing batch.
-- Routing must create no Goal and grant no work authority.
-- The selected Area and its descendants define the reading scope.
+- The capture path must add no new input surface.
+- An explicit save request must cause durable capture.
+- The capture unit must be the complete user turn.
+- The stored text must match the submitted user text.
+- The model must not retype the text to make the canonical record.
+- One source Journal must retain the complete turn.
+- A routed entry must contain an exact excerpt and a source entry reference.
+- A route must create no Goal and grant no work authority.
 - Root must cover the complete Area tree.
 - Activity can describe attention. It cannot define importance.
-- Text must remain the complete first experience.
+- The brain must acknowledge a successful save in normal conversation.
+- A failed save must never receive a success acknowledgement.
 
 ### 3.4 Non-goals
 
-- Saving every terminal message to a Journal.
-- A separate Work Briefing application.
-- A fixed narrative template in the interface.
-- A universal priority score.
-- Automatic reprioritization.
-- Automatic creation of Goals from a Spew.
+- A Spew button or capture composer inside brain chat.
+- A special memory conversation mode.
+- Saving every user turn.
+- Automatic capture based only on model opinion.
+- Rewriting Julian's words into Simple English.
+- Automatic creation of Goals from a saved turn.
 - Silent writes to another Area.
-- A new agent type above Area brains.
+- A separate Work Briefing application.
 - Agent-generated UI in the first trial.
-- Automatic fatigue detection.
 
-## 4. Current system
+## 4. Research that shapes the product
+
+This research supports a small conversational design. It does not require a new workflow or data model.
+
+### 4.1 Make capture an offload, not another task
+
+Risko and Gilbert describe cognitive offloading as action that reduces the mental demand of a task.
+
+**Product consequence:** Use the conversation that is already open. Do not ask Julian to select a type, complete a form, or organize the thought first.
+
+### 4.2 Preserve useful return cues
+
+Altmann and Trafton found a delay after task interruption. Cues from the interrupted task reduced that delay.
+
+**Product consequence:** Start orientation from Julian's earlier words. Those words can restore context before the brain adds current project facts.
+
+The paper does not compare verbatim text with a summary. The preference for verbatim text is a product inference and an explicit user requirement.
+
+### 4.3 Rebuild facts, meaning, and the next state
+
+Endsley describes situation awareness in three parts: perceived facts, their meaning, and their likely future state.
+
+**Product consequence:** The brain first recalls Julian's meaning. It then explains material changes and the next decision.
+
+This order is progressive disclosure. It avoids a complete inventory before the user has regained the main story.
+
+### 4.4 Give an open loop a usable stopping point
+
+Masicampo and Baumeister found that unfinished goals can interfere with other work. A specific plan reduced that interference in their studies.
+
+**Product consequence:** An orientation can end with one clear next decision or action. Tangent does not need a new stored plan object for this result.
+
+### 4.5 Keep interpretation visible
+
+Hullman and Diakopoulos show that narrative presentation can favor one interpretation through selection and framing.
+
+**Product consequence:** The brain distinguishes Julian's words, recorded facts, and its own interpretation. A later visual layer must preserve the same distinction.
+
+## 5. Current system
 
 All statements in this section are Observed.
 
-### 4.1 Area brains already provide the conversation
+### 5.1 Brain chat is a native terminal
 
 One Area brain belongs to one exact Area. Agent Shell shows its complete native agent terminal through xterm.
 
-The browser does not parse brain output into host UI components. The brain can render terminal text and terminal-native interfaces only.
+The browser transports terminal bytes. It does not expose a host-level user-message event to the surrounding Agent Shell UI.
 
-Work exposes **Open brain**, **Message brain**, and **Capture note** for an Area.
+This fact makes exact capture a material implementation problem. A model-produced copy is not an exactness guarantee.
 
-### 4.2 Journal capture already provides the notebook
+### 5.2 Journal capture already stores exact text
 
-**Capture note** accepts typed or dictated text.
+The existing Journal writer accepts an Area, text, an entry identifier, a source label, and a time.
 
-The server writes the exact text to the selected Area's `journal.md`. Each entry includes its time and source.
+It writes this Markdown shape:
 
-The vault commit finishes before the brain receives the notice. A failed commit does not claim that the brain heard durable words.
+```markdown
+# Journal
 
-The Journal archives itself after its size limit. Voice capture uses the same Journal-first route.
+<!-- tangent-journal:<entry-id> -->
+## <ISO timestamp>
 
-### 4.3 Cross-Area Journal routing already exists
+Source: <source>.
+
+<exact submitted text>
+```
+
+The writer keeps internal whitespace and removes surrounding whitespace. It writes one stable marker for retry safety.
+
+The vault commit finishes before the brain receives the notice. A failed commit does not claim that the words are durable.
+
+The active Journal moves to a dated archive after 256 KiB. The new `journal.md` links to that archive.
+
+### 5.3 Existing capture uses a separate composer
+
+Work has **Capture note**. It accepts typed or dictated text and uses the Journal-first route.
+
+Voice capture stores the transcript as the submitted text. It does not store the audio.
+
+The new design reuses the storage path. It removes the need to open this composer during brain chat.
+
+### 5.4 Existing remember behavior saves conclusions
+
+The global `remember` skill recognizes phrases such as “remember that,” “save that,” and “record this.”
+
+Its current contract saves the conclusion to one current Area record. It explicitly rejects transcript storage.
+
+That behavior serves current project truth. It does not preserve Julian's complete perspective for later orientation.
+
+The new Journal capture is an earlier layer. It saves the complete requested turn before the brain harvests any current fact.
+
+### 5.5 Cross-Area Journal routing already exists
 
 A live brain can create a Question with an exact `route-journal` effect.
 
-The effect names one destination Area and exact text. Julian must authorize its hashed revision.
+The effect names one destination Area and exact text. Julian authorizes the exact effect revision.
 
 After authorization, the server writes and commits the destination Journal entry. It records the source Area and notifies the destination brain.
 
 The notice explicitly grants no authority.
 
-This path already proves the core routing behavior. A later design can add one batch for more than one exact route.
+The current route records the source Area. The revised storage contract also needs the source Journal entry identifier.
 
-### 4.4 The hierarchy has no single visible Root
+### 5.6 Root is not a current Area identity
 
 The current Area list starts with top-level Areas such as `neara` and `otto`.
 
-The vault root supplies inherited brain instructions. It is not a selectable Area with its own Journal and brain.
+The vault root already contains their directories and the inherited brain instructions.
 
-The product needs a first-class Root identity above the current paths. It does not need to move every current Area below a new folder.
+It is the natural physical home for the Root Journal. The current Area APIs reject this empty Area identity.
 
-The durable representation of Root remains an implementation Unknown.
-
-### 4.5 Fixed visual surfaces already exist
-
-Agent Shell owns fixed browser views for Work, Areas, Documents, and the Area map.
-
-The Area map uses a fixed graph renderer and fixed interaction rules. A brain cannot compose or change that view.
-
-These surfaces prove that Tangent can render visual information. They do not provide an agent-controlled presentation channel.
-
-### 4.6 The brain has factual sources
-
-Area notes contain purpose, current work, knowledge, and resources.
-
-Goal files contain results, short stories, state, dependencies, and linked Documents.
-
-The brain runtime records material milestones. Usage records agent activity and duration. The worklog records named focus time.
-
-These records explain activity and change. The Journal supplies the personal interpretation that they lack.
-
-Usage and worklog entries do not always map cleanly to an Area. Exact time by Area is an Unknown.
-
-## 5. Research and transfer limits
-
-### 5.1 Memory and interruption
-
-Altmann and Trafton found a delay after task interruption. Relevant cues near the task reduced that delay.
-
-**Consequence:** Julian's own earlier words are strong return cues. The orientation answer starts from them.
-
-Endsley separates situation awareness into facts, meaning, and likely next states.
-
-**Consequence:** Project records supply facts. The brain connects those facts to Julian's meaning before it suggests a next move.
-
-Masicampo and Baumeister found less interference from unfinished goals after people made specific plans.
-
-**Consequence:** The conversation can end in a concrete next move. Tangent does not need a new stored plan object.
-
-Hullman and Diakopoulos show that narrative selection can steer a conclusion.
-
-**Consequence:** The brain distinguishes Julian's words, recorded activity, and its own interpretation in normal language.
-
-### 5.2 Agent-controlled UI
-
-A2UI lets an agent send declarative JSON that describes a UI. A client maps those descriptions to its own trusted components.
-
-The protocol supports streaming component and data updates. It does not run arbitrary agent code in the client.
-
-As of 2026-08-28, A2UI names v0.9.1 as current and v1.0 as a candidate.
-
-The basic catalogue contains text, layout, media, cards, tabs, and form controls. Rich charts need a custom catalogue component.
-
-**Consequence:** A2UI can support a Tangent presentation layer. It does not decide which story is useful or which visual is honest.
-
-Tangent still needs a structured agent-to-browser channel, a trusted component catalogue, and stable interaction rules.
-
-### 5.3 Why text comes first
-
-The failed briefing had a meaning problem, not a rendering problem.
-
-A polished visual can make the same weak story more persuasive. It can also hide omissions behind pace and visual emphasis.
-
-Text gives the cheapest test of memory, synthesis, and correction. A visual layer earns its place only after that test passes.
-
-Sources remain in section 14.
+The visible Root Area therefore needs one special identity that maps to the vault root.
 
 ## 6. Candidate decisions
 
-### 6.1 Which messages become memory
+### 6.1 How the user asks for capture
 
 | Candidate | Strength | Decisive problem |
 |---|---|---|
-| Save every brain message | No explicit capture action | Journals fill with questions, commands, and temporary chat |
-| Brain summarizes the transcript later | Low interruption during chat | The durable record starts with a model interpretation |
-| Explicit Spew | Clear user intent and exact source words | Julian must select the action |
+| Save every user turn | No explicit request | The Journal fills with temporary questions and commands |
+| Add a Spew control | Clear state | It creates a new mode for an ordinary conversation need |
+| Let the model save anything important | No keyword | The user cannot predict or control durable capture |
+| Use normal save language | No new UI and explicit intent | The turn boundary must be available outside model output |
 
-Select explicit **Spew**.
+Select normal save language.
 
-### 6.2 Where all-work perspective lives
+The first guaranteed phrase is **“remember this.”** The typed `/remember` form can provide the same behavior.
 
-| Candidate | Strength | Decisive problem |
-|---|---|---|
-| Separate global narrator | Independent all-work product | It duplicates the Area-brain model |
-| Choose one existing top-level Area | No new root identity | It makes unrelated work a child of the wrong subject |
-| Visible Root Area | Same mental model at every scope | Root needs a new durable identity |
+If no phrase exists, the brain can ask, “Save that complete turn?” It must not save the turn before Julian agrees.
 
-Select the visible Root Area.
-
-### 6.3 How a Spew reaches other Areas
+### 6.2 What Tangent saves
 
 | Candidate | Strength | Decisive problem |
 |---|---|---|
-| Read only the source Journal later | One stored copy | A child brain can miss perspective captured elsewhere |
-| Route silently | No later user action | A model can write the wrong Area memory |
-| Propose exact routes after capture | Safe source plus useful distribution | Adds one small review after the conversation starts |
+| Model summary only | Compact | It loses voice, uncertainty, and omitted context |
+| Native transcript only | Already exists | A future Area brain does not use transcripts as file memory |
+| One file per turn | Direct links | It creates file volume for one continuous human history |
+| Complete turn in the Journal | Existing path and readable sequence | A long Journal needs archives and selective reading |
 
-Select proposed exact routes. Group them into one optional batch.
+Select the complete turn in the Journal.
 
-### 6.4 How the brain presents orientation
+### 6.3 Where Root stores its Journal
 
 | Candidate | Strength | Decisive problem |
 |---|---|---|
-| Normal text conversation | Fastest proof of the story | Complex relationships can need more inspection |
-| Fixed briefing visual | Predictable rendering | It recreates a report before the story works |
-| Agent-controlled UI | Adapts presentation to the story | It adds a renderer, catalogue, protocol, and new failure modes |
+| `~/.tangent/trees/root/journal.md` | Uses a normal nonempty Area path | The folder does not contain Neara or Otto |
+| `~/.tangent/root-journal.md` | No vault changes | The record leaves the git vault and Obsidian tree |
+| `~/.tangent/trees/journal.md` | Root and its children share the same physical tree | Root needs a special Area identity in APIs |
 
-Select normal text for the first trial. Keep agent-controlled UI as a later experiment.
+Select `~/.tangent/trees/journal.md`.
 
-## 7. Selected product
+The visible Root maps to the vault root. No Area paths move.
 
-### 7.1 Mental model
+### 6.4 How other Areas receive relevant parts
 
-The product has one sentence:
+| Candidate | Strength | Decisive problem |
+|---|---|---|
+| Every brain reads every Journal | No copies | It exposes unrelated context and adds retrieval noise |
+| The model routes a summary | Compact | It can change Julian's meaning |
+| The model silently routes exact excerpts | Fast | It can put private or irrelevant words in the wrong Area |
+| Julian approves an exact excerpt | Clear source and controlled scope | It adds one normal conversation decision |
 
-> Spew what the work feels like into a brain. Ask that brain to give it back after the context is gone.
+Select an approved exact excerpt with a source entry reference.
 
-The Journal is the notebook. The Area brain is the reader and conversation partner. Root is the notebook for everything.
+## 7. Selected conversation behavior
 
-### 7.2 Root
+### 7.1 No new UI
 
-Agent Shell shows **Root** above the current Area tree.
+Julian talks to a brain as he does today.
 
-Root has the same brain actions and conversation as any other Area. It contains Neara, Otto, and every other top-level Area.
+He can say:
 
-The Root brain can read the complete tree for orientation. Existing child-brain boundaries still govern work actions.
+> Remember this. PG&E still matters most. Tangent took this week because the tool was blocking how I work.
 
-Julian uses Root for broad project perspective, personal attention, and thoughts that cross current Area boundaries.
+The brain does not enter a new mode. It does not open a form or change the conversation layout.
 
-He can still use Neara, Tangent, or any smaller Area for a focused Spew.
+Tangent saves the complete user turn. The brain then responds to its meaning.
 
-### 7.3 Spew
+The response starts with a small receipt:
 
-The brain session header includes **Spew**.
+> Saved verbatim to the Root Journal.
 
-It opens one large text and voice input. Julian speaks or types without choosing a type, Goal, or route.
+The brain can continue its normal answer after that sentence.
 
-Tangent saves the complete input to the current brain's Journal. It then sends the same words into the brain conversation.
+### 7.2 The cue marks the complete turn
 
-The brain can respond before Julian reviews any routes. The original thought is already safe.
+The capture includes the complete user turn, not only the words after “remember this.”
 
-Ordinary chat stays ordinary chat. Julian uses Spew again for a correction that must survive a fresh brain.
+The saved body includes the cue because the source record remains verbatim.
 
-### 7.4 Cross-Area routing
+The turn can contain more than one Area, uncertainty, repetition, and unfinished sentences. Tangent does not clean or classify it before the save.
 
-The brain can find exact passages that matter to another Area.
+If the input comes from speech, Tangent saves the exact transcript that the agent received.
 
-After its normal response, it can offer one compact routing batch:
+### 7.3 The cue is explicit but not rigid
 
-```text
-Also remember elsewhere?
+“Remember this” is the first guaranteed phrase. The brain can understand equivalent direct requests such as “save this complete thought.”
 
-Neara  “PG&E still matters most…”
-Tangent “The tool was blocking how I work…”
+The user does not need a new product word.
 
-Route both · Change · Leave here
+The brain can notice an unmarked perspective dump. In that case, it can offer capture after its answer.
+
+The offer is a normal question. Silence or a negative answer causes no Journal write.
+
+## 8. Concrete storage contract
+
+### 8.1 Canonical paths
+
+| Conversation scope | Complete source turn |
+|---|---|
+| Root | `~/.tangent/trees/journal.md` |
+| Neara | `~/.tangent/trees/neara/journal.md` |
+| Tangent | `~/.tangent/trees/otto/tangent/journal.md` |
+| Any other Area | `~/.tangent/trees/<area>/journal.md` |
+
+Archived entries remain beside the active Journal as `journal-<from>-<to>.md`.
+
+### 8.2 Source entry
+
+One remembered Root turn has this form:
+
+```markdown
+# Journal
+
+<!-- tangent-journal:01K4... -->
+## 2026-08-28T04:15:00.000Z
+
+Source: Root brain conversation.
+
+Remember this. PG&E still matters most. Tangent took this week because the tool was blocking how I work.
 ```
 
-Approval copies the shown excerpts to the destination Journals with a link to the source Spew.
+The hidden entry identifier provides retry protection and route provenance. The time orders entries.
 
-The brain does not paraphrase a route as if Julian said it. It can propose a longer exact passage after Julian selects **Change**.
+The `Source` line uses simple English. The body remains Julian's exact submitted text.
 
-Ignoring the offer loses nothing. The complete Spew remains in its source Journal.
+### 8.3 Routed entry
 
-### 7.5 Orientation
+If Julian approves the Tangent passage, Tangent writes this form to `otto/tangent/journal.md`:
 
-The first product adds no **Orient me** button.
+```markdown
+<!-- tangent-journal:01K5... -->
+## 2026-08-28T04:16:00.000Z
 
-Julian opens a brain and says “orient me,” “where was I,” or another natural version.
+Source: Routed from Root Journal entry 01K4....
+
+Tangent took this week because the tool was blocking how I work.
+```
+
+The routed body is an exact excerpt. It is not a summary and it does not replace the source entry.
+
+The source entry remains canonical. The route makes that context local to the destination brain.
+
+### 8.4 Corrections are new entries
+
+Tangent never edits an old remembered turn.
+
+Julian can say:
+
+> Remember this correction. Tangent is no longer blocking me. The customer review on Tuesday now controls PG&E.
+
+The correction becomes a later source entry. Approved routes become later destination entries.
+
+A future brain reads the sequence and treats the later explicit correction as current perspective.
+
+### 8.5 Journals and current truth have different jobs
+
+The Journal answers, “What did Julian say and how did his view change?”
+
+An Area note answers, “What is true and current for this Area?”
+
+A Goal answers, “Which result exists and what is its current state?”
+
+The brain can use a remembered turn to update an Area note or Goal through the normal workflow.
+
+The raw turn does not become project truth merely because Tangent saved it.
+
+### 8.6 One source, local routes
+
+```text
+Root brain user turn
+        │
+        ├── complete verbatim source ──→ ~/.tangent/trees/journal.md
+        │
+        ├── exact Neara excerpt ───────→ neara/journal.md
+        │
+        └── exact Tangent excerpt ─────→ otto/tangent/journal.md
+```
+
+The full turn exists in one canonical place. Routed excerpts provide local recall without a second complete copy.
+
+## 9. Orientation behavior
+
+Julian opens Root, Neara, Tangent, or another brain. He says “orient me,” “where was I,” or another natural version.
 
 The brain reads:
 
-1. Recent Spews and later corrections in the selected Area subtree.
-2. Area Purpose and `Current` sections.
-3. Open Goals and Goals changed after the last saved perspective.
-4. Material milestones and completed work after that point.
-5. Activity evidence with a reliable link to the scope.
+1. Remembered turns and later corrections in scope.
+2. Routed entries in the selected Area subtree.
+3. Area Purpose and `Current` sections.
+4. Open Goals and Goals changed after the last remembered turn.
+5. Material milestones and completed work after that point.
+6. Activity evidence with a reliable Area link.
 
-Root reads the complete tree. A smaller Area brain reads its own subtree and relevant routed excerpts.
+Root reads the complete tree. A smaller Area brain reads its subtree and local routed entries.
 
-The first answer gives the main arc. Julian can interrupt, correct it, ask for evidence, or tell the brain to act.
+The answer starts with Julian's last meaningful view. Project records explain what changed around it.
 
-### 7.6 What makes the answer a story
+Time spent remains evidence of attention, not priority.
 
-The answer starts with Julian's last meaningful view.
+The answer can use these phrases:
 
-It relates later activity to that view:
-
-- Work that received attention.
-- A recorded reason for an attention shift.
-- An important thread that remained open.
-- An older idea with a current connection.
-- The tension or decision that controls the next move.
-
-The answer can recommend a direction. It does not cover every Area or Goal.
-
-Counts and dates appear only to explain the story. They never become the story.
-
-Attribution stays conversational:
-
-- “You told me that…”
+- “You said…”
 - “The recent work shows…”
 - “I cannot tell whether…”
 - “My read is…”
 
-### 7.7 Representative scenario
+## 10. Visual presentation remains later
 
-Julian opens Root and selects **Spew**:
+The first trial stays in the native text conversation.
 
-> PG&E is still the job that matters. I spent this week on Tangent because the tool was blocking how I work. Viz Input waits on reviews. Hackathon felt urgent before, but I no longer know whether it is. I want to batch the people work before I return to code.
+Agent Shell has fixed visual surfaces. The Area map is one example. A brain cannot compose the surrounding browser UI today.
 
-Root saves the complete passage. The brain offers exact routes to Neara and Tangent after it responds.
+A2UI can support a later trusted presentation layer. The agent sends declarative component data, and the client controls the component catalog.
 
-After more work and another context change, Julian tells Root to orient him.
+This layer can show a short timeline, highlighted Area tree, or decision fork after the text story works.
 
-The brain can answer:
+It does not change the storage contract. Every visual remains a derived view of Journals and current project records.
 
-> Your last clear view was that PG&E still mattered most. Tangent temporarily took your attention because the tool itself was blocking you.
->
-> The recent work supports the second part. Most recorded activity moved through Tangent. I cannot tell whether that detour now has a good stopping point.
->
-> Inside Neara, Viz Input still appears to wait at the reviewer stage. That remains a natural people batch. You already questioned the old Hackathon urgency, so I do not revive it from age alone.
->
-> The first decision is whether Tangent is now good enough to leave. After that, the clean return is the reviewer batch and the PG&E thread with the nearest external date.
+## 11. Lens analysis
 
-This answer uses Julian's meaning as the spine. Work records explain what changed around it.
+### 11.1 UI/UX
 
-## 8. Visual presentation after the text trial
+The common path uses the existing brain terminal:
 
-### 8.1 Product position
+1. Julian sends one normal user turn with an explicit save phrase.
+2. Tangent saves the turn before the brain claims success.
+3. The brain gives one short receipt and its normal response.
+4. The brain asks a normal routing question only after the source is safe.
+5. Julian later requests orientation in normal language.
 
-A visual story is a possible second layer, not a replacement for conversation.
+The design adds one visible Root row. It adds no control inside the terminal.
 
-The brain first forms a useful text story. Julian can then say **Show me**.
+**No cue:** The turn remains normal chat. The brain can offer capture but cannot save silently.
 
-The presentation uses the same claims and evidence. It adds no new priority logic.
+**Save error:** The brain says that the Journal save failed. The native transcript still contains the turn.
 
-### 8.2 Visuals that can earn a place
+**Duplicate delivery:** The native user-message identifier becomes the Journal entry identifier. Tangent writes one entry.
 
-| Relationship | Useful visual | Reason |
-|---|---|---|
-| Perspective and attention across time | Short timeline | Shows a detour and return point |
-| One concern across Areas | Highlighted Area tree | Shows scope and routing |
-| One decision with two or more consequences | Small decision fork | Shows what each choice changes |
-| A few facts with no important relation | No visual | Prose is faster |
+**No destination brain:** The routed Journal entry remains for a future brain.
 
-Time bars must say **attention**, never **priority**.
+**Wrong route:** Julian declines the exact route. The source entry remains safe.
 
-The presentation advances only after Julian starts it. He controls pause, next, back, and stop.
+**Voice error:** Tangent stores the transcript that reached the agent. It does not claim fidelity to the audio.
 
-Every frame has a complete text equivalent. The last frame returns to the brain conversation.
-
-### 8.3 A2UI fit
-
-A2UI is a credible format for a later Tangent renderer because the agent sends data, not executable browser code.
-
-Tangent keeps control of style, accessibility, components, and allowed actions through its catalogue.
-
-A small Tangent catalogue can contain a story frame, Area trail, timeline, decision fork, and evidence link.
-
-The basic A2UI catalogue alone does not provide these project visuals. Tangent must define and test them.
-
-The current terminal connection also has no structured A2UI side channel. A later implementation design must define one.
-
-Do not adopt the protocol before a fixed visual prototype proves useful.
-
-## 9. UI/UX lens
-
-### 9.1 First trial path
-
-1. Julian opens the visible Root Area or another Area brain.
-2. He selects **Spew** in the session header.
-3. He types or dictates one long thought.
-4. Tangent saves it and sends it to the current brain.
-5. The brain responds in the native conversation.
-6. The brain offers optional exact routes after the response.
-7. Later, Julian opens a brain and asks for orientation in normal language.
-
-No new navigation mode appears.
-
-### 9.2 Important states
-
-**No saved perspective:** The brain says that it has project records but no personal view to restore.
-
-**Mixed Spew:** The full input stays in the source Journal. Route proposals separate only exact excerpts.
-
-**Wrong route:** Julian changes or declines it. No destination write occurs.
-
-**Ignored route:** The complete source remains available to the source brain.
-
-**No destination brain:** The routed Journal entry remains. A future brain reads it.
-
-**Live child brain:** Root can read its records for orientation. Existing territory rules still control work mutations.
-
-**No recent activity:** The brain uses saved perspective and current notes. It states that activity evidence is absent.
-
-**Incomplete Area mapping:** The brain avoids exact time claims.
-
-**Capture error:** The Spew stays in the composer. The surface does not claim that it was saved.
-
-**Model error:** The Journal remains safe. Julian can retry with a fresh brain.
-
-### 9.3 Cognitive cost
-
-The first trial adds two visible elements: Root and Spew.
-
-It adds no orientation questionnaire, chapter controls, evidence badges, plan editor, or generated dashboard.
-
-The route review comes after value and never blocks capture.
-
-## 10. Architecture, types, and data lens
-
-### 10.1 One owner for each fact
+### 11.2 Architecture, types, and data
 
 | Fact | Authority |
 |---|---|
-| Complete freeform Spew | Source Area Journal |
-| Exact routed excerpt | Destination Area Journal with source identity |
-| Present Area purpose and situation | Area note |
-| Goal result, state, story, and dependencies | Goal files |
-| Brain delivery and lifecycle | Area-brain runtime records |
+| Exact submitted user turn | Source Journal entry |
+| Exact routed excerpt | Destination Journal entry with source identifier |
+| Current Area purpose and situation | Area note |
+| Goal result and state | Goal file |
+| Native conversation | Provider transcript and Usage index |
 | Agent activity and duration | Usage index |
-| Named personal focus time | Worklog |
 | Orientation story | Derived brain response |
-| Visual presentation | Derived transient surface |
 
-### 10.2 Invariants
+The capture mechanism must reference the native user message. The model can request the save but cannot supply the canonical text.
 
-1. Tangent saves a Spew before it delivers or interprets the Spew.
-2. One source Journal retains the complete input.
-3. A route contains exact user text, destination Area, and source identity.
-4. No destination write occurs before Julian approves the route batch.
-5. Routing a Journal excerpt grants no work authority.
-6. Root can read the complete tree for orientation.
-7. Existing live brain territories govern work mutations.
-8. Activity evidence never changes recorded purpose or priority.
-9. An orientation response changes no durable state by itself.
-10. A generated visual changes no durable state by itself.
-11. A user correction becomes a later Spew, not a silent rewrite.
+The native message identifier also supplies idempotency. A retry writes no second Journal entry.
 
-### 10.3 Existing leverage
+The Journal remains append-only at the product level. Git commits preserve provenance.
 
-Journal capture already provides commit-before-delivery, archives, idempotency, voice input, and brain wake behavior.
+The route is a derived access copy. It names the source entry and cannot become the authority for the complete turn.
 
-The `route-journal` Request effect already provides exact text, explicit authorization, destination commit, provenance, and destination notice.
+### 11.3 Migration and compatibility
 
-The first implementation can compose these capabilities. It does not need a new memory database.
+Existing Area Journals already use the selected Markdown envelope. Old entries remain readable without migration.
 
-### 10.4 Material unknowns
+New routed entries add the source entry identifier to the existing `Source` line. Old routed entries remain valid with Area-only provenance.
 
-The vault root has no ordinary Area identity today. A later design must add Root without changing every current Area path.
+The existing `remember` skill can continue to save a conclusion to its current home.
 
-The existing route effect handles one destination. A product-quality Spew needs one compact batch for more than one destination.
+The new capture layer saves the raw turn first. These writes have different authority and do not compete.
 
-Usage sessions do not have complete Area identity. A later design must define which activity claims are safe.
+Root adds a new Journal at the vault root. It moves no Area and changes no existing Area path.
 
-The native terminal carries bytes, not structured UI messages. An A2UI experiment needs a separate trusted channel.
+Rollback can stop automatic cue capture. All written Journal files remain normal Markdown and remain readable.
 
-## 11. Detailed decisions
+## 12. Invariants and detailed decisions
 
-1. **Try text first.** Do not build visual presentation before a real orientation trial passes.
-2. **Add Root as an Area in the product model.** Use the normal Area-brain experience at all-work scope.
-3. **Keep child brains.** Root does not replace focused brains or their work authority.
-4. **Add explicit Spew inside brain chat.** Do not save every ordinary message.
-5. **Save the complete input first.** Classification and routing happen later.
-6. **Use the existing Journal.** Do not create a perspective schema.
-7. **Propose exact cross-Area excerpts.** Do not silently distribute model summaries.
-8. **Approve routes as one batch.** Do not make capture wait for that approval.
-9. **Keep “orient me” as language in the first trial.** Add a button only after repeated use proves its value.
-10. **Start from Julian's words.** State and activity explain change around them.
-11. **Treat time as attention, not priority.** Keep unknown mapping explicit.
-12. **Keep generated stories transient.** Durable truth stays in Journals, Area notes, Goals, and Documents.
-13. **Consider “Show me” later.** A visual presentation is optional and user-started.
-14. **Treat A2UI as a candidate format.** It is not the product decision.
-15. **Use trusted visual components.** An agent never sends executable browser code.
+1. **Use ordinary brain conversation.** Add no Spew UI or mode.
+2. **Use explicit save language.** “Remember this” is the first guaranteed phrase.
+3. **Save the complete user turn.** Do not save only the phrase after the cue.
+4. **Use native message text.** Do not ask the model to reproduce the canonical words.
+5. **Save before acknowledgement.** A success receipt means that the vault commit finished.
+6. **Use one canonical source Journal.** Root uses the vault-root Journal.
+7. **Use exact routed excerpts.** Each route names its source entry.
+8. **Require approval for another Area.** A route is a normal conversation decision.
+9. **Keep Journals append-only.** Corrections become later entries.
+10. **Keep current truth separate.** Area notes and Goals retain their current roles.
+11. **Use the current Journal format.** Add no perspective schema or database.
+12. **Keep orientation conversational.** Add no required command or button.
+13. **Try text first.** A2UI remains a later presentation experiment.
 
-## 12. Rejected alternatives
+## 13. Rejected alternatives
 
-### 12.1 Keep the five-stage briefing
+### 13.1 Keep a Spew button
 
-This direction forces a tired user through a review ritual. It also fills a structure from weak system signals.
+The control makes durable capture visible. It also creates a new mode for an ordinary sentence to a brain.
 
-### 12.2 Save every brain message
+An explicit save phrase provides intent without a new interface object.
 
-This direction removes one explicit action. It also mixes durable perspective with transient questions and commands.
+### 13.2 Let the brain summarize before storage
 
-### 12.3 Make Root a separate narrator product
+A summary can remove hesitation, uncertainty, and cross-Area context that matters later.
 
-This direction creates a second agent model and a new authority boundary.
+Save the complete source first. The brain can derive current state after that save.
 
-Root is an Area. It uses the same brain, Journal, and conversation rules.
+### 13.3 Use native transcripts as the only memory
 
-### 12.4 Let Root silently rewrite child memory
+Native transcripts preserve exact conversation. Fresh Area brains do not use them as file memory.
 
-This direction removes routing friction. It also lets a model misquote Julian inside another subject.
+The Journal makes selected turns durable, scoped, readable, and available across agent generations.
 
-Exact routes with one later approval keep capture fast and memory honest.
+### 13.4 Put Root in a `root/` folder
 
-### 12.5 Read all Journals from every brain
+That folder does not contain Neara or Otto. Moving all Areas into it changes every durable Area path.
 
-This direction avoids routing. It exposes unrelated personal context and increases retrieval noise.
+The vault root already contains the complete tree.
 
-Area scope plus routed excerpts gives each brain relevant memory.
+### 13.5 Copy the complete turn to every mentioned Area
 
-### 12.6 Build A2UI first
+This direction makes every brain self-contained. It also creates duplicate complete records and exposes unrelated context.
 
-This direction creates an impressive demo before Tangent proves the story.
+Keep one complete source. Route only exact relevant excerpts.
 
-It also adds protocol generation errors, rendering errors, interaction state, accessibility work, and visual framing risk.
+### 13.6 Route without approval
 
-### 12.7 Let activity generate the story
+Silent routing is fast. It can put private, irrelevant, or misclassified text in another Area.
 
-Time and recency show attention, not value.
+One normal conversation question preserves user control.
 
-The rejected Neara example already demonstrated the result: correct facts with no human meaning.
+## 14. Risks, unknowns, and validation
 
-## 13. Risks, reconsideration, and validation
+### 14.1 Risks
 
-### 13.1 Risks
+- Julian can forget the save phrase.
+- A long Journal can contain temporary views and repetition.
+- A brain can select the wrong route excerpt.
+- A destination Journal can show an old view before its correction route arrives.
+- Voice transcription can change spoken words.
+- The current terminal boundary does not expose semantic user turns to Agent Shell.
 
-- Julian can forget to use Spew for a durable correction.
-- A long Root Journal can contain noise and temporary thoughts.
-- A brain can select the wrong passage for a route.
-- Route approval can become a chore after every Spew.
-- Root can produce a broad story with too little depth.
-- Activity evidence can miss human work.
-- A natural story can sound persuasive while it is wrong.
-- A visual story can amplify that persuasion.
+### 14.2 Material unknown
 
-Exact source words, optional routing, normal conversation, and staged validation reduce these risks.
+The product contract requires exact submitted text from the native user message.
 
-### 13.2 Reconsideration conditions
+The current terminal transport carries bytes and the provider transcript records messages later.
 
-If Julian often forgets Spew, let the brain offer to save a clear correction after normal chat.
+A later implementation design must select a reliable message boundary and save trigger. It cannot use a model-generated copy.
 
-If route review becomes repetitive, test a narrow standing rule for named Areas. Do not make silent routing the default.
+### 14.3 Reconsideration conditions
 
-If Root becomes too broad, orient from one selected Area and use Root only for cross-work capture.
+If Julian often forgets the phrase, let the brain offer capture after a broad perspective turn.
 
-If Journal noise harms orientation, add a brain-maintained summary with links to exact entries.
+If those offers become noisy, keep explicit save language only.
 
-If text repeatedly hides a timeline, tree, or decision relation, prototype one fixed visual.
+If routing questions become repetitive, test a narrow standing rule for named Areas.
 
-If that prototype helps, compare a Tangent-native format with A2UI before protocol adoption.
+If Journal noise harms orientation, add a derived summary with links to exact entries.
 
-### 13.3 First validation: memory and story
+If exact voice fidelity matters, retain the source audio or require transcript review before submission.
+
+### 14.4 Validation
 
 Use Root, Neara, and Tangent over three real days.
 
-Julian records:
+Record these cases:
 
-1. One all-work Spew in Root.
-2. One Neara Spew with a Tangent aside.
-3. One later correction.
-4. One approved route and one declined route.
+1. One remembered Root turn with Neara and Tangent content.
+2. One ordinary unmarked turn that stays out of the Journal.
+3. One approved exact route to Tangent.
+4. One declined route.
+5. One later correction.
+6. One simulated save retry.
 
-Then a fresh Root brain and a fresh Neara brain each receive a natural orientation request.
+Then start fresh Root and Neara brains and request orientation.
 
-The design passes after the answers do these things:
+The design passes after these facts are true:
 
-1. Start from Julian's latest meaningful perspective.
-2. Relate an attention shift without treating time as value.
-3. Recall the routed Tangent aside in the correct scope.
-4. Treat the correction as current and the earlier view as history.
-5. Name one material unknown.
-6. Lead to a useful conversation without a setup questionnaire.
+1. The Root Journal body matches the submitted text.
+2. A retry creates no duplicate entry.
+3. The Tangent route matches an exact source excerpt and names its source identifier.
+4. The correction remains later than the original.
+5. The fresh brains restore the changed perspective.
+6. The answers treat activity as attention and not priority.
 
-The need to repeat the old context means that the design fails.
+The design fails if Julian must explain the old context again.
 
-An inventory that project counts alone can produce also means that the design fails.
+It also fails if the answer is only a list of Goals and dates.
 
-### 13.4 Second validation: visual value
+## 15. Sources
 
-Run this validation only after the text trial passes.
+### 15.1 Repository and vault evidence
 
-Use one real story with a meaningful sequence or Area relationship. Compare the text answer with one read-only visual prototype.
-
-The visual earns a second iteration only after Julian prefers it for orientation and can explain the relationship more easily.
-
-Beauty alone is not a pass condition.
-
-## 14. Sources
-
-### 14.1 Repository and vault evidence
-
+- [Vault rules](/Users/julianotto/.tangent/trees/README.md)
 - [Root Area-brain instructions](/Users/julianotto/.tangent/trees/AGENTS.md)
 - [Tangent Area note](/Users/julianotto/.tangent/trees/otto/tangent/tangent.md)
 - [Journal domain](../../../packages/agent-shell/app/area-brain-domain.mjs)
@@ -649,15 +617,17 @@ Beauty alone is not a pass condition.
 - [Area map](../../../packages/agent-shell/app/public/area-map.js)
 - [Capture composer](../../../packages/agent-shell/app/public/work-desk-view.js)
 - [Voice route](../../../packages/agent-shell/app/voice-routes.mjs)
-- [Area brain design](/Users/julianotto/.tangent/trees/otto/tangent/design-area-brain.md)
-- [Audited Area-brain workflow](/Users/julianotto/.tangent/trees/otto/tangent/design-audited-area-brain-workflow.md)
+- [Existing remember skill](/Users/julianotto/.claude/skills/remember/SKILL.md)
 
-### 14.2 External evidence
+### 15.2 Human-factors evidence
 
-- Altmann and Trafton, [task interruption, resumption lag, and cues](https://interruptions.net/literature/Altmann-CogSci04.pdf), 2004.
+- Risko and Gilbert, [cognitive offloading](https://doi.org/10.1016/j.tics.2016.07.002), 2016.
+- Altmann and Trafton, [task interruption, resumption lag, and cues](https://escholarship.org/uc/item/18b4r661), 2004.
 - Endsley, [situation awareness in dynamic systems](https://doi.org/10.1518/001872095779049543), 1995.
-- Masicampo and Baumeister, [plan making and unfinished goals](https://doi.org/10.1037/a0024192), 2011.
-- Hullman and Diakopoulos, [framing effects in narrative visualization](https://www.hullmanlab.northwestern.edu/paper/2011/02/01/vis-rhetoric.html), 2011.
-- A2UI project, [architecture and project status](https://github.com/a2ui-project/a2ui).
-- A2UI project, [v1.0 candidate protocol](https://github.com/a2ui-project/a2ui/blob/main/specification/v1_0/docs/a2ui_protocol.md).
-- A2UI project, [basic catalogue concepts](https://a2ui.org/concepts/catalogs/).
+- Masicampo and Baumeister, [plan making and unfinished goals](https://pubmed.ncbi.nlm.nih.gov/21688924/), 2011.
+- Hullman and Diakopoulos, [framing effects in narrative visualization](https://doi.org/10.1109/TVCG.2011.255), 2011.
+
+### 15.3 Later visual option
+
+- A2UI project, [declarative agent-generated UI and project status](https://github.com/a2ui-project/a2ui).
+- A2UI project, [trusted component catalogs](https://a2ui.org/guides/defining-your-own-catalog/).

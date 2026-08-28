@@ -923,8 +923,11 @@ function renderSessionLayer() {
   const program = peek.kind === "program"
     ? state.programs.operations.find((item) => item.session === peek.session) ?? null
     : null;
-  const primary = goal?.title
-    ?? (brain ? areaLabel(brain.area || session?.area) : null)
+  // A brain opened as a brain is named as one even while it owns a Goal and
+  // works it in its own terminal. Naming it by that Goal made Julian read the
+  // brain as a worker and hunt for a brain he was already inside.
+  const primary = (brain ? areaLabel(brain.area || session?.area) : null)
+    ?? goal?.title
     ?? program?.label
     ?? (session?.area ? areaLabel(session.area) : null)
     ?? "Agent session";
@@ -932,17 +935,17 @@ function renderSessionLayer() {
     ?? (typeof assignment?.launch === "string" ? assignment.launch : "")
     ?? brain?.resolvedLaunch?.label
     ?? "";
-  const secondary = goal
-    ? [agentName(session), launch].filter(Boolean).join(" · ")
-    : brain
-      ? [agentName(session), "Area brain", brain.resolvedLaunch?.label].filter(Boolean).join(" · ")
+  const secondary = brain
+    ? [agentName(session), "Area brain", brain.resolvedLaunch?.label].filter(Boolean).join(" · ")
+    : goal
+      ? [agentName(session), launch].filter(Boolean).join(" · ")
       : program
         ? "Program session"
         : [agentName(session), peek.kind === "definition" ? "Defining work" : "Agent"].filter(Boolean).join(" · ");
   const detail = assignment
     ? `Step ${assignment.index} of ${queue.steps.length}${assignment.kind ? ` · ${assignment.kind}` : ""}`
-    : brain?.generation
-      ? `Generation ${brain.generation}`
+    : brain
+      ? [brain.generation ? `Generation ${brain.generation}` : "", goal?.title ? `Working ${goal.title} itself` : ""].filter(Boolean).join(" · ")
       : session?.state
         ? session.state
         : "";

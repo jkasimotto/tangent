@@ -86,13 +86,16 @@ test("digits stage a count; 100j, 1G, and 5gg address rows Vim style", () => {
 });
 
 test("the chord engine keeps a count through its chord key and forgets it with everything else", () => {
-  const engine = createChordEngine(() => 1, () => {});
+  const timers = [];
+  const engine = createChordEngine((fn) => { timers.push(fn); return timers.length; }, () => {});
   engine.stageCount("work", "1");
   engine.stageCount("work", "2");
   assert.equal(engine.countFor("work"), "12");
+  assert.equal(timers.length, 0, "a count waits for its motion instead of expiring like a chord");
   engine.stage("work", "g");
   assert.equal(engine.countFor("work"), "12", "5gg keeps its digits");
   assert.equal(engine.pendingFor("work"), "g");
+  assert.equal(timers.length, 1, "the chord after a count still expires");
   engine.clear("work");
   assert.equal(engine.countFor("work"), "");
   engine.stageCount("work", "3");

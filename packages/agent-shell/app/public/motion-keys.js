@@ -104,7 +104,7 @@ export const CHORD_WINDOW_MS = 650;
 /**
  * One chord engine for every surface. A chord is staged for one surface
  * name, so a `g` pressed in the key sheet cannot complete a `gg` in Work.
- * A count (`100j`) is staged the same way, digit by digit; a chord key
+ * A count (`100j`) waits for its motion without a chord timeout. A chord key
  * after digits keeps them (`5gg`), and any other key forgets everything.
  */
 export function createChordEngine(setTimer = globalThis.setTimeout, clearTimer = globalThis.clearTimeout) {
@@ -137,7 +137,6 @@ export function createChordEngine(setTimer = globalThis.setTimeout, clearTimer =
   function stageCount(surface, digit) {
     const count = pending.surface === surface ? pending.count : "";
     pending = { surface, key: "", count: `${count}${digit}` };
-    arm(surface);
   }
   /** The staged chord key for one surface, or an empty string. */
   function pendingFor(surface) {

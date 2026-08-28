@@ -2,8 +2,23 @@ import terminalKeys from "./terminal-keys.js";
 import terminalSelectionApi from "./terminal-selection.js";
 
 /** Owns terminal construction, transport, fitting, selection, and disposal. */
-export function createTerminalController({ state, showToast }) {
+export function createTerminalController({ state, showToast, record = null }) {
   let terminal = null;
+  /**
+   * Writes one timing record for the open path, so a slow or black terminal
+   * names the phase that took the time: measuring cells, opening the socket,
+   * or waiting for tmux's first bytes (investigation of slow brain opens,
+   * 2026-08-28). Never throws and never blocks the terminal.
+   */
+  function trace(action, detail) {
+    try {
+      // The telemetry envelope keeps a fixed set of fields, so the phases
+      // travel inside the action string and the total in durationMs.
+      const phases = Object.entries(detail).filter(([key, value]) => key !== "at" && value !== null && value !== undefined && value !== "").map(([key, value]) => `${key}=${value}`).join(" ");
+      const total = detail.firstDataMs ?? detail.closedMs ?? detail.stalledMs;
+      record?.("terminal", `${action} ${phases}`, Number.isFinite(total) ? { durationMs: total } : {});
+    } catch {}
+  }
   let terminalFit = null;
   let terminalSocket = null;
   let terminalResizeObserver = null;
@@ -11,6 +26,7 @@ export function createTerminalController({ state, showToast }) {
   let terminalSelection = null;
   let terminalReconnectTimer = null;
   let terminalMeasureFrame = null;
+  let stalledTimer = null;
   let terminalGeneration = 0;
   let fitTerminal = null;
   let reportedSize = "";
@@ -20,6 +36,8 @@ export function createTerminalController({ state, showToast }) {
     terminalGeneration += 1;
     window.clearTimeout(terminalReconnectTimer);
     terminalReconnectTimer = null;
+    window.clearTimeout(stalledTimer);
+    stalledTimer = null;
     if (terminalMeasureFrame !== null) window.cancelAnimationFrame?.(terminalMeasureFrame);
     terminalMeasureFrame = null;
     terminalSelection?.dispose();
@@ -65,6 +83,16 @@ export function createTerminalController({ state, showToast }) {
     }
     terminalSession = sessionName;
     const generation = ++terminalGeneration;
+    const opened = { at: performance.now(), frames: 0, measuredMs: null, socketMs: null, firstDataMs: null, connects: 0 };
+    /** Milliseconds since this mount began, rounded. */
+    const sinceMount = () => Math.round(performance.now() - opened.at);
+    // A screen still black after two seconds is reported once with the phase
+    // it is stuck in, because the measure loop and a silent socket show
+    // nothing on their own.
+    stalledTimer = window.setTimeout(() => {
+      if (generation !== terminalGeneration || opened.firstDataMs !== null) return;
+      trace("stalled", { session: sessionName, ...opened, hostWidth: host.clientWidth, hostHeight: host.clientHeight, socketState: terminalSocket?.readyState ?? null, stalledMs: sinceMount() });
+    }, 2_000);
     terminal = new Terminal({
       cursorBlink: false,
       fontFamily: '"SFMono-Regular", Menlo, Consolas, monospace',
@@ -118,10 +146,19 @@ export function createTerminalController({ state, showToast }) {
       const attachedSize = `${measured.cols}x${measured.rows}`;
       const socket = new WebSocket(`${protocol}//${location.host}/term?session=${encodeURIComponent(sessionName)}&cols=${measured.cols}&rows=${measured.rows}`);
       terminalSocket = socket;
+      opened.connects += 1;
+      const connectedAt = sinceMount();
       socket.binaryType = "arraybuffer";
-      socket.onmessage = (event) => terminal?.write(typeof event.data === "string" ? event.data : new Uint8Array(event.data));
+      socket.onmessage = (event) => {
+        if (opened.firstDataMs === null) {
+          opened.firstDataMs = sinceMount();
+          trace("open", { session: sessionName, ...opened });
+        }
+        terminal?.write(typeof event.data === "string" ? event.data : new Uint8Array(event.data));
+      };
       socket.onopen = () => {
         if (terminalSocket !== socket) return;
+        opened.socketMs ??= sinceMount();
         reconnectAttempt = 0;
         reportedSize = attachedSize;
         fit();
@@ -131,6 +168,7 @@ export function createTerminalController({ state, showToast }) {
       socket.onclose = (event) => {
         if (generation !== terminalGeneration || terminalSocket !== socket) return;
         terminalSocket = null;
+        trace("close", { session: sessionName, code: event.code, reason: event.reason || "", connectedAt, closedMs: sinceMount(), hadData: opened.firstDataMs !== null, attempt: reconnectAttempt });
         if (event.code === 4404) {
           showToast("The tmux session ended.");
           return;
@@ -150,8 +188,10 @@ export function createTerminalController({ state, showToast }) {
       const measure = () => {
         terminalMeasureFrame = null;
         if (generation !== terminalGeneration || terminalSession !== sessionName || terminalSocket) return;
+        opened.frames += 1;
         const measured = fit();
         if (measured) {
+          opened.measuredMs ??= sinceMount();
           connect(measured);
           return;
         }

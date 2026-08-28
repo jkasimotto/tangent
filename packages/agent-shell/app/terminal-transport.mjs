@@ -31,9 +31,18 @@ export function attachTerminalTransport(server, { port, workspace, chatSession, 
     }
     const cols = dimension(url.searchParams.get("cols"), 120, 20, 500);
     const rows = dimension(url.searchParams.get("rows"), 32, 5, 200);
+    // One line per attach names the phase that took the time: authorizing
+    // through tmux, spawning the pty, or waiting for tmux's first bytes
+    // (investigation of slow brain opens, 2026-08-28).
+    const openedAt = Date.now();
+    let preparedAt = null;
     /** Starts the PTY only after the Agent Shell instance authorizes the target. */
     const start = () => {
-      if (socket.readyState >= WebSocket.CLOSING) return;
+      preparedAt ??= Date.now();
+      if (socket.readyState >= WebSocket.CLOSING) {
+        console.error(`[terminal] open session=${session} closed before spawn state=${socket.readyState} prepareMs=${preparedAt - openedAt}`);
+        return;
+      }
       const prepared = Boolean(prepareSession);
       const args = session === chatSession && !prepared
         ? ["new-session", "-A", "-s", session, "-c", workspace]
@@ -54,9 +63,15 @@ export function attachTerminalTransport(server, { port, workspace, chatSession, 
         return;
       }
       let clientClosed = false;
+      const spawnedAt = Date.now();
+      let firstData = false;
       socket.isAlive = true;
       socket.on("pong", () => { socket.isAlive = true; });
       terminal.onData((data) => {
+        if (!firstData) {
+          firstData = true;
+          console.error(`[terminal] open session=${session} prepareMs=${preparedAt - openedAt} spawnMs=${spawnedAt - preparedAt} firstDataMs=${Date.now() - spawnedAt} size=${cols}x${rows}`);
+        }
         if (socket.readyState !== WebSocket.OPEN) return;
         if (socket.bufferedAmount > MAX_TERMINAL_BUFFER_BYTES) {
           socket.close(1013, "terminal client is too slow");

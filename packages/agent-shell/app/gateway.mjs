@@ -167,6 +167,18 @@ function terminateController(reason) {
   force.unref();
 }
 
+// The gateway forwards every terminal byte, so a stall of its own event loop
+// is a black terminal. Log each stall above a quarter second with its length
+// (investigation of slow brain opens, 2026-08-28).
+const LAG_TICK_MS = 250;
+let lagExpectedAt = Date.now() + LAG_TICK_MS;
+const lagMonitor = setInterval(() => {
+  const lag = Date.now() - lagExpectedAt;
+  lagExpectedAt = Date.now() + LAG_TICK_MS;
+  if (lag > 250) console.error(`[gateway] event loop stalled ${lag}ms`);
+}, LAG_TICK_MS);
+lagMonitor.unref();
+
 const controllerMonitor = setInterval(() => {
   if (!controller) return;
   const now = Date.now();
@@ -291,9 +303,14 @@ function proxyController(request, response, operationId) {
         clearTimeout(deadline);
         releaseAdmission();
         try {
+          const parseStartedAt = Date.now();
           const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           sessionSnapshot = { value, capturedAt: new Date().toISOString() };
           sendSessionSnapshot(response, value, { stale: false, operationId });
+          const snapshotMs = Date.now() - parseStartedAt;
+          // The parse and re-serialize of this payload run on the loop that
+          // carries terminal bytes; a slow one is logged with its size.
+          if (snapshotMs > 100) console.error(`[gateway] session snapshot ${snapshotMs}ms bytes=${bytes} pipelines=${value?.pipelines?.length ?? 0}`);
         } catch (error) {
           console.error("[gateway] session snapshot:", error?.message ?? error);
           unavailable(request, response, operationId);

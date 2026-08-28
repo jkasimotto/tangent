@@ -409,7 +409,7 @@ function showToast(message, action = null) {
   toastTimer = window.setTimeout(() => toast.classList.remove("show"), action ? 8000 : 3200);
 }
 
-const terminalController = createTerminalController({ state, showToast });
+const terminalController = createTerminalController({ state, showToast, record: actionTelemetry.record });
 const { disposeTerminal, mountTerminal } = terminalController;
 
 /** Defers reading a feature function until the circular view graph is assembled. */
@@ -1210,6 +1210,9 @@ function noteRuntimeIdentity(gatewayBoot, controllerBoot) {
   const reloadKey = "agent-shell.reloaded-gateway-boot";
   if (sessionStorage.getItem(reloadKey) === gatewayBoot) return;
   sessionStorage.setItem(reloadKey, gatewayBoot);
+  // The gateway owns every terminal pty, so its restart is the moment a
+  // terminal went black; the record ties that to the reload that follows.
+  actionTelemetry.record("connection", "gateway-restarted:reload", { terminalOpen: Boolean(state.sessionPeek), session: state.sessionPeek?.session ?? "" });
   location.reload();
 }
 

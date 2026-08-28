@@ -4,6 +4,7 @@ import { documentReadingCommands, documentReadingScrollTarget, matchDocumentRead
 import { workCommandHelpRows, workCommandMatches, workCommandsFor } from "./work-commands.js";
 import { createChordEngine, motions, resolveMotion } from "./motion-keys.js";
 import { createWorkSearchBar } from "./work-search-bar.js";
+import { activeBrainForArea, nearestActiveBrain } from "./brain-ownership.js";
 
 /** Binds browser events through capability-owned feature ports. */
 export function bindShellEvents({ shell, chrome, prompts, work, areas, programs, launch, documents }) {
@@ -737,7 +738,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (id === "previousArea" || id === "nextArea") return moveAreaCursor(id === "previousArea" ? -1 : 1, row);
     if (id === "openBrain") {
       if (!area) return showToast("This row has no Area command header.");
-      const brain = (state.brains ?? []).find((item) => item.live && item.status === "active" && item.area === area);
+      // An Area row means exactly this Area's brain. Any other row (a Goal, a
+      // sub-goal) opens the nearest active brain up the Area chain, so a Goal
+      // under a sub-Area without its own brain still reaches its organiser.
+      const onAreaRow = Boolean(row?.classList.contains("work-group-row"));
+      const brain = onAreaRow ? activeBrainForArea(state.brains, area) : nearestActiveBrain(state.brains, area);
       const session = state.sessions.find((item) => item.name === brain?.session);
       if (session) return openSessionLayer(session, "brain");
       const point = captureNavigationPoint(row?.querySelector("[data-work-row-title], [data-work-cursor-control]"));
@@ -856,7 +861,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const brain = area ? brainForAreaCard(area) : null;
     const isArea = row.classList.contains("work-group-row") && area;
     const options = workCommandsFor({ palette: true }).filter((command) => {
-      if (["commands", "openBrain", "stopBrain", "defaults", "messageBrain", "focus", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return Boolean(isArea);
+      if (command.id === "openBrain") return Boolean(isArea || goal);
+      if (["commands", "stopBrain", "defaults", "messageBrain", "focus", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return Boolean(isArea);
       if (["readGoal", "changeAgent", "goalStatus"].includes(command.id)) return Boolean(goal);
       if (command.id === "resumeAttempt") return Boolean(goal) && !isArea;
       return ["collapse", "expand", "search", "keys"].includes(command.id);

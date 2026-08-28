@@ -12,7 +12,7 @@ const records = [
   { id: "previousArea", keyDisplay: "{", ariaKeyshortcuts: "Shift+[", scope: "area", kind: "navigation", palette: true, label: "Previous Area", help: "Jump to the previous Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "{", shiftKey: "any" }] },
   { id: "nextArea", keyDisplay: "}", ariaKeyshortcuts: "Shift+]", scope: "area", kind: "navigation", palette: true, label: "Next Area", help: "Jump to the next Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "}", shiftKey: "any" }] },
   { id: "open", keyDisplay: "↵", ariaKeyshortcuts: "Enter", scope: "work", kind: "action", label: "Open", help: "Open the live session or the Goal reader for this row.", shortcuts: [{ key: "Enter" }] },
-  { id: "openBrain", keyDisplay: "b", ariaKeyshortcuts: "b", scope: "area", kind: "action", palette: true, label: "Open brain", help: "Open this Area brain. A message starts an inactive brain.", shortcuts: [{ key: "b" }] },
+  { id: "openBrain", keyDisplay: "b", ariaKeyshortcuts: "b", scope: "area", kind: "action", palette: true, label: "Open brain", help: "On an Area: open its brain, or message it to start one. On a Goal: open the nearest active brain up its Area chain.", shortcuts: [{ key: "b" }] },
   { id: "stopBrain", keyDisplay: "s", ariaKeyshortcuts: "s", scope: "area", kind: "action", palette: true, label: "Stop brain", help: "Stop this Area brain without stopping its worker agents.", shortcuts: [{ key: "s" }] },
   { id: "defaults", keyDisplay: "d", ariaKeyshortcuts: "d", scope: "area", kind: "action", palette: true, label: "Defaults", help: "Change this Area's default Work and brain agents.", shortcuts: [{ key: "d" }] },
   { id: "messageBrain", keyDisplay: "a", ariaKeyshortcuts: "a", scope: "area", kind: "action", palette: true, label: "Message brain", help: "Tell this Area's brain what you want. It starts if it is not running.", shortcuts: [{ key: "a" }] },
@@ -71,6 +71,7 @@ const captionKeysByRow = Object.freeze({
   goal: [
     { ids: ["open"], word: "open" },
     { ids: ["readGoal"], word: "read" },
+    { ids: ["openBrain"], word: "brain" },
     { ids: ["goalStatus"], word: "status" },
     { ids: ["changeAgent"], word: "agent" },
     { ids: ["resumeAttempt"], word: "resume" },

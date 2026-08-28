@@ -10,6 +10,8 @@ Amended 2026-08-26: Tangent paces a brain that hands over with nothing done. A g
 
 Amended 2026-08-28 on Julian's word: starting or waking a brain asks for no instruction. The founding instruction may be empty; the brain starts from its Area note and AGENTS.md chain, its first message is any unread notice or `Start.`, and Julian messages it when he has something to say. The wake-needs-message rule and the instruction box in the chooser are gone.
 
+Amended 2026-08-28: an Area brain organizes Goal work but never owns a Goal or becomes its session binding. Durable brain generation history identifies every brain session. Create, own, start, queue, projection, and reconciliation paths enforce this rule. Reconciliation removes contaminated bindings without stopping the brain or a legitimate worker.
+
 ## Context
 
 Pipelines (ADR-0023) let Julian compose an assembly line of agents on one Goal and be interrupted only for decisions. Between Goals he was still the planner and dispatcher: how the work splits, what can start, which model each part deserves, when a finished part needs a fix pass. Those decisions kept him in the loop every hour, and when he stepped away the Area stopped moving.

@@ -4,6 +4,8 @@ Date: 2026-08-26
 
 Status: accepted. The worker verb clause is amended by ADR-0040: `tangent send brain` is the worker command, plain text is a note with no status change, and the typed `--report` stays only on the aliases. The completion policy, designated review, brain handover, and Test request clauses are superseded by ADR-0041.
 
+Amended 2026-08-28: the Area brain controls the Goal queue but is never a Goal owner or attempt. The server rejects all brain generations at each Goal-binding writer. Reads quarantine contaminated bindings. Reconciliation clears the Goal binding and stops an invalid queue assignment without terminating the brain session.
+
 ## Context
 
 The Area brain workflow had conflicting execution, authority, closure, lifecycle, Question, memory, and Operation paths.

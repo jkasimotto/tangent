@@ -32,7 +32,7 @@ import { appendSteps, continuationSource, currentStep, endPipeline, goalBindingG
 import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, reminderDue } from "./context-handover.mjs";
 import { messageBanner, noticeMessage, normalizeMessage } from "./agent-messages.mjs";
-import { beginGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { beginGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, brainSessionNames, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { resolveBrainAttemptLaunch } from "./brain-launch.mjs";
 import { refreshBrainObservation } from "./brain-lifecycle.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, unreadNotices, writeInbox } from "./brain-inbox.mjs";
@@ -87,6 +87,7 @@ import { agentShellInstanceId, createSessionOwnership, SESSION_OWNER_OPTION } fr
 import { appendWorkerHandoverReceipt, pendingWorkerHandoverReceipts, recordWorkerHandoverNotice, workerHandoverReceipt } from "./worker-handover-receipt.mjs";
 import { projectGoalDetail } from "./goal-detail.mjs";
 import { SETTLED_GOAL_STATUSES, goalIsFlaggedForVerify, goalStatusChange, normalizeGoalRecord, normalizeGoalStatus } from "./goal-lifecycle.mjs";
+import { withoutBrainGoalBinding, withoutBrainGoalBindings } from "./goal-brain-binding.mjs";
 import { notifyGoalWaitsForCheck, removeGoalCheckNotification } from "./julian-notify.mjs";
 import { appendIdea, areaNoteTemplate, areaTitle, currentSectionKey, ensureAreaNoteLinks, ensureVaultRootLinks, ideasFilePath, ideasFromFile, noteSignal, orderGoals, vaultRootAgentsText } from "./area-note-links.mjs";
 import { newAttemptReplacement, readAllAttemptReplacements, readAttemptReplacement, sameAttemptReplacementRequest, transitionAttemptReplacement, unsettledAttemptReplacements, writeAttemptReplacement } from "./goal-attempt-replacement.mjs";
@@ -874,6 +875,7 @@ async function readAreaGoals(area) {
     return [];
   }
   const goals = [];
+  const brainSessions = brainSessionNames(await readAllBrains(BRAINS_ROOT));
   for (const f of entries.filter((f) => /^(?:goal|outcome)-[a-z0-9-]+\.md$/.test(f))) {
     let text;
     try {
@@ -886,7 +888,10 @@ async function readAreaGoals(area) {
     const slug = f.replace(/^(?:goal|outcome)-/, "").slice(0, -".md".length);
     const info = await stat(path.join(TREES_ROOT, area, f)).catch(() => null);
     const mtime = info?.mtimeMs ?? 0;
-    const status = normalizeGoalStatus(fm.status || "open");
+    const projectedBinding = withoutBrainGoalBinding({
+      status: normalizeGoalStatus(fm.status || "open"),
+      session: fm.session || null,
+    }, brainSessions);
     goals.push({
       mtime,
       birthtime: info?.birthtimeMs ?? 0,
@@ -895,7 +900,7 @@ async function readAreaGoals(area) {
       slug,
       file: `${area}/${f}`,
       title: text.match(/^# (.+)$/m)?.[1]?.trim() ?? slug,
-      status,
+      status: projectedBinding.status,
       doneWhen: fm.done_when || fm.outcome || "",
       verify: goalIsFlaggedForVerify(fm.verify),
       stateText: noteSection(text, "State"),
@@ -904,7 +909,8 @@ async function readAreaGoals(area) {
       storyText: noteSection(text, "Story so far"),
       waitingOn: fm.waiting_on || null,
       due: fm.due || null,
-      session: fm.session || null,
+      session: projectedBinding.session,
+      brainSessionBinding: projectedBinding.brainSessionBinding ?? null,
       // The process note this Goal was started from, so a due process is
       // skipped while its last Goal is open (ADR-0043).
       process: fm.process || null,
@@ -1275,6 +1281,9 @@ function withFrontmatterLine(text, key, value) {
  * Rewrites the mechanical fields that the server owns in a Goal file.
  */
 async function writeGoalBinding(file, { status, session, waitingOn }) {
+  if (session && brainSessionNames(await readAllBrains(BRAINS_ROOT)).has(session)) {
+    throw new Error(`Area brain session ${session} cannot own or bind to a Goal.`);
+  }
   let text = await readFile(path.join(TREES_ROOT, file), "utf8");
   text = withFrontmatterLine(text, "status", status);
   text = withFrontmatterLine(text, "session", session);
@@ -2496,6 +2505,14 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
     }) : null;
     if (closedCleanup?.releasedGoals.length) await vaultCommit(closedCleanup.releasedGoals, "update: release Goals from finished worker", closed[0].area, null);
     for (const t of byFile.values()) {
+      if (t.brainSessionBinding) {
+        await writeGoalBinding(t.file, {
+          status: SETTLED_GOAL_STATUSES.has(t.status) ? t.status : "open",
+          session: null,
+        });
+        await vaultCommit([t.file], `update: ${t.area} goal ${t.slug} released from Area brain session`, t.area, null);
+        continue;
+      }
       if (SETTLED_GOAL_STATUSES.has(t.status)) continue;
       if (t.session && !live.has(t.session) && !(await sessionOwnership.ownsRecorded(t.session))) continue;
       // The Goal file's own mtime is when its binding was last written: a
@@ -3938,7 +3955,8 @@ async function resumeAttemptReplacements() {
  * session exists, its pane state, and the derived pipeline status.
  */
 async function pipelinesView(sessions) {
-  const byName = new Map(sessions.map((item) => [item.name, item]));
+  const brainSessions = brainSessionNames(await readAllBrains(BRAINS_ROOT));
+  const byName = new Map(sessions.filter((item) => item.kind !== "brain" && !brainSessions.has(item.name)).map((item) => [item.name, item]));
   const records = await readAllPipelines(PIPELINES_ROOT);
   return records.map((record) => ({
     ...record,
@@ -3952,6 +3970,7 @@ async function pipelinesView(sessions) {
 
 /** Marks running steps whose session is gone as stopped. */
 async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
+  const brainSessions = brainSessionNames(await readAllBrains(BRAINS_ROOT));
   const allByName = new Map(sessions.map((item) => [item.name, item]));
   const byName = new Map(sessions.filter((item) => item.owned).map((item) => [item.name, item]));
   const now = Date.now();
@@ -3986,6 +4005,21 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
         idleNoticed.delete(key);
         waitNoticed.delete(key);
         shellExitNoticed.delete(key);
+        continue;
+      }
+      if (brainSessions.has(step.session)) {
+        step.status = "stopped";
+        step.endedAt = new Date().toISOString();
+        const attempt = step.attempts?.findLast?.((item) => item.session === step.session);
+        if (attempt && !attempt.endedAt) {
+          attempt.endedAt = step.endedAt;
+          attempt.result = { type: "invalid-brain-binding", summary: "An Area brain session cannot run a Goal assignment." };
+        }
+        changed = true;
+        idleNoticed.delete(key);
+        waitNoticed.delete(key);
+        shellExitNoticed.delete(key);
+        stopped.push(step.index);
         continue;
       }
       const observed = allByName.get(step.session);
@@ -6214,8 +6248,9 @@ const programRoutes = createProgramRoutes({
 const documentRoutes = createDocumentRoutes({
   /** Returns the vault index with its server-owned desk projection. */
   async vault() {
-    const [vault, sessions] = await Promise.all([vaultIndex(), listSessions()]);
-    return { ...vault, projection: await vaultProjection.status(), desk: projectDesk(vault, sessions) };
+    const [vault, sessions, brains] = await Promise.all([vaultIndex(), listSessions(), readAllBrains(BRAINS_ROOT)]);
+    const projectedVault = withoutBrainGoalBindings(vault, brainSessionNames(brains));
+    return { ...projectedVault, projection: await vaultProjection.status(), desk: projectDesk(projectedVault, sessions) };
   },
   readMap: readMapState,
   writeMap: writeMapState,
@@ -6489,7 +6524,7 @@ const goalQueryRoutes = createGoalQueryRoutes({
     const verb = releasing ? "release" : "own";
     if (!session || !slugs.length) return { status: 400, error: `${verb} needs a session name and at least one goal slug` };
     const liveSessions = await listSessions();
-    if ((await readAllBrains(BRAINS_ROOT)).some((brain) => brain.session === session)) return { status: 403, error: "An Area brain controls Goal queues; it cannot own a worker Goal." };
+    if (brainSessionNames(await readAllBrains(BRAINS_ROOT)).has(session)) return { status: 403, error: "An Area brain controls Goal queues; it cannot own a worker Goal." };
     const live = new Set(liveSessions.map((item) => item.name));
     if (!releasing && !live.has(session)) return { status: 404, error: `no tmux session "${session}"; run this inside the agent's session or pass --session` };
     const bySlug = new Map([...(await goalsByFile()).values()].map((goal) => [goal.slug, goal]));
@@ -6925,6 +6960,7 @@ const workMutationRoutes = createWorkMutationRoutes({
     if (subgoals.some((item) => !item.title || !item.doneWhen)) return { status: 400, error: "each Subgoal needs a name and a done condition" };
     const own = String(body.own ?? "").trim();
     if (caller && own && caller !== own) return { status: 409, error: `${caller} cannot create a Goal owned by live session ${own}` };
+    if (own && brainSessionNames(await readAllBrains(BRAINS_ROOT)).has(own)) return { status: 403, error: "An Area brain controls Goal queues; it cannot own a worker Goal." };
     const sessions = own ? await listSessions() : [];
     if (own && !sessions.some((session) => session.name === own)) return { status: 404, error: `no tmux session "${own}"; run create --own inside the agent's session or pass --session` };
     try {

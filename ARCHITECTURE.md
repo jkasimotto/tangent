@@ -80,6 +80,7 @@ Search owns structural indexing and search over TypeScript and Dart source: a SQ
 
 `@tangent/agent-shell` owns the vault CLI, agent messages, worker notes, Area brains, and `tangent study`.
 Each Area brain has one logical identity.
+Its durable generation history identifies every brain session. A brain controls Goal work, but it never owns a Goal or becomes a Goal attempt.
 Its lifecycle is active or inactive. Process attempts and recovery are diagnostic health.
 The server owns its activation envelope, bounded prompt, subtree milestones, Journal, Requests, exact-Area Goal queue, and Operation event outbox.
 Each generation stores its complete resolved launch. A user-selected registry choice applies to one start or resume attempt without changing the Area default; reattachment keeps the live launch, and automatic recovery or handover resolves the current default.

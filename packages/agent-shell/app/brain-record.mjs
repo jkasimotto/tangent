@@ -47,6 +47,19 @@ export async function readAllBrains(root) {
   return records;
 }
 
+/** Every session name that has represented an Area brain. */
+export function brainSessionNames(records) {
+  const names = new Set();
+  for (const record of records ?? []) {
+    if (record?.session) names.add(record.session);
+    if (record?.currentAttemptId) names.add(record.currentAttemptId);
+    for (const generation of record?.generations ?? []) {
+      if (generation?.session) names.add(generation.session);
+    }
+  }
+  return names;
+}
+
 /** Writes a record with mkdir -p and an atomic tmp + rename; stamps updatedAt. */
 export async function writeBrain(root, record) {
   const target = brainPath(root, record.area);

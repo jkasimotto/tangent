@@ -11,6 +11,7 @@ import {
   brainOwnsArea,
   brainPath,
   brainSessionName,
+  brainSessionNames,
   currentGeneration,
   deleteBrain,
   endBrain,
@@ -22,6 +23,17 @@ import {
   validateInstruction,
   writeBrain
 } from "./brain-record.mjs";
+
+test("brain session identity includes current and historical attempts", () => {
+  assert.deepEqual(
+    [...brainSessionNames([{
+      session: "brain-current",
+      currentAttemptId: "brain-attempt",
+      generations: [{ session: "brain-old" }, { session: "brain-current" }],
+    }])].sort(),
+    ["brain-attempt", "brain-current", "brain-old"]
+  );
+});
 
 const claude = { harness: "claude", model: "fable-5", effort: null };
 

@@ -166,6 +166,25 @@ test("a brain lends its own harness to every worker it starts", async (context) 
   openedSessions.push(brain.body.session);
   assert.deepEqual(brain.body.brain.resolvedLaunch.ref, { harness: "claude-otto", model: "fable-5", effort: null });
 
+  const brainOwnedCreate = await post("/api/goals/create", {
+    area: "otto/proof",
+    caller: brain.body.session,
+    own: brain.body.session,
+    goal: { title: "Brain owned", doneWhen: "This Goal must not exist." },
+  });
+  assert.equal(brainOwnedCreate.status, 403, JSON.stringify(brainOwnedCreate.body));
+  await assert.rejects(
+    readFile(path.join(proof, "goal-brain-owned.md"), "utf8"),
+    { code: "ENOENT" },
+    "create --own refuses the brain before it writes a Goal"
+  );
+
+  const brainOwn = await post("/api/goals/own", {
+    session: brain.body.session,
+    slugs: ["julian-start"],
+  });
+  assert.equal(brainOwn.status, 403, JSON.stringify(brainOwn.body));
+
   // Two assignments, neither naming a harness. Both take the brain's.
   const started = await post("/api/goals/start", {
     file: "otto/proof/goal-default-worker.md",

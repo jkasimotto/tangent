@@ -288,3 +288,77 @@ test("every not-done Area has a row: a quiet top-level Area, a quiet sub-Area, a
   assert.ok(popover, "b on a quiet sub-Area opens the composer that starts its brain");
   assert.match(popover.querySelector("header").textContent, /Notes/);
 });
+
+const DND = "otto/dnd";
+const DIALOGUE = "otto/dnd/dialogue";
+const PLAYERS = "otto/dnd/players";
+
+/**
+ * Julian's bug: `otto/dnd` above `otto/dnd/dialogue` and `otto/dnd/players`,
+ * with a brain asking on Players. Folding D&D left the deeper rows showing.
+ */
+function dndFixture() {
+  const fixture = rootedFixture();
+  const dndGoal = goal(DND, "campaign", "Plan the campaign");
+  const dialogueGoal = goal(DIALOGUE, "voices", "Write the voices");
+  const playersGoal = goal(PLAYERS, "roster", "Fill the roster");
+  const areas = [
+    { path: DND, name: "dnd", goals: [dndGoal], documents: [] },
+    { path: DIALOGUE, name: "dialogue", goals: [dialogueGoal], documents: [] },
+    { path: PLAYERS, name: "players", goals: [playersGoal], documents: [] },
+  ];
+  fixture.goals.push(dndGoal, dialogueGoal, playersGoal);
+  fixture.vault.areas.push(...areas);
+  fixture.vault.map.push(...areas.map((area) => ({ path: area.path, name: area.name, goals: area.goals })));
+  fixture.brains.push({
+    area: PLAYERS, status: "active", live: false, session: "otto-dnd-players--brain", generation: 1, forJulian: [],
+    requests: [{ id: "req-players", status: "open", kind: "decision", subject: "Which roster?", question: "Which roster size?" }],
+  });
+  return fixture;
+}
+
+test("folding a sub-Area hides its deeper sub-Areas and their Goals, and its row rolls up what it hides", async () => {
+  const { window, document } = await bootWorkTable(dndFixture(), { workFilter: "all" });
+  /** One sub-header as painted now. */
+  const header = (path) => document.querySelector(`tr[data-work-sub-area='${path}']`);
+  assert.deepEqual([DND, DIALOGUE, PLAYERS].map((path) => header(path).querySelector(".work-group-count").textContent), ["1 open", "1 open", "1 open · 1 blocker · 1 question"], "open, every sub-header counts only its own work");
+  assert.equal(header(DND).querySelector(".desk-state"), null, "open, D&D does not show the Players question");
+
+  // Players is folded first, so its own fold state has something to keep.
+  header(PLAYERS).querySelector(".work-fold").click();
+  await settle(window);
+  header(DND).querySelector(".work-fold").click();
+  await settle(window);
+  assert.equal(header(DND).querySelector(".work-fold").textContent, "▸");
+  assert.equal(header(DIALOGUE), null, "the Dialogue row is hidden under folded D&D");
+  assert.equal(header(PLAYERS), null, "the Players row is hidden under folded D&D");
+  for (const path of [DND, DIALOGUE, PLAYERS]) assert.equal(document.querySelector(`tr[data-work-area='${path}'][data-goal-anchor]`), null, `no Goal of ${path} is a row`);
+  assert.equal(header(DND).querySelector(".work-group-count").textContent, "3 open · 1 blocker · 1 question", "folded, D&D counts its subtree");
+  const asking = header(DND).querySelector(".desk-state");
+  assert.ok(asking?.classList.contains("waiting"), "folded, D&D shows the amber question pill of its descendant brain");
+  assert.match(asking.textContent, /1 question/);
+  assert.deepEqual(JSON.parse(window.localStorage.getItem("agent-shell.folded-work-areas")), [PLAYERS, DND], "the hidden fold state stays in the store");
+  assert.ok(header("otto/onboarding"), "a sibling sub-Area stays visible");
+
+  // } from folded D&D goes to the next visible header after the hidden subtree.
+  await clickRow(window, header(DND));
+  press(window, "}", { shiftKey: true });
+  await settle(window);
+  assert.equal(cursorId(document), "area:otto/onboarding");
+  press(window, "{", { shiftKey: true });
+  await settle(window);
+  assert.equal(cursorId(document), `area:${DND}`);
+  press(window, "j");
+  await settle(window);
+  assert.equal(cursorId(document), "area:otto/onboarding", "j skips the hidden rows too");
+
+  header(DND).querySelector(".work-fold").click();
+  await settle(window);
+  assert.equal(header(DND).querySelector(".work-group-count").textContent, "1 open", "open again, D&D counts only its own work");
+  assert.equal(header(DND).querySelector(".desk-state"), null);
+  assert.equal(header(DIALOGUE).querySelector(".work-fold").textContent, "▾", "Dialogue comes back open");
+  assert.ok(document.querySelector(`tr[data-work-area='${DIALOGUE}'][data-goal-anchor]`));
+  assert.equal(header(PLAYERS).querySelector(".work-fold").textContent, "▸", "Players comes back with its own stored fold");
+  assert.equal(document.querySelector(`tr[data-work-area='${PLAYERS}'][data-goal-anchor]`), null);
+  assert.equal(header(PLAYERS).querySelector(".work-group-count").textContent, "1 open · 1 blocker · 1 question");
+});

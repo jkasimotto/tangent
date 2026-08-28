@@ -1529,14 +1529,19 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function workGroupHeaderRow(record, facts = new Map(), { parentPath = "" } = {}) {
     const { area, trees, descriptions, sections } = record;
     const sub = Boolean(parentPath);
+    const folded = sub ? subAreaIsFoldedOnWork(area.path) : areaIsFoldedOnWork(area.path);
+    // An open sub-header counts only its own work and its own brain. A folded
+    // one stands for its hidden subtree, so it rolls up its descendants'
+    // Goals, blockers, and questions (the caller passes them as `sections`).
+    const ownBrainOnly = sub && !folded;
     const allTrees = [...trees, ...sections.flatMap((section) => section.trees)];
     const allDescriptions = [...descriptions, ...sections.flatMap((section) => section.descriptions)];
-    const summary = deskAreaSummary(area.path, allTrees, allDescriptions, facts, { ownBrainOnly: sub });
+    const summary = deskAreaSummary(area.path, allTrees, allDescriptions, facts, { ownBrainOnly });
     // The pill keeps saying what the Area is doing, so a live brain with no
     // agent under it still states itself (design-active-brains-show-on-work-
     // even-with-no-agents). Only its "waiting" case changed source: it counts
     // the Questions brains asked, never an inferred ask.
-    const status = deskAreaState(area.path, allTrees, allDescriptions, { ownBrainOnly: sub });
+    const status = deskAreaState(area.path, allTrees, allDescriptions, { ownBrainOnly });
     const brain = brainForAreaCard(area.path);
     const label = brain?.live ? "Open brain" : brain ? "Resume brain" : "Start brain";
     // A live brain opens its own session; only a missing or stopped one goes
@@ -1546,7 +1551,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       : `data-open-area-brain="${escapeHtml(area.path)}"`;
     const name = sub ? descendantPath(area.path, parentPath) : humanName(area.name);
     const cursor = `area:${area.path}`;
-    const folded = sub ? subAreaIsFoldedOnWork(area.path) : areaIsFoldedOnWork(area.path);
     const showState = !sub || summary.questions || brain?.live;
     // A quiet sub-Area (no open work, no live brain, no question) prints in
     // the muted style so the eye skips it, and keeps its fold, brain button,
@@ -1702,10 +1706,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       ...descriptions.map((session) => workDefinitionRow(session)),
       ...orderedGoalTrees(trees).map((tree) => workTreeRows(tree, area.path, null, facts, maxElapsedMs)),
     ].join("");
-    const body = own + [...sections]
-      .sort((left, right) => left.area.path.localeCompare(right.area.path))
-      .map((section) => workSubAreaRows(section, area, facts, maxElapsedMs))
-      .join("");
+    const body = own + workSubAreaSections(sections, area, facts, maxElapsedMs);
     // A focused Area stays on the screen with nothing in it, and says why, so
     // Julian can see that his Focus is what emptied the table.
     const empty = record.focusRoot && !record.focusHasWork
@@ -1718,13 +1719,33 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
+   * The sub-headers of one open Area group in path order, each with its rows.
+   * A folded sub-Area hides its whole subtree: every deeper sub-Area's row and
+   * Goals go with it, and its own row rolls up what it hides. A hidden
+   * sub-Area keeps its own fold state in the store for when its ancestor
+   * opens again. Julian folded `otto/dnd` and `otto/dnd/players` stayed.
+   */
+  function workSubAreaSections(sections, parentArea, facts, maxElapsedMs) {
+    const sorted = [...sections].sort((left, right) => left.area.path.localeCompare(right.area.path));
+    const foldedPaths = sorted.map((section) => section.area.path).filter(subAreaIsFoldedOnWork);
+    /** True when a folded sub-Area above this path hides it. */
+    const underFold = (path) => foldedPaths.some((folded) => path.startsWith(`${folded}/`));
+    return sorted
+      .filter((section) => !underFold(section.area.path))
+      .map((section) => workSubAreaRows(section, parentArea, facts, maxElapsedMs, sorted.filter((other) => other.area.path.startsWith(`${section.area.path}/`))))
+      .join("");
+  }
+
+  /**
    * One sub-Area inside an open Area group: its thin sub-header, then its own
    * rows unless the sub-Area is folded. A folded sub-Area keeps its count and
-   * its brain state on the sub-header (work-view-sub-areas Decision 6).
+   * its brain state on the sub-header, rolled up over the `descendants` it
+   * hides (work-view-sub-areas Decision 6).
    */
-  function workSubAreaRows(section, parentArea, facts, maxElapsedMs) {
-    const header = workGroupHeaderRow({ area: section.area, trees: section.trees, descriptions: section.descriptions, sections: [] }, facts, { parentPath: parentArea.path });
-    if (subAreaIsFoldedOnWork(section.area.path)) return header;
+  function workSubAreaRows(section, parentArea, facts, maxElapsedMs, descendants = []) {
+    const folded = subAreaIsFoldedOnWork(section.area.path);
+    const header = workGroupHeaderRow({ area: section.area, trees: section.trees, descriptions: section.descriptions, sections: folded ? descendants : [] }, facts, { parentPath: parentArea.path });
+    if (folded) return header;
     const rows = [
       ...section.descriptions.map((session) => workDefinitionRow(session)),
       ...orderedGoalTrees(section.trees).map((tree) => workTreeRows(tree, section.area.path, null, facts, maxElapsedMs, { subArea: true })),

@@ -77,7 +77,7 @@ test("every status carries a word, and every icon-only control carries a name", 
 
 test("Area pointers, toolbar help, and the state-owned action surface share one command registry", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
-  const ids = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "messageBrain", "starArea", "chooseAreas", "collapse", "expand", "questions", "note"];
+  const ids = ["previousArea", "nextArea", "session", "stopBrain", "defaults", "messageBrain", "starArea", "chooseAreas", "collapse", "expand", "questions", "note"];
   document.querySelector("[data-work-group='otto/onboarding'] [data-work-object-actions]").click();
   await settle(window);
   for (const id of ids) {
@@ -414,6 +414,21 @@ test("an Area brain row takes the cursor and Command-Shift-Enter enters its brai
   assert.equal(document.querySelector("#session-layer-terminal").dataset.session, "otto-tangent--brain");
   assert.equal(document.querySelector("#session-layer-title strong").textContent, "Otto / Tangent");
   assert.match(document.querySelector("#session-layer-title span").textContent, /Claude · Area brain/);
+});
+
+test("Command-Shift-Enter opens the brain chooser on an inactive Area and b does nothing", async () => {
+  const fixture = withBrainOnlyArea(workTableFixture(), { live: false });
+  const { window, document } = await bootWorkTable(fixture);
+  const row = document.querySelector("[data-work-cursor='area:otto/quiet']");
+  row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  press(window, "b");
+  await settle(window);
+  assert.equal(document.querySelector("[data-launch-popover]"), null, "b does not open the brain chooser");
+  press(window, "Enter", { metaKey: true, shiftKey: true });
+  await settle(window);
+  assert.ok(document.querySelector("[data-launch-popover]"), "the shared agent-entry key opens the brain chooser");
+  assert.match(document.querySelector("[data-launch-popover] header").textContent, /Otto \/ Quiet/);
 });
 
 test("Work keys expose their help and stay inert in text and terminal input", async () => {

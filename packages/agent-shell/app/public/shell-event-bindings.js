@@ -174,7 +174,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   /** True when one header row carries the brain route that Area commands act through. */
   function headerHasBrainRoute(header) {
-    return Boolean(header?.querySelector("[data-work-command='openBrain']"));
+    return Boolean(header?.querySelector(".work-group-brain[data-open-brain], .work-group-brain[data-open-area-brain]"));
   }
 
   /** Returns the exact Area whose nearest header owns commands for this row. */
@@ -619,9 +619,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const session = describeWorkSessions().find((item) => item.name === value.slice(11));
       return session ? openSessionLayer(session, "definition") : showToast("This row has no live session to enter.");
     }
-    const brain = brainForAreaCard(row.dataset.workArea);
-    const session = state.sessions.find((item) => item.name === brain?.session && brain?.live);
-    return session ? openSessionLayer(session, "brain") : showToast("This Area has no live brain to enter.");
+    return executeWorkCommand("openBrain", row);
   }
 
   /** Lets the shared modal close its informational key sheet. */
@@ -889,7 +887,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const isArea = Boolean(row?.classList.contains("work-group-row") && area);
     const searching = Boolean(state.searchPattern);
     const options = workCommandsFor().filter((command) => {
-      if (["openBrain", "starArea"].includes(command.id)) return Boolean(isArea || goal);
+      if (command.id === "starArea") return Boolean(isArea || goal);
       if (["stopBrain", "defaults", "messageBrain", "chooseAreas", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return isArea;
       if (["readGoal", "changeAgent", "goalStatus"].includes(command.id)) return Boolean(goal);
       if (command.id === "resumeAttempt") return Boolean(goal) && !isArea;
@@ -2725,10 +2723,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const current = cursorRow();
       const commandArea = commandAreaForRow(current);
       if (handleWorkMotion(event, rows, current)) return;
-      if (workCommandMatches(event, "openBrain")) {
-        event.preventDefault();
-        return executeWorkCommand("openBrain", current);
-      }
       if (workCommandMatches(event, "stopBrain")) {
         event.preventDefault();
         return executeWorkCommand("stopBrain", current);

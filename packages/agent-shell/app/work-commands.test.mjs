@@ -12,8 +12,9 @@ test("Work command records are unique, complete, and own the settled shortcuts",
     assert.match(command.help, /\S/);
     assert.ok(Object.isFrozen(command));
   }
-  const settled = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "messageBrain", "starArea", "starredOnly", "activeOnly", "collapse", "expand", "questions", "readGoal", "goalStatus", "search", "nextMatch", "previousMatch", "keys"];
-  assert.deepEqual(settled.map((id) => workCommand(id).keyDisplay), ["{", "}", "b", "s", "d", "a", "f", "F", "A", "h", "l", "r", "o", "x", "/", "n", "N", "?"]);
+  const settled = ["previousArea", "nextArea", "stopBrain", "defaults", "messageBrain", "starArea", "starredOnly", "activeOnly", "collapse", "expand", "questions", "readGoal", "goalStatus", "search", "nextMatch", "previousMatch", "keys"];
+  assert.deepEqual(settled.map((id) => workCommand(id).keyDisplay), ["{", "}", "s", "d", "a", "f", "F", "A", "h", "l", "r", "o", "x", "/", "n", "N", "?"]);
+  assert.equal(workCommand("openBrain"), null, "the separate brain command and b shortcut are retired");
   assert.equal(workCommand("note").keyDisplay, "", "Capture note has no key (Julian, 2026-08-28); it stays in the ? sheet");
   assert.equal(workCommand("commands"), null, "commands and keys are one list under ? (Julian, 2026-08-28)");
   assert.equal(workCommand("filter"), null, "the Work filter is gone; / searches");
@@ -35,6 +36,7 @@ test("matching reads the registry and rejects unintended modifiers", () => {
   assert.equal(workCommandMatches(event("Enter", { metaKey: true, shiftKey: true }), "session"), true);
   assert.equal(workCommandMatches(event("Enter", { metaKey: true }), "session"), false, "Command-Enter alone submits forms");
   assert.equal(workCommandMatches(event("Enter", { shiftKey: true }), "session"), false);
+  assert.equal(WORK_COMMANDS.some((command) => workCommandMatches(event("b"), command.id)), false, "b triggers no Work command");
   assert.equal(workCommandMatches(event("?", { shiftKey: true }), "keys"), true);
   assert.equal(workCommandMatches(event("A", { shiftKey: true }), "activeOnly"), true);
   assert.equal(workCommandMatches(event("A", { shiftKey: true }), "messageBrain"), false, "Shift+A never messages the brain");

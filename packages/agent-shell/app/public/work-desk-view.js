@@ -993,10 +993,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * for it (work-screen-refresh D3).
    */
   const AREA_BRAIN_PILLS = Object.freeze({
-    "Brain needs a decision": "The brain shows a choice only you can make. Open it with b.",
+    "Brain needs a decision": "The brain shows a choice only you can make. Enter its agent with Command-Shift-Enter.",
     "Brain working": "The brain is producing output now, with no agent under it.",
     "Brain did not start": "The brain's session opened but no agent runs in it.",
-    "Brain has a problem": "The brain's last start failed. Open it with b to see why.",
+    "Brain has a problem": "The brain's last start failed. Enter its agent with Command-Shift-Enter to see why.",
     "Brain recovering": "Tangent is bringing the brain back after a failure.",
   });
 
@@ -1632,10 +1632,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       && !allDescriptions.length && !summary.questions && !brain?.live;
     const starred = areaFocusRoots().includes(area.path);
     const starButton = `<button class="work-star${starred ? " starred" : ""}" type="button" data-star-area="${escapeHtml(area.path)}" aria-pressed="${starred}" ${workCommandAttributes("starArea", `${starred ? "Unstar" : "Star"} ${areaLabel(area.path)} (f)`)} aria-label="${starred ? "Unstar" : "Star"} ${escapeHtml(areaLabel(area.path))}"><span aria-hidden="true">${starred ? "★" : "☆"}</span></button>`;
-    const brainCommand = workCommand("openBrain");
-    // The visible text is the one word `brain`; the verb (Open, Resume,
-    // Start) lives in the title and the accessible name (work-screen-refresh D4).
-    const brainButton = `<button class="work-group-brain" type="button" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)} (${brainCommand.keyDisplay})`)} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}" data-brain-verb="${escapeHtml(label)}"><span class="work-group-brain-text">brain</span>${workKey("openBrain")}</button>${brainLoopMark(area.path)}`;
+    // The visible text identifies the agent as the brain. The shared agent
+    // entry command supplies its key and keyboard label.
+    const brainButton = `<button class="work-group-brain" type="button" ${route} ${workCommandAttributes("session", `${label} for ${areaLabel(area.path)} (${workCommand("session").keyDisplay})`)} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}" data-brain-verb="${escapeHtml(label)}"><span class="work-group-brain-text">brain</span>${workKey("session")}</button>${brainLoopMark(area.path)}`;
     return `<tr class="work-group-row${sub ? " work-sub-area-row" : ""}${quiet ? " quiet" : ""}${folded ? " folded" : ""}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-search-text="${escapeHtml(`${name} ${area.path}`)}" data-work-area="${escapeHtml(area.path)}"${sub ? ` data-work-sub-area="${escapeHtml(area.path)}"` : ""}>
       <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="${sub ? "row" : "rowgroup"}" id="${workGroupId(area.path)}">
         <div class="work-group-layout">
@@ -2067,7 +2066,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /**
    * The caption's key line follows the cursor row (work-view-affordances D6):
-   * an Area row prints `b brain · h/l fold · : more`, a Goal row `↵ open · o
+   * an Area row prints `⌘⇧↵ agent · h/l fold`, a Goal row `↵ open · o
    * read`. The same registry feeds the `?` sheet.
    */
   function workCaptionHint() {

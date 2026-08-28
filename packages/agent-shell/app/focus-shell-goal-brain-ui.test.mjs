@@ -169,7 +169,7 @@ test("the group brain action is one word at every width and never wraps", async 
   const button = dom.window.document.createElement("button");
   button.className = "work-group-brain";
   button.setAttribute("aria-label", "Open brain for Otto / Tangent");
-  button.innerHTML = `<span class="work-group-brain-text">brain</span><kbd aria-hidden="true">b</kbd>`;
+  button.innerHTML = `<span class="work-group-brain-text">brain</span><kbd aria-hidden="true">⌘⇧↵</kbd>`;
   dom.window.document.body.append(button);
 
   assert.equal(dom.window.getComputedStyle(button).whiteSpace, "nowrap", "the group action never wraps");

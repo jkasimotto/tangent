@@ -87,7 +87,7 @@ test("every verb button in Work prints its key in one kbd", async () => {
   assert.equal(run.querySelector("kbd").textContent, "⌘⇧↵", "the agent control prints the key that enters the run (work-screen-refresh D5)");
   assert.equal(document.querySelector(".work-table [data-open-goal-run] kbd:not([aria-hidden])"), null);
   for (const kbd of document.querySelectorAll(".work-table [data-open-goal-run] kbd")) assert.notEqual(kbd.textContent, "↵", "no run route prints plain Enter: that key reads the Goal");
-  assert.equal(document.querySelector(".work-table .work-group-brain kbd").textContent, "b");
+  assert.equal(document.querySelector(".work-table .work-group-brain kbd").textContent, "⌘⇧↵");
   assert.equal(document.querySelector(".work-table .desk-action-menu-trigger kbd").textContent, "?");
   assert.equal(document.querySelector(".work-table [data-review-questions] kbd").textContent, "r");
   assert.equal(workCommand("open")?.keyDisplay, "↵", "Enter is a registered Work command");
@@ -119,7 +119,8 @@ test("the caption prints the current row's keys from the same table as the ? she
   await settle(window);
   assert.equal(document.querySelector(".work-keyboard-hint").dataset.workCaptionRow, "area");
   const areaKeys = captionKeys(document);
-  for (const key of ["h/l", "b", "a", "?"]) assert.ok(areaKeys.includes(key), `an Area row teaches ${key}: ${areaKeys.join(" ")}`);
+  for (const key of ["⌘⇧↵", "h/l", "a", "?"]) assert.ok(areaKeys.includes(key), `an Area row teaches ${key}: ${areaKeys.join(" ")}`);
+  assert.equal(areaKeys.includes("b"), false, "an Area row does not teach the retired brain shortcut");
   assert.equal(areaKeys.includes(":"), false, "there is no separate command menu");
   assert.match(document.querySelector(".work-keyboard-hint").textContent, /h\/l fold/, "the triangle's keys are printed beside the word fold");
 

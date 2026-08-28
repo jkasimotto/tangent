@@ -118,12 +118,12 @@ test("Go to offers an unstarted Area brain and Work has no Browse or Describe to
   dom.window.close();
 });
 
-test("the Work brain key opens the chooser, and Start needs no instruction", async () => {
+test("the Work agent-entry key opens the brain chooser, and Start needs no instruction", async () => {
   const { dom, window, posts } = await bootShell(null);
 
-  // j walks the Otto header, the quiet Empty sub-header, then the Tangent sub-header (every Area has a row).
-  for (let step = 0; step < 3; step += 1) window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", bubbles: true }));
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "b", bubbles: true }));
+  const tangentRow = window.document.querySelector("[data-work-sub-area='otto/tangent']");
+  tangentRow.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true, bubbles: true }));
   await settle(window);
 
   assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0, "the key opens the chooser first");
@@ -138,7 +138,7 @@ test("the Work brain key opens the chooser, and Start needs no instruction", asy
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   await settle(window);
   const started = posts.filter((item) => item.path === "/api/brains/start");
-  assert.equal(started.length, 1, "b then Enter starts the brain: two keys");
+  assert.equal(started.length, 1, "Command-Shift-Enter then Enter starts the brain");
   assert.equal(started[0].body.instruction, "", "no upfront instruction travels");
   assert.equal(started[0].body.resume, false);
   assert.equal(started[0].body.expectedLaunch, "codex/sol", "the request carries the launch that the control disclosed");
@@ -148,9 +148,9 @@ test("the Work brain key opens the chooser, and Start needs no instruction", asy
 
 test("a brain picker sends a typed one-launch override and preserves the Area default", async () => {
   const { dom, window, posts } = await bootShell(null);
-  // j walks the Otto header, the quiet Empty sub-header, then the Tangent sub-header (every Area has a row).
-  for (let step = 0; step < 3; step += 1) window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", bubbles: true }));
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "b", bubbles: true }));
+  const tangentRow = window.document.querySelector("[data-work-sub-area='otto/tangent']");
+  tangentRow.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true, bubbles: true }));
   await settle(window);
 
   assert.equal(window.document.querySelectorAll("[data-launch-harness]").length, 2, "brain launch exposes the registry choices");
@@ -182,7 +182,7 @@ test("a live brain has a direct Area stop control", async () => {
   assert.ok(stop, "stop lives in the related Area action surface");
   assert.equal(stop.dataset.modalKey, "s", "the pointer teaches the stop shortcut");
   const menuText = stop.closest("[role='menu']").textContent;
-  for (const taught of ["Open brain", "Defaults", "Message brain", "Star Area", "Review questions", "Capture note"]) assert.match(menuText, new RegExp(taught));
+  for (const taught of ["Enter the agent", "Defaults", "Message brain", "Star Area", "Review questions", "Capture note"]) assert.match(menuText, new RegExp(taught));
   assert.equal(window.document.querySelector("[data-modal-action='describeArea']"), null, "the removed Describe-work route is not renamed as New task");
   stop.click();
   assert.match(window.document.querySelector("#modal-title").textContent, /Stop the Tangent brain/);

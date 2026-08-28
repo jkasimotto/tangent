@@ -1,7 +1,7 @@
 // Sub-Area headers in Work (docs/design/work-view-sub-areas/design-record.md
 // Decisions 1 to 8). One flat sub-header per sub-Area with open work under
 // its top-level Area, named by its relative path, with its own fold, count,
-// brain state, brain button, and menu. `b`, `a`, `r`, `h`/`l`, and `:` act
+// brain state, brain button, and menu. `⌘⇧↵`, `a`, `r`, `h`/`l`, and `:` act
 // on the nearest header above the cursor. `{` and `}` visit every header a
 // fold has not hidden.
 
@@ -105,7 +105,7 @@ test("one flat sub-header per sub-Area, named by its path below the group, with 
   assert.deepEqual(subHeaders.map((row) => row.querySelector(".work-group-count").textContent), ["1 open", "2 open", "1 open · 1 blocker · 1 question"], "a sub-header prints its open count plus blockers");
   assert.deepEqual(subHeaders.map((row) => row.querySelector(".work-group-brain").dataset.brainVerb), ["Resume brain", "Start brain", "Resume brain"], "the brain button's accessible verb is Open, Resume, or Start as on the top-level header");
   for (const row of subHeaders) {
-    assert.equal(row.querySelector(".work-group-brain kbd").textContent, "b", "the brain button prints its key on every sub-header");
+    assert.equal(row.querySelector(".work-group-brain kbd").textContent, "⌘⇧↵", "the brain button prints the shared agent-entry key on every sub-header");
     assert.equal(row.querySelector(".desk-action-menu-trigger kbd").textContent, ":");
     assert.ok(row.querySelector(".work-fold"), "every sub-header has its own triangle");
     assert.equal(row.querySelector(".work-group-note"), null, "the note signal line is not on a sub-header");
@@ -189,7 +189,7 @@ test("the caption on a header teaches { } beside fold, from the one key table", 
   assert.equal(entry.keyDisplay, "{ }");
 });
 
-test("b, a, and : on a sub-header act on that Area, and h/l walk one level deeper", async () => {
+test("agent entry, a, and : on a sub-header act on that Area, and h/l walk one level deeper", async () => {
   const { window, document } = await bootWorkTable(subAreaFixture(), { workFilter: "all" });
   /** The Work sub-header as painted now. */
   const workHeader = () => document.querySelector(`tr[data-work-sub-area='${WORK}']`);
@@ -197,15 +197,19 @@ test("b, a, and : on a sub-header act on that Area, and h/l walk one level deepe
   press(window, ":", { shiftKey: true });
   await settle(window);
   assert.match(document.querySelector("#modal-title").textContent, /Shell \/ Work/, "the : menu names the sub-Area");
-  assert.ok(document.querySelector("[data-modal-action='openBrain']"), "the menu holds the Area commands");
+  assert.ok(document.querySelector("[data-modal-action='session']"), "the menu holds the shared agent-entry command");
+  assert.equal(document.querySelector("[data-modal-action='openBrain']"), null, "the menu has no separate brain command");
   press(window, "Escape");
   await settle(window);
 
   await clickRow(window, workHeader());
   press(window, "b");
   await settle(window);
+  assert.equal(document.querySelector("[data-launch-popover]"), null, "b does nothing on the sub-Area");
+  press(window, "Enter", { metaKey: true, shiftKey: true });
+  await settle(window);
   const popover = document.querySelector("[data-launch-popover]");
-  assert.ok(popover, "b on a sub-Area with no brain opens the composer that starts one");
+  assert.ok(popover, "the shared agent-entry key opens the chooser for a sub-Area with no brain");
   assert.match(popover.querySelector("header").textContent, /Otto \/ Tangent \/ Shell \/ Work/, "the composer is for the sub-Area, not its parent");
   document.querySelector("[data-launch-close]").click();
   await settle(window);
@@ -249,7 +253,7 @@ test("every not-done Area has a row: a quiet top-level Area, a quiet sub-Area, a
   const personalHeader = personal.querySelector(".work-group-row");
   assert.equal(personalHeader.querySelector(".work-group-count").textContent, "0 open", "a top-level Area with nothing under it keeps its header");
   assert.equal(personalHeader.querySelector(".work-group-brain").dataset.brainVerb, "Start brain");
-  assert.equal(personalHeader.querySelector(".work-group-brain kbd").textContent, "b");
+  assert.equal(personalHeader.querySelector(".work-group-brain kbd").textContent, "⌘⇧↵");
   assert.equal(personal.querySelectorAll("tr").length, 1, "and nothing under it");
 
   const otto = document.querySelector("tbody[data-work-group='otto']");
@@ -263,7 +267,7 @@ test("every not-done Area has a row: a quiet top-level Area, a quiet sub-Area, a
   assert.equal(notes.querySelector(".desk-state"), null, "no state on a quiet row");
   assert.ok(notes.querySelector(".work-fold"), "it keeps its fold triangle");
   assert.equal(notes.querySelector(".work-group-brain").dataset.brainVerb, "Start brain");
-  assert.equal(notes.querySelector(".work-group-brain kbd").textContent, "b");
+  assert.equal(notes.querySelector(".work-group-brain kbd").textContent, "⌘⇧↵");
   assert.equal(notes.querySelector(".desk-action-menu-trigger kbd").textContent, ":");
   assert.equal(subHeaders.filter((row) => row.classList.contains("quiet")).length, 1, "a sub-Area with work is not muted");
 
@@ -271,8 +275,8 @@ test("every not-done Area has a row: a quiet top-level Area, a quiet sub-Area, a
   assert.equal(shell.querySelector(".work-group-brain").dataset.brainVerb, "Open brain", "a live brain at depth 3 is a sub-header inside its top-level group");
   assert.match(shell.querySelector(".desk-state").textContent, /Brain working/);
 
-  // } walks every header, the quiet ones included, and b on the quiet row
-  // starts its brain.
+  // } walks every header, the quiet ones included. The shared agent-entry
+  // key starts the brain on the quiet row.
   await clickRow(window, document.querySelector("tr[data-work-sub-area='otto/tangent']"));
   const steps = [];
   for (let index = 0; index < 5; index += 1) {
@@ -282,10 +286,10 @@ test("every not-done Area has a row: a quiet top-level Area, a quiet sub-Area, a
   }
   assert.deepEqual(steps, ["area:otto/tangent/notes", `area:${SHELL}`, `area:${WORK}`, `area:${KEYS}`, "area:personal"], "} visits the quiet sub-header and the quiet top-level header");
   await clickRow(window, document.querySelector("tr[data-work-sub-area='otto/tangent/notes']"));
-  press(window, "b");
+  press(window, "Enter", { metaKey: true, shiftKey: true });
   await settle(window);
   const popover = document.querySelector("[data-launch-popover]");
-  assert.ok(popover, "b on a quiet sub-Area opens the composer that starts its brain");
+  assert.ok(popover, "the agent-entry key opens the chooser that starts the quiet Area brain");
   assert.match(popover.querySelector("header").textContent, /Notes/);
 });
 

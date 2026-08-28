@@ -137,7 +137,7 @@ test("a command modal hands focus to a live session instead of restoring inert W
   area.querySelector("[data-work-cursor-control]").focus();
   press(window, "?", { shiftKey: true });
   await settle(window);
-  document.querySelector("[data-modal-action='openBrain']").click();
+  document.querySelector("[data-modal-action='session']").click();
   await settle(window, 5);
 
   assert.equal(document.querySelector("#session-layer").hidden, false);

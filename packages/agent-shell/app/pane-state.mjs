@@ -23,7 +23,12 @@ export const PANE_SIGNATURES = {
     // so screen diffing alone briefly mistakes active work for a wait.
     busy: [/\bWorking(?:\.\.\.|…)/i],
     dialog: [],
-    composer: { prompt: /^❯(\s|$)/, homeColumn: 2 },
+    // Pi's editor prints no prompt character. The composer is the line between
+    // two horizontal rules above the footer, cursor at column 0 when empty
+    // (fixture pi-idle.txt, 0.84.x). The old `❯` prompt never matched a real
+    // pi pane, so every pi session read as "no composer" and messages queued
+    // forever (Julian, 2026-08-28).
+    composer: { frame: /^─{10,}\s*$/, homeColumn: 0 },
     // Footer prints "6.8%/1.0M": percent used, then window size. Both numbers
     // mean used-of-window (pinned by the pi-working fixture).
     context: {
@@ -184,12 +189,27 @@ function hasDialog(lines) {
  */
 function composerKind(lines, cursorX, cursorY) {
   const cursorLine = lines[cursorY] ?? "";
-  for (const signature of Object.values(PANE_SIGNATURES)) {
-    const { prompt, homeColumn } = signature.composer;
-    if (!prompt.test(cursorLine)) continue;
-    return cursorX <= homeColumn ? { kind: "idle" } : { kind: "draft" };
+  const composers = Object.values(PANE_SIGNATURES).map((signature) => signature.composer);
+  // A prompt character is the stronger evidence: claude boxes its `❯` line in
+  // rules too, so the frame form is only consulted when no prompt matched.
+  for (const { prompt, homeColumn } of composers) {
+    if (prompt && prompt.test(cursorLine)) return cursorX <= homeColumn ? { kind: "idle" } : { kind: "draft" };
+  }
+  for (const { frame, homeColumn } of composers) {
+    if (frame && isFramedComposer(lines, cursorY, frame)) return cursorX <= homeColumn ? { kind: "idle" } : { kind: "draft" };
   }
   return null;
+}
+
+/**
+ * True when the cursor line is the one line boxed between two rule lines: the
+ * shape of a prompt-less editor such as pi's. Requires a rule directly above
+ * and directly below so ordinary output that happens to contain a rule cannot
+ * pass as a composer.
+ */
+function isFramedComposer(lines, cursorY, frame) {
+  if (cursorY < 1 || cursorY + 1 >= lines.length) return false;
+  return frame.test(lines[cursorY - 1]) && frame.test(lines[cursorY + 1]);
 }
 
 /**

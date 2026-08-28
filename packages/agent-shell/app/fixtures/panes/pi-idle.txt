@@ -1,0 +1,36 @@
+ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+
+[Context]
+  ~/.pi/agent/AGENTS.md, ~/AGENTS.md, ~/git-worktrees/delivery/pgande-speedrun/CLAUDE.md, ~/git-worktrees/delivery/pgande-speedrun/Customers/PG&E/CLAUDE.md, AGENTS.md
+
+[Skills]
+  commit-hygiene, create-skill, design, dim-cli-tools, dim-fea, dim-integration-testing, dim-language, explain-code, extract-speedrun-transcript, factoring-dim-widgets, fibery,
+format-branch-dim, impl, module-build-cfg, outcome, present, recall, remember, simple-english, speedrun, tangent-eval, ux, write-for-reader
+
+[Extensions]
+  debug-logger.ts
+
+[Skill conflicts]
+  auto (project) ~/git-worktrees/delivery/pgande-speedrun/.agents/skills/fibery/SKILL.md
+    description exceeds 1024 characters (1144)
+  auto (project) ~/git-worktrees/delivery/pgande-speedrun/.agents/skills/ux/SKILL.md
+    description exceeds 1024 characters (1032)
+
+
+ Warning: tmux extended-keys-format is xterm. Pi works best with csi-u. Add `set -g extended-keys-format csi-u` to ~/.tmux.conf and restart tmux.
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 0.84.3 is available. Run pi update
+ Changelog: https://pi.dev/changelog
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~/git-worktrees/delivery/pgande-speedrun/Customers/PG&E/dashboard (pgande-speedrun)
+0.0%/1.0M (auto)                                                                                                                             (resetdata-glm) zai/glm-5.2 • medium

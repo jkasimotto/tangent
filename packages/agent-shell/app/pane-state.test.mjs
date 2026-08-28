@@ -46,6 +46,22 @@ test("a paused pi working screen remains working", () => {
   assert.deepEqual(classifyStaticPane({ text, cursorX: 0, cursorY: 2 }), { kind: "working" });
 });
 
+test("a real idle pi composer classifies as idle: no prompt character, framed by rules", () => {
+  const { text, lines } = fixture("pi-idle.txt");
+  const cursorY = 32;
+  assert.equal(lines[cursorY].trim(), "", "pi's composer is a blank line");
+  assert.match(lines[cursorY - 1], /^─{10,}/);
+  assert.match(lines[cursorY + 1], /^─{10,}/);
+  assert.deepEqual(classifyStaticPane({ text, cursorX: 0, cursorY }), { kind: "idle" });
+  assert.equal(classifyWorkingComposer({ text, cursorX: 0, cursorY }), "idle");
+  assert.equal(classifyWorkingComposer({ text, cursorX: 7, cursorY }), "draft");
+});
+
+test("a rule line in ordinary output is not a pi composer", () => {
+  const text = "output\n────────────────────\nmore output\nplain text\n";
+  assert.deepEqual(classifyStaticPane({ text, cursorX: 0, cursorY: 2 }), { kind: "waiting" });
+});
+
 test("a composer with unsent text classifies as draft", () => {
   const { text, cursorY } = fixture("claude-draft.txt", /^❯(\s|$)/);
   assert.deepEqual(classifyStaticPane({ text, cursorX: 25, cursorY }), { kind: "draft" });

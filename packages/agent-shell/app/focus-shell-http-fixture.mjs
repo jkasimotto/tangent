@@ -56,6 +56,7 @@ export async function startShellServer(context, { here, root, trees, workspace, 
       TANGENT_LOOPS_ROOT: path.join(root, "loops"), WORKSPACE: workspace, AGENT_SHELL_NO_OPEN: "1",
       AGENT_SHELL_TEST_NO_LAUNCH: "1", TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
       TANGENT_BRAINS_ROOT: path.join(root, "brains"), AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
+      TANGENT_LAUNCH_MEMORY: path.join(root, "launch-memory.json"),
       GROQ_API_KEY: "", CHAT_SESSION: `focus-shell-test-${process.pid}`,
       TANGENT_SHELL_INSTANCE_ID: instanceId,
       // These tests hand a brain over to prove the swap, not the pacing of an

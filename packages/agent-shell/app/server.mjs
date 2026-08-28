@@ -19,7 +19,7 @@ import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
 import { discoverProcesses, evaluateProcess, goalNamesProcess, processFileExists, processView, readAreaProcesses, readProcessState, removeProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
 import { formatLoopNote, parseProcessNote, validateProcessSlug } from "./process-note.mjs";
-import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
+import { documentHash, markdownTitle, safeMarkdownPath, safePresentedMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import documentComments from "./public/document-comments.js";
 import areaMapCore from "./public/area-map-core.js";
 import whatHappenedCore from "./public/what-happened-core.js";
@@ -759,7 +759,7 @@ async function readVaultDocument(file) {
 async function resolvePresentedDocument(goal, input) {
   const requested = String(input ?? "").trim();
   if (!requested) return { error: "present needs a document path" };
-  const vaultSafe = safeMarkdownPath(TREES_ROOT, requested);
+  const vaultSafe = safePresentedMarkdownPath(TREES_ROOT, requested);
   if (vaultSafe) {
     const text = await readFile(vaultSafe.absolute, "utf8").catch(() => null);
     if (text == null) return { error: `no Markdown file ${requested}` };

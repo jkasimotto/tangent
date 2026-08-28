@@ -9,6 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { readInbox } from "./brain-inbox.mjs";
+import { readGoalPresentations } from "./goal-presentations.mjs";
 import { startShellServer } from "./focus-shell-http-fixture.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
@@ -34,7 +35,7 @@ async function buildVault(root) {
   await mkdir(path.join(trees, area), { recursive: true });
   await mkdir(workspace, { recursive: true });
   await writeFile(path.join(trees, "harnesses.md"), "# Harnesses\n\n```tangent.harnesses.v1\n{\"version\":1,\"harnesses\":[{\"id\":\"test\",\"label\":\"Test\",\"command\":\"true\"}]}\n```\n", "utf8");
-  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n\n```tangent.environment.v1\n{\"defaults\":{\"brain\":{\"harness\":\"test\"}}}\n```\n", "utf8");
+  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n\n```tangent.environment.v2\n{\"version\":2,\"allow\":[\"test\"]}\n```\n", "utf8");
   await writeFile(path.join(trees, area, "sendprobe.md"), `---\ntype: area\n---\n\n# Send probe\n\n## Resources\n\n- Repository: ${workspace}\n`, "utf8");
   return { trees, workspace };
 }
@@ -104,12 +105,23 @@ test("a worker sends notes, questions, and done to its brain, and nothing else",
 
   // Done: the assignment is complete, stored as the typed result readers know.
   const second = await startWorker(base, brain.body.session, openedSessions, "Second probe");
-  const done = await post(base, "/api/agents/send", { to: "brain", from: second.session, text: "Route wired; npm test green.", kind: "done" });
+  const designFile = path.join(trees, area, "design-second-probe.md");
+  await writeFile(designFile, "# Second probe design\n", "utf8");
+  const outside = path.join(root, "outside.md");
+  await writeFile(outside, "# Outside\n", "utf8");
+  const refusedPresentation = await post(base, "/api/agents/send", { to: "brain", from: second.session, text: "Do not complete.", kind: "done", present: [outside] });
+  assert.equal(refusedPresentation.status, 400);
+  assert.equal(refusedPresentation.body.error, "the document is outside the vault and this Goal's repository");
+  assert.equal((await readQueue(root, second)).steps[0].status, "running", "an unauthorized absolute path cannot complete the handover");
+  const done = await post(base, "/api/agents/send", { to: "brain", from: second.session, text: "Route wired; npm test green.", kind: "done", present: [designFile] });
   assert.equal(done.status, 200, JSON.stringify(done.body));
   const afterDone = await readQueue(root, second);
   assert.equal(afterDone.steps[0].status, "complete");
   assert.deepEqual({ type: afterDone.steps[0].reports[0].type, status: afterDone.steps[0].reports[0].status, summary: afterDone.steps[0].reports[0].summary },
     { type: "implementation-result", status: "done", summary: "Route wired; npm test green." });
+  const presentation = await readGoalPresentations(path.join(root, "presented"), area, second.slug);
+  assert.deepEqual(presentation.items.map(({ root, file }) => ({ root, file })), [{ root: "vault", file: `${area}/design-second-probe.md` }],
+    "an absolute vault path completes the handover and stores the canonical vault-relative Document path");
   assert.match((await readInbox(path.join(root, "brains"), area)).notices.find((entry) => entry.id === done.body.receipt.notice.id).text, /^done: Route wired/);
 
   // Blocked: the assignment waits, stored as a failed report.

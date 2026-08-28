@@ -29,6 +29,15 @@ export function safeMarkdownPath(root, relative) {
   return absolute.startsWith(prefix) ? { relative: normalized, absolute } : null;
 }
 
+/** Resolve a relative path or an absolute path inside the vault to one canonical Markdown path. */
+export function safePresentedMarkdownPath(root, input) {
+  if (typeof input !== "string" || !input) return null;
+  const relative = path.isAbsolute(input)
+    ? path.relative(path.resolve(root), path.resolve(input)).split(path.sep).join("/")
+    : input;
+  return safeMarkdownPath(root, relative);
+}
+
 /** Uses the first level-one heading as a document's display title. */
 export function markdownTitle(text, fallback) {
   return text.match(/^#\s+(.+)$/m)?.[1]?.trim() || fallback;

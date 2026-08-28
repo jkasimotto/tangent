@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
+import { documentHash, markdownTitle, safeMarkdownPath, safePresentedMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 
 test("wikiLinks reads prose but not inline or fenced code", () => {
   const text = "[[design-one|Design]] and [[goal-work#State]] `[[not-this]]`\n```md\n[[nor-this]]\n```";
@@ -15,6 +15,15 @@ test("safeMarkdownPath confines markdown files to the vault", () => {
   assert.equal(safeMarkdownPath("/vault", "../secret.md"), null);
   assert.equal(safeMarkdownPath("/vault", "/tmp/file.md"), null);
   assert.equal(safeMarkdownPath("/vault", "otto/file.txt"), null);
+});
+
+test("safePresentedMarkdownPath canonicalizes absolute vault paths and rejects outside paths", () => {
+  const relative = safePresentedMarkdownPath("/vault", "otto/design.md");
+  assert.deepEqual(safePresentedMarkdownPath("/vault", "/vault/otto/design.md"), relative);
+  assert.deepEqual(relative, { relative: "otto/design.md", absolute: "/vault/otto/design.md" });
+  assert.equal(safePresentedMarkdownPath("/vault", "/tmp/design.md"), null);
+  assert.equal(safePresentedMarkdownPath("/vault", "/vault/../tmp/design.md"), null);
+  assert.equal(safePresentedMarkdownPath("/vault", "/vault/otto/design.txt"), null);
 });
 
 test("document metadata helpers are deterministic", () => {

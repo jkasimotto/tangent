@@ -73,13 +73,13 @@ function installTerminalFake(window) {
   };
 }
 
-test("an open terminal gives every key except Command-J to xterm", async () => {
+test("an open terminal gives every key except Command-Shift-Enter to xterm", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
   const row = document.querySelector("[data-work-cursor='goal:otto/standards/goal-framework-docs.md']");
   row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await settle(window);
   row.querySelector("[data-work-row-title]").focus();
-  press(window, "j", { metaKey: true });
+  press(window, "Enter", { metaKey: true, shiftKey: true });
   await settle(window);
 
   const terminal = document.querySelector("#session-layer-terminal");
@@ -93,9 +93,9 @@ test("an open terminal gives every key except Command-J to xterm", async () => {
   assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, cursor, "Work did not move below the terminal");
   assert.equal(document.querySelector("#session-layer").hidden, false, "Escape did not close the session");
 
-  const leave = keyFrom(window, terminal, "j", { metaKey: true });
+  const leave = keyFrom(window, terminal, "Enter", { metaKey: true, shiftKey: true });
   await settle(window);
-  assert.equal(leave.defaultPrevented, true, "Command-J is withheld from xterm");
+  assert.equal(leave.defaultPrevented, true, "Command-Shift-Enter is withheld from xterm");
   assert.equal(document.querySelector("#session-layer").hidden, true);
   assert.equal(document.querySelector("#screen").hasAttribute("inert"), false, "Work becomes interactive only after the session closes");
 });

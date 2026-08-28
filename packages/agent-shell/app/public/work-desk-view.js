@@ -1686,9 +1686,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const liveSession = sessionForGoal(goal);
     const agentMeta = [liveSession ? agentName(liveSession) : "", action.launch].filter(Boolean).join(" · ");
     const stepMeta = action.stepLine ? [action.stepLine, action.stepLabel].filter(Boolean).join(" · ") : "";
-    const titleRoute = action.route === "run"
-      ? `data-open-goal-run="${escapeHtml(goal.file)}"`
-      : `data-open-close="${escapeHtml(goal.file)}"`;
+    // Plain Enter and the title open the Goal itself. The live agent is one
+    // chord away, Command-Shift-Enter (design agent-shell-enter-key).
+    const titleRoute = `data-open-close="${escapeHtml(goal.file)}"`;
     const subgoalWord = `${subgoalCount} ${subgoalCount === 1 ? "Subgoal" : "Subgoals"}`;
     const disclosure = subgoalCount ? workFoldTriangle({ open: expanded, goal: goal.file, name: `${subgoalWord} of ${goal.title}` }) : WORK_FOLD_SPACE;
     // A folded Goal names what it hides. Open, the Subgoal rows are the count.

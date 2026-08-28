@@ -364,10 +364,11 @@ test("arrows, Home, End, PageDown, and Ctrl-D are synonyms of j, k, gg, G, and h
   assert.ok(document.querySelector(".document-reader, .work-page"), "Enter or a click on the title opens the Goal, never an agent");
 });
 
-test("the Goal title is the primary session, launch, or context route", async () => {
+test("the Goal title opens the Goal; the action cell keeps the agent route", async () => {
   const live = await bootWorkTable(workTableFixture());
   const running = live.document.querySelector("tr[data-goal-anchor$='goal-framework-docs.md']");
-  assert.ok(running.querySelector("[data-work-row-title][data-open-goal-run]"), "a live Goal title opens its agent session");
+  assert.ok(running.querySelector("[data-work-row-title][data-open-close]"), "a live Goal title opens the Goal; its agent is Command-Shift-Enter");
+  assert.ok(running.querySelector(".work-cell-action [data-open-goal-run]"), "the action cell keeps the agent route for the pointer");
   assert.match(running.querySelector(".work-row-agent").textContent, /Claude/, "the agent sits below the Goal title");
 
   const stopped = live.document.querySelector("tr[data-goal-anchor$='goal-walkthrough.md']");
@@ -400,31 +401,31 @@ test("vim keys move the persistent Work cursor through brains and Goals and stay
   await settle(window);
 });
 
-test("Command-J opens and closes the one session layer without destroying Work", async () => {
+test("Command-Shift-Enter opens and closes the one session layer without destroying Work", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
   const row = document.querySelector("[data-work-cursor='goal:otto/standards/goal-framework-docs.md']");
   row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await settle(window);
-  press(window, "j", { metaKey: true });
+  press(window, "Enter", { metaKey: true, shiftKey: true });
   await settle(window);
   assert.equal(document.querySelector("#session-layer").hidden, false);
   assert.ok(document.querySelector("table.work-table"), "Work remains mounted below the session");
   assert.equal(document.querySelector("#session-layer-terminal").dataset.session, "standards--docs");
   assert.equal(document.querySelector("#session-layer-title strong").textContent, "Land standards framework docs", "the Goal names the session");
   assert.match(document.querySelector("#session-layer-title span").textContent, /Claude/, "the agent sits below its Goal in the session header");
-  press(window, "j", { metaKey: true });
+  press(window, "Enter", { metaKey: true, shiftKey: true });
   await settle(window);
   assert.equal(document.querySelector("#session-layer").hidden, true);
   assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, row.dataset.workCursor);
 });
 
-test("an Area brain row takes the cursor and Command-J enters its brain", async () => {
+test("an Area brain row takes the cursor and Command-Shift-Enter enters its brain", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
   const row = document.querySelector("[data-work-cursor='area:otto/tangent']");
   row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await settle(window);
   assert.ok(document.querySelector("[data-work-cursor='area:otto/tangent']").classList.contains("cursor"), "the visible cursor sits on the Area brain row");
-  press(window, "j", { metaKey: true });
+  press(window, "Enter", { metaKey: true, shiftKey: true });
   await settle(window);
   assert.equal(document.querySelector("#session-layer-terminal").dataset.session, "otto-tangent--brain");
   assert.equal(document.querySelector("#session-layer-title strong").textContent, "Otto / Tangent");
@@ -463,26 +464,29 @@ test("Work keys expose their help and stay inert in text and terminal input", as
   const live = document.querySelector("[data-work-cursor='goal:otto/standards/goal-framework-docs.md']");
   live.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await settle(window);
-  press(window, "j", { metaKey: true });
+  press(window, "Enter", { metaKey: true, shiftKey: true });
   await settle(window);
   const terminalInput = document.querySelector("#session-layer-terminal");
   terminalInput.dispatchEvent(new window.KeyboardEvent("keydown", { key: "k", bubbles: true, cancelable: true }));
   assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, live.dataset.workCursor, "bare keys in the terminal do not move Work");
 });
 
-test("Command-J refuses a row with no live session and an outside click closes a live one", async () => {
+test("Command-Shift-Enter refuses a row with no live session and an outside click closes a live one", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
   const stopped = document.querySelector("[data-work-cursor='goal:otto/onboarding/goal-walkthrough.md']");
   stopped.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await settle(window);
-  press(window, "j", { metaKey: true });
+  press(window, "Enter", { metaKey: true, shiftKey: true });
+  await settle(window);
   assert.equal(document.querySelector("#session-layer").hidden, true, "enter never starts a missing session");
-  assert.match(document.querySelector("#toast").textContent, /no live session to enter/i);
+  assert.match(document.querySelector("#describe-work")?.value ?? "", /^Start an agent on /, "a Goal with no session asks the brain, the same route as its Open control");
+  press(window, "Escape");
+  await settle(window);
 
   const live = document.querySelector("[data-work-cursor='goal:otto/standards/goal-framework-docs.md']");
   live.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await settle(window);
-  press(window, "j", { metaKey: true });
+  press(window, "Enter", { metaKey: true, shiftKey: true });
   await settle(window);
   document.querySelector("#session-layer").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   assert.equal(document.querySelector("#session-layer").hidden, true);

@@ -601,16 +601,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return false;
   }
 
-  /** Opens the live session owned by the cursor row without starting work. */
+  /**
+   * Opens the live thing owned by the cursor row: a Goal's agent, a
+   * definition session, or an Area's brain. A Goal with no live session
+   * takes the same route as its Open control: ask the brain to start one,
+   * because only the brain starts agents (D8).
+   */
   function enterCursorSession() {
     const row = cursorRow();
     if (!row) return showToast("There is no Work row to enter.");
     setWorkCursor(row, false);
     const value = row.dataset.workCursor;
-    if (value.startsWith("goal:")) {
-      const session = sessionForGoal(rememberGoal(value.slice(5)));
-      return session ? openSessionLayer(session, "agent") : showToast("This Goal has no live session to enter.");
-    }
+    if (value.startsWith("goal:")) return openGoalRun(value.slice(5));
     if (value.startsWith("definition:")) {
       const session = describeWorkSessions().find((item) => item.name === value.slice(11));
       return session ? openSessionLayer(session, "definition") : showToast("This row has no live session to enter.");
@@ -2382,6 +2384,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       event.preventDefault();
       if (state.sessionPeek) closeSessionLayer();
       else if (state.view === "work") enterCursorSession();
+      else if (state.view === "document") openReaderAgent();
       else showToast("Return to Work to choose a session.");
       return true;
     }

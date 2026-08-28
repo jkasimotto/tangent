@@ -75,6 +75,18 @@ test("brain start rejects malformed or command-bearing choices before dispatch",
   assert.equal(calls, 0);
 });
 
+test("brain start preserves Area policy refusal details", async () => {
+  const routes = createBrainRoutes({
+    /** Returns one Area policy refusal. */
+    async start() { return { status: 403, code: "launch-not-allowed", error: "launch claude is not allowed in neara", launch: "claude", area: "neara", allowed: ["claude-gw"] }; },
+  });
+  const output = response();
+  await routes.handle(request("POST", { area: "neara", choice: { harness: "claude" } }), output, new URL("http://shell/api/brains/start"));
+  assert.equal(output.status, 403);
+  assert.deepEqual(output.body.allowed, ["claude-gw"]);
+  assert.equal(output.body.area, "neara");
+});
+
 test("brain stop carries the Area, attempt, and idempotency key", async () => {
   let received;
   const routes = createBrainRoutes({

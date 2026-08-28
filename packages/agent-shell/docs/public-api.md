@@ -79,7 +79,7 @@ Every active Goal execution uses one `area-goal-queue.v2` record under `~/.tange
 - `tangent brain advance <goal> <step>` starts one pending assignment through the Goal queue. Any local caller can use the command.
 - `tangent handover <facts...> [--report '<json>']` and `tangent goal handover <facts...> [--report '<json>']` are aliases of `tangent send brain` for one release. They print a hint line and submit through the same route. Plain text is a note. A typed `--report` keeps its old shape.
 
-A normal start acts directly through the Goal queue and does not require a live Area brain. A current brain caller can lend its launch default across Areas; other callers name a launch. A guarded `--recovery` start records `julian-emergency` in the same queue. It requires a pending assignment, no current attempt, and exhausted brain recovery.
+A normal start acts through the Goal queue and requires the live Area brain. A brain can lend its launch when the Goal's Area allows it. Other callers must name a launch. Agent Shell rejects each disallowed launch before it writes a new attempt. A guarded `--recovery` start records `julian-emergency` in the same queue. It requires a pending assignment, no current attempt, and exhausted brain recovery.
 
 Worker report types are `implementation-result`, `review-result`, `question-needed`, `context-risk`, and `failed`. The server validates the report against the assignment kind and queue revision. A worker report never starts another assignment. Missing, malformed, truncated, shell-quoted, and non-object reports fail before queue mutation. A rejected typed report also records no queue result or notice.
 
@@ -146,7 +146,7 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 
 Mutation routes validate target records, current revisions, idempotency, live ownership, and exact attempts. Caller identity is audit provenance, not permission. Read APIs can carry compatibility aliases. Mutation APIs do not have two meanings.
 
-Brain start resolves `choice` through the harness registry. The choice applies only to the new attempt; it does not update the Area Brain default. Without `choice`, every new attempt resolves the current inherited Brain default. `expectedLaunch` must equal the selected `harness/model/effort` reference. A live brain is reattached without changing its attempt launch. Raw launch commands are rejected.
+Brain start resolves `choice` through the harness registry and the Area policy. The choice applies only to the new attempt. Without `choice`, Agent Shell uses the nearest valid Brain launch memory. `expectedLaunch` must equal the selected `harness/model/effort` reference. A live brain is reattached without changing its attempt launch. Raw launch commands are rejected.
 
 ## Shell and study
 

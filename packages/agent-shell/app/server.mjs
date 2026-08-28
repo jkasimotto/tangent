@@ -12,8 +12,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { doneCascade } from "./goal-cascade.mjs";
 import { describeAreaResources, resolveWorkFolder, unboundAreaMessage } from "./area-resources.mjs";
-import { launchRef, resolveLaunch } from "./launch-environment.mjs";
+import { launchRef, migrateEnvironmentV1, parseLaunch, resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
+import { createLaunchMemory } from "./launch-memory.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
 import { discoverProcesses, evaluateProcess, goalNamesProcess, processFileExists, processView, readAreaProcesses, readProcessState, removeProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
@@ -173,6 +174,7 @@ const sessionOwnership = createSessionOwnership({
 /** Runs one Git command for the vault repository boundary. */
 const runRepositoryGit = (args) => execFileAsync("git", args);
 const vaultRepository = createVaultRepository({ root: TREES_ROOT, runGit: runRepositoryGit });
+const launchMemory = createLaunchMemory(process.env.TANGENT_LAUNCH_MEMORY ?? path.join(os.homedir(), ".tangent", "agent-shell", "launch-memory.json"));
 const launchCatalog = createLaunchCatalog({
   root: TREES_ROOT,
   readAreaNote: areaNote,
@@ -182,6 +184,9 @@ const launchCatalog = createLaunchCatalog({
   stage: (file) => execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {}),
   areaFile: areaNoteFile,
   emptyAreaNote,
+  memory: launchMemory,
+  /** Lists every Area for descendant policy validation. */
+  listAreas: async () => flattenAreaPaths(await readTree(TREES_ROOT)),
 });
 /** Per-file git times and agent runs for the vault, cached by HEAD (design-area-map Decision 9, design-goal-cards Decision 1). */
 const vaultGit = createVaultGitReader(TREES_ROOT);
@@ -2373,6 +2378,7 @@ async function spawnGoalSession(area, slug, { approved = false, launch = false, 
       for (const goal of rebind) await writeGoalBinding(goal.file, { status: "active", session: existing });
       await vaultCommit(rebind.map((goal) => goal.file), `update: ${area} ${rebind.length === 1 ? `goal ${rebind[0].slug}` : `${rebind.length} goals`} active`, area, existing);
     }
+    if (existingAtShell && ref) await launchCatalog.saveMemory(area, "work", parseLaunch(ref));
     return { status: 200, session: existing, reattached: true, primed };
   }
   // No command: tmux runs the login shell, so aliases (claude-otto) resolve
@@ -2426,6 +2432,7 @@ async function spawnGoalSession(area, slug, { approved = false, launch = false, 
   if (launch) await primeNewSession();
   else primeNewSession();
   trace?.mark("session primed", { session: phaseName, awaited: launch });
+  if (ref) await launchCatalog.saveMemory(area, "work", parseLaunch(ref));
   return { status: 200, session: phaseName, target: immutableTarget, cwd: folder.cwd, cwdSource: folder.source };
 }
 
@@ -2626,11 +2633,9 @@ function pipelineStepSessionName(record, index, liveNames) {
 }
 
 /** Resolves one step's launch to an exact command, or returns the error. */
-async function resolveStepLaunch(step) {
+async function resolveStepLaunch(area, step) {
   if (!step.launch) return step.command ? { command: step.command, label: step.label || "Edited command" } : { error: `step ${step.index}: no command` };
-  const registry = await launchCatalog.registry();
-  if (registry.error) return { error: registry.error };
-  return resolveLaunch(registry, step.launch);
+  return launchCatalog.allowed(area, step.launch);
 }
 
 /** The Area's declared work default as `harness[/model[/effort]]`, or null when none resolves. */
@@ -2764,8 +2769,8 @@ async function materializeStepLaunches(area, steps, { firstIndex = 1, brain = nu
   const rows = [];
   for (const [position, step] of filled.entries()) {
     const index = firstIndex + position;
-    const resolved = await resolveStepLaunch({ ...step, index });
-    if (resolved.error) return { status: 409, error: `step ${index}: ${resolved.error}` };
+    const resolved = await resolveStepLaunch(area, { ...step, index });
+    if (resolved.error) return { status: resolved.code === "launch-not-allowed" ? 403 : 409, code: resolved.code, error: `step ${index}: ${resolved.error}`, ...resolved };
     rows.push({
       index,
       launch: step.launch ? launchRef(step.launch) : null,
@@ -2819,9 +2824,9 @@ async function startPipelineStep(record, index, trace = null) {
     return { status: 409, error: `assignment ${current.index} is current; assignment ${index} cannot start` };
   }
   if (step.status !== "pending") return { status: 409, error: `step ${index} is ${step.status}` };
-  const resolved = await resolveStepLaunch(step);
+  const resolved = await resolveStepLaunch(record.area, step);
   trace?.mark("step launch resolved");
-  if (resolved.error) return { status: 409, error: `step ${index}: ${resolved.error}` };
+  if (resolved.error) return { status: 409, code: resolved.code, error: `step ${index}: ${resolved.error}`, ...resolved };
   step.command = resolved.command;
   step.label = resolved.label;
   const byFile = new Map((await readAreaGoals(record.area)).map((goal) => [goal.file, goal]));
@@ -2958,7 +2963,7 @@ async function startPipeline(file, { steps, extraFiles = [], start = true, attem
   // Fill and resolve every assignment before anything is written: a bad
   // launch names itself and leaves no record and no session behind.
   const materialized = await materializeStepLaunches(o.area, steps, { brain });
-  if (materialized.error) return { status: materialized.status, error: materialized.error };
+  if (materialized.error) return materialized;
   const located = resolveStepPaths(materialized.steps);
   if (located.error) return { status: 400, error: located.error };
   steps = located.steps;
@@ -3516,7 +3521,7 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   // Fill and resolve every new assignment before anything is written: a bad
   // launch names itself and leaves the record as it was.
   const materialized = await materializeStepLaunches(o.area, steps, { firstIndex: record.steps.length + 1, brain: caller });
-  if (materialized.error) return { status: materialized.status, error: materialized.error };
+  if (materialized.error) return materialized;
   const located = resolveStepPaths(materialized.steps, record.steps.length + 1);
   if (located.error) return { status: 400, error: located.error };
   steps = located.steps;
@@ -3820,6 +3825,8 @@ async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
   if (source.error) return { status: 409, code: source.code, error: source.error, pipeline: record };
   const chosen = await launchCatalog.requested({ choice: options.launch });
   if (chosen.error || !chosen.command) return { status: 400, code: "launch-invalid", error: chosen.error ?? "replacement launch needs a harness", pipeline: record };
+  const accepted = await launchCatalog.allowed(goal.area, options.launch);
+  if (accepted.error) return { status: 403, code: accepted.code, error: accepted.error, ...accepted, pipeline: record };
   let operation;
   try {
     const actor = await commandProvenance(options.caller);
@@ -3850,8 +3857,8 @@ async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
     started = await spawnGoalSession(goal.area, goal.slug, {
       approved: true,
       launch: true,
-      command: chosen.command,
-      label: chosen.label,
+      command: accepted.command,
+      label: accepted.label,
       ref: launchRef(options.launch),
       path: assignment.path,
       extraSlugs,
@@ -4577,6 +4584,7 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     if (process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") {
       await writeBrain(BRAINS_ROOT, record);
       await settleBrainActivation(record, name, generation, true, held);
+      await launchCatalog.saveMemory(record.area, "brain", resolvedLaunch.ref);
       return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch }, firstMessage: message, cwd: directory };
     }
     await sleep(700);
@@ -4591,6 +4599,7 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     await typeInto(name, launchWithConversation(harness, withDefaultModel(resolvedLaunch.command), conversation), false);
     await execFileAsync("tmux", ["send-keys", "-t", "=" + name + ":", "Enter"]);
     await sleep(250);
+    await launchCatalog.saveMemory(record.area, "brain", resolvedLaunch.ref);
     return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch }, firstMessage: message, cwd: directory };
   } catch (error) {
     const problem = `could not activate the brain session: ${error.stderr ?? error.message ?? error}`;
@@ -4682,7 +4691,7 @@ async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "",
     : null;
   const attemptChoice = automaticRecovery ? rootPreviousChoice : (choice ?? rootPreviousChoice);
   const resolvedLaunch = await resolveBrainAttemptLaunch({ area, choice: attemptChoice, expectedLaunch, launchCatalog });
-  if (resolvedLaunch.error) return { status: resolvedLaunch.status ?? 409, error: resolvedLaunch.error, ...(resolvedLaunch.code ? { code: resolvedLaunch.code } : {}), ...(resolvedLaunch.launch ? { launch: resolvedLaunch.launch } : {}) };
+  if (resolvedLaunch.error) return { status: resolvedLaunch.status ?? 409, error: resolvedLaunch.error, ...(resolvedLaunch.code ? { code: resolvedLaunch.code } : {}), ...(resolvedLaunch.launch ? { launch: resolvedLaunch.launch } : {}), ...(resolvedLaunch.area ? { area: resolvedLaunch.area } : {}), ...(resolvedLaunch.allowed ? { allowed: resolvedLaunch.allowed } : {}) };
   if (resume) {
     if (!existing) return { status: 404, error: "no brain to resume on this Area" };
     // A wake needs no message. The brain reads its Area note, its checkpoint,
@@ -6272,6 +6281,39 @@ const shellControlRoutes = createShellControlRoutes({
     if (process.env.TANGENT_VERIFY_READONLY) return { status: 403, value: { error: "Rebuild is disabled in the verification harness." } };
     return rebuildOperations.start();
   },
+  /** Replaces all v1 defaults with the confirmed top-level Area policies. */
+  async migrateLaunchPolicy({ apply = false } = {}) {
+    const policies = { otto: ["codex", "claude-otto"], neara: ["claude-gw", "codex-gw", "pi-code", "opencode"] };
+    const areas = flattenAreaPaths(await readTree(TREES_ROOT));
+    const changes = [];
+    const seeds = [];
+    for (const area of areas) {
+      const file = areaNoteFile(area);
+      const original = await readFile(path.join(TREES_ROOT, file), "utf8").catch(() => "");
+      let migrated;
+      try { migrated = migrateEnvironmentV1(original, policies[area] ?? []); }
+      catch (error) { return { status: 400, error: `${area}: ${error.message}` }; }
+      if (migrated.text !== original) changes.push({ area, file, text: migrated.text, allow: policies[area] ?? [] });
+      const work = migrated.defaults?.launch;
+      const brain = migrated.defaults?.brain === "work" ? work : migrated.defaults?.brain;
+      if (work?.harness) seeds.push({ area, kind: "work", ref: work });
+      if (brain?.harness) seeds.push({ area, kind: "brain", ref: brain });
+    }
+    const preview = { policies, files: changes.map(({ area, file, allow }) => ({ area, file, allow })), memory: seeds };
+    if (!apply) return { status: 200, value: { dryRun: true, ...preview } };
+    if (!changes.length) return { status: 200, value: { dryRun: false, changed: false, ...preview } };
+    for (const change of changes) {
+      await vaultRepository.writeMarkdown(change.file, change.text);
+      await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", change.file]);
+    }
+    await vaultCommit(changes.map((change) => change.file), "update: launch policy replaces defaults", "machine", null);
+    const stored = [];
+    for (const seed of seeds) {
+      const saved = await launchCatalog.saveMemory(seed.area, seed.kind, seed.ref);
+      if (!saved.error) stored.push(seed);
+    }
+    return { status: 200, value: { dryRun: false, changed: true, ...preview, memory: stored } };
+  },
   /** Changes the orchestrator command and stops its old session. */
   async agent(command) {
     agentCmd = command;
@@ -6529,13 +6571,15 @@ const launchRoutes = createLaunchRoutes({
   },
   /** Commits one Area's explicit default launch. */
   async saveDefault(body) {
+    return { status: 410, code: "defaults-retired", error: "launch defaults are retired" };
+  },
+  /** Commits one Area's allowed launch policy. */
+  async savePolicy(body) {
     const area = String(body.area ?? "");
     if (!validAreaPath(area) || !await areaExists(area)) return { status: 404, error: `no area "${area}"` };
-    const requestedKind = String(body.kind ?? "work");
-    if (!["work", "launch", "brain"].includes(requestedKind)) return { status: 400, error: `unknown default kind "${requestedKind}"` };
-    const kind = requestedKind === "brain" ? "brain" : "launch";
-    const saved = await launchCatalog.saveDefault(area, body.launch ?? {}, kind, String(body.mode ?? "launch"));
-    return saved.error ? { status: 400, error: saved.error } : { status: 200, value: saved };
+    const saved = await launchCatalog.savePolicy(area, body.allow ?? []);
+    const status = saved.code === "policy-empties-child" ? 409 : saved.error ? 400 : 200;
+    return saved.error ? { status, code: saved.code, error: saved.error } : { status: 200, value: saved };
   },
   /** Starts a Goal agent or a validated pipeline. */
   async start(body) {

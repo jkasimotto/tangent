@@ -63,7 +63,7 @@ export function createBrainRoutes(operations) {
     console.info(`[brain start] result area=${JSON.stringify(area)} status=${result.status} session=${JSON.stringify(result.session ?? "")} error=${JSON.stringify(result.error ?? "")}`);
     sendJson(response, result.status, result.status === 200
       ? { session: result.session, generation: result.generation, reattached: Boolean(result.reattached), brain: result.brain }
-      : { error: result.error, ...(result.code ? { code: result.code } : {}), ...(result.launch ? { launch: result.launch } : {}) });
+      : { error: result.error, ...(result.code ? { code: result.code } : {}), ...(result.launch ? { launch: result.launch } : {}), ...(result.area ? { area: result.area } : {}), ...(result.allowed ? { allowed: result.allowed } : {}) });
   }
 
   /** Stops one logical Area brain without trusting a stale session name. */

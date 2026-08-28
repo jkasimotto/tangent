@@ -6,6 +6,7 @@ export function createShellControlRoutes(operations) {
     ["POST /api/spawn", spawn],
     ["POST /api/caffeinate", caffeinate],
     ["POST /api/shell/rebuild", rebuild],
+    ["POST /api/shell/migrate-launch-policy", migrateLaunchPolicy],
     ["POST /api/agent", agent],
   ]);
 
@@ -42,6 +43,12 @@ export function createShellControlRoutes(operations) {
   async function rebuild(_request, response) {
     const result = await operations.rebuild();
     sendJson(response, result.status, result.value);
+  }
+
+  /** Previews or applies the one-time Area launch-policy migration. */
+  async function migrateLaunchPolicy(request, response) {
+    const result = await operations.migrateLaunchPolicy(await readJson(request));
+    sendJson(response, result.status, result.value ?? { error: result.error, ...(result.code ? { code: result.code } : {}) });
   }
 
   /** Changes the orchestrator command. */

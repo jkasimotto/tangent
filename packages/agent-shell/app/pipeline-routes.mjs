@@ -57,7 +57,7 @@ export function createPipelineRoutes(operations) {
     });
     sendJson(response, result.status, result.status === 200
       ? { status: result.state ?? "started", next: result.next ?? (result.index ? { index: result.index, session: result.session } : null), pipeline: result.pipeline, ...(result.ended ? { ended: result.ended } : {}) }
-      : { error: result.error });
+      : launchError(result));
   }
 
   /** Appends new pending steps without rewriting pipeline history. */
@@ -70,7 +70,7 @@ export function createPipelineRoutes(operations) {
     });
     sendJson(response, result.status, result.status === 200
       ? { status: result.state, after: result.after ?? null, next: result.next ?? null, session: result.session ?? null, added: result.added, pipeline: result.pipeline, warnings: result.warnings ?? [], launches: result.launches ?? [] }
-      : { error: result.error });
+      : launchError(result));
   }
 
   /** Attaches a live attempt or opens a new session with its resume command typed. */
@@ -109,9 +109,17 @@ export function createPipelineRoutes(operations) {
       : {
           error: result.error,
           ...(result.code ? { code: result.code } : {}),
+          ...(result.launch ? { launch: result.launch } : {}),
+          ...(result.area ? { area: result.area } : {}),
+          ...(result.allowed ? { allowed: result.allowed } : {}),
           ...(result.operation ? { operation: result.operation } : {}),
           ...(result.pipeline ? { pipeline: result.pipeline } : {}),
         });
+  }
+
+  /** Preserves actionable Area policy fields on a launch refusal. */
+  function launchError(result) {
+    return { error: result.error, ...(result.code ? { code: result.code } : {}), ...(result.launch ? { launch: result.launch } : {}), ...(result.area ? { area: result.area } : {}), ...(result.allowed ? { allowed: result.allowed } : {}) };
   }
 
   return { handle };

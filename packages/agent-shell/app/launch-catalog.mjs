@@ -1,12 +1,12 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  harnessEfforts, harnessModels, inheritedBrainLaunch, inheritedLaunch, modelEfforts, parseEnvironmentBlock, parseHarnessRegistry, resolveLaunch, updateEnvironmentDefault, upsertHarnessRegistry,
+  areaLaunchPolicy, harnessEfforts, harnessModels, launchMatches, launchRef, modelEfforts, parseEnvironmentBlock, parseHarnessRegistry, parseLaunch, resolveLaunch, updateEnvironmentPolicy, upsertHarnessRegistry,
   validateHarnessRegistry,
 } from "./launch-environment.mjs";
 
 /** Owns launch registry reads and Area/per-run launch resolution. */
-export function createLaunchCatalog({ root, readAreaNote, repository = null, commit = null, stage = null, areaFile = null, emptyAreaNote = null }) {
+export function createLaunchCatalog({ root, readAreaNote, repository = null, commit = null, stage = null, areaFile = null, emptyAreaNote = null, memory = null, listAreas = null }) {
   /** Reads the machine-wide registry; an absent block is an empty registry. */
   async function registry() {
     const text = await readFile(path.join(root, "harnesses.md"), "utf8").catch(() => "");
@@ -16,11 +16,49 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     return error ? { error: `harness registry is invalid: ${error}` } : parsed;
   }
 
-  /** Resolves the inherited launch declaration for one Area. */
-  async function forArea(area) {
+  /** Resolves the effective inherited policy for one Area. */
+  async function policyFor(area) {
     const current = await registry();
-    if (current.error) return { error: current.error };
-    return inheritedLaunch(area, readAreaNote, current);
+    return current.error ? current : areaLaunchPolicy(area, readAreaNote, current);
+  }
+
+  /** Resolves a registered launch and checks it against one Area. */
+  async function allowed(area, ref) {
+    const policy = await policyFor(area);
+    if (policy.error) return policy;
+    const resolved = resolveLaunch(await registry(), ref);
+    if (resolved.error) return resolved;
+    if (policy.launches.some((entry) => launchRef(entry) === launchRef(resolved))) return { ...resolved, policy };
+    return { error: `launch ${launchRef(ref)} is not allowed in ${area}`, code: "launch-not-allowed", launch: launchRef(ref), area, allowed: policy.allow.map(launchRef) };
+  }
+
+  /** Finds the nearest registered and allowed remembered launch. */
+  async function remembered(area, kind = "work") {
+    const policy = await policyFor(area);
+    if (policy.error) return policy;
+    const saved = await memory?.read?.() ?? {};
+    const ancestors = String(area).split("/").map((_, index, parts) => parts.slice(0, parts.length - index).join("/"));
+    for (const source of ancestors) {
+      const ref = saved[source]?.[kind];
+      if (ref && policy.launches.some((entry) => launchRef(entry) === launchRef(ref))) return { ...ref, source };
+    }
+    const fallback = policy.unrestricted ? null : policy.launches[0] ?? null;
+    return fallback ? { harness: fallback.harness, ...(fallback.model ? { model: fallback.model } : {}), ...(fallback.effort ? { effort: fallback.effort } : {}), source: null } : null;
+  }
+
+  /** Stores one successful launch after a final policy check. */
+  async function saveMemory(area, kind, ref) {
+    const accepted = await allowed(area, ref);
+    if (accepted.error) return accepted;
+    await memory?.write?.(area, kind, { harness: accepted.harness, ...(accepted.model ? { model: accepted.model } : {}), ...(accepted.effort ? { effort: accepted.effort } : {}) });
+    return accepted;
+  }
+
+  /** Resolves the remembered or first allowed launch for one Area. */
+  async function forArea(area) {
+    const ref = await remembered(area, "work");
+    if (ref?.error) return ref;
+    return ref ? allowed(area, ref) : null;
   }
 
   /** Returns the exact command for one Area or throws its declaration error. */
@@ -31,14 +69,11 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     return launch.command;
   }
 
-  /** Resolves the inherited brain launch, then the declared Area work default. */
+  /** Resolves the remembered or first allowed brain launch. */
   async function forBrain(area) {
-    const current = await registry();
-    if (current.error) return { error: current.error };
-    const declared = await inheritedBrainLaunch(area, readAreaNote, current);
-    if (declared) return declared;
-    const work = await inheritedLaunch(area, readAreaNote, current);
-    return work ? { ...work, via: "work-fallback" } : { error: `${area}: no brain or work launch is declared` };
+    const ref = await remembered(area, "brain");
+    if (ref?.error) return ref;
+    return ref ? allowed(area, ref) : { error: `${area}: no remembered or allowed brain launch` };
   }
 
   /** Returns the defaults declared directly on one Area. */
@@ -46,12 +81,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     if (!area) return { work: { mode: "inherit" }, brain: { mode: "inherit" } };
     const environment = parseEnvironmentBlock(await readAreaNote(area));
     if (environment?.error) return { error: `${area}: ${environment.error}` };
-    const work = environment?.defaults?.launch;
-    const brain = environment?.defaults?.brain;
-    return {
-      work: work ? { mode: "launch", launch: work } : { mode: "inherit" },
-      brain: brain === "work" ? { mode: "work" } : brain ? { mode: "launch", launch: brain } : { mode: "inherit" },
-    };
+    return { allow: environment?.allow ?? [] };
   }
 
   /** Returns one registry snapshot with exact commands and the requested Area defaults. */
@@ -64,6 +94,10 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
       ...(model ? { model: model.id } : {}),
       ...(effort ? { effort: effort.id } : {}),
     });
+    const policy = area ? await policyFor(area) : { unrestricted: true, launches: [] };
+    if (policy.error) return policy;
+    /** True when the requested catalog entry is in the filtered policy. */
+    const accepted = (ref) => !area || policy.launches.some((entry) => launchRef(entry) === launchRef(ref));
     const harnesses = current.harnesses.map((harness) => ({
       id: harness.id,
       label: harness.label || harness.id,
@@ -78,27 +112,24 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
           label: effort.label || effort.id,
           args: effort.args,
           command: launchFor(harness, model, effort).command,
-        })),
-      })),
+        })).filter((effort) => accepted({ harness: harness.id, model: model.id, effort: effort.id })),
+      })).filter((model) => model.efforts.length ? true : accepted({ harness: harness.id, model: model.id })),
       efforts: harnessEfforts(current, harness).map((effort) => ({
         id: effort.id,
         label: effort.label || effort.id,
         args: effort.args,
         command: launchFor(harness, null, effort).command,
-      })),
-    }));
+      })).filter((effort) => accepted({ harness: harness.id, effort: effort.id })),
+    })).filter((harness) => harness.models.length || harness.efforts.length || accepted({ harness: harness.id }));
     const local = area ? await declarations(area) : null;
     if (local?.error) return local;
-    const workDefault = area ? await inheritedLaunch(area, readAreaNote, current) : null;
-    let brainDefault = null;
-    if (area) {
-      brainDefault = await forBrain(area);
-    }
+    const rememberedChoice = area ? await remembered(area, kind === "brain" ? "brain" : "work") : null;
     return {
       source: path.join(root, "harnesses.md"),
       ...(area ? { area } : {}),
       harnesses,
-      ...(kind === "all" ? { workDefault, brainDefault, declarations: local } : { default: kind === "brain" ? brainDefault : workDefault }),
+      ...(kind === "all" ? { declarations: local, remembered: rememberedChoice, brainRemembered: await remembered(area, "brain") } : { remembered: rememberedChoice }),
+      policy: { allow: policy.allow ?? [], declaredBy: policy.declaredBy ?? [], unrestricted: policy.unrestricted },
     };
   }
 
@@ -113,6 +144,42 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
       return resolveLaunch(current, input.choice);
     }
     return { command: "", label: "" };
+  }
+
+  /** Validates and writes one Area's local allow patterns. */
+  async function savePolicy(area, allow) {
+    if (!repository || !commit || !areaFile || !emptyAreaNote) throw new Error("launch catalog is read-only");
+    if (!area) return { error: "an area is required", code: "invalid-area" };
+    const current = await registry();
+    const patterns = (allow ?? []).map(parseLaunch);
+    if (patterns.some((entry) => !entry)) return { error: "each allowed launch must be harness[/model[/effort]]", code: "pattern-invalid" };
+    const concrete = (await areaLaunchPolicy(area, async () => "", current)).launches;
+    for (const pattern of patterns) if (!concrete.some((launch) => launchMatches(pattern, launch))) {
+      return { error: `pattern ${launchRef(pattern)} matches no registered launch`, code: "pattern-invalid" };
+    }
+    const parent = area.includes("/") ? area.slice(0, area.lastIndexOf("/")) : "";
+    if (parent) {
+      const parentPolicy = await policyFor(parent);
+      if (parentPolicy.error) return parentPolicy;
+      const proposed = concrete.filter((launch) => patterns.some((pattern) => launchMatches(pattern, launch)));
+      if (!parentPolicy.unrestricted && proposed.some((launch) => !parentPolicy.launches.some((entry) => launchRef(entry) === launchRef(launch)))) return { error: `${area} policy widens ${parent}`, code: "policy-widens" };
+    }
+    const file = areaFile(area);
+    const text = await readFile(path.join(root, file), "utf8").catch(() => emptyAreaNote(area));
+    let next;
+    try { next = updateEnvironmentPolicy(text, patterns); } catch (error) { return { error: error.message }; }
+    /** Reads the proposed note at the target and durable notes elsewhere. */
+    const nextReader = (candidate) => candidate === area ? next : readAreaNote(candidate);
+    for (const descendant of await listAreas?.() ?? [area]) {
+      if (descendant !== area && !descendant.startsWith(`${area}/`)) continue;
+      const proposed = await areaLaunchPolicy(descendant, nextReader, current);
+      if (proposed.error) return proposed;
+      if (!proposed.launches.length) return { error: `policy would leave ${descendant} with no allowed launch`, code: "policy-empties-child", area: descendant };
+    }
+    await repository.writeMarkdown(file, next);
+    await stage?.(file);
+    await commit([file], `update: ${area} allowed launches ${patterns.map(launchRef).join(", ") || "inherit"}`, area, null);
+    return { policy: await areaLaunchPolicy(area, nextReader, current) };
   }
 
   /** Validates and writes the complete machine registry through the vault owner. */
@@ -133,47 +200,5 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     return { registry: next };
   }
 
-  /** Resolves and persists one Area's explicit default launch. */
-  async function saveDefault(area, ref, kind = "launch", mode = "launch") {
-    if (!repository || !commit || !areaFile || !emptyAreaNote) throw new Error("launch catalog is read-only");
-    const current = await registry();
-    if (current.error || !area) return { error: current.error || "an area is required" };
-    if (!["launch", "brain"].includes(kind)) return { error: `unknown default kind "${kind}"` };
-    if (!["launch", "inherit", "work"].includes(mode) || (mode === "work" && kind !== "brain")) {
-      return { error: `invalid ${kind} default mode "${mode}"` };
-    }
-    const chosen = mode === "launch" ? resolveLaunch(current, ref ?? {}) : null;
-    if (chosen?.error) return { error: chosen.error };
-    const file = areaFile(area);
-    const text = await readFile(path.join(root, file), "utf8").catch(() => emptyAreaNote(area));
-    const stored = chosen ? {
-      harness: chosen.harness,
-      ...(chosen.model ? { model: chosen.model } : {}),
-      ...(chosen.effort ? { effort: chosen.effort } : {}),
-    } : null;
-    let next;
-    try { next = updateEnvironmentDefault(text, { kind, mode, launch: stored }); }
-    catch (error) { return { error: error.message }; }
-    /** Reads the proposed target note and current notes for its ancestors. */
-    const nextReader = async (candidate) => candidate === area ? next : readAreaNote(candidate);
-    let effective;
-    if (kind === "brain") {
-      effective = await inheritedBrainLaunch(area, nextReader, current);
-      if (!effective) {
-        const work = await inheritedLaunch(area, nextReader, current);
-        effective = work ? { ...work, via: "work-fallback" } : { error: `${area}: no brain or work launch is declared` };
-      }
-    } else effective = await inheritedLaunch(area, nextReader, current);
-    // Clearing a default can leave nothing declared anywhere above the Area.
-    // That is a valid state now: `not declared` is reported, never a guess.
-    if (!effective) effective = { label: null, command: null };
-    if (effective.error) return { error: effective.error };
-    await repository.writeMarkdown(file, next);
-    await stage?.(file);
-    const description = mode === "inherit" ? "inherits" : mode === "work" ? "follows work" : chosen.label;
-    await commit([file], `update: ${area} default ${kind === "brain" ? "brain" : "work"} launch ${description}`, area, null);
-    return { label: effective.label, command: effective.command, mode };
-  }
-
-  return { commandForArea, declarations, forArea, forBrain, options, registry, requested, saveDefault, saveRegistry };
+  return { allowed, commandForArea, declarations, forArea, forBrain, options, policyFor, registry, remembered, requested, saveMemory, savePolicy, saveRegistry };
 }

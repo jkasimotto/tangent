@@ -5,7 +5,7 @@
 // otto/tangent/impl-what-needs-julian-under-brains, Decision 6).
 
 import { renderCommandHelp } from "@tangent/core";
-import { numberArg, parseArgs, stringArg, type Args } from "@tangent/core/cli";
+import { booleanArg, numberArg, parseArgs, stringArg, type Args } from "@tangent/core/cli";
 
 import { postJson, resolveServerUrl, vaultFetch } from "../client.js";
 import { shellCommandSpec } from "../spec.js";
@@ -20,7 +20,16 @@ export async function runShellCli(argv = process.argv.slice(2)): Promise<void> {
   const subcommand = args._[0];
   if (!subcommand || args.help) return help();
   if (subcommand === "rebuild") return rebuildCommand(args);
-  throw new Error(`Unknown shell command: ${subcommand}. Try "tangent shell rebuild".`);
+  if (subcommand === "migrate-launch-policy") return migrateLaunchPolicyCommand(args);
+  throw new Error(`Unknown shell command: ${subcommand}. Try "tangent shell --help".`);
+}
+
+/** Previews or applies the one-time v1 default migration. */
+async function migrateLaunchPolicyCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const dryRun = booleanArg(args["dry-run"]);
+  const result = await postJson(server, "/api/shell/migrate-launch-policy", { apply: !dryRun });
+  console.log(JSON.stringify(result, null, 2));
 }
 
 /**
@@ -80,5 +89,7 @@ packages, restarts the server, and returns when the new boot answers.
 Examples:
   tangent shell rebuild
   tangent shell rebuild --timeout 600
+  tangent shell migrate-launch-policy --dry-run
+  tangent shell migrate-launch-policy
 `);
 }

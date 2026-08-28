@@ -19,8 +19,8 @@ type Harness = { id: string; label: string; command: string; models: Model[]; ef
 type HarnessCatalog = {
   source: string;
   area?: string;
-  workDefault?: Launch;
-  brainDefault?: Launch;
+  remembered?: Launch & { source?: string | null };
+  policy?: { declaredBy?: string[]; unrestricted?: boolean; allow?: Array<{ harness: string; model?: string; effort?: string }> };
   harnesses: Harness[];
 };
 
@@ -47,8 +47,9 @@ export async function runHarnessCli(argv = process.argv.slice(2)): Promise<void>
 function printCatalog(catalog: HarnessCatalog): void {
   console.log(`source: ${catalog.source}`);
   if (catalog.area) {
-    console.log(`work default: ${launchLine(catalog.workDefault)}`);
-    console.log(`brain default: ${launchLine(catalog.brainDefault)}`);
+    console.log(`policy: ${catalog.policy?.unrestricted ? "unrestricted" : (catalog.policy?.allow ?? []).map((ref) => [ref.harness, ref.model, ref.effort].filter(Boolean).join("/")).join(", ")}`);
+    console.log(`declared by: ${catalog.policy?.declaredBy?.join(", ") || "none"}`);
+    console.log(`remembered: ${launchLine(catalog.remembered)}${catalog.remembered?.source ? ` from ${catalog.remembered.source}` : ""}`);
   }
   for (const harness of catalog.harnesses) {
     console.log(`\n${harness.id} (${harness.label})`);

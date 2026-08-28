@@ -105,7 +105,12 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     if (!state.launch.options && !state.launch.loading) {
       state.launch.loading = true;
       api(`/api/launch/options?area=${encodeURIComponent(area)}${kind === "launch" ? "" : `&kind=${kind}`}`)
-        .then((options) => { state.launch.options = options; })
+        .then((options) => {
+          state.launch.options = options;
+          if (state.launchTarget === DEFAULT_AGENTS_TARGET && !state.launch.command) {
+            state.launch.command = (options.declarations?.allow ?? []).map((ref) => [ref.harness, ref.model, ref.effort].filter(Boolean).join("/")).join("\n");
+          }
+        })
         .catch((error) => { state.launch.options = { harnesses: [], default: { error: error.message } }; })
         .finally(() => { state.launch.loading = false; paint(true); });
     }
@@ -113,16 +118,13 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   }
 
   /**
-   * The picker's current selection, seeded from the Area default. Recognition
+   * The picker's current selection, seeded from the last valid Area launch. Recognition
    * over recall: labels carry the choice, the composed command stays exact.
    */
   function launchSelection() {
     const options = state.launch.options;
     if (!options) return null;
-    const settingsDefault = state.launchTarget === DEFAULT_AGENTS_TARGET
-      ? state.defaultAgents.editing === "brain" ? options.brainDefault : options.workDefault
-      : null;
-    const preset = (settingsDefault ?? options.default) && !(settingsDefault ?? options.default).error ? (settingsDefault ?? options.default) : null;
+    const preset = options.remembered && !options.remembered.error ? options.remembered : null;
     const choice = state.launch.choice ?? (preset?.harness ? { harness: preset.harness, model: preset.model, effort: preset.effort ?? null } : null);
     const harness = choice ? (options.harnesses ?? []).find((entry) => entry.id === choice.harness) : null;
     if (!harness) {
@@ -254,7 +256,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const options = state.launch.options;
     if (row.command?.trim()) return row.command.trim();
     const harness = row.choice ? (options?.harnesses ?? []).find((entry) => entry.id === row.choice.harness) : null;
-    if (!harness) return options?.default && !options.default.error ? (options.default.label || options.default.command || "Area default") : "Area default";
+    if (!harness) return options?.remembered && !options.remembered.error ? (options.remembered.label || options.remembered.command || "Last launch") : "Choose a launch";
     const model = (harness.models ?? []).find((entry) => entry.id === row.choice.model);
     const effort = (model?.efforts ?? harness.efforts ?? []).find((entry) => entry.id === row.choice.effort);
     return [harness.label, model?.label, effort?.label].filter(Boolean).join(" · ");
@@ -292,7 +294,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
       { key: "↵", label: braining ? (brainResumes ? "wake" : "start") : settings ? "save" : "start" },
     ];
     if (brainResumes) keys.push({ id: "startOver", key: "n", label: "start over" });
-    if (braining) keys.push({ id: "changeDefault", key: "d", label: "default" });
+    if (braining) keys.push({ id: "changeDefault", key: "d", label: "policy" });
     keys.push({ id: "registry", key: "e", label: "harnesses" });
     keys.push({ key: "Esc", label: "back" });
     return keys;
@@ -318,9 +320,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     if (!options) return "";
     const settings = state.launchTarget === DEFAULT_AGENTS_TARGET;
     const selection = launchSelection();
-    const presetCandidate = settings
-      ? state.defaultAgents.editing === "brain" ? options.brainDefault : options.workDefault
-      : options.default;
+    const presetCandidate = options.remembered;
     const presetError = presetCandidate?.error ?? "";
     const preset = presetCandidate && !presetCandidate.error ? presetCandidate : {};
     const currentHarness = selection?.harness ?? null;
@@ -347,7 +347,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const brainSource = braining && preset.source ? (preset.source === state.brainDraft?.area ? "Set on this Area" : `Inherited from ${areaLabel(preset.source)}`) : "";
     const brainOverride = braining && Boolean(state.launch.choice?.harness);
     const commandZone = braining
-      ? `<section class="brain-launch-summary${brainOverride ? " override" : ""}" aria-label="Resolved brain launch"><p class="kicker">Brain launch</p><strong>${escapeHtml(brainRef || "Not configured")}</strong><span>${escapeHtml(selection?.label || presetError)}</span><code>${escapeHtml(selection?.command || "")}</code>${brainOverride ? `<small class="launch-override-note">One launch only · Area default unchanged</small>` : brainSource ? `<small>${escapeHtml(brainSource)}</small>` : ""}<button class="quiet-button" type="button" data-default-agents-area="${escapeHtml(state.brainDraft?.area ?? "")}" data-default-agents-origin="brain" data-launch-key="${escapeHtml(launchKeyFor("changeDefault"))}" data-focus-key="launch:brain:default">Change default <kbd>${escapeHtml(launchKeyFor("changeDefault"))}</kbd></button></section>`
+      ? `<section class="brain-launch-summary${brainOverride ? " override" : ""}" aria-label="Resolved brain launch"><p class="kicker">Brain launch</p><strong>${escapeHtml(brainRef || "Not configured")}</strong><span>${escapeHtml(selection?.label || presetError)}</span><code>${escapeHtml(selection?.command || "")}</code>${brainOverride ? `<small class="launch-override-note">One launch only · Area memory unchanged</small>` : brainSource ? `<small>${escapeHtml(brainSource)}</small>` : ""}<button class="quiet-button" type="button" data-default-agents-area="${escapeHtml(state.brainDraft?.area ?? "")}" data-default-agents-origin="brain" data-launch-key="${escapeHtml(launchKeyFor("changeDefault"))}" data-focus-key="launch:brain:default">Change policy <kbd>${escapeHtml(launchKeyFor("changeDefault"))}</kbd></button></section>`
       : settings
       ? `<div class="launch-command"><code>${escapeHtml(command)}</code></div>`
       : state.launch.editing
@@ -366,14 +366,16 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
       : "";
     const settingsRows = settings ? defaultAgentRows(options) : "";
     const settingsMode = state.defaultAgents.mode;
-    const showChoices = braining || !settings || (state.defaultAgents.editing && settingsMode === "launch");
-    const settingsEditor = settings && state.defaultAgents.editing ? `
-      <section class="default-agent-editor" aria-label="Edit ${escapeHtml(state.defaultAgents.editing)} default">
-        <p>${settingsMode === "launch" ? `Choose the harness, model, and effort for ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"}.` : settingsMode === "work" ? "Brain will follow the Work default of this Area." : `The ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"} default will inherit from the nearest parent Area.`}</p>
+    const showChoices = braining || !settings;
+    const settingsEditor = settings ? `
+      <section class="default-agent-editor" aria-label="Edit Area launch policy">
+        <label for="launch-command-input">Allowed launches</label>
+        <textarea id="launch-command-input" rows="6" spellcheck="false" placeholder="harness[/model[/effort]], one per line">${escapeHtml(state.launch.command)}</textarea>
+        <p>Each child Area can narrow this policy. It cannot allow a launch that its parent rejects.</p>
       </section>` : "";
     const settingsActions = settings ? `
       <div class="action-row start-actions">
-        ${state.defaultAgents.editing ? `<button class="primary-button" type="button" data-launch-save data-launch-primary data-focus-key="launch:default:save" ${settingsMode === "launch" && !selection?.harness ? "disabled" : ""}>Save <kbd>↵</kbd></button><button class="quiet-button" type="button" data-default-agents-cancel data-focus-key="launch:default:cancel">Cancel</button>` : ""}
+        <button class="primary-button" type="button" data-launch-save data-launch-primary data-focus-key="launch:default:save">Save <kbd>↵</kbd></button>
         <button class="quiet-button" type="button" data-launch-close data-focus-key="launch:close">${state.defaultAgents.origin === "brain" ? "Back" : "Close"}</button>
       </div>` : "";
     const columns = showChoices && (options.harnesses ?? []).length ? `
@@ -400,30 +402,11 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     `;
   }
 
-  /** Renders the effective Work and Brain values with their local edit actions. */
+  /** Renders the effective policy and its declaration chain. */
   function defaultAgentRows(options) {
-    /** Renders one independent default row. */
-    const row = (kind, title, effective) => {
-      const declaration = options.declarations?.[kind] ?? { mode: "inherit" };
-      const local = declaration.mode !== "inherit";
-      let source;
-      if (local) source = declaration.mode === "work" ? "Follows Work on this Area" : "Set on this Area";
-      else if (kind === "brain" && effective?.via === "work") source = `Inherited from ${areaLabel(effective.source)} · Follows Work`;
-      else if (kind === "brain" && effective?.via === "work-fallback") {
-        source = effective.source === options.area ? "Follows Work on this Area" : effective.source ? `Follows Work inherited from ${areaLabel(effective.source)}` : "No declared fallback";
-      } else if (effective?.source === options.area) source = "Set on this Area";
-      else source = effective?.source ? `Inherited from ${areaLabel(effective.source)}` : kind === "work" ? "Profile fallback" : "No declared fallback";
-      const value = effective?.error ? effective.error : effective?.label || effective?.command || "Not set";
-      return `<div class="default-agent-row" data-default-agent-row="${kind}">
-        <div class="default-agent-value"><strong>${title}</strong><span>${escapeHtml(value)}</span><small>${escapeHtml(source)}</small></div>
-        <div class="default-agent-actions">
-          <button class="quiet-button" type="button" data-default-agent-edit="${kind}" data-focus-key="launch:default:${kind}:change">Change</button>
-          ${kind === "brain" ? `<button class="quiet-button" type="button" data-default-agent-mode="work" data-default-agent-kind="brain" data-focus-key="launch:default:brain:work">Follow work</button>` : ""}
-          ${local ? `<button class="quiet-button" type="button" data-default-agent-mode="inherit" data-default-agent-kind="${kind}" data-focus-key="launch:default:${kind}:inherit">Use inherited</button>` : ""}
-        </div>
-      </div>`;
-    };
-    return `<div class="default-agent-rows">${row("work", "Work", options.workDefault)}${row("brain", "Brain", options.brainDefault)}</div>`;
+    const refs = (options.policy?.allow ?? []).map((ref) => [ref.harness, ref.model, ref.effort].filter(Boolean).join("/")).join(", ");
+    const source = options.policy?.declaredBy?.length ? `Declared by ${options.policy.declaredBy.join(" → ")}` : "No Area policy";
+    return `<div class="default-agent-rows"><div class="default-agent-row"><div class="default-agent-value"><strong>Allowed launches</strong><span>${escapeHtml(options.policy?.unrestricted ? "Unrestricted" : refs || "None")}</span><small>${escapeHtml(source)}</small></div></div></div>`;
   }
 
   /** Opens the durable defaults editor for one Area without starting work. */
@@ -435,7 +418,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
       return paint(true);
     }
     state.launchTarget = DEFAULT_AGENTS_TARGET;
-    state.defaultAgents = { area, editing: "", mode: "", ...(button.dataset.defaultAgentsOrigin ? { origin: button.dataset.defaultAgentsOrigin } : {}) };
+    state.defaultAgents = { area, editing: "policy", mode: "policy", ...(button.dataset.defaultAgentsOrigin ? { origin: button.dataset.defaultAgentsOrigin } : {}) };
     launchOptionsFor(area);
     // The menu item is hidden when `d` opens this editor. Its always-visible
     // summary is the shared pointer and keyboard anchor.
@@ -470,20 +453,15 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   async function saveLaunchDefault() {
     const settings = state.launchTarget === DEFAULT_AGENTS_TARGET;
     if (settings) {
-      const { area, editing: kind, mode } = state.defaultAgents;
-      const selection = launchSelection();
-      if (!area || !kind || !mode || (mode === "launch" && !selection?.harness)) return;
+      const { area } = state.defaultAgents;
+      if (!area) return;
       try {
-        const saved = await post("/api/launch/default", {
-          area,
-          kind,
-          mode,
-          ...(mode === "launch" ? { launch: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}), ...(selection.effort ? { effort: selection.effort.id } : {}) } } : {}),
-        });
+        const allow = state.launch.command.split(/[\n,]+/).map((value) => value.trim()).filter(Boolean);
+        await post("/api/launch/policy", { area, allow });
         state.defaultAgents = { area, editing: "", mode: "", ...(state.defaultAgents.origin ? { origin: state.defaultAgents.origin } : {}) };
         state.launch.options = null;
         launchOptionsFor(area);
-        showToast(`${kind === "brain" ? "Brain" : "Work"} now uses ${saved.label || saved.command}.`);
+        showToast(`Saved the launch policy for ${areaLabel(area)}.`);
         paint(true);
       } catch (error) {
         showToast(error.message);

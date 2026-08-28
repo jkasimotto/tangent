@@ -103,7 +103,12 @@ async function vaultRequest(server: URL, path: string, init?: RequestInit): Prom
 /** One request against the Agent Shell server, throwing with the server's own error message on a non-2xx response. */
 export async function vaultFetch(server: URL, path: string, init?: RequestInit): Promise<Record<string, any>> {
   const { status, body } = await vaultRequest(server, path, init);
-  if (status < 200 || status >= 300) throw new Error(body.error || `Agent Shell returned ${status}.`);
+  if (status < 200 || status >= 300) {
+    if (body.code === "launch-not-allowed") {
+      throw new Error(`${body.error}\nArea: ${body.area}\nAllowed: ${(body.allowed ?? []).join(", ") || "none"}`);
+    }
+    throw new Error(body.error || `Agent Shell returned ${status}.`);
+  }
   return body;
 }
 

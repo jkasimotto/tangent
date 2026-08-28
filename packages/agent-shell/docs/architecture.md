@@ -25,7 +25,8 @@ Gateway and controller share one stable Agent Shell instance identity. The gatew
 
 `app/server.mjs` is the workflow-controller composition root. HTTP route modules parse transport input and map operation results. Stateful mechanisms live behind capability factories:
 
-- `launch-catalog.mjs`: harness registry and Area launch resolution and writes;
+- `launch-catalog.mjs`: harness registry, inherited Area launch policy, filtered choices, and policy writes;
+- `launch-memory.mjs`: last successful Brain and Work launch per Area;
 - `brain-launch.mjs`: per-attempt Brain default or registry-choice resolution, stale-choice checks, and immutable launch snapshots;
 - `message-delivery.mjs`: cross-agent queue order, delivery, audit, retargeting, and brain-notice settlement;
 - `message-queue-store.mjs`: atomic persistence for generic `tangent send` messages until pane-presentation settlement;

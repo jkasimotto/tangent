@@ -24,10 +24,12 @@ export async function resolveBrainAttemptLaunch({ area, choice = null, expectedL
       error: overridden ? "the Brain launch choice is incomplete" : `${area}: no brain launch is declared`,
     };
   }
+  const accepted = launchCatalog.allowed ? await launchCatalog.allowed(area, selected) : selected;
+  if (accepted.error) return { status: 403, ...accepted };
   const resolvedLaunch = {
-    ref: { harness: selected.harness, model: selected.model ?? null, effort: selected.effort ?? null },
-    label: selected.label || selected.command,
-    command: selected.command,
+    ref: { harness: accepted.harness, model: accepted.model ?? null, effort: accepted.effort ?? null },
+    label: accepted.label || accepted.command,
+    command: accepted.command,
     sourceArea: overridden ? null : selected.source ?? null,
     mode: overridden ? "override" : selected.via ?? "brain",
   };

@@ -75,15 +75,83 @@ export function parseHarnessRegistry(text) {
   return { modelSets, effortSets, harnesses };
 }
 
-/** Parses one note's tangent.environment.v1 block, or null when absent. */
+export const ENVIRONMENT_TAG = "tangent.environment.v2";
+
+/** Parses `harness[/model[/effort]]` without guessing omitted axes. */
+export function parseLaunch(value) {
+  const parts = String(value ?? "").trim().split("/");
+  if (!parts[0] || parts.length > 3 || parts.some((part) => !part.trim())) return null;
+  return { harness: parts[0], ...(parts[1] ? { model: parts[1] } : {}), ...(parts[2] ? { effort: parts[2] } : {}) };
+}
+
+/** Parses one note's Area launch policy, or null when absent. */
 export function parseEnvironmentBlock(text) {
-  const raw = fencedBlock(text, "tangent.environment.v1");
+  if (fencedBlock(text, "tangent.environment.v1") !== null) {
+    return { error: "tangent.environment.v1 is retired; run tangent shell migrate-launch-policy" };
+  }
+  const raw = fencedBlock(text, ENVIRONMENT_TAG);
   if (raw === null) return null;
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (parsed.version !== 2 || !Array.isArray(parsed.allow)) return { error: "environment policy needs version 2 and an allow list" };
+    const allow = parsed.allow.map(parseLaunch);
+    if (allow.some((entry) => !entry)) return { error: "each allowed launch must be harness[/model[/effort]]" };
+    return { ...parsed, allow };
   } catch (error) {
     return { error: `environment block is not valid JSON: ${error.message}` };
   }
+}
+
+/** True when a concrete launch matches one policy pattern. */
+export function launchMatches(pattern, ref) {
+  return pattern.harness === ref.harness
+    && (!pattern.model || pattern.model === ref.model)
+    && (!pattern.effort || pattern.effort === ref.effort);
+}
+
+/** Expands the registry into concrete launches in registry order. */
+export function registeredLaunches(registry) {
+  const launches = [];
+  for (const harness of registry?.harnesses ?? []) {
+    const models = harnessModels(registry, harness);
+    if (!models.length) {
+      const efforts = harnessEfforts(registry, harness);
+      if (efforts.length) for (const effort of efforts) launches.push(resolveLaunch(registry, { harness: harness.id, effort: effort.id }));
+      else launches.push(resolveLaunch(registry, { harness: harness.id }));
+      continue;
+    }
+    for (const model of models) {
+      const efforts = modelEfforts(registry, harness, model);
+      if (efforts.length) for (const effort of efforts) launches.push(resolveLaunch(registry, { harness: harness.id, model: model.id, effort: effort.id }));
+      else launches.push(resolveLaunch(registry, { harness: harness.id, model: model.id }));
+    }
+  }
+  return launches;
+}
+
+/** Resolves the intersection of every policy declared on an Area chain. */
+export async function areaLaunchPolicy(area, readAreaNote, registry) {
+  const declarations = [];
+  for (const candidate of areaAncestors(area)) {
+    const environment = parseEnvironmentBlock(await readAreaNote(candidate));
+    if (environment?.error) return { error: `${candidate}: ${environment.error}` };
+    if (environment) declarations.push({ area: candidate, allow: environment.allow });
+  }
+  const all = registeredLaunches(registry);
+  const launches = declarations.length
+    ? all.filter((launch) => declarations.every((entry) => entry.allow.some((pattern) => launchMatches(pattern, launch))))
+    : all;
+  if (declarations.length) launches.sort((left, right) => {
+    const patterns = declarations[0].allow;
+    return patterns.findIndex((pattern) => launchMatches(pattern, left)) - patterns.findIndex((pattern) => launchMatches(pattern, right));
+  });
+  return {
+    area,
+    allow: declarations[0]?.allow ?? [],
+    declaredBy: declarations.map((entry) => entry.area),
+    unrestricted: declarations.length === 0,
+    launches,
+  };
 }
 
 /** The model options one harness offers, in registry order. */
@@ -217,6 +285,31 @@ export function upsertHarnessRegistry(text, registry) {
  */
 export function upsertEnvironmentLaunch(text, ref, kind = "launch") {
   return updateEnvironmentDefault(text, { kind, mode: "launch", launch: ref });
+}
+
+/** Writes or removes one Area's local v2 policy declaration. */
+export function updateEnvironmentPolicy(text, allow) {
+  const current = String(text ?? "");
+  if (fencedBlock(current, "tangent.environment.v1") !== null) throw new Error("tangent.environment.v1 is retired; run tangent shell migrate-launch-policy");
+  const existing = fencedBlock(current, ENVIRONMENT_TAG);
+  const refs = (allow ?? []).map((entry) => typeof entry === "string" ? entry : launchRef(entry));
+  if (!refs.length) return existing === null ? current : current.replace(/```tangent\.environment\.v2\s*\n[\s\S]*?\n```\s*/, "");
+  const block = `\`\`\`${ENVIRONMENT_TAG}\n${JSON.stringify({ version: 2, allow: refs }, null, 2)}\n\`\`\``;
+  if (existing !== null) return current.replace(/```tangent\.environment\.v2\s*\n[\s\S]*?\n```/, block);
+  return `${current.trimEnd()}\n\n## Development environment\n\nAllowed launches in this Area subtree.\n\n${block}\n`;
+}
+
+/** Converts one legacy default block into a v2 policy or inherited policy. */
+export function migrateEnvironmentV1(text, allow = []) {
+  const current = String(text ?? "");
+  const raw = fencedBlock(current, "tangent.environment.v1");
+  let defaults = null;
+  if (raw !== null) {
+    try { defaults = JSON.parse(raw).defaults ?? {}; }
+    catch (error) { throw new Error(`environment block is not valid JSON: ${error.message}`); }
+  }
+  const withoutLegacy = raw === null ? current : current.replace(/```tangent\.environment\.v1\s*\n[\s\S]*?\n```\s*/, "");
+  return { text: updateEnvironmentPolicy(withoutLegacy, allow), defaults };
 }
 
 /**

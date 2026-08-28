@@ -150,6 +150,11 @@ export const shellCommandSpec: CliCommandSpec = {
         serverOption,
         { name: "timeout", takesValue: true, description: "Seconds to wait for the new boot (default 240)" }
       ]
+    },
+    {
+      name: "migrate-launch-policy",
+      description: "Replace retired Area launch defaults with confirmed Area policies and seed launch memory.",
+      options: [serverOption, { name: "dry-run", description: "Print the proposed policy and memory changes without writing them" }]
     }
   ]
 };

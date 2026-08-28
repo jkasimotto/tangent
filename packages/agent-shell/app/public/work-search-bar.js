@@ -45,7 +45,7 @@ export function createWorkSearchBar({
     if (!row) return false;
     setWorkCursor(row, focus);
     // setWorkCursor repaints, so the row that scrolls is the freshly painted one.
-    rowFor(cursor)?.scrollIntoView?.({ block: "nearest" });
+    rowFor(cursor)?.scrollIntoView?.({ block: "center" });
     return true;
   }
 

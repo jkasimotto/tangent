@@ -2,7 +2,7 @@ import { journalCaptureNeedsRetry, journalCaptureToast } from "./journal-capture
 import { keyboardEventIsComposing, resolveKeyboardContext } from "./keyboard-context.js";
 import { documentReadingCommands, documentReadingScrollTarget, matchDocumentReadingCommand } from "./document-reading-commands.js";
 import { workCommandMatches, workCommandsFor } from "./work-commands.js";
-import { createChordEngine, motions, resolveMotion } from "./motion-keys.js";
+import { countedRowIndex, createChordEngine, motions, resolveMotion } from "./motion-keys.js";
 import { createWorkSearchBar } from "./work-search-bar.js";
 import { activeBrainForArea, nearestActiveBrain } from "./brain-ownership.js";
 
@@ -2382,21 +2382,25 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    * resolver, so click, arrow, and letter all move the one cursor.
    */
   function handleWorkMotion(event, rows, current) {
-    const motion = resolveMotion(event, { textOwned: false, pendingChord: chords.pendingFor("work") });
+    const motion = resolveMotion(event, { textOwned: false, pendingChord: chords.pendingFor("work"), pendingCount: chords.countFor("work") });
     if (!motion) { chords.clear("work"); return false; }
     event.preventDefault();
     if (motion === motions.chordStart) { chords.stage("work", event.key); return true; }
+    if (motion === motions.countDigit) { chords.stageCount("work", event.key); return true; }
+    const count = Number(chords.countFor("work")) || 0;
     chords.clear("work");
     const index = rows.indexOf(current);
     const pageRows = Math.max(1, Math.floor(screen.clientHeight / Math.max(1, current?.offsetHeight || 40) / 2));
-    if (motion === motions.next) return setWorkCursor(rows[index < 0 ? 0 : Math.min(rows.length - 1, index + 1)]);
-    if (motion === motions.previous) return setWorkCursor(rows[index < 0 ? 0 : Math.max(0, index - 1)]);
-    if (motion === motions.first) return setWorkCursor(rows[0]);
-    if (motion === motions.last) return setWorkCursor(rows.at(-1));
-    if (motion === motions.halfDown) return setWorkCursor(rows[Math.min(rows.length - 1, Math.max(0, index) + pageRows)]);
-    if (motion === motions.halfUp) return setWorkCursor(rows[Math.max(0, index - pageRows)]);
-    if (motion === motions.sectionNext) return moveAreaCursor(1, current);
-    if (motion === motions.sectionPrevious) return moveAreaCursor(-1, current);
+    const target = countedRowIndex(motion, { index, count, length: rows.length, pageRows });
+    if (target !== null) return setWorkCursor(rows[target]);
+    if (motion === motions.sectionNext || motion === motions.sectionPrevious) {
+      let moved = current;
+      for (let step = 0; step < Math.max(1, count); step += 1) {
+        moveAreaCursor(motion === motions.sectionNext ? 1 : -1, moved);
+        moved = cursorRow();
+      }
+      return true;
+    }
     if (motion === motions.parent) return executeWorkCommand("collapse", current);
     if (motion === motions.child) return executeWorkCommand("expand", current);
     return true;

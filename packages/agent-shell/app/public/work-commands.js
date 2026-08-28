@@ -10,6 +10,7 @@
 const records = [
   { id: "moveRows", keyDisplay: "j / k", ariaKeyshortcuts: "j k", scope: "work", kind: "navigation", label: "Move between rows", help: "Move to the next or previous Work row.", shortcuts: [{ key: "j" }, { key: "k" }] },
   { id: "firstLast", keyDisplay: "gg / G", ariaKeyshortcuts: null, scope: "work", kind: "navigation", label: "First or last row", help: "Move to the first or last Work row." },
+  { id: "count", keyDisplay: "5j / 12G", ariaKeyshortcuts: null, scope: "work", kind: "navigation", label: "Count a motion", help: "Digits before a motion repeat it: 5j moves five rows, 12G or 12gg goes to row 12." },
   { id: "halfPage", keyDisplay: "^D / ^U", ariaKeyshortcuts: "Control+D Control+U", scope: "work", kind: "navigation", label: "Half a page", help: "Move the cursor half a screen of rows down or up.", shortcuts: [{ key: "d", ctrlKey: true }, { key: "u", ctrlKey: true }] },
   { id: "previousArea", keyDisplay: "{", ariaKeyshortcuts: "Shift+[", scope: "area", kind: "navigation", label: "Previous Area", help: "Jump to the previous Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "{", shiftKey: "any" }] },
   { id: "nextArea", keyDisplay: "}", ariaKeyshortcuts: "Shift+]", scope: "area", kind: "navigation", label: "Next Area", help: "Jump to the next Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "}", shiftKey: "any" }] },

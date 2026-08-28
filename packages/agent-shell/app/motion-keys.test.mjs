@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHORD_WINDOW_MS, createChordEngine, motions, resolveMotion } from "./public/motion-keys.js";
+import { CHORD_WINDOW_MS, countedRowIndex, createChordEngine, motions, resolveMotion } from "./public/motion-keys.js";
 
 /** Test helper for a keydown event fact. */
 const event = (key, extra = {}) => ({ key, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...extra });
@@ -65,4 +65,37 @@ test("the chord engine stages one key per surface and forgets it after the windo
   engine.stage("work", "]");
   engine.clear();
   assert.equal(engine.pendingFor("work"), "");
+});
+
+test("digits stage a count; 100j, 1G, and 5gg address rows Vim style", () => {
+  assert.equal(resolveMotion(event("1")), motions.countDigit);
+  assert.equal(resolveMotion(event("0")), null, "a leading zero is not a count");
+  assert.equal(resolveMotion(event("0"), { pendingCount: "1" }), motions.countDigit);
+  assert.equal(resolveMotion(event("5"), { textOwned: true }), null, "digits type inside a field");
+  assert.equal(resolveMotion(event("g"), { pendingCount: "5" }), motions.chordStart, "5gg starts its chord after the count");
+  assert.equal(resolveMotion(event("2"), { pendingChord: "g" }), null, "g2 is nothing");
+  assert.equal(countedRowIndex(motions.next, { index: 3, count: 100, length: 20 }), 19);
+  assert.equal(countedRowIndex(motions.next, { index: 3, count: 0, length: 20 }), 4);
+  assert.equal(countedRowIndex(motions.previous, { index: 10, count: 4, length: 20 }), 6);
+  assert.equal(countedRowIndex(motions.last, { index: 10, count: 1, length: 20 }), 0, "1G is the first row");
+  assert.equal(countedRowIndex(motions.first, { index: 10, count: 5, length: 20 }), 4, "5gg is row 5");
+  assert.equal(countedRowIndex(motions.last, { index: 10, count: 99, length: 20 }), 19);
+  assert.equal(countedRowIndex(motions.first, { index: 10, count: 0, length: 20 }), 0);
+  assert.equal(countedRowIndex(motions.halfDown, { index: 0, count: 2, length: 50, pageRows: 10 }), 20);
+  assert.equal(countedRowIndex(motions.sectionNext, { index: 0, count: 2, length: 50 }), null);
+});
+
+test("the chord engine keeps a count through its chord key and forgets it with everything else", () => {
+  const engine = createChordEngine(() => 1, () => {});
+  engine.stageCount("work", "1");
+  engine.stageCount("work", "2");
+  assert.equal(engine.countFor("work"), "12");
+  engine.stage("work", "g");
+  assert.equal(engine.countFor("work"), "12", "5gg keeps its digits");
+  assert.equal(engine.pendingFor("work"), "g");
+  engine.clear("work");
+  assert.equal(engine.countFor("work"), "");
+  engine.stageCount("work", "3");
+  engine.stage("reader:full", "g");
+  assert.equal(engine.countFor("work"), "", "another surface takes over");
 });

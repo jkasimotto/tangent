@@ -73,7 +73,7 @@ test("a parent Area owns descendant work without a separate sub-Area section", a
   assert.equal(window.document.querySelectorAll(".work-table tbody").length, 1, "embedded-js and storm-response fold into one row group");
   const group = window.document.querySelector(".work-table tbody");
   assert.match(group.querySelector(".work-group-name [data-work-cursor-control]").textContent, /Neara/);
-  assert.match(group.querySelector(".work-group-brain .work-group-brain-long").textContent, /Open brain/);
+  assert.match(group.querySelector(".work-group-brain").getAttribute("aria-label"), /^Open brain/);
   assert.equal(group.getAttribute("aria-labelledby"), group.querySelector(".work-group-head").id, "the row group is named by its header");
 
   // Each descendant Area, with Goals or without, is one flat sub-header
@@ -94,9 +94,9 @@ test("a parent Area owns descendant work without a separate sub-Area section", a
   assert.equal(group.querySelector("tr[data-goal-anchor] .work-row-path"), null, "a Goal row under a sub-header carries no path tag: the sub-header names its Area");
   for (const row of stormRows) assert.equal(row.previousElementSibling.dataset.workSubArea ?? row.previousElementSibling.dataset.workArea, "neara/hackathon/embedded-js/storm-response", "storm-response rows sit under their sub-header");
   assert.equal(window.document.querySelectorAll(".work-group-brain").length, 4, "every header, top-level and sub, prints its brain button");
-  assert.match(subHeaders[2].querySelector(".work-group-brain").textContent, /Resume brain/, "an inactive brain record says Resume");
-  assert.match(subHeaders[1].querySelector(".work-group-brain").textContent, /Start brain/, "no brain record says Start");
-  assert.match(subHeaders[0].querySelector(".work-group-brain").textContent, /Start brain/, "a quiet sub-Area still offers to start its brain");
+  assert.match(subHeaders[2].querySelector(".work-group-brain").getAttribute("aria-label"), /^Resume brain/, "an inactive brain record says Resume");
+  assert.match(subHeaders[1].querySelector(".work-group-brain").getAttribute("aria-label"), /^Start brain/, "no brain record says Start");
+  assert.match(subHeaders[0].querySelector(".work-group-brain").getAttribute("aria-label"), /^Start brain/, "a quiet sub-Area still offers to start its brain");
 
   const titles = stormRows.map((row) => row.querySelector(".work-row-title").textContent);
   assert.deepEqual(titles, ["Working goal", "Needs you goal", "Old ready goal"], "one projection keeps live, waiting, and unstarted descendant Goals together");

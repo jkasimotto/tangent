@@ -47,8 +47,8 @@ test("the Work row route of a Goal whose session is gone asks the brain, it neve
   // the list: the row keeps its run route and the route has nothing to open.
   fixture.sessions = fixture.sessions.filter((session) => session.goal !== goal.file);
   const { window, document, posts } = await bootWorkTable(fixture);
-  const title = document.querySelector(`[data-goal-anchor='${goal.file}'] .work-cell-action [data-open-goal-run]`);
-  assert.equal(title?.dataset.openGoalRun, goal.file, "the action cell keeps the run route");
+  const title = document.querySelector(`[data-goal-anchor='${goal.file}'] .work-cell-agent [data-open-goal-run]`);
+  assert.equal(title?.dataset.openGoalRun, goal.file, "the Agent cell keeps the run route");
   title.click();
   await settle(window, 3);
 

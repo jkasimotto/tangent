@@ -116,15 +116,16 @@ export function withDirectAsks(fixture) {
  * common shape of the same case: the Area holds Goals, every one of them is
  * unstarted, so the Current filter keeps no row for it either.
  */
-export function withBrainOnlyArea(fixture, { state = "working", live = true, planned = false } = {}) {
+export function withBrainOnlyArea(fixture, { state = "working", stateDetail = "", live = true, planned = false } = {}) {
   const own = planned ? [goal("otto/quiet", "quiet-plan", "Plan the quiet Area")] : [];
   const areas = [...fixture.vault.areas, { path: "otto/quiet", name: "quiet", goals: own, documents: [] }];
   const map = own.length ? [...fixture.vault.map, { path: "otto/quiet", name: "quiet", goals: own }] : fixture.vault.map;
+  const detail = stateDetail ? { stateDetail } : {};
   const record = live
-    ? brain("otto/quiet", 4, state)
+    ? { ...brain("otto/quiet", 4, state), ...detail }
     : { ...brain("otto/quiet", 4, state), status: "inactive", live: false };
   const sessions = live
-    ? [...fixture.sessions, { name: "otto-quiet--brain", area: "otto/quiet", kind: "brain", state, command: "claude" }]
+    ? [...fixture.sessions, { name: "otto-quiet--brain", area: "otto/quiet", kind: "brain", state, ...detail, command: "claude" }]
     : fixture.sessions;
   return {
     ...fixture,

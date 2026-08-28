@@ -317,7 +317,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   // Every top-level Area is a row group and its sub-Areas are sub-header rows (every Area has a row).
   const tangentRoot = window.document.querySelector('[data-work-group="otto"] tr[data-work-sub-area="otto/tangent"]');
   const tangentBrainAction = tangentRoot.querySelector('.work-group-brain[data-open-area-brain="otto/tangent"]');
-  assert.equal(tangentBrainAction.querySelector(".work-group-brain-long").textContent, "Start brain", "a group header can start its exact Area brain");
+  assert.equal(tangentBrainAction.dataset.brainVerb, "Start brain", "a group header can start its exact Area brain");
   assert.equal(tangentBrainAction.getAttribute("aria-label"), "Start brain for Otto / Tangent");
 
   assert.match(window.document.querySelectorAll(".work-table tbody")[1].textContent, /Tangent/);

@@ -1,6 +1,8 @@
 # Work screen refresh: design record
 
-Status: designed, not implemented. Date: 2026-08-28.
+Status: implemented 2026-08-28 (same day as the design). Date: 2026-08-28.
+
+Implementation notes: the Status column is 216 px, not 190 px; `Preparing validation · 10d 23h` measures 206 px at the table font, so 190 px clipped it (the unknown in section 7). Between 640 and 1199 px the Goal cell holds a second copy of the agent control under the title and CSS shows exactly one copy, the same technique as the 639 px facts line. Row state words on a waiting agent now print the refined word (`Waiting for you`, `Needs your decision`, `Finished · ready for you`, `Holding your draft`) instead of `Waiting`, so the D6 title table applies. Hover reveal of row controls (D4) is in; the always-visible `⋯` alternative stays the open question for Julian.
 
 Lens: UI/UX only. No persistence, API, or server contract changes. Every change is a projection change in `packages/agent-shell/app/public/` (`work-desk-view.js`, `work-commands.js`, `shell.css`) and its tests.
 

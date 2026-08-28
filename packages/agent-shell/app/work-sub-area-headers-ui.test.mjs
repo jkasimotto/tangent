@@ -103,7 +103,7 @@ test("one flat sub-header per sub-Area, named by its path below the group, with 
   for (const row of workRows) assert.ok(row.classList.contains("under-sub-area"), "a Goal under a sub-header indents one level");
 
   assert.deepEqual(subHeaders.map((row) => row.querySelector(".work-group-count").textContent), ["1 open", "2 open", "1 open · 1 blocker · 1 question"], "a sub-header prints its open count plus blockers");
-  assert.deepEqual(subHeaders.map((row) => row.querySelector(".work-group-brain .work-group-brain-long").textContent), ["Resume brain", "Start brain", "Resume brain"], "the brain button says Open, Resume, or Start as on the top-level header");
+  assert.deepEqual(subHeaders.map((row) => row.querySelector(".work-group-brain").dataset.brainVerb), ["Resume brain", "Start brain", "Resume brain"], "the brain button's accessible verb is Open, Resume, or Start as on the top-level header");
   for (const row of subHeaders) {
     assert.equal(row.querySelector(".work-group-brain kbd").textContent, "b", "the brain button prints its key on every sub-header");
     assert.equal(row.querySelector(".desk-action-menu-trigger kbd").textContent, ":");
@@ -248,7 +248,7 @@ test("every not-done Area has a row: a quiet top-level Area, a quiet sub-Area, a
   const personal = document.querySelector("tbody[data-work-group='personal']");
   const personalHeader = personal.querySelector(".work-group-row");
   assert.equal(personalHeader.querySelector(".work-group-count").textContent, "0 open", "a top-level Area with nothing under it keeps its header");
-  assert.equal(personalHeader.querySelector(".work-group-brain .work-group-brain-long").textContent, "Start brain");
+  assert.equal(personalHeader.querySelector(".work-group-brain").dataset.brainVerb, "Start brain");
   assert.equal(personalHeader.querySelector(".work-group-brain kbd").textContent, "b");
   assert.equal(personal.querySelectorAll("tr").length, 1, "and nothing under it");
 
@@ -262,13 +262,13 @@ test("every not-done Area has a row: a quiet top-level Area, a quiet sub-Area, a
   assert.equal(notes.querySelector(".work-group-count").textContent, "0 open");
   assert.equal(notes.querySelector(".desk-state"), null, "no state on a quiet row");
   assert.ok(notes.querySelector(".work-fold"), "it keeps its fold triangle");
-  assert.equal(notes.querySelector(".work-group-brain .work-group-brain-long").textContent, "Start brain");
+  assert.equal(notes.querySelector(".work-group-brain").dataset.brainVerb, "Start brain");
   assert.equal(notes.querySelector(".work-group-brain kbd").textContent, "b");
   assert.equal(notes.querySelector(".desk-action-menu-trigger kbd").textContent, ":");
   assert.equal(subHeaders.filter((row) => row.classList.contains("quiet")).length, 1, "a sub-Area with work is not muted");
 
   const shell = subHeaders.find((row) => row.dataset.workSubArea === SHELL);
-  assert.equal(shell.querySelector(".work-group-brain .work-group-brain-long").textContent, "Open brain", "a live brain at depth 3 is a sub-header inside its top-level group");
+  assert.equal(shell.querySelector(".work-group-brain").dataset.brainVerb, "Open brain", "a live brain at depth 3 is a sub-header inside its top-level group");
   assert.match(shell.querySelector(".desk-state").textContent, /Brain working/);
 
   // } walks every header, the quiet ones included, and b on the quiet row

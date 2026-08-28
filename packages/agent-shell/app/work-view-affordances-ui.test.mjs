@@ -76,15 +76,17 @@ test("the cursor keeps its bar and tint and loses its triangle", async () => {
 
 test("every verb button in Work prints its key in one kbd", async () => {
   const { document } = await bootWorkTable(withDirectAsks(workTableFixture()));
-  const buttons = [...document.querySelectorAll(".work-table button.desk-action:not([data-launch-for]), .work-table .desk-launch-ref, .work-table .work-group-brain, .work-table .desk-action-menu-trigger, .work-table [data-review-questions], .work-page .primary-button")];
+  const buttons = [...document.querySelectorAll(".work-table button.work-agent-ref, .work-table .work-group-brain, .work-table .desk-action-menu-trigger, .work-table [data-review-questions], .work-page .primary-button")];
   assert.ok(buttons.length >= 5, "the fixture renders verb buttons");
   for (const button of buttons) {
     const kbd = button.querySelector("kbd");
     assert.ok(kbd, `${button.className} prints its key: ${button.outerHTML.slice(0, 120)}`);
     assert.equal(button.lastElementChild, kbd, "the key sits right of the verb");
   }
-  const open = document.querySelector(".work-table button.desk-action[data-open-close], .work-table button.desk-action[data-open-goal-run]");
-  assert.equal(open.querySelector("kbd").textContent, "↵", "Open prints Enter");
+  const run = document.querySelector(".work-table button.work-agent-ref[data-open-goal-run]");
+  assert.equal(run.querySelector("kbd").textContent, "⌘⇧↵", "the agent control prints the key that enters the run (work-screen-refresh D5)");
+  assert.equal(document.querySelector(".work-table [data-open-goal-run] kbd:not([aria-hidden])"), null);
+  for (const kbd of document.querySelectorAll(".work-table [data-open-goal-run] kbd")) assert.notEqual(kbd.textContent, "↵", "no run route prints plain Enter: that key reads the Goal");
   assert.equal(document.querySelector(".work-table .work-group-brain kbd").textContent, "b");
   assert.equal(document.querySelector(".work-table .desk-action-menu-trigger kbd").textContent, "?");
   assert.equal(document.querySelector(".work-table [data-review-questions] kbd").textContent, "r");

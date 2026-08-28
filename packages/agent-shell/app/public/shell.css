@@ -342,9 +342,6 @@ summary:focus-visible {
 .area-focus-picker > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .area-focus-picker > footer button { min-height: 38px; }
 
-.work-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 12px; margin: 0 0 32px; }
-.work-tool-actions { display: flex; align-items: stretch; gap: 6px; }
-.work-tool-actions .quiet-button { min-height: 46px; white-space: nowrap; }
 
 .search-field {
   display: flex;
@@ -426,19 +423,7 @@ summary:focus-visible {
 
 
 .desk-fill { color: #737d88; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; letter-spacing: .08em; text-transform: uppercase; }
-/* The bar: its drawn length (worked plus waiting) encodes elapsed time
-   relative to the longest-elapsed Goal on the desk (Julian's word,
-   2026-08-20: a bar that was always full made every running Goal look
-   identical); worked (blue) splits from the current wait (amber, or gray
-   under a live brain) inside that length (design-compact-work-desk
-   Decisions 1 and 2). Undrawn track stays the container's background. The
-   elapsed-time text prints the same total elapsed time the bar's length
-   encodes; the agent count is the only other fact left as text. */
-.desk-goal-bar { display: inline-flex; width: 84px; height: 6px; overflow: hidden; border-radius: 3px; background: #262b31; flex: none; }
-.desk-goal-bar-worked { display: block; height: 100%; background: var(--blue); }
-.desk-goal-bar-wait { display: block; height: 100%; min-width: 3px; background: var(--amber); }
-.desk-goal-bar-wait.fact { background: var(--muted); }
-.desk-goal-elapsed { color: #98a1ac; font-size: 11px; white-space: nowrap; }
+.desk-goal-elapsed { color: #98a1ac; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .desk-goal-actions { display: inline-flex; flex: none; align-items: center; gap: 8px; }
 .desk-action, .desk-icon-action { padding: 4px 7px; border: 1px solid #3c434c; border-radius: 2px; background: #1a1e23; color: #cbd1d7; cursor: pointer; font-size: 10px; font-weight: 690; }
 .desk-brain-action { padding: 4px 0; border: 0; background: transparent; color: #9aa9bc; cursor: pointer; font-size: 10px; font-weight: 650; white-space: nowrap; }
@@ -448,26 +433,20 @@ summary:focus-visible {
 .desk-goal.waiting .desk-action { border-color: #665735; color: var(--amber); }
 .desk-goal.fact .desk-action { border-color: #3c434c; color: #cbd1d7; }
 .desk-icon-action { border-color: transparent; background: transparent; color: #7f8994; }
-/* The open control of a running row: the launch ids are the label, so the row
-   says which agent runs it without a second element
-   (design-see-the-harness-model-effort-and-open-that-agent). Its own class and
-   not `.desk-action`: the state colour rules below turn every `.desk-action`
-   amber on a waiting row, and 25 characters of amber monospace shouts. The
-   State pill and the time bar already carry that signal. */
-.desk-launch-ref { display: inline-flex; max-width: 144px; align-items: center; padding: 4px 0; border: 0; background: transparent; color: #79828d; cursor: pointer; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; white-space: nowrap; }
-.desk-launch-ref-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.desk-launch-ref:hover, .desk-launch-ref:focus-visible { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
 .desk-icon-action.complete:hover { color: var(--green); }
 
 
 /* ---- The direct-ask table and the work table ----
    One semantic table for questions, one for work
-   (design-redesign-work-as-a-compact-table). At 640 px and above the work
-   table shows four columns. Below 640 px the State and Time cells leave the
-   page with `display: none`, which also takes them out of the accessibility
-   tree, and the Work cell's own copy of those facts appears instead, so every
-   width reads each fact exactly once. Table display never changes: rows stay
-   `<tr>` children of their row group at every width. */
+   (design-redesign-work-as-a-compact-table). At 1200 px and above the work
+   table shows Goal, Agent, Status, and a controls column with no header, one
+   line per Goal. Between 640 and 1199 px the Agent cell hides and the Goal
+   cell's own copy of the agent control appears under the title. Below 640 px
+   the Status cell hides too and the Goal cell's facts line appears. A hidden
+   cell uses `visibility: hidden`, which takes it out of the accessibility
+   tree, so every width reads each fact exactly once. Table display never
+   changes: rows stay `<tr>` children of their row group at every width
+   (work-screen-refresh D8). */
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
@@ -514,20 +493,32 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .session-layer-terminal { min-height: 0; }
 /* A caption keeps `display: table-caption`. Any other display value drops it
    out of the table box, and the browser then sizes it to one column. */
-.work-caption { padding: 0 4px 8px; color: #9fa7b0; font-size: 11px; font-weight: 760; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
-.work-caption-count { margin-left: 12px; color: #7c8590; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; text-transform: none; }
-.work-keyboard-hint { float: right; color: #7c8590; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.work-caption { box-sizing: border-box; height: 24px; padding: 0 4px 8px; color: #9fa7b0; font-size: 11px; font-weight: 760; letter-spacing: .1em; line-height: 16px; text-align: left; text-transform: uppercase; }
+.work-caption-scope { display: inline-flex; align-items: center; gap: 10px; }
+.work-caption-count { color: #7c8590; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+/* The Starred and Active switches live on the caption line, where their
+   current state stays visible (work-screen-refresh D7). The old 46 px
+   toolbar is gone. */
+.work-caption-toggle { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 5px; border: 1px solid transparent; border-radius: 2px; background: transparent; color: #8b949f; cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 0; line-height: 1; text-transform: none; white-space: nowrap; }
+.work-caption-toggle:hover, .work-caption-toggle:focus-visible { color: #fff; border-color: #3c434c; }
+.work-caption-toggle.on { color: var(--blue); border-color: #34445a; background: #121821; }
+.work-caption-toggle .area-focus-count { color: inherit; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.work-caption-toggle kbd { margin-left: 4px; }
+.work-keyboard-hint { float: right; display: inline-flex; align-items: center; color: #7c8590; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 .work-keyboard-hint kbd { margin-left: 0; }
+.work-caption-key { padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; white-space: nowrap; }
+.work-caption-key:hover, .work-caption-key:focus-visible { color: #fff; }
+.work-caption-dot { color: #4d5661; white-space: pre; }
 .work-table thead th { box-sizing: border-box; height: 26px; padding: 0 10px; border-bottom: 1px solid #46505c; color: #8b949f; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-align: left; text-transform: uppercase; }
 .work-col-work { width: auto; min-width: 280px; }
-.work-col-state { width: 156px; }
-.work-col-time { width: 150px; }
-.work-col-action { width: 196px; }
+.work-col-agent { width: 260px; }
+.work-col-status { width: 216px; }
+.work-col-controls { width: 56px; }
 
-.work-group-row > .work-group-head { box-sizing: border-box; height: 32px; padding: 0 10px; border-bottom: 1px solid #2b3037; background: #14171b; font-weight: 400; line-height: 1.1; text-align: left; }
+.work-group-row > .work-group-head { box-sizing: border-box; height: 28px; padding: 0 10px; border-bottom: 1px solid #2b3037; background: #14171b; font-weight: 400; line-height: 1.1; text-align: left; }
 .work-group-head { display: table-cell; }
 .work-group-head > * { vertical-align: middle; }
-.work-group-layout { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 32px; }
+.work-group-layout { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 28px; }
 .work-group-identity, .work-group-controls { display: flex; min-width: 0; align-items: center; }
 .work-group-identity { overflow: hidden; }
 .work-group-controls { justify-content: flex-end; gap: 6px; }
@@ -545,7 +536,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-group-head .desk-state kbd { color: inherit; opacity: .7; }
 .work-fold:hover, .work-fold:focus-visible { color: #fff; background: #242a31; }
 /* The one group of Areas outside Area Focus: present, quiet, never a link. */
-.work-group-count { margin-left: 10px; color: #7c8590; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.work-group-count { margin-left: 10px; color: #7c8590; white-space: nowrap; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* A sub-Area header: one thin indented row inside an open Area group, named
    by its path below the parent. Same triangle, count, brain button, and menu
    as the top-level header, smaller and quieter (work-view-sub-areas D1). */
@@ -559,11 +550,15 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-sub-area-row.quiet .work-group-brain:hover, .work-sub-area-row.quiet .desk-action-menu-trigger:hover { color: #fff; }
 .work-row.under-sub-area .work-cell-work { padding-left: 26px; }
 .work-row.under-sub-area.subgoal .work-cell-work { padding-left: 46px; }
-.work-group-head .desk-state { margin-left: 12px; }
+.work-group-head .desk-state { margin-left: 10px; }
 .work-group-brain { display: inline-flex; min-height: 24px; align-items: center; gap: 6px; padding: 0 4px; border: 0; background: transparent; color: #9ebbe0; cursor: pointer; font-size: 11px; font-weight: 690; line-height: 1; white-space: nowrap; }
 .work-group-brain:hover { color: #fff; }
-.work-group-brain-short { display: none; }
-.work-group-brain-long { display: inline; }
+/* The row-end controls (`brain b`, `⋯ ?`) stay in the DOM and in the
+   accessibility tree, and appear on the cursor row, on hover, and on focus
+   (work-screen-refresh D4). Opacity, never `visibility`: the narrow layout
+   hides cells with `visibility`, and a second use would hide these for good. */
+.work-row-controls { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; opacity: 0; pointer-events: none; transition: opacity .12s; }
+tr.cursor .work-row-controls, tr:hover .work-row-controls, tr:focus-within .work-row-controls { opacity: 1; pointer-events: auto; }
 .work-group-action-menu > div { min-width: 186px; }
 .work-group-action-menu > div button { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 
@@ -571,7 +566,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
    is explicit because `.work-row` styling sits at the same specificity as the
    user-agent's `[hidden]` rule. */
 .work-row[hidden] { display: none; }
-.work-row > * { box-sizing: border-box; height: 48px; padding: 3px 10px; border-bottom: 1px solid #23282e; vertical-align: middle; }
+.work-row > * { box-sizing: border-box; height: 34px; padding: 3px 10px; border-bottom: 1px solid #23282e; vertical-align: middle; }
 .work-row:hover > * { background: #171a1e; }
 .work-cell-work { min-width: 0; font-weight: 400; text-align: left; }
 .work-cell-title { display: flex; min-width: 0; align-items: flex-start; gap: 6px; }
@@ -588,30 +583,26 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 /* Provenance rides on the title line: the row keeps one line at wide width,
    and the title, not the path, is what an over-long cell truncates. */
 .work-row-path { flex: none; margin-left: 2px; color: #7c8590; font-size: 10px; font-weight: 690; letter-spacing: .05em; text-transform: uppercase; }
-.work-row-agent { overflow: hidden; color: #8f99a5; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 690; text-overflow: ellipsis; white-space: nowrap; }
-.work-row-step { overflow: hidden; color: #707b87; font-size: 9px; font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
+/* The Agent cell: one button prints agent, launch, and step once and enters
+   the run with its registered key, ⌘⇧↵ (work-screen-refresh D5). Its own
+   class and not `.desk-action`: the state colour rules turn every
+   `.desk-action` amber on a waiting row, and 25 characters of amber monospace
+   shouts. A past run prints muted, with no key. */
+.work-cell-agent { overflow: hidden; white-space: nowrap; }
+.work-agent-ref { display: inline-flex; max-width: 100%; align-items: center; padding: 2px 0; border: 0; background: transparent; color: #8f99a5; cursor: pointer; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 690; white-space: nowrap; }
+.work-agent-ref-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.work-agent-ref kbd { flex: none; }
+button.work-agent-ref:hover, button.work-agent-ref:focus-visible { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+.work-agent-ref.past { color: #6f7883; cursor: default; }
+.work-no-agent { color: #59616b; }
+.work-cell-agent-inline { display: none; }
 .work-cell-facts { display: none; }
-.work-cell-state .desk-state { font-size: 11px; }
+/* The Status cell: state word, then elapsed time, on one line (D6). */
+.work-cell-status { overflow: hidden; white-space: nowrap; }
+.work-cell-status .desk-state { font-size: 11px; }
+.work-status-sep { color: #4d5661; }
+.work-cell-controls { padding-right: 6px; text-align: right; }
 .work-step { margin-left: 6px; color: #7c8590; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; }
-.work-cell-time { white-space: nowrap; }
-/* The label sits in a fixed-width box, so every row's bar starts at the same
-   x whatever the text says ("<1m" against "17h 45m"). Tabular figures keep the
-   digits themselves in one column too. 54 px holds the longest label
-   durationLabel can print in practice ("365d 23h" measures 52 px at this
-   font); a longer one ellipses instead of pushing the bar. Label, gap and bar
-   add up to the column's content box (150 px less its 2 x 10 px padding). */
-.work-cell-time .desk-goal-elapsed { display: inline-block; width: 54px; overflow: hidden; font-variant-numeric: tabular-nums; text-overflow: ellipsis; vertical-align: middle; }
-.work-cell-time .desk-goal-bar { width: 68px; margin-left: 8px; vertical-align: middle; }
-.work-no-time { color: #7c8590; }
-.work-cell-action { text-align: right; }
-.work-cell-action .desk-action { white-space: nowrap; }
-/* `max-width` is what makes the ellipsis on `.desk-launch-ref` work. The row
-   of actions is an inline-flex box, so without it the box takes its max-content
-   width, the launch text never shrinks, and a long launch pushes the `▾` menu
-   out of the cell: measured 3.5 px at full width and 41 px at the 959 px
-   breakpoint, where the menu left the table. The `▾` of every row must sit on
-   one x-position. */
-.work-cell-action .desk-goal-actions { max-width: 100%; justify-content: flex-end; }
 .work-row.waiting .desk-action { border-color: #665735; color: var(--amber); }
 .work-row.fact .desk-action { border-color: #3c434c; color: #cbd1d7; }
 .work-row.definition .work-row-title { color: #e2d7bd; }
@@ -635,13 +626,18 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 
 .work-table :focus-visible, .ask-table :focus-visible { outline: 2px solid #8fc4ff; outline-offset: 1px; }
 
-@media (max-width: 959px) {
-  .work-col-state { width: 124px; }
-  .work-col-time { width: 66px; }
-  /* Wide enough for the primary action beside its menu: a narrower column
-     wraps the label and costs every row 13 px of height. */
-  .work-col-action { width: 136px; }
-  .work-cell-time .desk-goal-bar { display: none; }
+@media (max-width: 1199px) {
+  /* The Agent cell moves under the title as line 2 (work-screen-refresh D8).
+     The `<col>` states zero width so the fixed layout stops reserving it;
+     `visibility: hidden` takes the cell's copy out of the accessibility tree,
+     so the launch is read once. Rows are two lines, 48 px. */
+  .work-col-agent { width: 0; }
+  .work-head-agent, .work-cell-agent { visibility: hidden; padding: 0; overflow: hidden; white-space: nowrap; }
+  .work-cell-agent-inline { display: block; margin-top: 1px; }
+  /* A Goal with no agent has nothing to say on line 2: the dash stays in the hidden cell. */
+  .work-cell-agent-inline:has(> .work-no-agent) { display: none; }
+  .work-row > * { height: 48px; }
+  .work-col-status { width: 216px; }
 }
 
 @media (max-width: 639px) {
@@ -653,16 +649,15 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
      cell slides into the wrong column. `visibility: collapse` on the column
      would say the same thing, but its engine support is uneven and it leaves
      the text in Chrome's accessibility tree. */
-  .work-col-work { width: 62%; min-width: 0; }
-  .work-col-state, .work-col-time { width: 0; }
-  .work-col-action { width: 108px; }
-  .work-head-state, .work-head-time, .work-cell-state, .work-cell-time { visibility: hidden; padding: 0; overflow: hidden; white-space: nowrap; }
+  .work-col-work { width: auto; min-width: 0; }
+  .work-col-status { width: 0; }
+  .work-col-controls { width: 56px; }
+  .work-head-status, .work-cell-status { visibility: hidden; padding: 0; overflow: hidden; white-space: nowrap; }
   .work-row > * { height: auto; padding: 6px 8px; }
-  .work-cell-facts { display: block; margin-top: 2px; color: #8b949f; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+  /* 22 px = the fold glyph's 16 px box plus its 6 px gap, so the facts line up under the title. */
+  .work-cell-facts { display: block; margin-top: 2px; padding-left: 22px; color: #8b949f; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
   .work-row-title { white-space: normal; }
-  .work-cell-action { vertical-align: top; }
-  .work-group-brain-long { display: none; }
-  .work-group-brain-short { display: inline; }
+  .work-cell-controls { vertical-align: top; }
   .work-keyboard-hint { display: none; }
   .ask-col-area, .ask-col-kind { width: 0; }
   .ask-head-area, .ask-head-kind, .ask-cell-area, .ask-cell-kind { visibility: hidden; padding: 0; overflow: hidden; white-space: nowrap; }
@@ -1592,8 +1587,6 @@ body.work-search-open .screen { padding-bottom: 48px; }
 @media (max-width: 900px) {
   .area-focus-control { width: 100%; }
   .area-focus-picker { width: 100%; }
-  .work-tools { grid-template-columns: 1fr; }
-  .work-tool-actions .quiet-button { flex: 1; }
   .app-bar { grid-template-columns: auto 1fr auto; gap: 12px; padding: 0 16px; }
   .primary-tab { min-width: 60px; padding: 0 8px; }
   .work-page, .summary-page, .decision-page, .areas-page, .program-detail { width: calc(100% - 48px); }
@@ -1700,7 +1693,6 @@ body.work-search-open .screen { padding-bottom: 48px; }
 .area-purpose { max-width: 820px; margin: 4px 0 0; color: var(--muted); }
 .area-note-signal { margin: 4px 0 0; font-size: 12px; color: var(--muted); opacity: 0.8; }
 .area-note-signal.warning { color: var(--warning, #b45309); opacity: 1; }
-.work-group-note { margin: 0 0 0 10px; font-size: 10px; }
 .area-current { max-width: 820px; margin: 2px 0 0; color: var(--quiet); font-size: 13px; }
 .area-contents-actions-spacer { flex: 1; }
 .area-map-screen .area-content-section { padding: 0 26px 26px; }

@@ -90,11 +90,11 @@ async function chooseBrain(window, areaName = "tangent") {
   await settle(window);
 }
 
-test("the Work toolbar is one search with visible keyboard affordances", async () => {
+test("Work has no toolbar: the search and keys entries live on the caption line", async () => {
   const css = await readFile(path.join(here, "public", "shell.css"), "utf8");
 
-  assert.match(css, /\.work-tools \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto/);
-  assert.match(css, /\.work-tools \{ grid-template-columns: 1fr/);
+  assert.doesNotMatch(css, /\.work-tools\b/, "the 46 px toolbar is gone (work-screen-refresh D7)");
+  assert.match(css, /\.work-caption-key \{/, "the caption key entries are pointer targets");
   assert.doesNotMatch(css, /\.work-filter/);
   assert.doesNotMatch(css, /\.work-area-browser|\.work-describe/);
 });
@@ -105,8 +105,8 @@ test("Go to offers an unstarted Area brain and Work has no Browse or Describe to
   assert.equal(window.document.querySelector("[data-show-areas]"), null);
   assert.equal(window.document.querySelector("[data-describe-work]"), null);
   assert.equal(window.document.querySelector("[data-work-commands]"), null, "Commands and Keys are one ? sheet");
-  assert.ok(window.document.querySelector("[data-work-keys]"));
-  assert.match(window.document.querySelector("[data-work-keys]").textContent, /Keys\s*\?/);
+  assert.ok(window.document.querySelector(".work-caption [data-work-keys]"), "the keys entry is on the caption line");
+  assert.match(window.document.querySelector("[data-work-keys]").textContent, /\?\s*all/);
   assert.equal(window.document.querySelector("[data-work-filter]"), null, "Current and Planned controls are retired");
   assert.ok(window.document.querySelector("[data-open-area-brain='otto/empty']"), "the empty Area keeps its Work row, so its brain stays reachable (every Area has a row)");
   await chooseBrain(window, "empty");

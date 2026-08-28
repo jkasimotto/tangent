@@ -97,7 +97,7 @@ test("Goal cards open only their exact Area brain and preserve Work context", as
     return row.querySelector(".work-group-brain");
   };
   const rootAction = groupBrain(parent.file);
-  assert.equal(rootAction.querySelector(".work-group-brain-long").textContent, "Open brain");
+  assert.equal(rootAction.querySelector(".work-group-brain-text").textContent, "brain", "the control prints one word; its verb is the accessible name (work-screen-refresh D4)");
   assert.equal(rootAction.dataset.openBrain, "tangent-brain");
   assert.equal(rootAction.getAttribute("aria-label"), "Open brain for Otto / Tangent");
   assert.equal(groupBrain(subgoal.file), rootAction, "a Subgoal reads the same group route as its parent");
@@ -105,7 +105,7 @@ test("Goal cards open only their exact Area brain and preserve Work context", as
   assert.equal(window.document.querySelector(`[data-goal-anchor='${nested.file}']`).closest("tbody").dataset.workGroup, "otto", "a nested Area is never a peer group: every Area sits in its top-level group");
   assert.ok(window.document.querySelector("tbody[data-work-group='otto'] tr[data-work-sub-area='otto/tangent/nested']"), "the nested Area is a sub-header row");
   assert.equal(groupBrain(orphan.file).dataset.openBrain, undefined, "an Area with no brain offers Start instead");
-  assert.equal(groupBrain(orphan.file).querySelector(".work-group-brain-long").textContent, "Start brain");
+  assert.equal(groupBrain(orphan.file).dataset.brainVerb, "Start brain");
   assert.equal(window.document.querySelector(".desk-brain-action"), null, "no row repeats the group's brain route");
 
   const user = userEvent.setup({ document: window.document });
@@ -148,16 +148,16 @@ test("Goal cards open only their exact Area brain and preserve Work context", as
   await window.refresh();
   await settle(window);
   assert.equal(groupBrain(parent.file).dataset.openBrain, undefined, "refresh turns an ended owner back into Resume");
-  assert.equal(groupBrain(parent.file).querySelector(".work-group-brain-long").textContent, "Resume brain");
+  assert.equal(groupBrain(parent.file).dataset.brainVerb, "Resume brain");
   childLive = false;
   sessionProjection = goalSessions;
   await window.refresh();
   await settle(window);
-  assert.equal(groupBrain(nested.file).querySelector(".work-group-brain-long").textContent, "Resume brain");
+  assert.equal(groupBrain(nested.file).dataset.brainVerb, "Resume brain");
   dom.window.close();
 });
 
-test("the group brain action keeps one label per width and never wraps", async () => {
+test("the group brain action is one word at every width and never wraps", async () => {
   const [html, css] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.css"), "utf8"),
@@ -169,14 +169,11 @@ test("the group brain action keeps one label per width and never wraps", async (
   const button = dom.window.document.createElement("button");
   button.className = "work-group-brain";
   button.setAttribute("aria-label", "Open brain for Otto / Tangent");
-  button.innerHTML = `<span class="work-group-brain-long">Open brain</span><span class="work-group-brain-short">Brain</span>`;
+  button.innerHTML = `<span class="work-group-brain-text">brain</span><kbd aria-hidden="true">b</kbd>`;
   dom.window.document.body.append(button);
 
-  /** The computed style of one label span inside the group action. */
-  const styleOf = (selector) => dom.window.getComputedStyle(button.querySelector(selector));
   assert.equal(dom.window.getComputedStyle(button).whiteSpace, "nowrap", "the group action never wraps");
-  assert.equal(styleOf(".work-group-brain-long").display, "inline", "the wide label is the visible one by default");
-  assert.equal(styleOf(".work-group-brain-short").display, "none", "the narrow label is hidden by default");
-  assert.equal(button.getAttribute("aria-label"), "Open brain for Otto / Tangent", "the accessible name names the Area at every width");
+  assert.equal(button.querySelector(".work-group-brain-text").textContent, "brain", "the visible text is the one word at every width");
+  assert.equal(button.getAttribute("aria-label"), "Open brain for Otto / Tangent", "the accessible name names the verb and the Area at every width");
   dom.window.close();
 });

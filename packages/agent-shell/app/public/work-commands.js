@@ -82,11 +82,14 @@ const captionKeysByRow = Object.freeze({
     { ids: ["changeAgent"], word: "agent" },
     { ids: ["resumeAttempt"], word: "resume" },
     { ids: ["collapse", "expand"], word: "fold" },
+    { ids: ["search"], word: "search" },
     { ids: ["keys"], word: "all" },
   ],
   definition: [
     { ids: ["open"], word: "open" },
+    { ids: ["session"], word: "agent" },
     { ids: ["moveRows"], word: "rows" },
+    { ids: ["search"], word: "search" },
     { ids: ["keys"], word: "all" },
   ],
   none: [

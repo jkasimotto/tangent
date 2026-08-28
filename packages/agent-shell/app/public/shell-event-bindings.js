@@ -1390,6 +1390,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (workSearchButton) return searchBar.open();
     const workKeys = target.closest?.("[data-work-keys]");
     if (workKeys) return openWorkKeySheet();
+    // The caption key line's entries run their command on the cursor row
+    // (work-screen-refresh D7): the line teaches the key and takes the pointer.
+    const captionCommand = target.closest?.("[data-work-caption-command]");
+    if (captionCommand && state.view === "work") return executeWorkCommand(captionCommand.dataset.workCaptionCommand, cursorRow());
     if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: false });
     const objectActions = target.closest?.("[data-work-object-actions]");
     if (objectActions) {

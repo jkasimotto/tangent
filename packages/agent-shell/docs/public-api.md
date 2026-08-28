@@ -18,6 +18,8 @@ Every command except `vault commit` and `study` is a thin HTTP client to the Age
 
 Requests have a response deadline and an operation ID. A failed mutation response warns that the operation can already be durable. A worker send transport failure tells the caller to retry the same command. The server deduplicates that retry and repairs a missing brain notice.
 
+`GET /api/work` returns the compact browser Work read model. It includes current Area, Goal, queue, brain, session, shell, and program summaries. It excludes durable history bodies. The response supports `ETag` and `If-None-Match`. Gateway headers report boot identity, capture time, and stale state.
+
 `tangent vault commit` writes the vault history directly. `tangent study` starts one local interactive agent directly. No other package command writes vault files or starts a process itself.
 
 ## Vault and Area commands

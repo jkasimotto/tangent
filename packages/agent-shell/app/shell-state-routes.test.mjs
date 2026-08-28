@@ -26,3 +26,22 @@ test("shell-state routes serve snapshots and the shared chat session", async () 
   assert.match(config.body, /window\.CHAT_SESSION = "chat"/);
   assert.equal(config.headers["content-type"], "text/javascript");
 });
+
+test("Work route serves hashed bytes and honors conditional reads", async () => {
+  const body = JSON.stringify({ schema: "agent-shell-work.v1" });
+  const routes = createShellStateRoutes({
+    chatSession: "chat",
+    /** Returns one hashed Work response. */
+    async work() { return { body, bytes: Buffer.byteLength(body), etag: '"work-1"' }; },
+  });
+  const first = response();
+  await routes.handle({ method: "GET", headers: {} }, first, new URL("http://shell/api/work"));
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.etag, '"work-1"');
+  assert.equal(first.body, body);
+
+  const unchanged = response();
+  await routes.handle({ method: "GET", headers: { "if-none-match": '"work-1"' } }, unchanged, new URL("http://shell/api/work"));
+  assert.equal(unchanged.status, 304);
+  assert.equal(unchanged.body, undefined);
+});

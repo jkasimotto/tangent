@@ -60,3 +60,16 @@ test("API client distinguishes transport errors and caller aborts", async () => 
   });
   await assert.rejects(aborted.api("/api/example", { signal: signal.signal }), (error) => error.kind === "abort");
 });
+
+test("API client reuses a compact Work response after a content ETag match", async () => {
+  const calls = [];
+  const payload = { schema: "agent-shell-work.v1" };
+  const client = createApiClient(async (_path, options) => {
+    calls.push(options);
+    if (calls.length === 2) return { ok: false, status: 304, headers: new Headers(), /** Returns the empty 304 body. */ async json() { return {}; } };
+    return { ok: true, status: 200, headers: new Headers({ etag: '"work-1"' }), /** Returns the first Work body. */ async json() { return payload; } };
+  });
+  assert.equal(await client.api("/api/work"), payload);
+  assert.equal(await client.api("/api/work"), payload);
+  assert.equal(calls[1].headers["if-none-match"], '"work-1"');
+});

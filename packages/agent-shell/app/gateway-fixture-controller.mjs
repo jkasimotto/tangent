@@ -4,6 +4,12 @@ import { randomUUID } from "node:crypto";
 
 const boot = randomUUID();
 const server = http.createServer((request, response) => {
+  if (request.url === "/api/work") {
+    response.writeHead(200, { "content-type": "application/json", etag: `"${boot}"` });
+    const fixtureBytes = Number(process.env.TANGENT_GATEWAY_FIXTURE_WORK_BYTES ?? 0);
+    response.end(JSON.stringify({ schema: "agent-shell-work.v1", fixture: "x".repeat(fixtureBytes) }));
+    return;
+  }
   if (request.url === "/api/sessions") {
     response.writeHead(200, { "content-type": "application/json" });
     const fixtureBytes = Number(process.env.TANGENT_GATEWAY_FIXTURE_SNAPSHOT_BYTES ?? 0);

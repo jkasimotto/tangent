@@ -1,10 +1,31 @@
-/** Reads one complete projection and waits for every sibling request to settle. */
+/** Reads the controller-owned compact Work projection in one coherent request. */
 export async function readProjection(api) {
-  const results = await Promise.allSettled([
-    api("/api/vault"),
-    api("/api/sessions"),
-    api("/api/operations"),
-  ]);
+  try {
+    const work = await api("/api/work");
+    if (work?.schema === "agent-shell-work.v1") {
+      const goals = new Map((work.vault.areas ?? []).flatMap((area) => (area.goals ?? []).map((goal) => [goal.file, goal])));
+      const documents = new Map((work.vault.documents ?? []).map((document) => [document.file, document]));
+      work.vault.map = (work.vault.map ?? []).map((group) => ({ ...group, goals: (group.goalFiles ?? []).map((file) => goals.get(file)).filter(Boolean) }));
+      work.vault.areas = (work.vault.areas ?? []).map((area) => ({ ...area, documents: (area.documentFiles ?? []).map((file) => documents.get(file)).filter(Boolean) }));
+      work.session.pipelines = [...goals.values()].map((goal) => goal.run).filter(Boolean);
+      work.session.brains = (work.vault.areas ?? []).map((area) => area.brain).filter(Boolean);
+      if (work.transport) {
+        work.session.runtime = {
+          ...(work.session.runtime ?? {}),
+          gateway: {
+            boot: work.transport.gatewayBoot,
+            stale: work.transport.stale,
+            capturedAt: work.transport.capturedAt,
+            controller: { boot: work.transport.controllerBoot },
+          },
+        };
+      }
+      return [work.vault, work.session, work.programs];
+    }
+  } catch (error) {
+    if (error?.status !== 404) throw error;
+  }
+  const results = await Promise.allSettled([api("/api/vault"), api("/api/sessions"), api("/api/operations")]);
   const failure = results.find((result) => result.status === "rejected");
   if (failure) throw failure.reason;
   return results.map((result) => result.value);

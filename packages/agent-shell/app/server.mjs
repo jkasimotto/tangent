@@ -94,6 +94,7 @@ import { newAttemptReplacement, readAllAttemptReplacements, readAttemptReplaceme
 import { GoalExecutionTransitionError, attachLateSourceEvidence, parkCurrentGoalAttempt, promoteReadyReplacement, reopenParkedGoalQueue } from "./goal-execution-transition.mjs";
 import { dismissGoalDocument, markGoalDocumentOpened, presentGoalDocument, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalDocument } from "./goal-presentations.mjs";
 import { createGoalPresentationRoutes } from "./goal-presentation-routes.mjs";
+import { projectWork } from "./work-projection.mjs";
 
 const rawExecFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = Number(process.env.TANGENT_TMUX_COMMAND_TIMEOUT_MS ?? 10_000);
@@ -6427,6 +6428,39 @@ const shellStateRoutes = createShellStateRoutes({
       brains,
       contextHandoverTokens: CONTEXT_HANDOVER_TOKENS,
     };
+  },
+  /** Returns the compact browser read model with a semantic content hash. */
+  async work() {
+    const sessions = await listSessions();
+    const [vault, session, programs] = await Promise.all([
+      (async () => {
+        const [indexed, brains] = await Promise.all([vaultIndex(), readAllBrains(BRAINS_ROOT)]);
+        const projectedVault = withoutBrainGoalBindings(indexed, brainSessionNames(brains));
+        return { ...projectedVault, projection: await vaultProjection.status(), desk: projectDesk(projectedVault, sessions) };
+      })(),
+      (async () => {
+        const [pipelines, brains, revisions, rebuild, attemptReplacements] = await Promise.all([
+          pipelinesView(sessions).catch(() => []),
+          brainsView(sessions).catch(() => []),
+          commitChanges.status().catch(() => ({ deployedCommit: commitChanges.deployedCommit, currentCommit: commitChanges.deployedCommit, commits: [] })),
+          rebuildOperations.current().catch(() => null),
+          readAllAttemptReplacements(ATTEMPT_REPLACEMENTS_ROOT).then(unsettledAttemptReplacements).catch(() => []),
+        ]);
+        return {
+          agent: agentCmd, boot: BOOT_ID, sourceChanged: revisions.commits.length > 0,
+          deployedCommit: revisions.deployedCommit, currentCommit: revisions.currentCommit,
+          pendingCommits: revisions.commits, rebuild, goalCleanups: await readAllGoalCleanups(GOAL_CLEANUPS_ROOT),
+          caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions,
+          runtime: { instanceId: INSTANCE_ID, ownershipKey: SESSION_OWNER_OPTION, sessions: sessionObservation.status() },
+          pipelines, attemptReplacements, brains, contextHandoverTokens: CONTEXT_HANDOVER_TOKENS,
+        };
+      })(),
+      (async () => {
+        const snapshot = await programsSnapshot({ treesRoot: TREES_ROOT, sessions: await listProgramSessions() });
+        return { ...await projectMaterialOperationEvents(snapshot), processes: await processViews() };
+      })(),
+    ]);
+    return projectWork({ vault, session, programs });
   },
 });
 const voiceRoutes = createVoiceRoutes({

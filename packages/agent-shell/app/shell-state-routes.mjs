@@ -4,6 +4,22 @@ import { sendJson } from "./http-json.mjs";
 export function createShellStateRoutes(operations) {
   /** Handles one matching request and reports whether this router owned it. */
   async function handle(request, response, url) {
+    if (request.method === "GET" && url.pathname === "/api/work") {
+      const projected = await operations.work();
+      if (request.headers?.["if-none-match"] === projected.etag) {
+        response.writeHead(304, { etag: projected.etag, "cache-control": "no-cache" });
+        response.end();
+        return true;
+      }
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "content-length": projected.bytes,
+        "cache-control": "no-cache",
+        etag: projected.etag,
+      });
+      response.end(projected.body);
+      return true;
+    }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
       sendJson(response, 200, await operations.snapshot());
       return true;

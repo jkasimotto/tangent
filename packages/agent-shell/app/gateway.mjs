@@ -53,6 +53,7 @@ const RESTART_MAX_MS = Number(process.env.TANGENT_CONTROLLER_RESTART_MAX_MS ?? 1
 // vault can legitimately exceed 8 MiB, so keep a generous bounded allowance
 // rather than misclassifying a valid controller response as a restart.
 const MAX_SNAPSHOT_BYTES = Number(process.env.TANGENT_GATEWAY_SNAPSHOT_MAX_BYTES ?? 32 * 1024 * 1024);
+const MAX_WORK_BYTES = Number(process.env.TANGENT_GATEWAY_WORK_MAX_BYTES ?? 2 * 1024 * 1024);
 const MAX_CONTROLLER_REQUESTS = Number(process.env.TANGENT_GATEWAY_CONTROLLER_REQUESTS ?? 64);
 
 startEventLoopWatchdog({
@@ -66,6 +67,7 @@ let restartAttempt = 0;
 let restartTimer = null;
 let shuttingDown = false;
 let sessionSnapshot = null;
+let workSnapshot = null;
 let activeControllerRequests = 0;
 const activeReadPaths = new Set();
 
@@ -219,8 +221,27 @@ function sendSessionSnapshot(response, value, { stale, operationId }) {
   sendJson(response, 200, snapshot);
 }
 
+/** Serves the controller's compact Work bytes without parsing them on the terminal loop. */
+function sendWorkSnapshot(response, snapshot, { stale, operationId, reason = "" }) {
+  response.writeHead(200, {
+    ...snapshot.headers,
+    "content-length": snapshot.body.length,
+    "x-tangent-operation-id": operationId,
+    "x-tangent-gateway-boot": GATEWAY_BOOT_ID,
+    "x-tangent-controller-boot": snapshot.controllerBoot,
+    "x-tangent-stale": stale ? "1" : "0",
+    "x-tangent-stale-reason": stale ? reason || "controller-recovery" : "",
+    "x-tangent-captured-at": snapshot.capturedAt,
+  });
+  response.end(snapshot.body);
+}
+
 /** Returns cached sessions during controller recovery, or a named 503. */
 function unavailable(request, response, operationId) {
+  if (request.method === "GET" && new URL(request.url, "http://localhost").pathname === "/api/work" && workSnapshot) {
+    sendWorkSnapshot(response, workSnapshot, { stale: true, operationId });
+    return;
+  }
   if (request.method === "GET" && request.url?.startsWith("/api/sessions") && sessionSnapshot) {
     sendSessionSnapshot(response, sessionSnapshot.value, { stale: true, operationId });
     return;
@@ -263,6 +284,7 @@ function proxyController(request, response, operationId) {
   let settled = false;
   let deadline;
   let upstream;
+  let projectionError = null;
   try {
     upstream = http.request({
       host: "127.0.0.1",
@@ -275,17 +297,23 @@ function proxyController(request, response, operationId) {
         "x-tangent-operation-id": operationId,
       },
     }, (incoming) => {
-      incoming.on("error", (error) => upstream.destroy(error));
-      incoming.on("aborted", () => upstream.destroy(new Error("controller response aborted")));
-      const isSessions = request.method === "GET" && request.url?.startsWith("/api/sessions") && incoming.statusCode === 200;
-      if (!isSessions) {
-        response.writeHead(incoming.statusCode ?? 502, proxyHeaders(incoming.headers));
+      incoming.on("error", (error) => upstream.destroy(projectionError ?? error));
+      incoming.on("aborted", () => upstream.destroy(projectionError ?? new Error("controller response aborted")));
+      const pathname = new URL(request.url, "http://localhost").pathname;
+      const isSessions = request.method === "GET" && pathname === "/api/sessions" && incoming.statusCode === 200;
+      const isWork = request.method === "GET" && pathname === "/api/work" && incoming.statusCode === 200;
+      if (!isSessions && !isWork) {
+        const workHeaders = request.method === "GET" && pathname === "/api/work" ? {
+          "x-tangent-gateway-boot": GATEWAY_BOOT_ID,
+          "x-tangent-controller-boot": generation.boot,
+          "x-tangent-stale": "0",
+        } : {};
+        response.writeHead(incoming.statusCode ?? 502, { ...proxyHeaders(incoming.headers), ...workHeaders });
         incoming.pipe(response);
         incoming.on("end", () => {
           settled = true;
           clearTimeout(deadline);
           releaseAdmission();
-          const pathname = new URL(request.url, "http://localhost").pathname;
           if (request.method === "POST" && pathname !== "/api/telemetry/action" && (incoming.statusCode ?? 500) < 400) stateEvents.changed(pathname);
         });
         return;
@@ -294,8 +322,11 @@ function proxyController(request, response, operationId) {
       let bytes = 0;
       incoming.on("data", (chunk) => {
         bytes += chunk.length;
-        if (bytes > MAX_SNAPSHOT_BYTES) {
-          incoming.destroy(new Error(`session snapshot exceeds ${MAX_SNAPSHOT_BYTES} bytes`));
+        const limit = isWork ? MAX_WORK_BYTES : MAX_SNAPSHOT_BYTES;
+        if (bytes > limit) {
+          projectionError = new Error(`${isWork ? "work projection" : "session snapshot"} exceeds ${limit} bytes`);
+          projectionError.code = isWork ? "work-projection-too-large" : "session-snapshot-too-large";
+          incoming.destroy(projectionError);
           return;
         }
         chunks.push(chunk);
@@ -306,6 +337,17 @@ function proxyController(request, response, operationId) {
         clearTimeout(deadline);
         releaseAdmission();
         try {
+          if (isWork) {
+            const body = Buffer.concat(chunks);
+            workSnapshot = {
+              body,
+              headers: proxyHeaders(incoming.headers),
+              controllerBoot: generation.boot,
+              capturedAt: new Date().toISOString(),
+            };
+            sendWorkSnapshot(response, workSnapshot, { stale: false, operationId });
+            return;
+          }
           const parseStartedAt = Date.now();
           const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           sessionSnapshot = { value, capturedAt: new Date().toISOString() };
@@ -333,6 +375,11 @@ function proxyController(request, response, operationId) {
     if (settled) return;
     settled = true;
     console.error(`[gateway] ${request.method} ${request.url} operation=${operationId}:`, error?.message ?? error);
+    if (projectionError?.code === "work-projection-too-large") {
+      if (workSnapshot) sendWorkSnapshot(response, workSnapshot, { stale: true, operationId, reason: "projection-too-large" });
+      else sendJson(response, 502, { error: "Agent Shell Work projection exceeded the gateway limit.", code: projectionError.code, operationId });
+      return;
+    }
     if (!response.headersSent) unavailable(request, response, operationId);
     else response.destroy(error);
   });
@@ -358,6 +405,7 @@ const server = http.createServer(async (request, response) => {
         pid: process.pid,
         controller: controllerStatus(),
         sessions: { cached: Boolean(sessionSnapshot), capturedAt: sessionSnapshot?.capturedAt ?? null },
+        work: { cached: Boolean(workSnapshot), capturedAt: workSnapshot?.capturedAt ?? null, bytes: workSnapshot?.body.length ?? 0 },
         proxy: { active: activeControllerRequests, limit: MAX_CONTROLLER_REQUESTS, reads: activeReadPaths.size },
       });
       return;

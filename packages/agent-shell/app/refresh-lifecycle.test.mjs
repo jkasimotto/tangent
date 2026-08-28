@@ -130,22 +130,25 @@ test("a pending trigger respects backpressure before its trailing refresh", asyn
   coordinator.stop();
 });
 
-test("projection read waits for sibling requests after one endpoint rejects", async () => {
-  let releaseSessions;
-  let settled = false;
-  /** Returns one controlled projection endpoint result. */
-  const api = (path) => {
-    if (path === "/api/vault") return Promise.reject(Object.assign(new Error("duplicate"), { status: 429 }));
-    if (path === "/api/sessions") return new Promise((resolve) => { releaseSessions = () => resolve({ sessions: [] }); });
-    return Promise.resolve({ programs: [] });
-  };
-  const projection = readProjection(api).catch((error) => {
-    settled = true;
-    throw error;
+test("projection read unwraps one coherent compact Work response", async () => {
+  const calls = [];
+  const projection = await readProjection(async (path) => {
+    calls.push(path);
+    return { schema: "agent-shell-work.v1", vault: { areas: [] }, session: { sessions: [] }, programs: { operations: [] } };
   });
-  await Promise.resolve();
-  assert.equal(settled, false);
-  releaseSessions();
-  await assert.rejects(projection, (error) => error.status === 429);
-  assert.equal(settled, true);
+  assert.deepEqual(calls, ["/api/work"]);
+  assert.deepEqual(projection, [{ areas: [], map: [] }, { sessions: [], pipelines: [], brains: [] }, { operations: [] }]);
+});
+
+test("projection read keeps compatibility with a controller without compact Work", async () => {
+  const calls = [];
+  const projection = await readProjection(async (path) => {
+    calls.push(path);
+    if (path === "/api/work") return {};
+    if (path === "/api/vault") return { areas: [] };
+    if (path === "/api/sessions") return { sessions: [] };
+    return { operations: [] };
+  });
+  assert.deepEqual(calls, ["/api/work", "/api/vault", "/api/sessions", "/api/operations"]);
+  assert.deepEqual(projection, [{ areas: [] }, { sessions: [] }, { operations: [] }]);
 });

@@ -18,6 +18,7 @@ function retryAfterMs(value, now = Date.now()) {
 
 /** Creates the browser's small JSON client around a fetch implementation. */
 export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), telemetry = null, deadlineMs = 20_000) {
+  let workCache = null;
   /** Calls one JSON endpoint and turns non-success replies into errors. */
   async function api(path, options = {}) {
     const method = String(options.method ?? "GET").toUpperCase();
@@ -35,7 +36,9 @@ export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), t
     if (callerSignal?.aborted) callerAborted();
     else callerSignal?.addEventListener("abort", callerAborted, { once: true });
     try {
-      response = await fetchJson(path, { ...options, signal: controller.signal });
+      const headers = { ...(options.headers ?? {}) };
+      if (method === "GET" && path === "/api/work" && workCache?.etag) headers["if-none-match"] = workCache.etag;
+      response = await fetchJson(path, { ...options, headers, signal: controller.signal });
     } catch (error) {
       telemetry?.apiFinished?.(method, path, startedAt, 0, false);
       if (timedOut) throw new ApiError(`Agent Shell ${method} ${path} exceeded its ${deadlineMs}ms response deadline.`, { kind: "timeout", status: 0, path, method, operationId: "", retryAfterMs: 0, cause: error });
@@ -46,6 +49,7 @@ export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), t
       callerSignal?.removeEventListener("abort", callerAborted);
     }
     telemetry?.apiFinished?.(method, path, startedAt, response.status, response.ok);
+    if (response.status === 304 && method === "GET" && path === "/api/work" && workCache) return workCache.data;
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new ApiError(data.error || `Agent Shell returned ${response.status}.`, {
@@ -60,6 +64,20 @@ export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), t
         operationId: response.headers?.get?.("x-tangent-operation-id") ?? data.operationId ?? "",
         retryAfterMs: retryAfterMs(response.headers?.get?.("retry-after")),
       });
+    }
+    if (data && typeof data === "object") {
+      Object.defineProperty(data, "transport", {
+        enumerable: false,
+        value: {
+          gatewayBoot: response.headers?.get?.("x-tangent-gateway-boot") ?? "",
+          controllerBoot: response.headers?.get?.("x-tangent-controller-boot") ?? "",
+          stale: response.headers?.get?.("x-tangent-stale") === "1",
+          capturedAt: response.headers?.get?.("x-tangent-captured-at") ?? "",
+        },
+      });
+    }
+    if (method === "GET" && path === "/api/work") {
+      workCache = { etag: response.headers?.get?.("etag") ?? "", data };
     }
     return data;
   }

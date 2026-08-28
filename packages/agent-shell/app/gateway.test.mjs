@@ -120,6 +120,51 @@ test("gateway accepts a complete session snapshot above the old 8 MiB limit", as
   assert.equal(snapshot.fixture.length, 9 * 1024 * 1024);
 });
 
+test("gateway caches compact Work as opaque bytes across controller recovery", async (context) => {
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") return context.skip("local listeners are not permitted");
+    throw error;
+  }
+  await startGateway(context, port, { TANGENT_GATEWAY_FIXTURE_WORK_BYTES: "1024" });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForHealth(base, (health) => health.controller.state === "ready");
+  const first = await fetch(`${base}/api/work`);
+  const body = await first.text();
+  assert.equal(first.headers.get("x-tangent-stale"), "0");
+  assert.match(body, /agent-shell-work\.v1/);
+
+  void fetch(`${base}/api/block`, { method: "POST" }).catch(() => {});
+  await waitForHealth(base, (health) => health.controller.state !== "ready");
+  const cached = await fetch(`${base}/api/work`);
+  assert.equal(cached.status, 200);
+  assert.equal(cached.headers.get("x-tangent-stale"), "1");
+  assert.equal(await cached.text(), body);
+});
+
+test("gateway names an oversized Work projection without reporting a restart", async (context) => {
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") return context.skip("local listeners are not permitted");
+    throw error;
+  }
+  await startGateway(context, port, {
+    TANGENT_GATEWAY_WORK_MAX_BYTES: "512",
+    TANGENT_GATEWAY_FIXTURE_WORK_BYTES: "1024",
+  });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForHealth(base, (health) => health.controller.state === "ready");
+  const response = await fetch(`${base}/api/work`);
+  assert.equal(response.status, 502);
+  const problem = await response.json();
+  assert.equal(problem.code, "work-projection-too-large");
+  assert.doesNotMatch(problem.error, /restart/i);
+});
+
 test("gateway rejects duplicate reads while one controller request is active", async (context) => {
   let port;
   try {

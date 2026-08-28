@@ -21,6 +21,8 @@ Gateway and controller share one stable Agent Shell instance identity. The gatew
 
 `app/public/refresh-lifecycle.js` serializes all complete browser projection reads. It keeps one trailing refresh when triggers overlap and owns projection retry timing. The browser probes gateway health only after a material projection error. Gateway and controller boot identities remain separate, so only a gateway replacement reloads browser assets.
 
+The browser refreshes through one compact `GET /api/work` read model. The model excludes durable report, handover, attempt, notice, and generation bodies. Targeted Goal and brain routes own full history. The controller gives the response a content ETag. The gateway caches its bytes without parsing them and serves the last valid response during controller recovery.
+
 `app/native/install-launch-agent.sh` installs the one outer gateway supervisor. Launchd restarts only unsuccessful exits and applies a ten-second throttle. The native app validates `/api/health`, asks launchd to start the job, and uses a re-probing exponential-backoff fallback only when the job is not installed.
 
 `app/server.mjs` is the workflow-controller composition root. HTTP route modules parse transport input and map operation results. Stateful mechanisms live behind capability factories:

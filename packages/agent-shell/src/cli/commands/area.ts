@@ -65,7 +65,9 @@ async function listCommand(args: Args): Promise<void> {
     console.log(nodes.length ? "Every Area is done or archived. Use --all to list them." : "No Areas yet.");
     return;
   }
-  for (const node of shown) console.log(all && folded(node.path) ? `${node.path}  [${node.status || "hidden"}]` : node.path);
+  /** The status label of a folded Area: its own hidden status, or the hidden ancestor's. */
+  const foldedLabel = (path: string) => hidden.has(path) ? nodes.find((node) => node.path === path)?.status : `under ${nodes.find((node) => hidden.has(node.path) && path.startsWith(`${node.path}/`))?.status}`;
+  for (const node of shown) console.log(all && folded(node.path) ? `${node.path}  [${foldedLabel(node.path)}]` : node.path);
   const foldedCount = nodes.length - shown.length;
   if (foldedCount) console.log(`${foldedCount} done or archived ${foldedCount === 1 ? "Area is" : "Areas are"} not listed. Use --all.`);
 }

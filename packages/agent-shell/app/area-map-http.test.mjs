@@ -132,6 +132,22 @@ test("the vault index carries kinds, git times, degrees, and Area children and s
   assert.equal(afterDone.areas.find((area) => area.path === "neara/hackathon").status, "done");
   const reopened = await fetch(`${base}/api/areas/status`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ area: "neara/hackathon", status: "active" }) }).then((response) => response.json());
   assert.equal(reopened.status, "active");
+  // Archived is a second hidden state beside done (area-archive Decision 3).
+  const archived = await fetch(`${base}/api/areas/status`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ area: "neara/hackathon", status: "archived" }) }).then((response) => response.json());
+  assert.equal(archived.status, "archived");
+  assert.equal(archived.openGoals, 2);
+  assert.match(await readFile(path.join(hackathon, "hackathon.md"), "utf8"), /^status: archived$/m);
+  const { stdout: archiveLog } = await execFileAsync("git", ["-C", trees, "log", "-1", "--format=%s"]);
+  assert.match(archiveLog, /update: neara\/hackathon area archived/);
+  const tree = await fetch(`${base}/api/tree`).then((response) => response.json());
+  assert.equal(tree.areas.find((area) => area.path === "neara").children.find((area) => area.path === "neara/hackathon").status, "archived");
+  const shown = await fetch(`${base}/api/areas/show?area=${encodeURIComponent("neara/hackathon")}`).then((response) => response.json());
+  assert.equal(shown.status, "archived");
+  const blockedBrain = await fetch(`${base}/api/brains/start`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ area: "neara/hackathon/live-edit" }) });
+  assert.equal(blockedBrain.status, 409, "no brain starts under an archived Area");
+  assert.match((await blockedBrain.json()).error, /is archived/);
+  const restored = await fetch(`${base}/api/areas/status`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ area: "neara/hackathon", status: "active" }) }).then((response) => response.json());
+  assert.equal(restored.status, "active");
   const bad = await fetch(`${base}/api/areas/status`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ area: "neara/hackathon", status: "paused" }) });
   assert.equal(bad.status, 400);
   const unknown = await fetch(`${base}/api/areas/status`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ area: "neara/nowhere", status: "done" }) });

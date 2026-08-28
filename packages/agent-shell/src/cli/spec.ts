@@ -47,7 +47,7 @@ export const areaCommandSpec: CliCommandSpec = {
   name: "area",
   description: "List, inspect, and create Tangent tree Areas",
   subcommands: [
-    { name: "list", description: "List every Area path in the vault", options: [serverOption, jsonOption] },
+    { name: "list", description: "List every open Area path in the vault; done and archived Areas fold away", options: [{ name: "all", description: "Include done and archived Areas, each with its status" }, serverOption, jsonOption] },
     { name: "show", description: "Show one Area's purpose, resources, skills, processes, Goals, and ideas", args: "<area>", options: [serverOption, jsonOption] },
     { name: "recent", description: "Show material milestones for one Area and its child Areas", args: "<area>", options: [{ name: "since", takesValue: true, description: "Only milestones inside a window (30d, 12h, 2w, 90m) or after an ISO time" }, { name: "query", takesValue: true, description: "Only milestones whose summary or reference holds any of these words" }, { name: "limit", takesValue: true, description: "Maximum rows (default 12)" }, serverOption, jsonOption] },
     { name: "audit", description: "Export detached legacy Area-brain records for explicit audit", args: "<area>", options: [serverOption, jsonOption] },
@@ -57,8 +57,9 @@ export const areaCommandSpec: CliCommandSpec = {
       args: "<parent> <name>",
       options: [serverOption, jsonOption]
     },
-    { name: "done", description: "Mark an Area done on Julian's word: it folds away from the desk and the tree; its Goals are not changed", args: "<area>", options: [serverOption] },
-    { name: "reopen", description: "Reopen a done Area", args: "<area>", options: [serverOption] }
+    { name: "done", description: "Mark an Area done on Julian's word: a finished subject folds away from the desk and the tree; its Goals are not changed", args: "<area>", options: [serverOption] },
+    { name: "archive", description: "Archive an Area on Julian's word: a shelved subject folds away from the desk and the tree; its Goals are not changed", args: "<area>", options: [serverOption] },
+    { name: "reopen", description: "Reopen a done or archived Area", args: "<area>", options: [serverOption] }
   ]
 };
 

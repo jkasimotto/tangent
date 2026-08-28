@@ -137,9 +137,10 @@ function goalIsOpen(goal) {
  * `when:` process whose note the brain has not acted on is not probed again,
  * so the inbox gets one note per condition, not one per interval.
  */
-export async function evaluateProcess({ note, state, now = new Date(), runProbe, openGoal = null }) {
+export async function evaluateProcess({ note, state, now = new Date(), runProbe, openGoal = null, areaHidden = "" }) {
   if (note.error) return { due: false, reason: `broken note: ${note.error}`, slot: null };
   if (note.status === "paused") return { due: false, reason: "paused", slot: null };
+  if (areaHidden) return { due: false, reason: `Area is ${areaHidden}`, slot: null };
   if (openGoal && goalIsOpen(openGoal)) return { due: false, reason: `Goal ${openGoal.file} is still open`, slot: null, openGoal };
   if (note.schedule) return { ...scheduleDue(note, state, now) };
   if (state.lastNoticeAt && (!state.lastGoalAt || state.lastGoalAt < state.lastNoticeAt)) return { due: false, reason: `note sent ${state.lastNoticeAt}; waits for the brain`, slot: null };
@@ -155,9 +156,11 @@ export async function evaluateProcess({ note, state, now = new Date(), runProbe,
  * One sweep: reads every process, evaluates it, and sends the brain one
  * note per due process. `openGoalFor(note)` finds the open Goal the
  * process created. `notify(area, text, { idempotencyKey })` writes the
- * note to the exact-Area inbox.
+ * note to the exact-Area inbox. `hiddenAreaStatus(area)` resolves to `done`
+ * or `archived` when the Area or an ancestor is folded away: its processes
+ * are never due (area-archive Decision 7).
  */
-export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), runProbe, openGoalFor, notify }) {
+export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), runProbe, openGoalFor, notify, hiddenAreaStatus = async () => "" }) {
   const results = [];
   for (const note of await discoverProcesses(treesRoot)) {
     const state = await readProcessState(stateRoot, note.area, note.slug);
@@ -170,7 +173,7 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
     }
     let outcome;
     try {
-      outcome = await evaluateProcess({ note, state: next, now, runProbe, openGoal });
+      outcome = await evaluateProcess({ note, state: next, now, runProbe, openGoal, areaHidden: await hiddenAreaStatus(note.area) });
     } catch (error) {
       outcome = { due: false, reason: `check failed: ${error.message}`, slot: null };
     }
@@ -196,7 +199,7 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
  * `brainLive` says whether the Area brain runs now, so a due process whose
  * note waits in the inbox reads `Due, brain not running`.
  */
-export function processView(note, state, now = new Date(), { brainLive = false, openGoal = null } = {}) {
+export function processView(note, state, now = new Date(), { brainLive = false, openGoal = null, areaHidden = "" } = {}) {
   const nextRunAt = note.schedule
     ? nextSlotAfter(note.schedule, now)?.toISOString() ?? null
     : note.everyMs ? new Date((instant(state.lastCheckedAt)?.getTime() ?? now.getTime()) + (instant(state.lastCheckedAt) ? note.everyMs : 0)).toISOString() : null;
@@ -205,13 +208,14 @@ export function processView(note, state, now = new Date(), { brainLive = false, 
   let stateWord = "Waiting";
   if (note.error) stateWord = "Broken note";
   else if (note.status === "paused") stateWord = "Paused";
+  else if (areaHidden) stateWord = `Area ${areaHidden}`;
   else if (goalOpen) stateWord = "Running";
   else if (noticeWaits) stateWord = brainLive ? "Due, brain told" : "Due, brain not running";
   return {
     area: note.area, slug: note.slug, file: note.file, title: note.title, status: note.status,
     when: describeWhen(note), schedule: note.schedule?.text ?? null, probe: note.when, every: note.every,
     launch: note.launch, path: note.path, verify: note.verify, error: note.error,
-    nextRunAt: note.status === "paused" ? null : nextRunAt,
+    nextRunAt: note.status === "paused" || areaHidden ? null : nextRunAt,
     lastRunAt: state.lastDueAt ?? null, lastNoticeAt: state.lastNoticeAt ?? null, lastCheckedAt: state.lastCheckedAt ?? null,
     lastGoalFile: state.lastGoalFile ?? null, lastReason: state.lastReason ?? null,
     goalOpen: Boolean(goalOpen), due: noticeWaits, brainLive, state: stateWord,

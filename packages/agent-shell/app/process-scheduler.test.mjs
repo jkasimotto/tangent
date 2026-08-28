@@ -56,6 +56,10 @@ test("a when: process runs its probe only every: so often and is due on exit 0",
 
 test("a due process is skipped while the Goal it created is still open, and paused notes never fire", async () => {
   const note = scheduled();
+  const hidden = await evaluateProcess({ note, state: { firstSeenAt: "2026-08-20T00:00:00Z" }, now: new Date("2026-08-28T12:00:00Z"), areaHidden: "archived" });
+  assert.equal(hidden.due, false, "a process under an archived Area is never due");
+  assert.equal(hidden.reason, "Area is archived");
+  assert.equal(processView(note, {}, new Date("2026-08-28T12:00:00Z"), { areaHidden: "done" }).state, "Area done");
   const skipped = await evaluateProcess({ note, state: { firstSeenAt: "2026-08-20T00:00:00Z" }, now: new Date("2026-08-28T12:00:00Z"), openGoal: { file: "neara/pgande/goal-rebase.md", status: "active" } });
   assert.equal(skipped.due, false);
   assert.match(skipped.reason, /goal-rebase.md is still open/);

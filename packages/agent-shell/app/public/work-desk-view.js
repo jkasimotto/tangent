@@ -928,12 +928,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const descriptions = (state.workFilter === "inactive" ? [] : describeWorkSessions())
       .filter((session) => inFocus(session.area));
     const core = areaMapCore;
-    // Every Area, done ones included, so a done sub-Area with open Goals still
-    // earns its sub-header under an open parent (work-view-sub-areas). Without
-    // a Focus, a done Area still earns no top-level header of its own.
+    // Every Area, done and archived ones included, so a hidden sub-Area with
+    // open Goals still earns its sub-header under an open parent
+    // (work-view-sub-areas). Without a Focus, a hidden Area still earns no
+    // top-level header of its own (area-archive Decision 4).
     const areaList = allAreas().filter((area) => inFocus(area.path));
-    const doneAreas = new Set(allAreas().filter((area) => area.status === "done").map((area) => area.path));
-    /** True when the Area or one of its ancestors is done. */
+    const doneAreas = new Set(allAreas().filter((area) => ["done", "archived"].includes(area.status)).map((area) => area.path));
+    /** True when the Area or one of its ancestors is done or archived. */
     const underDoneArea = (path) => path.split("/").some((_part, index, parts) => doneAreas.has(parts.slice(0, index + 1).join("/")));
     const headerAreas = new Set((roots.length ? allAreas() : areas()).map((area) => area.path));
     /** The focus roots this pass renders as roots; a scoped pass has none. */

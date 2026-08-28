@@ -17,8 +17,15 @@ function fileName(file) {
 export function buildGoToRows({ vault, brains = [], query = "", area = "", kind = "", view = "list", areaLabel, brainStateLabel }) {
   if (!vault) return null;
   const rows = [];
+  // A done or archived Area, and everything under it, leaves Go To unless the
+  // search is scoped to it (area-archive Decision 4).
+  const hiddenAreas = new Set((vault.areas ?? []).filter((record) => ["done", "archived"].includes(record.status)).map((record) => record.path));
+  /** True when the Area or one of its ancestors is done or archived, and the search does not start inside it. */
+  const folded = (path) => !(area && (path === area || path.startsWith(`${area}/`))) &&
+    String(path ?? "").split("/").some((_part, index, parts) => hiddenAreas.has(parts.slice(0, index + 1).join("/")));
   for (const record of vault.documents ?? []) {
     if (record.kind !== "document" && !(record.kind === "note" && !record.missing)) continue;
+    if (folded(record.area)) continue;
     rows.push({ key: record.file, kind: record.kind, kindLabel: record.kind === "note" ? "Area note" : areaMapCore.kindLabel(record.docKind ?? "page"), docKind: record.docKind ?? record.kind, name: record.title, area: record.area, areaLabel: areaLabel(record.area), detail: "", changedAt: Number(record.changedAt ?? record.mtime ?? 0), live: false, file: record.file, links: record.links ?? [] });
   }
   // A brain is a destination for every Area, even before its first attempt.
@@ -55,9 +62,9 @@ export function buildGoToRows({ vault, brains = [], query = "", area = "", kind 
       session: brain?.session,
     });
   };
-  for (const record of vault.areas ?? []) appendBrain(record.path, brainsByArea.get(record.path));
+  for (const record of vault.areas ?? []) if (!folded(record.path)) appendBrain(record.path, brainsByArea.get(record.path));
   // Keep an indexed brain reachable while its Area projection catches up.
-  for (const brain of brainsByArea.values()) appendBrain(brain.area, brain);
+  for (const brain of brainsByArea.values()) if (brain.live || !folded(brain.area)) appendBrain(brain.area, brain);
   const scoped = rows.filter((row) => (!area || row.area === area || row.area.startsWith(`${area}/`)) && (!kind || row.docKind === kind));
   const visible = goToCore.matchRows(scoped, query, view === "graph" ? 60 : GO_TO_LIMIT);
   const identityCounts = new Map();

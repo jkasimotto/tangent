@@ -126,13 +126,21 @@ export async function goalQueueRevision(server: URL, goalFile: string): Promise<
 
 /** Every Area path in the vault, flattened from /api/tree's nested tree. */
 export async function listAreaPaths(server: URL): Promise<string[]> {
+  return (await listAreaNodes(server)).map((node) => node.path);
+}
+
+/** One Area of `/api/tree`: its path and its note's frontmatter status. */
+export interface AreaNode { path: string; status: string }
+
+/** Every Area of the vault with its status, hidden ones included, in tree order. */
+export async function listAreaNodes(server: URL): Promise<AreaNode[]> {
   const tree = await vaultFetch(server, "/api/tree");
-  const paths: string[] = [];
-  /** Collects one node's path, then the paths of its children. */
-  const walk = (nodes: Array<{ path: string; children: unknown[] }>) => {
+  const paths: AreaNode[] = [];
+  /** Collects one node, then its children. */
+  const walk = (nodes: Array<{ path: string; status?: string; children: unknown[] }>) => {
     for (const node of nodes) {
-      paths.push(node.path);
-      walk(node.children as Array<{ path: string; children: unknown[] }>);
+      paths.push({ path: node.path, status: String(node.status ?? "") });
+      walk(node.children as Array<{ path: string; status?: string; children: unknown[] }>);
     }
   };
   walk(tree.areas || []);

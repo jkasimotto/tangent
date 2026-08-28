@@ -40,10 +40,18 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     return [...(state.vault?.areas ?? [])].filter((area) => area.path);
   }
 
-  /** True when a done Area folds this path away: itself or an ancestor is done, and it is not the selected Area. */
+  /** The Area statuses that fold an Area away: done is a finished subject, archived a shelved one (area-archive Decision 3). */
+  const HIDDEN_AREA_STATUSES = new Set(["done", "archived"]);
+
+  /** True when the Area's own status folds it away. */
+  function areaIsHidden(area) {
+    return HIDDEN_AREA_STATUSES.has(area?.status ?? "");
+  }
+
+  /** True when a done or archived Area folds this path away: itself or an ancestor is hidden, and it is not the selected Area. */
   function areaIsFolded(path) {
     if (path === state.areaSelection) return false;
-    const done = new Set(allAreas().filter((area) => area.status === "done").map((area) => area.path));
+    const done = new Set(allAreas().filter(areaIsHidden).map((area) => area.path));
     const parts = String(path).split("/");
     return parts.some((part, index) => done.has(parts.slice(0, index + 1).join("/")));
   }
@@ -52,15 +60,16 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
   async function setAreaStatus(area, status) {
     const result = await api("/api/areas/status", { method: "POST", body: JSON.stringify({ area, status }) }).catch(() => null);
     if (!result || result.error) return showToast(result?.error || "The Area status did not save.");
+    const previous = allAreas().find((item) => item.path === area)?.status;
     await refresh();
-    if (status === "done") {
+    if (status !== "active") {
       const kept = result.openGoals ? ` ${result.openGoals} open ${result.openGoals === 1 ? "Goal stays" : "Goals stay"} open and hidden.` : "";
       /** Undo puts the Area back to active. */
       const undo = () => setAreaStatus(area, "active");
-      showToast(`${humanName(area.split("/").pop())} is done.${kept}`, { label: "Undo", run: undo });
+      showToast(`${humanName(area.split("/").pop())} is ${status}.${kept}`, { label: "Undo", run: undo });
     } else {
-      /** Undo marks the Area done again. */
-      const undo = () => setAreaStatus(area, "done");
+      /** Undo hides the Area again with the status it had. */
+      const undo = () => setAreaStatus(area, HIDDEN_AREA_STATUSES.has(previous) ? previous : "done");
       showToast(`${humanName(area.split("/").pop())} is active again.`, { label: "Undo", run: undo });
     }
     paint(true);
@@ -101,14 +110,14 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
           ${expandable
             ? `<button class="area-toggle" type="button" data-toggle-area="${escapeHtml(path)}" aria-expanded="${expanded}" aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(humanName(area.name))}"><span aria-hidden="true">${expanded ? "▾" : "▸"}</span></button>`
             : `<span class="area-toggle-spacer" aria-hidden="true"></span>`}
-          <button class="area-row ${area.status === "done" ? "done" : ""}" type="button" data-select-area="${escapeHtml(path)}"><span>${escapeHtml(humanName(area.name))}</span><small>${escapeHtml(path)}</small>${area.status === "done" ? `<span class="area-row-mark done">done</span>` : ""}${areaProgramMark(path, expanded)}</button>
+          <button class="area-row ${areaIsHidden(area) ? "done" : ""}" type="button" data-select-area="${escapeHtml(path)}"><span>${escapeHtml(humanName(area.name))}</span><small>${escapeHtml(path)}</small>${areaIsHidden(area) ? `<span class="area-row-mark done">${escapeHtml(area.status)}</span>` : ""}${areaProgramMark(path, expanded)}</button>
         </div>`;
       if (!expanded) return row;
       return row + childPaths.map((child) => branch(child, depth + 1)).join("");
     };
-    const doneCount = allAreas().filter((area) => area.status === "done").length;
+    const doneCount = allAreas().filter(areaIsHidden).length;
     const doneToggle = doneCount
-      ? `<button class="area-tree-done-toggle" type="button" data-toggle-done-areas aria-pressed="${state.showDoneAreas}">${state.showDoneAreas ? "Hide" : "Show"} ${doneCount} done ${doneCount === 1 ? "Area" : "Areas"}</button>`
+      ? `<button class="area-tree-done-toggle" type="button" data-toggle-done-areas aria-pressed="${state.showDoneAreas}">${state.showDoneAreas ? "Hide" : "Show"} ${doneCount} done or archived ${doneCount === 1 ? "Area" : "Areas"}</button>`
       : "";
     return (children.get("") || []).map((root) => branch(root, 0)).join("") + doneToggle;
   }
@@ -242,7 +251,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
   function areaContents(area) {
     const programs = state.programs.operations.filter((program) => program.area === area.path);
     const problems = state.programs.problems.filter((item) => item.area === area.path);
-    const done = area.status === "done";
+    const done = areaIsHidden(area);
     const current = clip(area.current ?? "", 240);
     const documents = areaDocuments(area.path);
     const brain = brainForAreaCard(area.path);
@@ -275,7 +284,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
         <details class="area-more"><summary>More</summary>
           <details><summary>Relationship map</summary><div class="area-map-host" data-area-map="${escapeHtml(area.path)}"></div></details>
           <details><summary>Operations · ${programs.length}</summary><section class="area-content-section"><div class="memory-heading"><h3>Operations</h3><button class="quiet-button" type="button" data-new-program>New Operation</button></div>${programs.length ? `<div class="program-list">${programs.map(programRow).join("")}</div>` : `<p class="memory-empty">No Operations exist in this Area.</p>`}${problems.length ? `<div class="program-errors">${problems.map((item) => `<p>${escapeHtml(item.file)} — ${escapeHtml(item.error)}</p>`).join("")}</div>` : ""}</section></details>
-          <details><summary>Area settings</summary><div class="area-settings-actions"><button class="quiet-button" type="button" data-default-agents-area="${escapeHtml(area.path)}">Default agents</button><button class="quiet-button" type="button" data-new-area>Add nested Area</button>${area.path.split("/").length > 1 ? `<button class="quiet-button" type="button" data-rename-area>Rename or move</button>` : ""}${done ? `<button class="quiet-button" type="button" data-reopen-area="${escapeHtml(area.path)}">Reopen</button>` : `<button class="quiet-button" type="button" data-mark-area-done="${escapeHtml(area.path)}">Mark done</button>`}</div></details>
+          <details><summary>Area settings</summary><div class="area-settings-actions"><button class="quiet-button" type="button" data-default-agents-area="${escapeHtml(area.path)}">Default agents</button><button class="quiet-button" type="button" data-new-area>Add nested Area</button>${area.path.split("/").length > 1 ? `<button class="quiet-button" type="button" data-rename-area>Rename or move</button>` : ""}${done ? `<button class="quiet-button" type="button" data-reopen-area="${escapeHtml(area.path)}">Reopen</button>` : `<button class="quiet-button" type="button" data-mark-area-done="${escapeHtml(area.path)}">Mark done</button><button class="quiet-button" type="button" data-archive-area="${escapeHtml(area.path)}" title="A shelved subject: it folds away like done, with its own mark.">Archive</button>`}</div></details>
         </details>
       </section>`;
   }

@@ -548,6 +548,15 @@ async function readTree(dir, rel = "") {
   return areas;
 }
 
+/** Adds each Area note's frontmatter `status` to a tree from `readTree`, so `tangent area list` can fold hidden Areas away. */
+async function withAreaStatus(areas) {
+  return Promise.all(areas.map(async (area) => ({
+    ...area,
+    status: parseFrontmatter(await areaNote(area.path)).status ?? "",
+    children: await withAreaStatus(area.children),
+  })));
+}
+
 /** Runs one vault git command, with a filesystem fallback for isolated tests. */
 async function runVaultGit(args, fallback) {
   try {
@@ -1324,19 +1333,50 @@ function emptyAreaNote(area) {
 }
 
 /**
- * Sets an Area's status (`done` or `active`) in its note frontmatter on
- * Julian's word (design-area-map Decision 11). Goals are not touched. Creates
- * the note when the Area has none. Returns the open Goals that stay open and
+ * The two Area statuses that fold an Area away from Work, the Areas
+ * directory, Go To, and `tangent area list`: `done` is a finished subject,
+ * `archived` a shelved one (design area-archive Decision 3). Both stop brain
+ * starts and process notes under the Area.
+ */
+const HIDDEN_AREA_STATUSES = new Set(["done", "archived"]);
+
+/** The hidden status of an Area or of its nearest hidden ancestor, else "". */
+async function hiddenAreaStatus(area) {
+  const parts = String(area ?? "").split("/").filter(Boolean);
+  for (let depth = parts.length; depth > 0; depth -= 1) {
+    const status = parseFrontmatter(await areaNote(parts.slice(0, depth).join("/"))).status ?? "";
+    if (HIDDEN_AREA_STATUSES.has(status)) return status;
+  }
+  return "";
+}
+
+/** Live brain and agent sessions bound to an Area or any Area inside it. Program sessions do not count. */
+async function liveAgentSessionsUnder(area) {
+  return (await listSessions()).filter((session) =>
+    session.area && (session.area === area || session.area.startsWith(`${area}/`)) &&
+    !["process", "service", "command"].includes(session.kind ?? ""));
+}
+
+/**
+ * Sets an Area's status (`done`, `archived`, or `active`) in its note
+ * frontmatter on Julian's word (design-area-map Decision 11, area-archive
+ * Decision 1). Goals are not touched. Creates the note when the Area has
+ * none. Hiding an Area is refused while a brain or agent under it is live
+ * (area-archive Decision 5). Returns the open Goals that stay open and
  * hidden with the Area, so the caller can say so.
  */
 async function setAreaStatus(area, status, tmuxSession) {
+  if (HIDDEN_AREA_STATUSES.has(status)) {
+    const live = await liveAgentSessionsUnder(area);
+    if (live.length) return { refused: true, liveSessions: live.map((session) => session.name) };
+  }
   const file = areaNoteFile(area);
   const absolute = path.join(TREES_ROOT, file);
   const text = await readFile(absolute, "utf8").catch(() => emptyAreaNote(area));
   const next = withFrontmatterLine(text, "status", status);
   await vaultRepository.writeMarkdown(file, next);
   await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
-  await vaultCommit([file], `update: ${area} area ${status === "done" ? "done" : "reopened"}`, area, tmuxSession);
+  await vaultCommit([file], `update: ${area} area ${status === "active" ? "reopened" : status}`, area, tmuxSession);
   const openGoals = (await readAreaGoalsDeep(area)).filter((goal) => !["done", "dropped", "parked"].includes(goal.status));
   return { file, status, openGoals: openGoals.length };
 }
@@ -2130,7 +2170,7 @@ const runtimeScheduler = createRuntimeScheduler([
     active: () => true,
     /** Tells the Area brain about each due process note (ADR-0043). */
     async run() {
-      await sweepProcesses({ treesRoot: TREES_ROOT, stateRoot: PROCESSES_ROOT, runProbe: runProcessProbe, openGoalFor: openGoalForProcess, notify: notifyBrain });
+      await sweepProcesses({ treesRoot: TREES_ROOT, stateRoot: PROCESSES_ROOT, runProbe: runProcessProbe, openGoalFor: openGoalForProcess, notify: notifyBrain, hiddenAreaStatus });
     },
   },
   {
@@ -4516,6 +4556,8 @@ function startBrain(area, options = {}) {
 /** Performs one exact-Area start, resume, or reattachment. */
 async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "", choice = null, resume = false, automaticRecovery = false, messageRecorded = false } = {}) {
   if (!area || !existsSync(path.join(TREES_ROOT, area))) return { status: 404, error: `no Area ${area || "(none)"}` };
+  const hidden = await hiddenAreaStatus(area);
+  if (hidden) return { status: 409, code: "area-hidden", error: `Area ${area} is ${hidden}. Reopen it first: tangent area reopen ${area}` };
   const existing = await readBrain(BRAINS_ROOT, area);
   if (existing?.status === "inactive" && unsettledBrainStop(existing)) {
     return { status: 409, code: "stop-unsettled", error: `the ${area} brain is still settling stop ${existing.stopOperation.id}; retry stop before you resume it` };
@@ -5771,7 +5813,7 @@ const agentRoutes = createAgentRoutes({
 const areaRoutesOperations = {
   /** Returns the complete Area tree. */
   async tree() {
-    return { root: TREES_ROOT, areas: await readTree(TREES_ROOT) };
+    return { root: TREES_ROOT, areas: await withAreaStatus(await readTree(TREES_ROOT)) };
   },
   /** Returns one Area's note sections and own Goals. */
   async show(area) {
@@ -5781,6 +5823,7 @@ const areaRoutesOperations = {
     const resolved = await describeAreaResources(TREES_ROOT, area);
     return {
       area,
+      status: parseFrontmatter(text).status ?? "",
       purpose: noteSection(text, "Purpose"),
       resources: noteSection(text, "Resources"),
       // The three resource lines as the Area sees them, each with the Area
@@ -5925,7 +5968,7 @@ async function processViews({ area = "", exact = false } = {}) {
   for (const note of notes) {
     if (!liveByArea.has(note.area)) liveByArea.set(note.area, Boolean(await liveBrainForArea(note.area).catch(() => null)));
     const state = await readProcessState(PROCESSES_ROOT, note.area, note.slug);
-    views.push(processView(note, state, new Date(), { brainLive: liveByArea.get(note.area), openGoal: await openGoalForProcess(note) }));
+    views.push(processView(note, state, new Date(), { brainLive: liveByArea.get(note.area), openGoal: await openGoalForProcess(note), areaHidden: await hiddenAreaStatus(note.area) }));
   }
   return views;
 }
@@ -6665,15 +6708,19 @@ const workMutationRoutes = createWorkMutationRoutes({
     for (const one of area ? [area] : allAreas) ideas.push(...(await areaIdeas(one)).map((text) => ({ area: one, text })));
     return { status: 200, value: { ideas } };
   },
-  /** Marks an Area done or active without changing its Goals. */
+  /** Marks an Area done, archived, or active without changing its Goals. */
   async areaStatus(body) {
     const area = String(body.area ?? "");
     const status = String(body.status ?? "");
-    if (!validAreaPath(area) || !["done", "active"].includes(status)) return { status: 400, error: "area and status (done or active) required" };
+    if (!validAreaPath(area) || !["done", "archived", "active"].includes(status)) return { status: 400, error: "area and status (done, archived, or active) required" };
     try { await stat(path.join(TREES_ROOT, area)); }
     catch { return { status: 404, error: `no Area ${area}` }; }
     const value = await setAreaStatus(area, status, body.session ? String(body.session) : null);
-    await recordCommittedCommand({ operation: status === "done" ? "area-done" : "area-reopen", actorSession: body.session, targetArea: area });
+    if (value.refused) {
+      const names = value.liveSessions.join(", ");
+      return { status: 409, code: "live-sessions", error: `${value.liveSessions.length === 1 ? "An agent is" : "Agents are"} live under ${area}: ${names}. Stop ${value.liveSessions.length === 1 ? "it" : "them"} first.`, liveSessions: value.liveSessions };
+    }
+    await recordCommittedCommand({ operation: status === "active" ? "area-reopen" : `area-${status}`, actorSession: body.session, targetArea: area });
     return { status: 200, value };
   },
   /** Applies validated direct edits and status changes to one Goal. */

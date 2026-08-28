@@ -360,7 +360,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       let candidate;
       if (preference === "summary" || summaryKind) candidate = summary;
       else if (exact) candidate = exact;
-      else if (state.launchTarget === BRAIN_LAUNCH_TARGET) candidate = popover.querySelector("#brain-instruction");
       else if (preference === "choices") candidate = choice;
       else if (state.launchTarget === DEFAULT_AGENTS_TARGET && !state.defaultAgents.editing) candidate = summary;
       else candidate = choice ?? popover.querySelector("textarea, input, select, button:not([disabled])");

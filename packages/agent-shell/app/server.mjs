@@ -4556,14 +4556,9 @@ async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "",
   if (resolvedLaunch.error) return { status: resolvedLaunch.status ?? 409, error: resolvedLaunch.error, ...(resolvedLaunch.code ? { code: resolvedLaunch.code } : {}), ...(resolvedLaunch.launch ? { launch: resolvedLaunch.launch } : {}) };
   if (resume) {
     if (!existing) return { status: 404, error: "no brain to resume on this Area" };
-    // An inactive brain wakes for Julian's message, not for the act of
-    // resuming. The server holds that rule too, because the message box is
-    // only the browser's half of it. Two resumes carry no message and stay
-    // allowed: automatic recovery, and the reattachment of a brain whose
-    // record is still active but whose process died.
-    if (!automaticRecovery && !messageRecorded && existing.status !== "active" && !instruction.trim() && !(await unreadNoticesAsFirstMessage(area, existing)).text) {
-      return { status: 400, error: `the ${existing.area} brain is not live; send it a message to wake it` };
-    }
+    // A wake needs no message. The brain reads its Area note, its checkpoint,
+    // and any unread notices; Julian messages it when he has something to
+    // say (2026-08-28, superseding the wake-needs-message rule).
     if (!automaticRecovery) existing.recovery = { attempts: 0, exhausted: false, lastAttemptAt: null };
     // The wake message is typed verbatim as the woken attempt's first
     // message, with the notices that waited for it below. A wake with no

@@ -212,8 +212,6 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   function syncLaunchDraft() {
     const instruction = document.querySelector("#launch-instruction");
     if (instruction) state.launch.instruction = instruction.value;
-    const brainInstruction = document.querySelector("#brain-instruction");
-    if (brainInstruction && state.brainDraft) state.brainDraft.instruction = brainInstruction.value;
     const command = document.querySelector("#launch-command-input");
     if (command) state.launch.command = command.value;
     const path = document.querySelector("[data-launch-path]");
@@ -327,11 +325,13 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const brain = braining ? brainForAreaCard(state.brainDraft?.area) : null;
     const brainResumes = Boolean(brain && !brain.live);
     const startLabel = braining
-      ? (brainResumes ? "Send and wake brain" : "Start brain")
+      ? (brainResumes ? "Wake brain" : "Start brain")
       : `Start ${selection ? (selection.label || "agent") : "agent"}`;
-    const brainZone = braining ? `
-        <label class="brain-instruction"><span>${brainResumes ? "What should this brain do next?" : "What should this Area get done?"}</span><textarea id="brain-instruction" rows="5" placeholder="${brainResumes ? "The message that wakes this brain. It keeps its founding instruction and its plan, and reads this as the reason it is awake." : "The instruction the brain plans and dispatches from. It splits the work into Goals, starts agents in dependency order, reviews what comes back, and asks you only for real decisions."}">${escapeHtml(state.brainDraft?.instruction ?? "")}</textarea></label>
-        ${brainResumes ? `<p class="form-note">A brain ran here before (${escapeHtml(brainStateLabel(brain).toLowerCase())}). Your message wakes it and keeps its founding instruction. Start over begins a new brain from the message above.</p>` : ""}` : "";
+    // No instruction box: a brain starts from its Area note and AGENTS.md
+    // chain, and Julian messages it when he has something to say (2026-08-28).
+    const brainZone = braining && brainResumes
+      ? `<p class="form-note">A brain ran here before (${escapeHtml(brainStateLabel(brain).toLowerCase())}). Wake keeps its founding instruction and its plan. Start over begins a new brain.</p>`
+      : "";
     const settingsRows = settings ? defaultAgentRows(options) : "";
     const settingsMode = state.defaultAgents.mode;
     const showChoices = braining || !settings || (state.defaultAgents.editing && settingsMode === "launch");

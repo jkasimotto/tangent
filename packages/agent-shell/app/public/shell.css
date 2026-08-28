@@ -422,10 +422,6 @@ summary:focus-visible {
 .area-brain.working { box-shadow: 0 0 0 1px var(--blue); }
 .area-brain.waiting { box-shadow: 0 0 0 1px var(--amber); }
 .area-brain.stopped, .area-brain.ended { opacity: .6; filter: grayscale(1); box-shadow: 0 0 0 1px #4a515b; }
-.brain-instruction { display: grid; gap: 6px; margin-bottom: 12px; }
-.brain-instruction span { color: #9fa7b0; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.brain-instruction textarea { width: 100%; min-height: 96px; padding: 9px 10px; border: 1px solid #3c434c; border-radius: 3px; background: #101216; color: #e7eaed; font: inherit; font-size: 13px; line-height: 1.45; resize: vertical; }
-.brain-instruction textarea:focus { border-color: var(--blue); outline: none; }
 
 .area-desk-section { min-width: 0; padding: 18px; border-bottom: 1px solid #2b3037; }
 .area-desk-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 12px; }

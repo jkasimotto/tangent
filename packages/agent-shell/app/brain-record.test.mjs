@@ -48,11 +48,11 @@ test("newBrain builds an active logical record with founding instruction", () =>
   assert.equal(record.planFile, "otto/tangent/plan-tangent.md");
 });
 
-test("validateInstruction rejects empty and overlong text", () => {
-  assert.equal(validateInstruction("  "), "instruction is empty");
+test("validateInstruction allows empty text and rejects overlong text", () => {
+  assert.equal(validateInstruction("  "), null, "a brain starts from its Area note; no upfront instruction is needed");
   assert.match(validateInstruction("x".repeat(4001)), /longer than 4000/);
   assert.equal(validateInstruction("Do the thing."), null);
-  assert.throws(() => sampleBrain({ instruction: "" }), /instruction is empty/);
+  assert.equal(sampleBrain({ instruction: "" }).foundingInstruction.text, "");
 });
 
 test("legacy records normalize into active or inactive logical lifecycle", () => {

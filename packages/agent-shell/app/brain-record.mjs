@@ -107,10 +107,13 @@ export async function deleteBrain(root, area) {
   await rm(brainPath(root, area), { force: true });
 }
 
-/** Returns an error string for an unusable instruction, else null. */
+/**
+ * Returns an error string for an unusable instruction, else null. An empty
+ * instruction is fine: a brain reads its Area note and AGENTS.md chain, and
+ * Julian messages it when he has something to say (2026-08-28).
+ */
 export function validateInstruction(text) {
   const value = String(text ?? "").trim();
-  if (!value) return "instruction is empty";
   if (value.length > MAX_INSTRUCTION_CHARS) return `instruction is longer than ${MAX_INSTRUCTION_CHARS} characters`;
   return null;
 }

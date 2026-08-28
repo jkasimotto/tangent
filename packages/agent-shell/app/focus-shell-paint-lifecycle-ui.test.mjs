@@ -66,7 +66,7 @@ test("background polls never rebuild the screen under an editing surface or a re
   await settle(window);
   const popover = window.document.querySelector("[data-launch-popover]");
   assert.ok(popover, "the popover opened");
-  assert.ok(window.document.querySelector("#brain-instruction"), "the brain chooser takes the first message");
+  assert.equal(window.document.querySelector("#brain-instruction"), null, "the brain chooser asks for no upfront instruction");
   await vaultChangesAndPolls();
   assert.equal(window.document.querySelector("[data-launch-popover]"), popover, "the poll did not rebuild the popover");
   click(window, "[data-launch-close]");

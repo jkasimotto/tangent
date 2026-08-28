@@ -94,9 +94,9 @@ test("a Goal row never opens a chooser; brain spawning owns the Harness, Model, 
   const brain = document.querySelector("[data-work-group='otto/quiet'] .work-group-brain");
   brain.click();
   await settle(window, 5);
-  assert.equal(document.activeElement.id, "brain-instruction", "brain spawn starts where its instruction can be typed");
+  assert.equal(document.activeElement.dataset.launchHarness, "codex", "brain spawn starts on the selected harness choice");
   press(window, "Tab");
-  assert.equal(document.activeElement.dataset.launchHarness, "codex", "one Tab enters the same choice columns");
+  assert.ok(document.activeElement.closest("[data-launch-popover]"), "Tab stays inside the chooser");
   press(window, "l");
   press(window, "j");
   press(window, "Enter");
@@ -159,7 +159,7 @@ test("switching from defaults to a brain loads the brain catalog and returns to 
   brain.click();
   await settle(window, 5);
 
-  assert.equal(document.activeElement.id, "brain-instruction", "the brain chooser starts at its message");
+  assert.equal(document.activeElement.dataset.launchHarness, "codex", "the brain chooser starts on its selected launch");
   assert.equal(document.querySelector("[data-launch-harness='codex']").getAttribute("aria-checked"), "true", "the brain receives its launch default, not the settings catalog");
   const launchRequests = gets.filter((url) => new URL(url).pathname === "/api/launch/options");
   assert.equal(new URL(launchRequests.at(-1)).searchParams.get("kind"), "brain", "the brain chooser requests brain launch options");
@@ -168,16 +168,12 @@ test("switching from defaults to a brain loads the brain catalog and returns to 
   assert.equal(document.activeElement, document.querySelector("[data-work-group='otto/quiet'] .work-group-brain"), "Back returns to the brain that replaced the prior chooser");
 });
 
-test("Brain defaults are a nested Back stage and preserve the typed brain instruction", async () => {
+test("Brain defaults are a nested Back stage that returns to the brain chooser", async () => {
   const fixture = withBrainOnlyArea(workTableFixture(), { live: false, planned: true });
   const { window, document } = await bootWorkTable(fixture, { launchOptions });
   const brain = document.querySelector("[data-work-group='otto/quiet'] .work-group-brain");
   brain.click();
   await settle(window, 5);
-  const instruction = document.querySelector("#brain-instruction");
-  instruction.value = "Keep this exact brain instruction.";
-  instruction.dispatchEvent(new window.Event("input", { bubbles: true }));
-
   document.querySelector("[data-default-agents-origin='brain']").click();
   await settle(window, 5);
   assert.equal(document.activeElement.dataset.defaultAgentEdit, "brain", "nested settings starts at the Brain default");
@@ -190,7 +186,6 @@ test("Brain defaults are a nested Back stage and preserve the typed brain instru
   press(window, "Escape");
   await settle(window, 5);
 
-  assert.equal(document.querySelector("#brain-instruction").value, "Keep this exact brain instruction.");
   assert.equal(document.activeElement.dataset.focusKey, "launch:brain:default", "Back restores the nested opener in the brain chooser");
   press(window, "Escape");
   await settle(window);

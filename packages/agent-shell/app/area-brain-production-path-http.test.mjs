@@ -254,7 +254,7 @@ test("an inactive brain wakes with Julian's message, and the woken attempt reads
   assert.equal(JSON.stringify(prompt.brain).includes("Julian woke this brain"), false, "no notice is written for a typed wake");
 });
 
-test("an ended brain does not wake without a message, and a live record still reattaches", async (context) => {
+test("an ended brain wakes without a message, and a live record still reattaches", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-silent-wake-"));
   const { trees, workspace } = await buildVault(root);
   const openedSessions = [];
@@ -276,16 +276,13 @@ test("an ended brain does not wake without a message, and a live record still re
   });
   assert.equal(repeated.status, 200, "a retry is idempotent");
 
-  const silent = await post(base, "/api/brains/start", { area: "otto/test", resume: true });
-  assert.equal(silent.status, 400, JSON.stringify(silent.body));
-  assert.match(silent.body.error, /message/i, "the server says what the wake needs");
-  const stillEnded = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
-  assert.equal(stillEnded.brain.status, "inactive", "the refused wake starts nothing");
-  assert.doesNotMatch(JSON.stringify(stillEnded.brain), /Julian woke this brain/, "the refused wake records no notice");
-
-  const woken = await post(base, "/api/brains/start", { area: "otto/test", resume: true, instruction: "Take this Area back up." });
+  // A wake needs no message (2026-08-28): the brain reads its Area note and
+  // checkpoint, and Julian messages it when he has something to say.
+  const woken = await post(base, "/api/brains/start", { area: "otto/test", resume: true });
   assert.equal(woken.status, 200, JSON.stringify(woken.body));
   openedSessions.push(woken.body.session);
+  const awake = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  assert.equal(awake.brain.status, "active", "the silent wake starts the brain");
 
   // A record that is still active lost its process, not its orders. That
   // reattachment stays open with no message.

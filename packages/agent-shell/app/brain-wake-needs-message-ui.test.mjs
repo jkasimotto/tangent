@@ -1,9 +1,7 @@
-// A brain that is not live wakes for Julian's words, never for a keystroke.
-//
-// The Work key used to post a canned instruction, so pressing it on a quiet
-// Area started a brain that nobody had asked anything, and resuming an
-// inactive one woke it with no reason. Both routes now open the message box
-// first, and the message travels with the send.
+// Starting or waking a brain asks Julian for nothing upfront (2026-08-28).
+// The Work key opens the chooser so he can see and change the launch, and
+// Start posts with no instruction: the brain reads its Area note and waits
+// for his message. The old message box is gone.
 
 import test from "node:test";
 import { assert, readFile, path, JSDOM, shellBundle, here, settle, click, jsonResponse } from "./focus-shell-ui-fixture.mjs";
@@ -116,12 +114,12 @@ test("Go to offers an unstarted Area brain and Work has no Browse or Describe to
 
   assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0);
   assert.equal(window.document.querySelector("#go-to-layer").hidden, true);
-  assert.ok(window.document.querySelector("#brain-instruction"), "the missing brain destination opens its message box");
-  assert.equal(window.document.querySelector("#brain-instruction").value, "");
+  assert.ok(window.document.querySelector("[data-launch-popover] [data-launch-start]"), "the missing brain destination opens its chooser");
+  assert.equal(window.document.querySelector("#brain-instruction"), null);
   dom.window.close();
 });
 
-test("the Work brain key opens the message box instead of starting a brain", async () => {
+test("the Work brain key opens the chooser, and Start needs no instruction", async () => {
   const { dom, window, posts } = await bootShell(null);
 
   // j walks the Otto header, the quiet Empty sub-header, then the Tangent sub-header (every Area has a row).
@@ -129,10 +127,8 @@ test("the Work brain key opens the message box instead of starting a brain", asy
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "b", bubbles: true }));
   await settle(window);
 
-  assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0, "the key never starts a brain by itself");
-  const box = window.document.querySelector("#brain-instruction");
-  assert.ok(box, "the key opens the message box");
-  assert.equal(box.value, "", "the box starts empty, so no old order becomes today's");
+  assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0, "the key opens the chooser first");
+  assert.equal(window.document.querySelector("#brain-instruction"), null, "no instruction box: the brain reads its Area note");
   const launch = window.document.querySelector(".brain-launch-summary");
   assert.match(launch.textContent, /codex\/sol/);
   assert.match(launch.textContent, /Codex · Sol/);
@@ -140,17 +136,11 @@ test("the Work brain key opens the message box instead of starting a brain", asy
   assert.match(launch.textContent, /Inherited from Otto/);
   assert.ok(launch.querySelector("[data-default-agents-area='otto/tangent']"), "the disclosed launch links to the Area default editor");
 
-  // An empty send is refused. Nothing reaches the server.
-  click(window, "[data-launch-start]");
-  await settle(window);
-  assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0);
-
-  window.document.querySelector("#brain-instruction").value = "Plan the migration.";
   click(window, "[data-launch-start]");
   await settle(window);
   const started = posts.filter((item) => item.path === "/api/brains/start");
-  assert.equal(started.length, 1);
-  assert.equal(started[0].body.instruction, "Plan the migration.", "the brain starts from Julian's own words");
+  assert.equal(started.length, 1, "Start posts at once");
+  assert.equal(started[0].body.instruction, "", "no upfront instruction travels");
   assert.equal(started[0].body.resume, false);
   assert.equal(started[0].body.expectedLaunch, "codex/sol", "the request carries the launch that the control disclosed");
   assert.equal("choice" in started[0].body, false, "an untouched picker leaves durable default resolution to the server");
@@ -172,7 +162,6 @@ test("a brain picker sends a typed one-launch override and preserves the Area de
   assert.match(summary.textContent, /One launch only · Area default unchanged/);
   assert.ok(summary.querySelector("[data-default-agents-area='otto/tangent']"), "the durable default stays one click away");
 
-  window.document.querySelector("#brain-instruction").value = "Review the contract.";
   click(window, "[data-launch-start]");
   await settle(window);
   const started = posts.find((item) => item.path === "/api/brains/start");
@@ -223,7 +212,7 @@ test("Go to opens a live Area brain in the shared session layer", async () => {
   dom.window.close();
 });
 
-test("an inactive brain resumes only with a message, and Work names no generation", async () => {
+test("an inactive brain wakes without a message, and Work names no generation", async () => {
   const inactive = {
     area: "otto/tangent", session: "tangent-brain-g7", status: "inactive", live: false,
     state: "shell", generation: 7, foundingInstruction: { text: "Run this Area." }, requests: [],
@@ -234,20 +223,15 @@ test("an inactive brain resumes only with a message, and Work names no generatio
   assert.doesNotMatch(shellText, /generation/i, "Work never names a brain generation");
 
   await chooseBrain(window);
-  assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0, "an inactive brain does not resume on a click");
-  assert.ok(window.document.querySelector("#brain-instruction"));
-  assert.match(window.document.querySelector(".launch-popover")?.textContent ?? "", /wake/i, "the box says the message is what wakes it");
+  assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0, "an inactive brain shows its chooser first");
+  assert.equal(window.document.querySelector("#brain-instruction"), null, "no message box");
+  assert.match(window.document.querySelector("[data-launch-start]")?.textContent ?? "", /Wake brain/, "the button says Wake");
 
-  click(window, "[data-launch-start]");
-  await settle(window);
-  assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0, "an empty message wakes nothing");
-
-  window.document.querySelector("#brain-instruction").value = "Pick the branch up again.";
   click(window, "[data-launch-start]");
   await settle(window);
   const resumed = posts.filter((item) => item.path === "/api/brains/start");
-  assert.equal(resumed.length, 1);
+  assert.equal(resumed.length, 1, "Wake posts at once, with no message");
   assert.equal(resumed[0].body.resume, true);
-  assert.equal(resumed[0].body.instruction, "Pick the branch up again.", "the wake message travels with the resume");
+  assert.equal(resumed[0].body.instruction, "");
   dom.window.close();
 });

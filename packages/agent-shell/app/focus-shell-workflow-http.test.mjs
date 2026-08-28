@@ -464,12 +464,6 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(serverSource, /name: "material Operation events"/, "material Operation delivery runs without a browser poll");
   assert.doesNotMatch(serverSource, /\b(?:newContinuationRecord|writeContinuation|soloExecution)\b/, "production has no retired solo writer");
 
-  const emptyBrain = await fetch(`${base}/api/brains/start`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/test", instruction: "   " }),
-  });
-  assert.equal(emptyBrain.status, 400);
   const brainStart = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },

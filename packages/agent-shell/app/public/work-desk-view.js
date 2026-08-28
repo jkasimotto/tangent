@@ -499,7 +499,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const area = state.brainDraft?.area;
     const instruction = (state.brainDraft?.instruction ?? "").trim();
     if (!area) return;
-    if (!instruction) return showToast(resume ? "Write the message that wakes this brain." : "Tell the brain what this Area should get done.");
     try {
       const selection = launchSelection();
       const expectedLaunch = [selection?.harness?.id, selection?.model?.id, selection?.effort?.id].filter(Boolean).join("/");
@@ -520,7 +519,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       state.launchAnchor = null;
       state.brainDraft = null;
       await refresh();
-      showToast(result.reattached ? "The brain already runs." : resume ? "Brain resumed." : "Brain started.");
+      showToast(result.reattached ? "The brain already runs." : resume ? "Brain awake." : "Brain started.");
       openBrainSession(result.session);
     } catch (error) {
       showToast(error.message);

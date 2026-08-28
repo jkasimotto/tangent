@@ -68,12 +68,13 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     selectionCommentPointerArmed = false;
     try {
       const [documentRecord, goalDetail] = await Promise.all([
-        api(`/api/document?file=${encodeURIComponent(file)}`),
+        api(documentReadUrl(file)),
         goal
           ? api(`/api/goals/detail?goal=${encodeURIComponent(file)}`).catch((error) => ({ goal, error: error.message }))
           : Promise.resolve(null),
       ]);
       state.document = documentRecord;
+      await markPresentationOpened(file, documentRecord.hash);
       state.goalDetail = goalDetail;
       updateDocumentTrail(file, trail, trailIndex);
       paint(true);
@@ -102,7 +103,29 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** The indexed title and Area for one vault file, for the layer's loading header. */
   function indexedDocument(file) {
-    return (state.vault?.documents ?? []).find((record) => record.file === file) ?? null;
+    return (state.vault?.documents ?? []).find((record) => record.file === file) ?? presentationForFile(file)?.item ?? null;
+  }
+
+  /** Finds the Goal presentation that authorizes one reader file. */
+  function presentationForFile(file) {
+    for (const area of state.vault?.areas ?? []) for (const goal of area.goals ?? []) {
+      const item = (goal.presentations ?? []).find((entry) => entry.file === file);
+      if (item) return { goal, item };
+    }
+    return null;
+  }
+
+  /** Clears temporary Work attention after a successful read. */
+  async function markPresentationOpened(file, hash) {
+    const presentation = presentationForFile(file);
+    if (presentation) await post("/api/goals/presented-opened", { goal: presentation.goal.file, file, hash }).catch(() => {});
+  }
+
+  /** Selects the vault or repository allow-list read route. */
+  function documentReadUrl(file) {
+    return presentationForFile(file)?.item?.root === "repository"
+      ? `/api/document?repository=${encodeURIComponent(file)}`
+      : `/api/document?file=${encodeURIComponent(file)}`;
   }
 
   /** The scrolling reading column inside the quick layer. */
@@ -181,9 +204,10 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     updatePeekTrail(file, trail, trailIndex);
     paintPeek();
     try {
-      const loaded = await api(`/api/document?file=${encodeURIComponent(file)}`, { signal: request.signal });
+      const loaded = await api(documentReadUrl(file), { signal: request.signal });
       if (!peekOwnsResult(serial, file)) return;
       state.documentPeek.document = loaded;
+      await markPresentationOpened(file, loaded.hash);
       state.documentPeek.error = "";
       paintPeek();
       restorePeekPosition(heading);

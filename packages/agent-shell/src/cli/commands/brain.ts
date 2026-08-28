@@ -7,7 +7,7 @@ import { brainCommandSpec } from "../spec.js";
 
 /** Dispatches `tangent brain` subcommands. */
 export async function runBrainCli(argv = process.argv.slice(2)): Promise<void> {
-  const args = parseArgs(argv, { repeatable: ["option"] });
+  const args = parseArgs(argv, { repeatable: ["option", "document"] });
   const subcommand = args._[0];
   if (!subcommand || args.help) return help();
   if (subcommand === "advance") return advanceCommand(args);
@@ -64,7 +64,7 @@ async function requestCommand(args: Args): Promise<void> {
     try { effect = JSON.parse(effectText); }
     catch { throw new Error("--effect must be one JSON object."); }
   }
-  const result = await postJson(server, "/api/brains/requests", { session, kind, subject, question, proposal, detail, options: stringsArg(args.option), goal, ...(effect ? { effect } : {}) });
+  const result = await postJson(server, "/api/brains/requests", { session, kind, subject, question, proposal, detail, options: stringsArg(args.option), documents: stringsArg(args.document), goal, ...(effect ? { effect } : {}) });
   console.log(`asked Julian: ${String(result.request?.id ?? "request recorded")}`);
 }
 

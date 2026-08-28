@@ -4,7 +4,7 @@ Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 
 - Vault CLI: `tangent area`, `tangent goal`, `tangent idea`, `tangent document`, `tangent vault commit`.
 - Agent CLI: `tangent agent list`, `tangent send`, and read-only `tangent agent context` recovery from durable brain and Goal records.
-- Worker CLI: `tangent send brain "<note>" [--done | --blocked | --question]` is the one worker command (ADR-0040). `tangent handover`, `tangent goal handover`, and `tangent agent send` are aliases for one release. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
+- Worker CLI: `tangent send brain "<note>" [--done | --blocked | --question] [--present <file>]` is the one worker command (ADR-0040). `tangent handover`, `tangent goal handover`, and `tangent agent send` are aliases for one release. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
 - Brain CLI: `tangent brain request` creates durable user requests, and `tangent brain advance` starts the next approved assignment.
 - Brain and server CLI: `tangent brain status|stop|request|withdraw` reads or stops a brain and files its questions through guarded Agent Shell routes. A brain runs until Julian restarts it; there is no handover (ADR-0041). `tangent goal create --start --path <dir>` is the brain's one command to create a Goal and start its worker. `tangent shell rebuild` rebuilds and restarts the server.
 - Study partner CLI: `tangent study` (spawns an interactive `claude-otto` session carrying the partner contract) and `tangent study contract` (prints that contract).
@@ -16,6 +16,8 @@ Any replacement harness can recover the current assignment from the tmux session
 Agent Shell centers each Area on one logical brain with an active or inactive lifecycle. Exact Area identity selects records and inboxes, not command permission. The Area Journal saves unstructured text before brain delivery.
 
 Work shows all open Goals in one projection. An explicit keyboard context owns each key. Terminal sessions keep native tmux input, except the visible leave shortcut. Work and Document actions expose matching keyboard and pointer paths. See ADR-0038.
+
+An agent can present a Markdown document on its Goal. Work shows the human title until Julian opens or dismisses the document. The runtime record does not change the document or the Goal queue.
 
 Generic `tangent send` messages persist before pane wake or presentation. The controller restores them after a restart and keeps their exact target order. See ADR-0039.
 

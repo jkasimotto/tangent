@@ -7,7 +7,7 @@ test("Work command records are unique, complete, and own the settled shortcuts",
   for (const command of WORK_COMMANDS) {
     assert.match(command.id, /^[a-z][A-Za-z]+$/);
     if (!["note", "chooseAreas"].includes(command.id)) assert.match(command.keyDisplay, /\S/);
-    assert.match(command.scope, /^(work|area|goal)$/);
+    assert.match(command.scope, /^(work|area|goal|document)$/);
     assert.match(command.label, /\S/);
     assert.match(command.help, /\S/);
     assert.ok(Object.isFrozen(command));

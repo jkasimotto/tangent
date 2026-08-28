@@ -58,7 +58,8 @@ The root-owned `service` command resolves inherited `.processes.json` definition
 Raw, debug, and CI commands remain callable but hidden from default help.
 
 Agent Shell centers each Area on one logical brain. The vault owns Area knowledge, and each bound repository owns code-agent instructions.
-Agent Shell derives inherited sources by path. It owns bounded runtime projections, Journal delivery, Requests, Goal queues, and Operation health.
+Agent Shell derives inherited sources by path. It owns bounded runtime projections, Journal delivery, Requests, Goal queues, presented-document attention, and Operation health.
+Presented-document records stay outside the vault and Goal queue. Opening a presented document clears its Work row. Closing the Goal removes its record.
 One budget covers every character Agent Shell generates for a brain prompt; only Julian's own founding instruction sits outside it.
 Work infers no ask. A Question exists only when a brain writes a Request, and it stays with that brain: a quiet count on the Area header, and a deliberate review behind it.
 Every Goal closure and every dropped Goal records one material milestone, so a brain's recent-work view matches what happened.

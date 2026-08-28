@@ -55,7 +55,7 @@ test("tangent goal create starts the worker for a brain in the same call", () =>
 test("goal help still lists the vault commands beside start and handover", () => {
   assert.deepEqual(
     goalCommandSpec.subcommands.map((entry) => entry.name),
-    ["create", "list", "show", "depend", "undepend", "own", "release", "start", "append", "handover", "done", "wont-do", "park", "reopen", "replace-agent"]
+    ["present", "create", "list", "show", "depend", "undepend", "own", "release", "start", "append", "handover", "done", "wont-do", "park", "reopen", "replace-agent"]
   );
 });
 

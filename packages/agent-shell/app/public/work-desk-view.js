@@ -1159,6 +1159,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const effectRevision = request.effectRevision ? `Exact effect revision\n${request.effectRevision}` : "";
     const copy = [anchor, context, request.proposal ? `Proposed transition\n${request.proposal}` : "", request.question, request.detail, effectRevision, effectState].filter(Boolean).join("\n\n");
     const options = [
+      ...(request.documents ?? []).map((file) => {
+        const record = (state.vault?.documents ?? []).find((item) => item.file === file);
+        return { value: `document:${file}`, label: `Read ${record?.title ?? file}` };
+      }),
       { value: "reply", label: "Reply to the brain" },
       ...(request.effect ? [{ value: "authorize", label: operation?.status === "failed" ? `Retry exact effect: ${request.proposal}` : `Authorize exact effect: ${request.proposal}` }] : []),
       { value: "dismiss", label: "Dismiss this Question" },
@@ -1167,6 +1171,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const answerRequest = async () => {
       const answer = document.querySelector("[data-modal-select]")?.value || "reply";
       const note = document.querySelector("[data-modal-input]")?.value.trim() || "";
+      if (answer.startsWith("document:")) {
+        openDocumentPeek(answer.slice("document:".length));
+        return;
+      }
       if (answer === "dismiss") {
         await post("/api/brains/requests/dismiss", { area, id });
         await refresh();
@@ -1965,7 +1973,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     };
     return nodes.map((node) => {
       const expanded = !state.collapsedGoalTrees.has(node.goal.file);
-      return workGoalRow(node.goal, {
+      const goalRow = workGoalRow(node.goal, {
         groupPath,
         labels,
         fact: facts.get(node.goal.file),
@@ -1976,7 +1984,27 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         subgoalCount: node.children.length,
         expanded,
       });
+      const presentations = (node.goal.presentations ?? []).slice(0, 3);
+      const presentationRows = presentations.map((item) => workPresentedDocumentRow(node.goal, item)).join("");
+      const overflow = (node.goal.presentations ?? []).length - presentations.length;
+      return `${goalRow}${presentationRows}${overflow > 0 ? workPresentationOverflowRow(node.goal, overflow) : ""}`;
     }).join("");
+  }
+
+  /** One temporary attention row for a Document that an agent presented. */
+  function workPresentedDocumentRow(goal, item) {
+    const cursor = `document:${item.file}`;
+    return `<tr class="desk-document work-row presented-document${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(goal.area)}" data-presentation-goal="${escapeHtml(goal.file)}" data-presentation-file="${escapeHtml(item.file)}" data-search-text="${escapeHtml(`${item.title} ${item.file}`)}">
+      <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<span class="work-goal-copy"><span class="work-goal-primary"><button type="button" class="work-row-title" data-work-row-title data-open-document="${escapeHtml(item.file)}" data-document-root="${escapeHtml(item.root ?? "vault")}" title="${escapeHtml(item.file)}">↳ Read · ${escapeHtml(item.title)}</button></span></span></span></th>
+      <td><small>${escapeHtml(item.note || item.presentedBy?.session || "Presented")}</small></td><td></td>
+      <td><span class="work-row-controls"><button type="button" data-presentation-full="${escapeHtml(item.file)}" title="Open full reader">o full</button><button type="button" data-withdraw-presentation="${escapeHtml(item.file)}" title="Withdraw presentation">x dismiss</button></span></td>
+    </tr>`;
+  }
+
+  /** One compact row for presentations beyond the desk cap. */
+  function workPresentationOverflowRow(goal, count) {
+    const cursor = `document-more:${goal.file}`;
+    return `<tr class="desk-document work-row presented-document overflow${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(goal.area)}"><th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<button type="button" data-work-row-title data-open-document="${escapeHtml(goal.file)}">and ${count} more · o</button></span></th><td></td><td></td><td></td></tr>`;
   }
 
   /** Renders the Programs of one Area as a compact operational shelf. */

@@ -13,7 +13,7 @@ import { SEND_ALIAS_HINT, parseWorkerReportOption, workerHandoverResultLine } fr
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   // Boolean flags never consume the token after them.
-  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status"], boolean: ["continue", "own", "confirm", "start", "verify", "conversations"] });
+  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status"], boolean: ["continue", "own", "confirm", "start", "verify", "conversations", "withdraw"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
   // `tangent goal <subcommand> --help` prints that subcommand's own flags:
@@ -35,7 +35,26 @@ export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "park") return parkCommand(args);
   if (subcommand === "reopen") return reopenCommand(args);
   if (subcommand === "replace-agent") return replaceAgentCommand(args);
+  if (subcommand === "present") return presentCommand(args);
   throw new Error(`Unknown goal command: ${subcommand}. Try "tangent goal --help".`);
+}
+
+/** Presents or withdraws one Goal document for Julian. */
+async function presentCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const slug = requiredString(args._[1], "tangent goal present requires <slug>.");
+  const goal = await requireGoal(server, slug);
+  const files = args._.slice(2).map(String).filter(Boolean);
+  if (!files.length) throw new Error("tangent goal present requires at least one <file>.");
+  const session = stringArg(args.session) || (await currentTmuxSession()) || "";
+  if (booleanArg(args.withdraw)) {
+    if (files.length !== 1) throw new Error("tangent goal present --withdraw takes one <file>.");
+    await postJson(server, "/api/goals/withdraw-presentation", { goal: goal.file, file: files[0], session });
+    console.log(`withdrew ${files[0]} from ${slug}`);
+    return;
+  }
+  const result = await postJson(server, "/api/goals/present", { goal: goal.file, files, note: stringArg(args.note) ?? "", session });
+  console.log(`presented ${result.items.length} document${result.items.length === 1 ? "" : "s"} on ${slug}`);
 }
 
 /** Adds or removes advisory prerequisite links for one Goal. */

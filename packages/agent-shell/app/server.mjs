@@ -89,6 +89,8 @@ import { notifyGoalWaitsForCheck, removeGoalCheckNotification } from "./julian-n
 import { appendIdea, areaNoteTemplate, areaTitle, currentSectionKey, ensureAreaNoteLinks, ensureVaultRootLinks, ideasFilePath, ideasFromFile, noteSignal, orderGoals, vaultRootAgentsText } from "./area-note-links.mjs";
 import { newAttemptReplacement, readAllAttemptReplacements, readAttemptReplacement, sameAttemptReplacementRequest, transitionAttemptReplacement, unsettledAttemptReplacements, writeAttemptReplacement } from "./goal-attempt-replacement.mjs";
 import { GoalExecutionTransitionError, attachLateSourceEvidence, parkCurrentGoalAttempt, promoteReadyReplacement, reopenParkedGoalQueue } from "./goal-execution-transition.mjs";
+import { markGoalDocumentOpened, presentGoalDocument, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalDocument } from "./goal-presentations.mjs";
+import { createGoalPresentationRoutes } from "./goal-presentation-routes.mjs";
 
 const rawExecFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = Number(process.env.TANGENT_TMUX_COMMAND_TIMEOUT_MS ?? 10_000);
@@ -192,6 +194,8 @@ const MAP_STATE_ROOT = process.env.TANGENT_MAP_STATE_ROOT ?? path.join(os.homedi
 // the handovers between them. Ownership stays in the Goal file; this holds
 // only what neither the Goal nor tmux can.
 const PIPELINES_ROOT = process.env.TANGENT_PIPELINES_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "pipelines");
+const PRESENTATIONS_ROOT = process.env.TANGENT_PRESENTATIONS_ROOT
+  ?? (process.env.TANGENT_PIPELINES_ROOT ? path.join(path.dirname(process.env.TANGENT_PIPELINES_ROOT), "presented") : path.join(os.homedir(), ".tangent", "agent-shell", "presented"));
 // One JSON record per Goal for a solo (non-pipeline) session's context
 // continuations: the same mechanism pipeline steps keep inline on the step
 // (design-worker-context-handover D6).
@@ -245,7 +249,7 @@ function workerSendSection() {
     `## When you finish\n\n` +
     `You have one Tangent command. Run it inside this session.\n\n` +
     `    tangent send brain "<note>"            a note to the brain, no status change\n` +
-    `    tangent send brain --done "<note>"     the work is finished; say what changed and how you proved it\n` +
+    `    tangent send brain --done "<note>" [--present <file>]  the work is finished; present each document Julian must read\n` +
     `    tangent send brain --blocked "<note>"  you cannot continue; say why\n` +
     `    tangent send brain --question "<note>" you need a decision; ask it\n\n` +
     `Do not run other tangent commands. Do not change the Goal file's frontmatter. The brain marks the Goal done.`
@@ -745,6 +749,45 @@ async function readVaultDocument(file) {
   return text == null ? null : { ...metadata, text, hash: documentHash(text), comments: documentComments.parseComments(text) };
 }
 
+/** Resolves one presentation input to a Markdown file inside the vault or the Goal worker folder. */
+async function resolvePresentedDocument(goal, input) {
+  const requested = String(input ?? "").trim();
+  if (!requested) return { error: "present needs a document path" };
+  const vaultSafe = safeMarkdownPath(TREES_ROOT, requested);
+  if (vaultSafe) {
+    const text = await readFile(vaultSafe.absolute, "utf8").catch(() => null);
+    if (text == null) return { error: `no Markdown file ${requested}` };
+    return { root: "vault", file: vaultSafe.relative, title: markdownTitle(text, path.basename(vaultSafe.relative, ".md")), hash: documentHash(text), text };
+  }
+  const queue = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+  const boundFolder = await areaWorkFolder(goal.area);
+  const roots = [boundFolder?.cwd, ...(queue?.steps ?? []).flatMap((step) => (step.attempts ?? []).map((attempt) => attempt.cwd).filter(Boolean))]
+    .filter(Boolean)
+    .map((root) => path.resolve(root));
+  const absolute = path.isAbsolute(requested)
+    ? path.resolve(requested)
+    : roots.map((root) => path.resolve(root, requested)).find((candidate) => existsSync(candidate)) ?? path.resolve(requested);
+  if (path.extname(absolute).toLowerCase() !== ".md") return { error: "present accepts Markdown files only" };
+  const repository = roots.find((root) => absolute === root || absolute.startsWith(`${root}${path.sep}`));
+  if (!repository) return { error: "the document is outside the vault and this Goal's repository" };
+  const text = await readFile(absolute, "utf8").catch(() => null);
+  if (text == null) return { error: `no Markdown file ${absolute}` };
+  return { root: "repository", file: absolute, repository, title: markdownTitle(text, path.basename(absolute, ".md")), hash: documentHash(text), text };
+}
+
+/** Reads an allow-listed repository Document without granting general file access. */
+async function readPresentedRepositoryDocument(file) {
+  const absolute = path.resolve(String(file ?? ""));
+  for (const goal of (await goalsByFile()).values()) {
+    const record = await readGoalPresentations(PRESENTATIONS_ROOT, goal.area, goal.slug);
+    const item = projectPresentations(record).find((entry) => entry.root === "repository" && entry.file === absolute);
+    if (!item) continue;
+    const text = await readFile(absolute, "utf8").catch(() => null);
+    return text == null ? null : { file: absolute, area: goal.area, kind: "document", root: "repository", repositoryFile: true, readOnly: true, title: markdownTitle(text, item.title), text, hash: documentHash(text), comments: [] };
+  }
+  return null;
+}
+
 /** Tests one wiki target against a record path or its short stem. */
 function linkTargetsRecord(target, record) {
   if (!record) return false;
@@ -903,6 +946,11 @@ async function buildVaultIndex() {
   projectGoalDependencies(entries.flatMap(({ own }) => own));
   const linked = new Set([...bySlug.values()].flatMap((o) => o.subgoals));
   const parentBySlug = new Map();
+  const presentationsByGoal = new Map(await Promise.all([...bySlug.values()].map(async (goal) => {
+    const record = await readGoalPresentations(PRESENTATIONS_ROOT, goal.area, goal.slug);
+    await pruneMissingPresentations(PRESENTATIONS_ROOT, record, (item) => stat(item.root === "vault" ? path.join(TREES_ROOT, item.file) : item.file).then(() => true, () => false));
+    return [goal.file, record];
+  })));
   for (const goal of bySlug.values()) {
     for (const subgoal of goal.subgoals) {
       if (!parentBySlug.has(subgoal)) parentBySlug.set(subgoal, goal.slug);
@@ -985,6 +1033,15 @@ async function buildVaultIndex() {
     goal.documents = related
       .filter((record) => record.kind === "document")
       .map((record) => ({ file: record.file, title: record.title, kind: record.kind, docKind: record.docKind, changedAt: record.changedAt }));
+    const presentationRecord = presentationsByGoal.get(goal.file);
+    const presented = projectPresentations(presentationRecord);
+    goal.presentations = presented.filter((item) => item.openedAt === null).map((item) => ({ ...item }));
+    for (const item of presented.reverse()) {
+      const existing = goal.documents.findIndex((document) => document.file === item.file);
+      const projected = { file: item.file, title: item.title, kind: "document", root: item.root, repository: item.repository, presentedBy: item.presentedBy, presentedAt: item.presentedAt, note: item.note };
+      if (existing >= 0) goal.documents.splice(existing, 1);
+      goal.documents.unshift(projected);
+    }
   }
   for (const document of records.filter((record) => record.kind === "document")) {
     const relatedGoals = [...bySlug.values()].filter((goal) => {
@@ -1690,7 +1747,7 @@ async function goalContext(area, o, trace = null) {
   return {
     goalFile: path.join(TREES_ROOT, o.file),
     notes,
-    documents: linked.map((d) => path.join(TREES_ROOT, d.file)),
+    documents: linked.map((d) => d.root === "repository" ? d.file : path.join(TREES_ROOT, d.file)),
     commentCounts: linked.map((d) => d.commentCount ?? 0),
   };
 }
@@ -1715,7 +1772,17 @@ async function goalContextDocuments(area, goal, trace = null) {
     return `${stem.includes("/") ? stem : `${area}/${stem}`}.md`;
   }))].slice(0, GOAL_CONTEXT_MAX_DOCUMENTS);
   const linked = [];
+  const presentations = projectPresentations(await readGoalPresentations(PRESENTATIONS_ROOT, goal.area, goal.slug));
+  for (const item of presentations) {
+    if (item.root === "repository") {
+      linked.push({ file: item.file, root: "repository", title: item.title, commentCount: 0 });
+      continue;
+    }
+    candidates.unshift(item.file);
+  }
+  const seen = new Set(linked.map((item) => item.file));
   for (const file of candidates) {
+    if (seen.has(file)) continue;
     const safe = safeMarkdownPath(TREES_ROOT, file);
     if (!safe || /\/(?:goal|outcome)-[^/]+\.md$/.test(safe.relative)) continue;
     const info = await stat(safe.absolute).catch(() => null);
@@ -1728,6 +1795,7 @@ async function goalContextDocuments(area, goal, trace = null) {
       title: markdownTitle(text, path.basename(safe.relative, ".md")),
       commentCount: documentComments.parseComments(text).length,
     });
+    seen.add(safe.relative);
   }
   return linked;
 }
@@ -1780,7 +1848,7 @@ async function goalPrompt(area, o, extras = [], continuationEntries = [], trace 
     (openComments
       ? `Julian's comments in a Document look like \`{>>Julian: ...<<}\`, sometimes after \`{==the words they refer to==}\`. Carry them along unchanged when you edit the Document.\n\n`
       : "") +
-    `Design documents go in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md, in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${goalLink}]] link.` +
+    `Design documents go in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md, in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${goalLink}]] link. Present each document with --present <file> when you send the brain your result.` +
     (continuationEntries.length ? `\n\n${continuationSection({ index: 1, total: 1, entries: continuationEntries, subject: "Goal" })}` : "") +
     (closing ? `\n\n${workerSendSection()}` : "")
   );
@@ -4205,6 +4273,12 @@ async function commandProvenance(session) {
   return commandActor(session, { sessions, brains });
 }
 
+/** Finds the Goal that owns one current or historical worker session. */
+async function workerGoalForSession(session) {
+  const pipeline = (await readAllPipelines(PIPELINES_ROOT)).find((record) => record.steps.some((step) => step.session === session || step.attempts?.some((attempt) => attempt.session === session)));
+  return pipeline ? (await goalsByFile()).get(pipeline.goal) ?? null : null;
+}
+
 /**
  * Records a committed command and tells the logical target Area brain. The
  * state mutation is already authoritative. This durable notice is its audit
@@ -5799,8 +5873,22 @@ const agentRoutes = createAgentRoutes({
     const actor = await commandProvenance(session);
     const queued = session && (await readAllPipelines(PIPELINES_ROOT)).some((record) => record.steps.some((step) => step.session === session || step.attempts?.some((attempt) => attempt.session === session)));
     if (actor.role !== "worker" && !queued) return { status: 400, error: "tangent send brain works inside a worker session. Name a session or an Area path." };
+    const goal = await workerGoalForSession(session);
+    const requestedPresentations = Array.isArray(body.present) ? body.present.map(String).filter(Boolean) : [];
+    const resolvedPresentations = [];
+    if (requestedPresentations.length) {
+      if (!goal) return { status: 400, error: "the worker has no assigned Goal for this presentation" };
+      for (const file of requestedPresentations) {
+        const document = await resolvePresentedDocument(goal, file);
+        if (document.error) return { status: 400, error: document.error };
+        resolvedPresentations.push(document);
+      }
+    }
     const result = await handoverPipelineStep(session, text, null, String(body.idempotencyKey ?? ""), kind ?? "note");
     if (result.status !== 200) return { status: result.status, error: result.error };
+    for (const document of resolvedPresentations) {
+      await presentGoalDocument(PRESENTATIONS_ROOT, goal, document, { session: actor.session, role: "worker", assignmentId: actor.assignment?.id ?? null });
+    }
     const area = result.receipt?.destinationArea ?? result.pipeline?.area ?? actor.area;
     const brain = area ? await liveBrainForArea(area) : null;
     return { status: 200, value: { status: "sent", to: brain?.session ?? area, kind: kind ?? "note", state: result.state, receipt: result.receipt ?? null, pipeline: result.pipeline } };
@@ -6123,10 +6211,54 @@ const documentRoutes = createDocumentRoutes({
   readMap: readMapState,
   writeMap: writeMapState,
   validArea: validAreaPath,
-  readDocument: readVaultDocument,
+  /** Reads a vault Document or one presentation-authorized repository file. */
+  async readDocument(file, repository) { return repository ? readPresentedRepositoryDocument(repository) : readVaultDocument(file); },
   writeDocument: saveVaultDocument,
   notifyComments: notifyBrainOfDocumentComments,
   resolve: resolveVaultDocumentComment,
+});
+const goalPresentationRoutes = createGoalPresentationRoutes({
+  /** Validates and records one or more Goal presentations. */
+  async present(body) {
+    const goals = await goalsByFile();
+    const requested = String(body.goal ?? "");
+    const goal = goals.get(requested) ?? [...goals.values()].find((item) => item.slug === requested);
+    if (!goal || ["done", "dropped", "parked", "deferred"].includes(normalizeGoalStatus(goal.status))) return { status: 404, error: `no open Goal ${requested}` };
+    const session = String(body.session ?? body.caller ?? "").trim();
+    const actor = await commandProvenance(session);
+    if (actor.role === "worker" && (await workerGoalForSession(session))?.file !== goal.file) return { status: 403, error: "a worker can present only on its assigned Goal" };
+    const files = Array.isArray(body.files) ? body.files : [body.file];
+    const resolved = [];
+    for (const file of files) {
+      const document = await resolvePresentedDocument(goal, file);
+      if (document.error) return { status: 400, error: document.error };
+      resolved.push(document);
+    }
+    const items = [];
+    for (const document of resolved) {
+      const result = await presentGoalDocument(PRESENTATIONS_ROOT, goal, document, { session: actor.session, role: actor.role, assignmentId: actor.assignment?.id ?? null }, body.note);
+      items.push(result.item);
+    }
+    return { status: 200, value: { goal: goal.file, items } };
+  },
+  /** Withdraws one presentation from its Goal. */
+  async withdraw(body) {
+    const goals = await goalsByFile();
+    const requested = String(body.goal ?? "");
+    const goal = goals.get(requested) ?? [...goals.values()].find((item) => item.slug === requested);
+    if (!goal) return { status: 404, error: `no Goal ${requested}` };
+    const result = await withdrawGoalDocument(PRESENTATIONS_ROOT, goal, String(body.file ?? ""));
+    return result.changed ? { status: 200, value: { ok: true } } : { status: 404, error: "no active presentation for that document" };
+  },
+  /** Clears active attention for a Document that a reader opened. */
+  async opened(body) {
+    const goals = await goalsByFile();
+    const requested = String(body.goal ?? "");
+    const candidates = requested ? [goals.get(requested) ?? [...goals.values()].find((item) => item.slug === requested)].filter(Boolean) : [...goals.values()];
+    let changed = false;
+    for (const goal of candidates) changed = (await markGoalDocumentOpened(PRESENTATIONS_ROOT, goal, String(body.file ?? ""), body.hash ?? null)).changed || changed;
+    return { status: 200, value: { ok: true, changed } };
+  },
 });
 const shellControlRoutes = createShellControlRoutes({
   spawn: spawnSession,
@@ -6852,6 +6984,7 @@ const workMutationRoutes = createWorkMutationRoutes({
         changed = [file];
       }
       if (!changed.includes(file)) changed.unshift(file);
+      if (["done", "dropped", "parked"].includes(fields.status)) await removeGoalPresentations(PRESENTATIONS_ROOT, goal);
       const what = fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "parked" ? "parked" : fields.status === "open" ? "reopened" : fields.verify === true ? "flagged for Julian to check" : fields.verify === false ? "unflagged" : "edited";
       await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} ${what} in tree`, goal.area, body.session ? String(body.session) : null);
       if (lifecycle?.leftVerify) await forgetCheckNotification(goal);
@@ -6985,6 +7118,7 @@ const server = http.createServer(async (req, res) => {
     if (await areaRoutes.handle(req, res, url)) return;
     if (await programRoutes.handle(req, res, url)) return;
     if (await processRoutes.handle(req, res, url)) return;
+    if (await goalPresentationRoutes.handle(req, res, url)) return;
     if (await documentRoutes.handle(req, res, url)) return;
     if (await shellControlRoutes.handle(req, res, url)) return;
     if (await voiceRoutes.handle(req, res, url)) return;

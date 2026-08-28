@@ -736,6 +736,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   function executeWorkCommand(id, row = cursorRow()) {
     const area = commandAreaForRow(row);
     const goal = goalByFile(row?.dataset.goalAnchor ?? "");
+    if (id === "fullDocument" && row?.dataset.presentationFile) return openDocument(row.dataset.presentationFile);
+    if (id === "dismissPresentation" && row?.dataset.presentationFile) {
+      return post("/api/goals/withdraw-presentation", { goal: row.dataset.presentationGoal, file: row.dataset.presentationFile }).then(() => refresh());
+    }
     if (id === "previousArea" || id === "nextArea") return moveAreaCursor(id === "previousArea" ? -1 : 1, row);
     if (id === "openBrain") {
       if (!area) return showToast("This row has no Area command header.");
@@ -1659,7 +1663,19 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return openDocumentHeading(documentHeading.dataset.documentHeading);
     }
     const documentButton = target.closest("[data-open-document]");
-    if (documentButton) return openDocument(documentButton.dataset.openDocument);
+    if (documentButton) {
+      const presentation = documentButton.closest("[data-presentation-goal]");
+      if (presentation) return openDocumentPeek(documentButton.dataset.openDocument, { origin: documentButton });
+      return openDocument(documentButton.dataset.openDocument);
+    }
+    const presentationFull = target.closest("[data-presentation-full]");
+    if (presentationFull) return openDocument(presentationFull.dataset.presentationFull);
+    const withdrawPresentation = target.closest("[data-withdraw-presentation]");
+    if (withdrawPresentation) {
+      const row = withdrawPresentation.closest("[data-presentation-goal]");
+      await post("/api/goals/withdraw-presentation", { goal: row.dataset.presentationGoal, file: withdrawPresentation.dataset.withdrawPresentation });
+      return refresh();
+    }
     const readerGoalActions = target.closest("[data-reader-goal-actions]");
     if (readerGoalActions) return openReaderGoalActions(readerGoalActions);
     const closeRow = target.closest("[data-open-close]");
@@ -2723,6 +2739,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const current = cursorRow();
       const commandArea = commandAreaForRow(current);
       if (handleWorkMotion(event, rows, current)) return;
+      if (current?.dataset.presentationFile && workCommandMatches(event, "fullDocument")) {
+        event.preventDefault();
+        return executeWorkCommand("fullDocument", current);
+      }
+      if (current?.dataset.presentationFile && workCommandMatches(event, "dismissPresentation")) {
+        event.preventDefault();
+        return executeWorkCommand("dismissPresentation", current);
+      }
       if (workCommandMatches(event, "stopBrain")) {
         event.preventDefault();
         return executeWorkCommand("stopBrain", current);

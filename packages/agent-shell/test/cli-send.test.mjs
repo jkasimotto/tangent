@@ -23,7 +23,7 @@ function capture(context, respond) {
 
 test("tangent send has the three flags and the sender option", () => {
   assert.equal(sendCommandSpec.args, "<brain|session|area> <note...>");
-  assert.deepEqual(sendCommandSpec.options.map((option) => option.name), ["done", "blocked", "question", "session", "server"]);
+  assert.deepEqual(sendCommandSpec.options.map((option) => option.name), ["done", "blocked", "question", "present", "session", "server"]);
 });
 
 test("each flag maps to one send kind and the plain note is kind note", async (context) => {

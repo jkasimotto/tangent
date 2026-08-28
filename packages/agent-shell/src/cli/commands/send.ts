@@ -1,5 +1,5 @@
 import { renderCommandHelp } from "@tangent/core";
-import { booleanArg, parseArgs, requiredString, stringArg, type Args } from "@tangent/core/cli";
+import { booleanArg, parseArgs, requiredString, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
 import { currentSessionIsWorker, currentTmuxSession, postJson, resolveServerUrl } from "../client.js";
 import { sendCommandSpec } from "../spec.js";
@@ -18,7 +18,7 @@ export const WORKER_SEND_TARGET_REFUSAL = 'workers only send to their brain. Use
  * server; any other target is a live session or an Area path.
  */
 export async function runSendCli(argv = process.argv.slice(2)): Promise<void> {
-  const args = parseArgs(argv, { boolean: FLAG_KINDS });
+  const args = parseArgs(argv, { boolean: FLAG_KINDS, repeatable: ["present"] });
   if (args.help) {
     console.log(renderCommandHelp(sendCommandSpec));
     console.log(examples());
@@ -32,12 +32,13 @@ export async function runSendCli(argv = process.argv.slice(2)): Promise<void> {
   const from = stringArg(args.session) || stringArg(args.from) || (await currentTmuxSession());
   if (to === "brain") {
     if (!from) throw new Error("tangent send brain works inside a worker session. Name a session or an Area path.");
-    const result = await postJson(server, "/api/agents/send", { to, text, from, kind });
+    const present = stringsArg(args.present);
+    const result = await postJson(server, "/api/agents/send", { to, text, from, kind, ...(present.length ? { present } : {}) });
     console.log(`sent to ${result.to} (${result.kind ?? kind})`);
     return;
   }
-  if (kind !== "note") throw new Error("--done, --blocked, and --question work only with tangent send brain.");
-  if (await currentSessionIsWorker()) throw new Error(WORKER_SEND_TARGET_REFUSAL);
+  if (kind !== "note" || stringsArg(args.present).length) throw new Error("--done, --blocked, --question, and --present work only with tangent send brain.");
+  if (!stringArg(args.session) && await currentSessionIsWorker()) throw new Error(WORKER_SEND_TARGET_REFUSAL);
   const result = await postJson(server, "/api/agents/send", { to, text, from });
   console.log(sendResultLine(result));
 }
@@ -64,6 +65,7 @@ Examples:
   tangent send brain --done "Parser and route committed as 3f2a1c0; npm test green."
   tangent send brain --blocked "The fixture server needs port 4321, which is taken."
   tangent send brain --question "Keep the old field name or rename it?"
+  tangent send brain --done "The design is ready." --present otto/tangent/design-ready.md
   tangent send neara/essential/autodesign "Start the queued design Goal when you return."
 `;
 }

@@ -46,7 +46,7 @@ export function createDocumentRoutes(operations) {
 
   /** Returns one indexed Document. */
   async function readDocument(_request, response, url) {
-    const document = await operations.readDocument(url.searchParams.get("file") ?? "");
+    const document = await operations.readDocument(url.searchParams.get("file") ?? "", url.searchParams.get("repository") ?? "");
     sendJson(response, document ? 200 : 404, document ?? { error: "document not found" });
   }
 

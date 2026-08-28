@@ -123,6 +123,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
     const canGoForward = state.documentTrailIndex >= 0 && state.documentTrailIndex < state.documentTrail.length - 1;
     const brain = activeDocumentBrain();
     const comments = state.document?.comments?.length ?? 0;
+    const repositoryFile = state.document?.repositoryFile === true;
     const goalCanOpenAgent = goal && (sessionsForGoal(goal).length || !state.goalDetail || ["open", "active"].includes(goal.status));
     const notifyLabel = brain ? `Tell ${brain.area} brain I added comments` : "No active brain to notify";
     const notifyTitle = !brain ? `No active brain covers ${state.document?.area ?? "this Area"}` : !comments ? "Add a comment before you notify the brain" : notifyLabel;
@@ -139,9 +140,9 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         </div>
         <div class="document-reader-actions">
           ${documentOutlineMenu()}
-          ${documentCommentControls()}
+          ${repositoryFile ? "" : documentCommentControls()}
           ${state.goalDetail?.goal ? "" : `<button class="document-keys-action" type="button" data-document-keys aria-keyshortcuts="Shift+/" title="Document reading keys (?)">Keys <kbd>?</kbd></button>`}
-          ${brain ? `<details class="reader-brain-actions">
+          ${repositoryFile ? "" : brain ? `<details class="reader-brain-actions">
             <summary title="${escapeHtml(notifyLabel)}"><span>${escapeHtml(notifyLabel)}</span><i aria-hidden="true">⌄</i></summary>
             <div class="reader-brain-actions-popover" role="group" aria-label="Brain actions">
               <button class="reader-notify-brain" type="button" data-notify-document-comments title="${escapeHtml(notifyTitle)}" ${comments ? "" : "disabled"}>Tell brain I added comments</button>
@@ -209,7 +210,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
       </div>
       <div class="goal-reader-sections">
         <section><h2>Dependencies</h2>${references.length ? `<ul>${references.map((item) => `<li><span>${escapeHtml(item.relation)}</span><strong>${escapeHtml(item.title || item.file || item.slug)}</strong><small>${escapeHtml(item.status || "open")}</small></li>`).join("")}</ul>` : `<p>None.</p>`}</section>
-        <section><h2>Related Documents</h2>${relatedDocuments.length ? `<ul>${relatedDocuments.map((item) => { const record = typeof item === "string" ? { file: item, title: item } : item; return `<li><button type="button" data-open-document="${escapeHtml(record.file)}">${escapeHtml(record.title || record.file)}</button></li>`; }).join("")}</ul>` : `<p>None.</p>`}</section>
+        <section><h2>Related Documents</h2>${relatedDocuments.length ? `<ul>${relatedDocuments.map((item) => { const record = typeof item === "string" ? { file: item, title: item } : item; const presented = record.presentedBy?.session ? `Presented by ${record.presentedBy.session}` : ""; return `<li><button type="button" data-open-document="${escapeHtml(record.file)}">${escapeHtml(record.title || record.file)}</button>${presented ? `<small>${escapeHtml(presented)}</small>` : ""}</li>`; }).join("")}</ul>` : `<p>None.</p>`}</section>
         <section><h2>Queue</h2>${assignments.length ? `<ol>${assignments.map((item, index) => `<li><span>${escapeHtml(String(item.index ?? index + 1))}</span><strong>${escapeHtml(item.instruction || item.label || "Assignment")}</strong><small>${escapeHtml([item.status, goalLaunchLabel(item)].filter(Boolean).join(" · "))}</small></li>`).join("")}</ol>` : `<p>No assignments.</p>`}</section>
         <section><h2>Attempt history</h2>${attempts.length ? `<ol>${attempts.map((item) => attemptHistoryRow(item, goal.file)).join("")}</ol>` : `<p>No attempts.</p>`}</section>
       </div>
@@ -224,10 +225,12 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
    */
   function renderDocumentArticle(source = state.document, { readOnly = false } = {}) {
     if (!source) return `<div class="loading">Opening the Document…</div>`;
+    readOnly = readOnly || source.readOnly === true;
     return `
       <article class="document-page">
         <header class="document-heading">
           <h1>${escapeHtml(source.title)}</h1>
+          ${source.repositoryFile ? `<small>Repository file · comments off</small>` : ""}
         </header>
         ${!readOnly && source.file === state.goalDetail?.goal?.file ? goalDetailPanel() : ""}
         <div class="document-content">${markdownToHtml(source.text, { comments: source.comments ?? [], composer: readOnly ? null : state.commentComposer, readOnly, baseFile: source.file })}</div>

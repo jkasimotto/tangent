@@ -11,6 +11,7 @@ export const sendCommandSpec: CliCommandSpec = {
     { name: "done", description: "The work is finished; the assignment is complete" },
     { name: "blocked", description: "You cannot continue; the assignment waits for the brain" },
     { name: "question", description: "You need a decision; the assignment waits for the brain" },
+    { name: "present", takesValue: true, description: "Present a Markdown file on this worker's Goal; repeatable" },
     { name: "session", takesValue: true, description: "Sender session name; defaults to the tmux session this command runs in" },
     serverOption
   ]
@@ -100,6 +101,7 @@ export const brainCommandSpec: CliCommandSpec = {
         { name: "detail", takesValue: true, description: "At most two short sentences that Julian needs to answer" },
         { name: "option", takesValue: true, description: "Decision choice; repeat for each choice" },
         { name: "goal", takesValue: true, description: "Goal slug this request is about" },
+        { name: "document", takesValue: true, description: "Document for Julian to read; repeatable" },
         { name: "effect", takesValue: true, description: "Exact authorized effect as one JSON object" },
         { name: "session", takesValue: true, description: "Brain session; defaults to the current tmux session" },
         serverOption
@@ -164,6 +166,12 @@ export const goalCommandSpec: CliCommandSpec = {
   name: "goal",
   description: "Create, list, start, append to, and close Goals in the Tangent tree",
   subcommands: [
+    {
+      name: "present",
+      description: "Present Markdown files on a Goal, or withdraw one presentation",
+      args: "<slug> <file...>",
+      options: [{ name: "note", takesValue: true, description: "Short reason to read the document" }, { name: "withdraw", description: "Withdraw the named presentation" }, { name: "session", takesValue: true, description: "Caller session; defaults to the current tmux session" }, serverOption]
+    },
     {
       name: "create",
       description: "Create a Goal. A brain adds --start to start its worker in the same call",

@@ -56,6 +56,26 @@ test("the work table states its rows and columns in the accessibility tree", asy
   assert.equal(row.children.length, columns.length, "a Goal row fills every column");
 });
 
+test("presented Documents are capped child rows with human titles and keyboard verbs", async () => {
+  const fixture = workTableFixture();
+  const goal = fixture.goals[0];
+  goal.presentations = [1, 2, 3, 4].map((number) => ({
+    file: `otto/onboarding/design-${number}.md`, root: "vault", title: `Readable design ${number}`,
+    presentedBy: { session: "worker-a" }, presentedAt: `2026-08-28T00:00:0${number}.000Z`, note: "Read this result",
+  }));
+  const { window, document, posts } = await bootWorkTable(fixture);
+  const rows = [...document.querySelectorAll("[data-presentation-goal]")];
+  assert.equal(rows.length, 3, "Work renders no more than three unopened presentations");
+  assert.match(rows[0].textContent, /Readable design 1/);
+  assert.match(document.querySelector("[data-work-cursor^='document-more:']").textContent, /and 1 more/);
+  rows[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  rows[0].querySelector("[data-work-row-title]").focus();
+  press(window, "x");
+  await settle(window);
+  assert.equal(posts.at(-1).path, "/api/goals/withdraw-presentation");
+  assert.equal(posts.at(-1).body.file, "otto/onboarding/design-1.md");
+});
+
 test("every status carries a word, and every icon-only control carries a name", async () => {
   const { document } = await bootWorkTable(withDirectAsks(workTableFixture()));
   for (const state of document.querySelectorAll(".work-table .desk-state")) {

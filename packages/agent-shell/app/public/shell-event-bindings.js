@@ -362,8 +362,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       else if (exact) candidate = exact;
       else if (preference === "choices") candidate = choice;
       else if (state.launchTarget === DEFAULT_AGENTS_TARGET && !state.defaultAgents.editing) candidate = summary;
+      // The brain's common path is Enter on its default, so focus starts on Start.
+      else if (state.launchTarget === BRAIN_LAUNCH_TARGET) candidate = popover.querySelector("[data-launch-primary]:not([disabled])") ?? choice;
       else candidate = choice ?? popover.querySelector("textarea, input, select, button:not([disabled])");
       (candidate ?? popover).focus?.({ preventScroll: true });
+      (candidate ?? popover).scrollIntoView?.({ block: "nearest" });
       return Boolean(candidate);
     };
     if (attempt()) return;
@@ -418,12 +421,37 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return true;
   }
 
-  /** Owns keyboard movement inside the shared brain, Goal, and defaults chooser. */
+  /** Scrolls the chooser so its focused control is visible after a move or repaint. */
+  function revealLaunchFocus() {
+    const active = document.activeElement;
+    if (active?.closest?.("[data-launch-popover]")) active.scrollIntoView?.({ block: "nearest" });
+  }
+
+  /**
+   * Moves the chooser cursor onto one option. Moving is choosing: the option
+   * is checked at once, as in a native radio group, and the repaint keeps
+   * focus on it by focus key (design: brain-launch-keyboard, decision 1).
+   */
+  function chooseLaunchOption(option) {
+    if (!option) return;
+    option.focus({ preventScroll: true });
+    if (option.getAttribute("aria-checked") !== "true") option.click();
+    revealLaunchFocus();
+  }
+
+  /**
+   * Owns keyboard movement inside the shared brain, Goal, and defaults
+   * chooser. `h/l` pick a column, `j/k` move the checked value, Enter runs
+   * the primary action, printed letters run the secondary ones.
+   */
   function handleLaunchPopoverKey(event) {
     const popover = screen.querySelector("[data-launch-popover]");
     if (!popover) return false;
     const active = event.target;
-    const stops = [...popover.querySelectorAll("button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex='0']")];
+    // Tab visits controls, and each column once, on its checked value. The
+    // options inside a column are walked with j/k, not Tab.
+    const stops = [...popover.querySelectorAll("button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex='0']")]
+      .filter((stop) => !stop.classList.contains("launch-option") || stop.getAttribute("aria-checked") === "true");
     if (event.key === "Tab") {
       if (!stops.length) {
         event.preventDefault();
@@ -431,26 +459,47 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         popover.focus?.({ preventScroll: true });
         return true;
       }
-      const index = stops.indexOf(document.activeElement);
-      const next = index < 0
+      const current = document.activeElement?.closest?.("[data-launch-column]")
+        ? stops.findIndex((stop) => stop.closest("[data-launch-column]") === document.activeElement.closest("[data-launch-column]"))
+        : stops.indexOf(document.activeElement);
+      const next = current < 0
         ? event.shiftKey ? stops.length - 1 : 0
-        : (index + (event.shiftKey ? -1 : 1) + stops.length) % stops.length;
+        : (current + (event.shiftKey ? -1 : 1) + stops.length) % stops.length;
       event.preventDefault();
       stops[next].focus({ preventScroll: true });
+      revealLaunchFocus();
       return true;
     }
     if (event.key === "Escape") return false;
     if (active.closest?.("input, textarea, select, [contenteditable='true']")) return false;
+    const plain = !event.ctrlKey && !event.altKey && !event.shiftKey;
     const button = active.closest?.("button");
+    const option = button?.classList.contains("launch-option") ? button : null;
+    if (event.key === "Enter" && (!button || option || event.metaKey)) {
+      const primary = popover.querySelector("[data-launch-primary]:not([disabled])");
+      if (!primary) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      primary.click();
+      return true;
+    }
     if (["Enter", " "].includes(event.key) && button && popover.contains(button)) {
       event.preventDefault();
       event.stopPropagation();
       button.click();
       return true;
     }
+    if (plain && !event.metaKey && event.key.length === 1 && !/^[hjkl]$/.test(event.key)) {
+      const command = popover.querySelector(`[data-launch-key="${event.key}"]:not([disabled])`);
+      if (!command) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      command.click();
+      return true;
+    }
     const assignment = active.closest?.("[data-launch-assignment]");
     const assignmentRegion = active.closest?.("[data-launch-assignment-region]");
-    if (assignmentRegion && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (assignmentRegion && plain && !event.metaKey) {
       const rows = [...assignmentRegion.querySelectorAll("[data-launch-assignment]")];
       const current = rows.indexOf(assignment);
       if (["j", "k", "ArrowDown", "ArrowUp"].includes(event.key)) {
@@ -459,32 +508,36 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         const delta = ["j", "ArrowDown"].includes(event.key) ? 1 : -1;
         const next = current < 0 ? (delta > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, current + delta));
         rows[next]?.querySelector("[data-launch-step-select]")?.focus({ preventScroll: true });
+        revealLaunchFocus();
         return true;
       }
     }
-    const vertical = !event.ctrlKey && !event.metaKey && !event.altKey && ["j", "k", "ArrowDown", "ArrowUp"].includes(event.key);
-    const horizontal = !event.ctrlKey && !event.metaKey && !event.altKey && ["h", "l", "ArrowLeft", "ArrowRight"].includes(event.key);
+    const vertical = plain && !event.metaKey && ["j", "k", "ArrowDown", "ArrowUp"].includes(event.key);
+    const horizontal = plain && !event.metaKey && ["h", "l", "ArrowLeft", "ArrowRight"].includes(event.key);
     if (!vertical && !horizontal) return false;
     const columns = [...popover.querySelectorAll("[data-launch-column]")].filter((column) => column.querySelector(".launch-option"));
     if (!columns.length) return false;
     const column = active.closest?.("[data-launch-column]");
+    /** The checked option of one column, or its first option. */
+    const checkedIn = (target) => target.querySelector(".launch-option[aria-checked='true']") ?? target.querySelector(".launch-option");
+    if (horizontal) {
+      event.preventDefault();
+      event.stopPropagation();
+      const delta = ["l", "ArrowRight"].includes(event.key) ? 1 : -1;
+      const columnIndex = columns.indexOf(column);
+      // From outside the columns, l enters the first column and h the last.
+      const next = columnIndex < 0 ? (delta > 0 ? 0 : columns.length - 1) : Math.max(0, Math.min(columns.length - 1, columnIndex + delta));
+      chooseLaunchOption(checkedIn(columns[next]));
+      return true;
+    }
     if (!column) return false;
     event.preventDefault();
     event.stopPropagation();
-    let columnIndex = columns.indexOf(column);
-    if (horizontal) {
-      const delta = ["l", "ArrowRight"].includes(event.key) ? 1 : -1;
-      columnIndex = columnIndex < 0 ? (delta > 0 ? 0 : columns.length - 1) : Math.max(0, Math.min(columns.length - 1, columnIndex + delta));
-      const target = columns[columnIndex].querySelector(".launch-option.selected") ?? columns[columnIndex].querySelector(".launch-option");
-      target?.focus({ preventScroll: true });
-      return true;
-    }
-    const currentColumn = columnIndex >= 0 ? columns[columnIndex] : columns[0];
-    const choices = [...currentColumn.querySelectorAll(".launch-option")];
-    const current = choices.indexOf(button);
+    const choices = [...column.querySelectorAll(".launch-option")];
+    const current = choices.indexOf(option);
     const delta = ["j", "ArrowDown"].includes(event.key) ? 1 : -1;
     const index = current < 0 ? (delta > 0 ? 0 : choices.length - 1) : Math.max(0, Math.min(choices.length - 1, current + delta));
-    choices[index]?.focus({ preventScroll: true });
+    chooseLaunchOption(choices[index]);
     return true;
   }
 
@@ -819,6 +872,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const currentAssignment = record?.steps?.find((step) => !["complete", "skipped", "ended", "replaced"].includes(step.status));
     const stoppedAssignment = currentAssignment && (currentAssignment.status === "stopped" || (currentAssignment.status === "running" && !currentAssignment.live));
     if (goal && sessionForGoal(goal)) options.splice(2, 0, { value: "stopWork", key: "", label: "End current agent", help: "Stop this exact agent while keeping the Goal and its notes.", enabled: true });
+    // Area status on Julian's word (area-archive Decision 8): done is a finished
+    // subject, archived a shelved one. Both fold away. A live brain blocks both.
+    const areaRecord = isArea ? state.vault?.areas?.find((item) => item.path === area) : null;
+    if (areaRecord) {
+      const hidden = ["done", "archived"].includes(areaRecord.status);
+      const blocked = Boolean(brain?.live);
+      if (hidden) options.push({ value: "reopenArea", key: "", label: "Reopen", help: `This Area is ${areaRecord.status}. Return it to active.`, enabled: true });
+      else {
+        options.push({ value: "areaDone", key: "", label: "Mark done", help: "A finished subject. It folds away; its Goals are not changed.", enabled: !blocked, reason: "A brain is live here. Stop it first." });
+        options.push({ value: "archiveArea", key: "", label: "Archive", help: "A shelved subject. It folds away like done, with its own mark.", enabled: !blocked, reason: "A brain is live here. Stop it first." });
+      }
+    }
     if (goal && stoppedAssignment) {
       if (currentAssignment.index < (record.steps?.length ?? 0)) options.splice(2, 0, { value: "skipAssignment", key: "", label: `Skip to assignment ${currentAssignment.index + 1}`, help: "End this stopped assignment and advance to the next one.", enabled: true });
       options.splice(2, 0, { value: "endPipeline", key: "", label: "End work", help: "End the run while keeping the Goal open and preserving its history.", enabled: true });
@@ -838,6 +903,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       }
       if (id === "endPipeline" && goal && currentAssignment) {
         controlGoalPipeline(goal.file, "end", currentAssignment.index);
+        return true;
+      }
+      if (["areaDone", "archiveArea", "reopenArea"].includes(id) && area) {
+        setAreaStatus(area, id === "areaDone" ? "done" : id === "archiveArea" ? "archived" : "active");
         return true;
       }
       return executeWorkCommand(id, currentRow);
@@ -1488,6 +1557,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     const markAreaDone = target.closest("[data-mark-area-done]");
     if (markAreaDone) return setAreaStatus(markAreaDone.dataset.markAreaDone, "done");
+    const archiveArea = target.closest("[data-archive-area]");
+    if (archiveArea) return setAreaStatus(archiveArea.dataset.archiveArea, "archived");
     const reopenArea = target.closest("[data-reopen-area]");
     if (reopenArea) return setAreaStatus(reopenArea.dataset.reopenArea, "active");
     if (target.closest("[data-toggle-done-areas]")) {

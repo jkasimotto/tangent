@@ -136,10 +136,10 @@ test("the Work brain key opens the chooser, and Start needs no instruction", asy
   assert.match(launch.textContent, /Inherited from Otto/);
   assert.ok(launch.querySelector("[data-default-agents-area='otto/tangent']"), "the disclosed launch links to the Area default editor");
 
-  click(window, "[data-launch-start]");
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   await settle(window);
   const started = posts.filter((item) => item.path === "/api/brains/start");
-  assert.equal(started.length, 1, "Start posts at once");
+  assert.equal(started.length, 1, "b then Enter starts the brain: two keys");
   assert.equal(started[0].body.instruction, "", "no upfront instruction travels");
   assert.equal(started[0].body.resume, false);
   assert.equal(started[0].body.expectedLaunch, "codex/sol", "the request carries the launch that the control disclosed");
@@ -226,6 +226,9 @@ test("an inactive brain wakes without a message, and Work names no generation", 
   assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0, "an inactive brain shows its chooser first");
   assert.equal(window.document.querySelector("#brain-instruction"), null, "no message box");
   assert.match(window.document.querySelector("[data-launch-start]")?.textContent ?? "", /Wake brain/, "the button says Wake");
+  const startOver = window.document.querySelector("[data-brain-start-over]");
+  assert.equal(startOver?.dataset.launchKey, "n", "Start over prints its key");
+  assert.match(window.document.querySelector("[data-launch-popover] header").textContent, /↵ wake · n start over/);
 
   click(window, "[data-launch-start]");
   await settle(window);
@@ -233,5 +236,11 @@ test("an inactive brain wakes without a message, and Work names no generation", 
   assert.equal(resumed.length, 1, "Wake posts at once, with no message");
   assert.equal(resumed[0].body.resume, true);
   assert.equal(resumed[0].body.instruction, "");
+
+  await chooseBrain(window);
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "n", bubbles: true }));
+  await settle(window);
+  const fresh = posts.filter((item) => item.path === "/api/brains/start").at(-1);
+  assert.equal(fresh.body.resume, false, "n starts over with a new brain");
   dom.window.close();
 });

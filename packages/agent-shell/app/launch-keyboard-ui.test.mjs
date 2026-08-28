@@ -45,18 +45,19 @@ test("defaults are a complete keyboard chooser with staged Escape and exact retu
   await settle(window);
   assert.equal(document.activeElement.dataset.launchHarness, "codex", "Enter on Change enters the shared chooser");
   press(window, "l");
-  assert.equal(document.activeElement.dataset.launchModel, "sol", "l moves from Harness to Model");
-  press(window, "j");
-  assert.equal(document.activeElement.dataset.launchModel, "luna", "j moves within Model choices");
-  press(window, "Enter");
   await settle(window);
-  assert.equal(document.activeElement.dataset.launchModel, "luna", "selection repaint preserves the focused model");
+  assert.equal(document.activeElement.dataset.launchModel, "sol", "l moves from Harness to Model, on its checked value");
+  press(window, "j");
+  await settle(window);
+  assert.equal(document.activeElement.dataset.launchModel, "luna", "j moves within Model choices and keeps focus across the repaint");
+  assert.equal(document.querySelector("[data-launch-model='luna']").getAttribute("aria-checked"), "true", "moving the cursor is choosing: no Enter needed");
   press(window, "ArrowRight");
+  await settle(window);
   assert.equal(document.activeElement.dataset.launchEffort, "low", "right arrow reaches Effort");
   press(window, "ArrowDown");
-  press(window, "Enter");
   await settle(window);
   assert.equal(document.querySelector("[data-launch-effort='high']").classList.contains("selected"), true);
+  assert.equal(document.querySelector("[data-launch-popover] header").textContent.includes("↵ save"), true, "the hint names Enter as Save while editing a default");
 
   const last = document.querySelector("[data-focus-key='launch:registry']");
   last.focus();
@@ -94,14 +95,21 @@ test("a Goal row never opens a chooser; brain spawning owns the Harness, Model, 
   const brain = document.querySelector("[data-work-group='otto/quiet'] .work-group-brain");
   brain.click();
   await settle(window, 5);
-  assert.equal(document.activeElement.dataset.launchHarness, "codex", "brain spawn starts on the selected harness choice");
+  assert.ok(document.activeElement.hasAttribute("data-launch-start"), "brain spawn starts on Start, so Enter is the common path");
   press(window, "Tab");
   assert.ok(document.activeElement.closest("[data-launch-popover]"), "Tab stays inside the chooser");
   press(window, "l");
-  press(window, "j");
-  press(window, "Enter");
   await settle(window);
-  assert.equal(document.querySelector("[data-launch-model='luna']").classList.contains("selected"), true);
+  assert.equal(document.activeElement.dataset.launchHarness, "codex", "l from the actions enters the Harness column on its checked value");
+  press(window, "l");
+  press(window, "j");
+  await settle(window);
+  assert.equal(document.querySelector("[data-launch-model='luna']").classList.contains("selected"), true, "j chooses without Enter");
+  const stops = [...document.querySelectorAll("[data-launch-popover] .launch-option")];
+  assert.equal(stops.length > 3, true);
+  document.querySelector("[data-launch-start]").focus();
+  press(window, "Tab");
+  assert.equal(document.activeElement.classList.contains("launch-option"), false, "Tab visits controls before any option");
   press(window, "Escape");
   await settle(window);
   assert.equal(document.activeElement, document.querySelector("[data-work-group='otto/quiet'] .work-group-brain"));
@@ -159,7 +167,7 @@ test("switching from defaults to a brain loads the brain catalog and returns to 
   brain.click();
   await settle(window, 5);
 
-  assert.equal(document.activeElement.dataset.launchHarness, "codex", "the brain chooser starts on its selected launch");
+  assert.ok(document.activeElement.hasAttribute("data-launch-start"), "the brain chooser starts on Start");
   assert.equal(document.querySelector("[data-launch-harness='codex']").getAttribute("aria-checked"), "true", "the brain receives its launch default, not the settings catalog");
   const launchRequests = gets.filter((url) => new URL(url).pathname === "/api/launch/options");
   assert.equal(new URL(launchRequests.at(-1)).searchParams.get("kind"), "brain", "the brain chooser requests brain launch options");
@@ -253,5 +261,24 @@ test("a chooser near the viewport bottom flips above its trigger", async () => {
   assert.equal(popover.style.top, "", "a flipped chooser no longer uses the unusable below-trigger top");
   assert.equal(popover.style.bottom, "68px", "the chooser bottom sits eight pixels above the trigger");
   assert.ok(Number.parseFloat(popover.style.maxHeight) > 600, "the full space above the trigger remains scrollable");
+  window.close();
+});
+
+test("a brain chooser uses the whole viewport and never a fixed height cap", async () => {
+  const { window, document } = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { live: false, planned: true }), { launchOptions });
+  Object.defineProperty(window, "innerHeight", { value: 1_000, configurable: true });
+  const trigger = document.querySelector("[data-work-group='otto/quiet'] .work-group-brain");
+  trigger.getBoundingClientRect = () => ({ top: 100, bottom: 130, right: 1_200 });
+  trigger.click();
+  await settle(window, 5);
+  const popover = document.querySelector("[data-launch-popover]");
+  assert.equal(popover.style.top, "138px");
+  assert.equal(popover.style.maxHeight, "846px", "the chooser may grow to the bottom gap of the viewport");
+  const picker = popover.querySelector(".launch-picker");
+  const order = [...picker.children].map((child) => child.className.split(" ")[0]);
+  assert.ok(order.indexOf("action-row") < order.indexOf("launch-columns"), "Start sits above the columns so the fold never hides it");
+  assert.ok(order.indexOf("brain-launch-summary") < order.indexOf("launch-columns"), "the resolved launch sits above the columns");
+  assert.match(popover.querySelector("header").textContent, /h\/l column · j\/k choose · ↵ wake · n start over · d default · e harnesses · Esc back/, "the hint prints the real grammar");
+  assert.equal(popover.querySelector("[data-launch-key='e']")?.hasAttribute("data-open-harnesses"), true, "the registry button prints and answers its key");
   window.close();
 });

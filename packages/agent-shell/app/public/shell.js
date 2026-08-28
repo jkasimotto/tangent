@@ -479,7 +479,7 @@ const {
   selectableAreas, preferredArea, areaOptions, renderDescribeCapture, describeSourcesBlock,
   launchOptionsFor, launchSelection, launchRequestFields, launchStepDraft, syncLaunchDraft, commitActiveStep,
   blankLaunchStep, launchStepsForRecord, launchStepIsMutable, activateLaunchStep, loadLaunchStep, launchStepLabel,
-  pipelineForGoal, pipelineRecordForGoal, launchPickerBlock,
+  pipelineForGoal, pipelineRecordForGoal, launchPickerBlock, launchKeyHint,
   toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor,
 } = goalLaunchView;
 
@@ -565,17 +565,16 @@ function whatHappenedRenderKey() {
 function launchPopoverVerticalStyle(anchor) {
   const gap = 16;
   const viewport = Math.max(0, Number(window.innerHeight) || 0);
-  const usable = Math.max(0, viewport - gap * 2);
-  const wanted = Math.min(360, usable);
+  // The chooser may use all the space on its side of the trigger. A fixed
+  // cap hid the Start button under the fold (design: brain-launch-keyboard).
   const preferredTop = Number.isFinite(Number(anchor?.top)) ? Number(anchor.top) : 120;
   const aboveEdge = Number(anchor?.above);
   const belowSpace = Math.max(0, viewport - preferredTop - gap);
   const aboveSpace = Number.isFinite(aboveEdge) ? Math.max(0, aboveEdge - gap) : 0;
-  if (Number.isFinite(aboveEdge) && belowSpace < wanted && aboveSpace > belowSpace) {
+  if (Number.isFinite(aboveEdge) && aboveSpace > belowSpace) {
     return `bottom:${Math.max(gap, viewport - aboveEdge)}px;max-height:${aboveSpace}px`;
   }
-  const latestTop = Math.max(gap, viewport - wanted - gap);
-  const top = Math.max(gap, Math.min(preferredTop, latestTop));
+  const top = Math.max(gap, Math.min(preferredTop, Math.max(gap, viewport - gap)));
   return `top:${top}px;max-height:${Math.max(0, viewport - top - gap)}px`;
 }
 
@@ -599,7 +598,7 @@ function launchPopover() {
   const left = Math.max(16, anchor.right - width);
   return `
     <div class="launch-popover" data-launch-popover data-focus-key="launch:surface" tabindex="-1" role="dialog" aria-modal="false" aria-label="${settings ? "Default agents" : "Choose agent and model"}" style="${launchPopoverVerticalStyle(anchor)};left:${left}px;width:${width}px">
-      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : "Default agents"}</strong><span class="launch-key-hint"><kbd>j/k</kbd> choices · <kbd>h/l</kbd> columns · <kbd>Enter</kbd> select · <kbd>Esc</kbd> back</span></header>
+      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : "Default agents"}</strong><span class="launch-key-hint">${launchKeyHint()}</span></header>
       ${launchPickerBlock()}
     </div>
   `;

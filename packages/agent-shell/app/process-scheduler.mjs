@@ -6,7 +6,7 @@
 // `~/.tangent/agent-shell/processes/<area>/<slug>.json`.
 
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describeWhen, latestSlotAtOrBefore, nextSlotAfter, parseProcessNote, processSlugFromFile } from "./process-note.mjs";
 
@@ -35,6 +35,12 @@ export async function writeProcessState(stateRoot, area, slug, state) {
   const temporary = `${file}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   await rename(temporary, file);
+}
+
+/** Removes only one process's derived run state. An absent file is already clear. */
+export async function removeProcessState(stateRoot, area, slug) {
+  try { await unlink(processStatePath(stateRoot, area, slug)); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
 }
 
 /** Every Area path in the vault, parents before children. */

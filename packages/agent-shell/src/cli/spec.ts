@@ -67,13 +67,15 @@ const areaOption = { name: "area", takesValue: true, description: "Only this Are
 
 export const processCommandSpec: CliCommandSpec = {
   name: "process",
-  description: "Read, pause, resume, and check repeatable work and brain loops: <area>/process-<slug>.md notes",
+  description: "Create and manage repeatable work and brain loops: <area>/process-<slug>.md notes",
   subcommands: [
+    { name: "create", description: "Create and commit one loop note", options: [{ name: "area", takesValue: true, description: "Area that owns the loop" }, { name: "slug", takesValue: true, description: "Lowercase kebab-case loop identity" }, { name: "every", takesValue: true, description: "Loop interval (1m or slower)" }, { name: "message", takesValue: true, description: "Message for the Area brain" }, serverOption, jsonOption] },
     { name: "list", description: "List every process with its schedule, next run, and state", args: "[area]", options: [areaOption, serverOption, jsonOption] },
     { name: "show", description: "Show one process: schedule or probe, next run, last run, last Goal", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] },
     { name: "pause", description: "Set status: paused in the note and commit it", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] },
     { name: "resume", description: "Set status: active in the note and commit it", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] },
-    { name: "check", description: "Evaluate due-ness now and print why", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] }
+    { name: "check", description: "Evaluate due-ness now and print why", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] },
+    { name: "remove", description: "Remove one loop note and commit the removal", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] }
   ]
 };
 

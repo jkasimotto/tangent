@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { describeWhen, latestSlotAtOrBefore, nextSlotAfter, parseEvery, parseProcessNote, parseSchedule, processSlugFromFile } from "./process-note.mjs";
+import { describeWhen, formatLoopNote, latestSlotAtOrBefore, nextSlotAfter, parseEvery, parseProcessNote, parseSchedule, processSlugFromFile, validateProcessSlug } from "./process-note.mjs";
 
 test("a process note parses its frontmatter, title, and body", () => {
   const note = parseProcessNote("---\ntype: process\nstatus: active\nschedule: weekdays 08:30\nlaunch: claude/opus\npath: ~/Projects/dnd\nverify: yes\n---\n\n# Rebase staging\n\nRebase the branch.\n", { file: "neara/pgande/process-rebase.md", area: "neara/pgande" });
@@ -79,4 +79,16 @@ test("every: alone is a loop whose body is the message, with a one-minute floor 
   assert.match(both.error, /schedule: or every:, not both/);
   const empty = parseProcessNote("---\ntype: process\nevery: 20m\n---\n", { file: "a/process-empty.md", area: "a" });
   assert.match(empty.error, /write the message the brain gets/);
+});
+
+test("a loop serializer writes the exact process-note contract and validates its input", () => {
+  const text = formatLoopNote({ every: "20m", message: "Review the open Goals.  " });
+  assert.equal(text, "---\ntype: process\nstatus: active\nevery: 20m\n---\n\nReview the open Goals.\n");
+  const note = parseProcessNote(text, { file: "otto/process-review-open-goals.md", area: "otto" });
+  assert.equal(note.error, null);
+  assert.equal(note.loop, true);
+  assert.equal(validateProcessSlug("review-open-goals"), "review-open-goals");
+  assert.throws(() => validateProcessSlug("Review Goals"), /lowercase kebab-case/);
+  assert.throws(() => formatLoopNote({ every: "30s", message: "Fast." }), /1m or slower/);
+  assert.throws(() => formatLoopNote({ every: "20m", message: "  " }), /must not be empty/);
 });

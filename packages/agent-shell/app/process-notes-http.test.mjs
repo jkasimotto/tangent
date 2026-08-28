@@ -131,4 +131,62 @@ test("process notes reach the Area page, the CLI routes, the Goal, and the brain
     const refused = await post(base, "/api/processes/control", { slug: "red-build", action: "delete" });
     assert.equal(refused.status, 409);
   });
+
+  await context.test("create and remove own the complete loop lifecycle", async () => {
+    const stateFile = path.join(root, "processes", "otto", "dnd", "review-work.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(stateFile, '{"lastNoticeAt":"2020-01-01T00:00:00.000Z"}\n', "utf8");
+    const created = await post(base, "/api/processes/create", { area: "otto/dnd", slug: "review-work", every: "20m", message: "Review the open Goals." });
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    assert.equal(created.body.file, "otto/dnd/process-review-work.md");
+    assert.equal(created.body.process.loop, true);
+    assert.equal(created.body.process.body, "Review the open Goals.");
+    await assert.rejects(readFile(stateFile, "utf8"), /ENOENT/);
+    assert.equal(await readFile(path.join(area, "process-review-work.md"), "utf8"), "---\ntype: process\nstatus: active\nevery: 20m\n---\n\nReview the open Goals.\n");
+    let log = await execFileAsync("git", ["-C", trees, "log", "-1", "--format=%s"]);
+    assert.equal(log.stdout.trim(), "add: otto/dnd loop review-work");
+
+    const duplicate = await post(base, "/api/processes/create", { area: "otto/dnd", slug: "review-work", every: "1h", message: "Overwrite." });
+    assert.equal(duplicate.status, 409);
+    assert.match(duplicate.body.error, /already exists/);
+    assert.doesNotMatch(await readFile(path.join(area, "process-review-work.md"), "utf8"), /Overwrite/);
+
+    const checked = await post(base, "/api/processes/check", { slug: "otto/dnd/review-work" });
+    assert.equal(checked.status, 200);
+    assert.deepEqual([checked.body.due, checked.body.reason], [false, "brain not running"]);
+    const paused = await post(base, "/api/processes/control", { slug: "review-work", area: "otto/dnd", action: "pause" });
+    assert.equal(paused.body.status, "paused");
+    const resumed = await post(base, "/api/processes/control", { slug: "otto/dnd/review-work", action: "resume" });
+    assert.equal(resumed.body.status, "active");
+
+    const removed = await post(base, "/api/processes/remove", { slug: "review-work", area: "otto/dnd" });
+    assert.equal(removed.status, 200, JSON.stringify(removed.body));
+    log = await execFileAsync("git", ["-C", trees, "log", "-1", "--format=%s"]);
+    assert.equal(log.stdout.trim(), "remove: otto/dnd loop review-work");
+    const listed = await get(base, "/api/processes?area=otto%2Fdnd");
+    assert.equal(listed.processes.some((item) => item.slug === "review-work"), false);
+    assert.equal(listed.processes.some((item) => item.slug === "red-build"), true);
+    const removedAgain = await post(base, "/api/processes/remove", { slug: "review-work", area: "otto/dnd" });
+    assert.equal(removedAgain.status, 409);
+  });
+
+  await context.test("loop mutations return actionable validation and commit errors", async () => {
+    for (const [body, pattern] of [
+      [{ area: "missing", slug: "review", every: "20m", message: "Review." }, /no Area missing/],
+      [{ area: "otto/dnd", slug: "Review Work", every: "20m", message: "Review." }, /lowercase kebab-case/],
+      [{ area: "otto/dnd", slug: "fast", every: "30s", message: "Review." }, /1m or slower/],
+      [{ area: "otto/dnd", slug: "empty", every: "20m", message: "" }, /message must not be empty/],
+    ]) {
+      const response = await post(base, "/api/processes/create", body);
+      assert.equal(response.status, 409);
+      assert.match(response.body.error, pattern);
+    }
+
+    const hook = path.join(trees, ".git", "hooks", "pre-commit");
+    await writeFile(hook, "#!/bin/sh\nexit 1\n", "utf8");
+    await execFileAsync("chmod", ["+x", hook]);
+    const failed = await post(base, "/api/processes/create", { area: "otto/dnd", slug: "commit-fails", every: "20m", message: "Review." });
+    assert.equal(failed.status, 409);
+    assert.match(failed.body.error, /saved but not committed/);
+  });
 });

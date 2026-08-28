@@ -26,6 +26,24 @@ const TIME = /^(\d{1,2}):(\d{2})$/;
 const EVERY = /^(\d+)\s*(s|m|h|d)$/;
 const STATUSES = new Set(["active", "paused"]);
 const LOOP_FLOOR_MS = 60_000;
+const PROCESS_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** Validates the stable slug used by a process note. */
+export function validateProcessSlug(value) {
+  const slug = String(value ?? "").trim();
+  if (!PROCESS_SLUG.test(slug)) throw new Error("slug must use lowercase kebab-case, such as review-open-work");
+  return slug;
+}
+
+/** Formats one loop with the process-note shape that the scheduler reads. */
+export function formatLoopNote({ every, message }) {
+  const interval = String(every ?? "").trim();
+  const body = String(message ?? "").trim();
+  if (!body) throw new Error("message must not be empty");
+  const everyMs = parseEvery(interval);
+  if (everyMs < LOOP_FLOOR_MS) throw new Error("a loop runs every 1m or slower");
+  return `---\ntype: process\nstatus: active\nevery: ${interval}\n---\n\n${body}\n`;
+}
 
 /** The slug of a process note file, or null when the name is not `process-<slug>.md`. */
 export function processSlugFromFile(file) {

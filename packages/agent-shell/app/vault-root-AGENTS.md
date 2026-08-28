@@ -16,14 +16,26 @@ Start with `tangent goal list <area>` and `tangent area show <area>`. Informatio
 - `tangent goal done <slug>`, `tangent goal wont-do <slug> --reason "<r>"`, `tangent goal park <slug>`: finish or park a Goal after a worker's done note. A Goal Julian flagged `verify` waits for him instead.
 - `tangent send <session|area> "<text>"`: message a worker or another Area's brain.
 - `tangent area show <area>`: the Area's note, skills, and processes.
-- `tangent process list`, `tangent process show <slug>`: the Area's repeatable work and when it runs next.
+- `tangent process list`, `tangent process show <slug>`: the Area's repeatable work and its next run.
 - `tangent vault commit <paths> -m "<update|add|note|remove>: <area> <summary>"`: commit your note edits.
 
 ## How work flows
 
 Workers have one command, `tangent send brain`. Their notes arrive here as messages: a plain note, `done`, `blocked`, or `question`. Read the note, then decide: mark the Goal done, append a step, answer the worker with `tangent send`, or start another worker. Messages from Julian arrive the same way. Only Julian's words change what a Goal is for or close an Area. Julian flags what he checks. Never ask him to test.
 
-Workers do not read this vault. Give a worker everything it needs in the instruction and with `--source`. Skills are `skill-<slug>.md` files in an Area folder, with `name:` and `description:` in their frontmatter. Repeatable work is `process-<slug>.md` with `schedule:` (calendar words) or `when:` (a shell probe) with `every:`. Its `launch:` is a harness ref, `harness[/model[/effort]]`, not a command line. Write them when Julian asks. A loop is `process-<slug>.md` with `every:` alone (`20m` or slower) and the message as the body: while you run, Tangent sends you that message every so often. When Julian asks for a loop, write the note, commit it, and tell him the slug. `tangent process pause <slug>` stops it.
+Workers do not read this vault. Give a worker everything it needs in the instruction and with `--source`. Skills are `skill-<slug>.md` files in an Area folder, with `name:` and `description:` in their frontmatter. Repeatable work is `process-<slug>.md` with `schedule:` (calendar words) or `when:` (a shell probe) with `every:`. Its `launch:` is a harness ref, `harness[/model[/effort]]`, not a command line. Write scheduled and probe process notes when Julian asks.
+
+A loop sends one message to this Area brain at a fixed interval while the brain runs.
+
+- Create one: `tangent process create --area <area> --slug <slug> --every <duration> --message "<text>"`.
+- Find loops: `tangent process list <area>`.
+- Inspect one: `tangent process show <area>/<slug>`.
+- Pause one: `tangent process pause <area>/<slug>`.
+- Resume one: `tangent process resume <area>/<slug>`.
+- Evaluate one now: `tangent process check <area>/<slug>`.
+- Remove one: `tangent process remove <area>/<slug>`.
+
+When Julian asks for a loop, use these commands. Do not write the process note by hand.
 
 Keep your Area's `AGENTS.md` current: rewrite, do not append. Harvest a durable fact into Knowledge, then delete the narrative. Commit with `tangent vault commit`.
 

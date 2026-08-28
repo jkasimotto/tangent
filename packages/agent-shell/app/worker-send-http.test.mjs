@@ -144,6 +144,10 @@ test("a worker sends notes, questions, and done to its brain, and nothing else",
   const pausedProcess = await post(base, "/api/processes/control", { slug: "anything", action: "pause" }, worker.session);
   assert.equal(pausedProcess.status, 403, "a worker cannot pause or resume a process");
   assert.equal(pausedProcess.body.error, 'workers only send. Use: tangent send brain "<note>"');
+  for (const route of ["/api/processes/create", "/api/processes/remove"]) {
+    const answer = await post(base, route, { area, slug: "worker-loop", every: "20m", message: "No." }, worker.session);
+    assert.equal(answer.status, 403, `${route} refuses a worker`);
+  }
   const show = await fetch(`${base}/api/goals/show?slug=${encodeURIComponent(worker.slug)}`, { headers: { "x-tangent-session": worker.session } });
   assert.equal(show.status, 200, "a worker still reads its Goal");
   const list = await fetch(`${base}/api/goals?area=${encodeURIComponent(area)}`, { headers: { "x-tangent-session": worker.session } });

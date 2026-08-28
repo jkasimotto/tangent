@@ -23,12 +23,44 @@ export async function runProcessCli(argv = process.argv.slice(2)): Promise<void>
   const args = parseArgs(argv);
   const subcommand = args._[0];
   if (!subcommand || args.help) return help();
+  if (subcommand === "create") return createCommand(args);
   if (subcommand === "list") return listCommand(args);
   if (subcommand === "show") return showCommand(args);
   if (subcommand === "pause") return controlCommand(args, "pause");
   if (subcommand === "resume") return controlCommand(args, "resume");
   if (subcommand === "check") return checkCommand(args);
-  throw new Error(`Unknown process command: ${subcommand}. Try "tangent process list", "tangent process show <slug>", "tangent process pause <slug>", "tangent process resume <slug>", or "tangent process check <slug>".`);
+  if (subcommand === "remove") return removeCommand(args);
+  throw new Error(`Unknown process command: ${subcommand}. Run "tangent process --help" for available commands.`);
+}
+
+/** Creates one loop note through the server-owned vault boundary. */
+async function createCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const area = requiredOption(args, "area");
+  const slug = requiredOption(args, "slug");
+  const every = requiredOption(args, "every");
+  const message = requiredOption(args, "message");
+  const caller = await currentTmuxSession();
+  const result = await postJson(server, "/api/processes/create", { area, slug, every, message, ...(caller ? { caller } : {}) });
+  if (booleanArg(args.json)) return void console.log(JSON.stringify(result, null, 2));
+  console.log(`${result.file}: loop created`);
+}
+
+/** Removes one loop note through the server-owned vault boundary. */
+async function removeCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const slug = requireSlug(args, "remove");
+  const caller = await currentTmuxSession();
+  const result = await postJson(server, "/api/processes/remove", { slug, area: stringArg(args.area) ?? "", ...(caller ? { caller } : {}) });
+  if (booleanArg(args.json)) return void console.log(JSON.stringify(result, null, 2));
+  console.log(`${result.file}: loop removed`);
+}
+
+/** Returns one required named value. */
+function requiredOption(args: Args, name: string): string {
+  const value = String(stringArg(args[name]) ?? "").trim();
+  if (!value) throw new Error(`tangent process create requires --${name} <value>.`);
+  return value;
 }
 
 /** Handles `tangent process list [area]`. */
@@ -120,18 +152,19 @@ when: (a shell probe; exit 0 means due) with every: (30m, 2h). Optional
 launch: (harness[/model[/effort]], such as claude/opus-5), path:, verify:.
 The body is the instruction the brain gives the worker. When it is due, the server writes one note to the Area brain.
 
-A loop is the same note with every: alone (1m or slower) and the message as
-the body. While the Area brain runs, the server sends it that message every
-so often. Pause it to stop it.
+A loop is the same note with every: alone (1m or slower). Its body is the
+message. The server sends the message while the Area brain runs.
 
 Servers and watchers are "tangent service".
 
 Examples:
+  tangent process create --area neara/pgande --slug review-work --every 20m --message "Review open work."
   tangent process list
   tangent process list neara/pgande
   tangent process show rebase-pgande-staging
   tangent process pause rebase-pgande-staging
   tangent process resume neara/pgande/rebase-pgande-staging
   tangent process check speedrun-pgande
+  tangent process remove neara/pgande/review-work
 `);
 }

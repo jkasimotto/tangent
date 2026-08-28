@@ -4,7 +4,7 @@
 import http from "node:http";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
-import { appendFile, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { appendFile, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { execFile, fork, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -16,7 +16,8 @@ import { launchRef, resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
-import { discoverProcesses, evaluateProcess, goalNamesProcess, processFileExists, processView, readAreaProcesses, readProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
+import { discoverProcesses, evaluateProcess, goalNamesProcess, processFileExists, processView, readAreaProcesses, readProcessState, removeProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
+import { formatLoopNote, parseProcessNote, validateProcessSlug } from "./process-note.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import documentComments from "./public/document-comments.js";
 import areaMapCore from "./public/area-map-core.js";
@@ -4177,7 +4178,7 @@ const WORKER_REFUSED_ROUTES = new Set([
   "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/areas/journal", "/api/idea/new", "/api/document/resolve", "/api/document",
   "/api/brains/start", "/api/brains/stop", "/api/brains/reply", "/api/brains/verdict", "/api/brains/verdict/undo",
   "/api/brains/requests", "/api/brains/requests/withdraw", "/api/brains/requests/answer", "/api/brains/requests/dismiss",
-  "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/control", "/api/processes/check",
+  "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control", "/api/processes/check",
   "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
 
@@ -6027,6 +6028,37 @@ const processRoutes = createProcessRoutes({
   async list(area) {
     return { processes: await processViews({ area }) };
   },
+  /** Creates and commits one loop process note. */
+  async create(body) {
+    const area = cleanAreaPath(String(body.area ?? "").trim());
+    if (!area || isRootArea(area) || !existsSync(areaDirectory(TREES_ROOT, area))) throw new Error(`no Area ${area || "(none)"}`);
+    if (await hiddenAreaStatus(area)) throw new Error(`Area ${area} is not open`);
+    const slug = validateProcessSlug(body.slug);
+    const file = `${area}/process-${slug}.md`;
+    if (processFileExists(TREES_ROOT, file)) throw new Error(`${file} already exists`);
+    const text = formatLoopNote({ every: body.every, message: body.message });
+    const note = parseProcessNote(text, { file, area });
+    if (note.error || !note.loop) throw new Error(note.error || "the new process is not a loop");
+    await removeProcessState(PROCESSES_ROOT, area, slug);
+    await vaultRepository.writeMarkdown(file, text);
+    await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
+    const committed = await vaultCommit([file], `add: ${area} loop ${slug}`, area, String(body.caller ?? "").trim() || null);
+    if (!committed.committed) throw new Error(`the loop was saved but not committed: ${committed.error}`);
+    const process = (await processViews({ area, exact: true })).find((item) => item.slug === slug);
+    return { ok: true, file, process };
+  },
+  /** Removes and commits one resolved loop process note. */
+  async remove(body) {
+    const note = await resolveProcessNote(String(body.slug ?? "").trim(), String(body.area ?? "").trim());
+    if (!note.loop) throw new Error(`${note.file} is not a loop`);
+    if (!processFileExists(TREES_ROOT, note.file)) throw new Error(`${note.file} no longer exists.`);
+    await unlink(path.join(TREES_ROOT, note.file));
+    await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", note.file]).catch(() => {});
+    const committed = await vaultCommit([note.file], `remove: ${note.area} loop ${note.slug}`, note.area, String(body.caller ?? "").trim() || null);
+    if (!committed.committed) throw new Error(`the loop was removed but not committed: ${committed.error}`);
+    await removeProcessState(PROCESSES_ROOT, note.area, note.slug);
+    return { ok: true, file: note.file, area: note.area, slug: note.slug };
+  },
   /** Pauses or resumes one process by rewriting its status line and committing through the vault. */
   async control(body) {
     const action = String(body.action ?? "");
@@ -6046,8 +6078,9 @@ const processRoutes = createProcessRoutes({
     const note = await resolveProcessNote(String(body.slug ?? "").trim(), String(body.area ?? "").trim());
     const state = await readProcessState(PROCESSES_ROOT, note.area, note.slug);
     const openGoal = await openGoalForProcess(note);
-    const outcome = await evaluateProcess({ note, state, runProbe: runProcessProbe, openGoal });
-    const view = processView(note, state, new Date(), { brainLive: Boolean(await liveBrainForArea(note.area).catch(() => null)), openGoal });
+    const brainLive = await loopBrainLive(note.area);
+    const outcome = await evaluateProcess({ note, state, runProbe: runProcessProbe, openGoal, brainLive });
+    const view = processView(note, state, new Date(), { brainLive, openGoal });
     return { due: outcome.due, reason: outcome.reason, process: view };
   },
 });

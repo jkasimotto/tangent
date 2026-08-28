@@ -14,6 +14,8 @@ The root `tangent` command loads this package only when one of these nouns is us
 
 Every command except `vault commit` and `study` is a thin HTTP client to the Agent Shell gateway. The default URL is `http://127.0.0.1:4321`. `--server` or `TANGENT_SHELL_URL` can select another loopback URL.
 
+`tangent process create` creates and commits an `every:`-only loop note. `tangent process remove` removes and commits one loop note. The list, show, pause, resume, and check commands manage the same process-note identity.
+
 Requests have a response deadline and an operation ID. A failed mutation response warns that the operation can already be durable. A worker send transport failure tells the caller to retry the same command. The server deduplicates that retry and repairs a missing brain notice.
 
 `tangent vault commit` writes the vault history directly. `tangent study` starts one local interactive agent directly. No other package command writes vault files or starts a process itself.

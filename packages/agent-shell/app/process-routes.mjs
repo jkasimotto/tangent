@@ -1,9 +1,11 @@
 import { readJson, sendJson } from "./http-json.mjs";
 
-/** Creates the HTTP route table for process notes (ADR-0043): read, pause or resume, and check. */
+/** Creates the HTTP route table for the complete process-note lifecycle. */
 export function createProcessRoutes(operations) {
   const routes = new Map([
     ["GET /api/processes", list],
+    ["POST /api/processes/create", create],
+    ["POST /api/processes/remove", remove],
     ["POST /api/processes/control", control],
     ["POST /api/processes/check", check],
   ]);
@@ -20,6 +22,11 @@ export function createProcessRoutes(operations) {
   async function list(_request, response, url) {
     sendJson(response, 200, await operations.list(url.searchParams.get("area") ?? ""));
   }
+
+  /** Creates one loop process note. */
+  async function create(request, response) { await mutate(request, response, operations.create); }
+  /** Removes one loop process note. */
+  async function remove(request, response) { await mutate(request, response, operations.remove); }
 
   /** Pauses or resumes one process. */
   async function control(request, response) {

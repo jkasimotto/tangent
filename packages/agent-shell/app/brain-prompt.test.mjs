@@ -163,6 +163,9 @@ test("Root appears first and its brain starts in the existing vault root", async
   assert.ok(resumed.session, JSON.stringify(resumed));
   openedSessions.push(resumed.session);
   assert.deepEqual((await readBrain(brains, ROOT_AREA)).generations.at(-1).resolvedLaunch.ref, { harness: "brain", model: null, effort: null }, "Root reuses its first explicit launch because it has no Area note default");
+  const addressed = await post(base, "/api/agents/send", { to: ROOT_AREA, text: "A message addressed to Root." });
+  assert.equal(addressed.target, "area");
+  assert.equal(addressed.to, ROOT_AREA, "the special Root identity is a normal Area inbox target");
 });
 
 test("the production brain path saves one marked native turn and ignores an unmarked turn", async (context) => {

@@ -5825,7 +5825,7 @@ const agentRoutes = createAgentRoutes({
     if (sender.role === "worker") return { status: 403, error: WORKER_SEND_TARGET_REFUSAL };
     const entry = { from: sender.session ?? "unknown sender", area: sender.area, text, durable: true, queuedAt: new Date().toISOString() };
     if (!live) {
-      const inbox = areaInboxTarget(requested, { areas: flattenAreaPaths(tree), brains });
+      const inbox = areaInboxTarget(requested, { areas: [ROOT_AREA, ...flattenAreaPaths(tree)], brains });
       if (inbox) {
         const delivery = await routeBrainNotice(inbox.area, text, { sender: { session: entry.from, area: entry.area } });
         const reason = delivery.addressed

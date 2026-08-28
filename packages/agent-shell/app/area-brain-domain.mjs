@@ -249,6 +249,18 @@ export async function journalFiles(treesRoot, area) {
   return names.filter((name) => /^journal(?:-.*)?\.md$/.test(name)).sort((left, right) => left === "journal.md" ? 1 : right === "journal.md" ? -1 : left.localeCompare(right)).map((name) => path.join(directory, name));
 }
 
+/** Reads one stable Journal entry by its retry/provenance identifier. */
+export async function readJournalEntry(treesRoot, area, id) {
+  const marker = `<!-- tangent-journal:${String(id ?? "").trim()} -->`;
+  if (marker === "<!-- tangent-journal: -->") return null;
+  for (const file of await journalFiles(treesRoot, area)) {
+    const text = await readFile(file, "utf8").catch(() => "");
+    const entry = journalEntryAtMarker(file, text, marker);
+    if (entry) return { id: String(id), file, ...entry };
+  }
+  return null;
+}
+
 /** Returns the durable milestone index path for one Area. */
 export function milestonePath(root, area) {
   return path.join(root, cleanArea(area), "milestones.json");

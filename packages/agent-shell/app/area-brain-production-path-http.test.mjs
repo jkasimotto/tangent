@@ -122,14 +122,19 @@ test("an authorized Request effect closes a Goal and routes a Journal on the pro
   });
   assert.equal(again.status, 400, "an answered Request never runs its effect a second time");
 
-  // 5. A route-journal effect writes the destination Area's Journal.
+  // 5. A route-journal effect writes an exact source excerpt with provenance.
+  const sourceText = "The source stays complete. The ramp faces meet at the dragged width. Another concern stays here.";
+  const sourceCapture = await post(base, "/api/areas/journal", {
+    area: "otto/test", text: sourceText, idempotencyKey: "native-source-entry", source: "Area otto/test brain conversation",
+  });
+  assert.equal(sourceCapture.status, 200);
   const routed = await post(base, "/api/brains/requests", {
     session: brain.body.session,
     kind: "decision",
     subject: "Route the note",
     question: "Send this to Other?",
     proposal: "Route it.",
-    effect: { type: "route-journal", area: "otto/other", text: "The ramp faces meet at the dragged width." },
+    effect: { type: "route-journal", area: "otto/other", text: "The ramp faces meet at the dragged width.", sourceEntryId: "native-source-entry" },
   });
   assert.equal(routed.status, 200);
   const routedAnswer = await post(base, "/api/brains/requests/answer", {
@@ -139,7 +144,24 @@ test("an authorized Request effect closes a Goal and routes a Journal on the pro
   assert.equal(routedAnswer.body.request.effectOperation.status, "succeeded");
   const journal = routedAnswer.body.request.effectOperation.result.journal;
   assert.ok(journal, "the effect result names the Journal it wrote");
-  assert.match(await readFile(path.join(trees, journal), "utf8"), /The ramp faces meet at the dragged width\./);
+  const routedJournal = await readFile(path.join(trees, journal), "utf8");
+  assert.match(routedJournal, /The ramp faces meet at the dragged width\./);
+  assert.match(routedJournal, /Source: Routed from otto\/test Journal entry native-source-entry\./);
+  assert.doesNotMatch(routedJournal, /Another concern stays here\./, "only the approved exact excerpt reached the destination");
+
+  const declined = await post(base, "/api/brains/requests", {
+    session: brain.body.session,
+    kind: "decision",
+    subject: "Decline another route",
+    question: "Send the other concern too?",
+    proposal: "Route the exact other concern.",
+    effect: { type: "route-journal", area: "otto/other", text: "Another concern stays here.", sourceEntryId: "native-source-entry" },
+  });
+  const declinedAnswer = await post(base, "/api/brains/requests/answer", {
+    area: "otto/test", id: declined.body.request.id, answer: "changes", note: "Keep it in the source Journal.",
+  });
+  assert.equal(declinedAnswer.status, 200);
+  assert.doesNotMatch(await readFile(path.join(trees, journal), "utf8"), /Another concern stays here\./, "a declined route writes nothing");
 
   // 6. The allowlist is closed. An unknown effect never reaches a Request.
   const rejected = await post(base, "/api/brains/requests", {

@@ -27,6 +27,21 @@ test("an Area gets its template note and two relative links once, and a real fil
   assert.deepEqual(await ensureVaultRootLinks({ treesRoot: trees, agentsText: "other" }), [], "the root file is written once");
 });
 
+test("the known root instruction template upgrades without replacing hand-written instructions", async () => {
+  const trees = await mkdtemp(path.join(os.tmpdir(), "area-root-instructions-"));
+  const oldTemplate = await readFile(new URL("./vault-root-AGENTS.md", import.meta.url), "utf8");
+  const legacy = oldTemplate.replace(/\n## Journal memory[\s\S]*$/, "");
+  await writeFile(path.join(trees, "AGENTS.md"), legacy, "utf8");
+  assert.deepEqual(await ensureVaultRootLinks({ treesRoot: trees, agentsText: oldTemplate }), ["AGENTS.md", "CLAUDE.md"]);
+  assert.equal(await readFile(path.join(trees, "AGENTS.md"), "utf8"), oldTemplate);
+
+  const custom = path.join(trees, "custom");
+  await mkdir(custom);
+  await writeFile(path.join(custom, "AGENTS.md"), "# My instructions\n", "utf8");
+  assert.deepEqual(await ensureVaultRootLinks({ treesRoot: custom, agentsText: oldTemplate }), ["CLAUDE.md"]);
+  assert.equal(await readFile(path.join(custom, "AGENTS.md"), "utf8"), "# My instructions\n");
+});
+
 test("the template has Purpose, Knowledge, Current, and Ideas and no Goals or Resources", () => {
   const note = areaNoteTemplate("Live Edit");
   assert.equal(note, "---\ntype: area\nstatus: active\n---\n# Live Edit\n## Purpose\n\n## Knowledge\n\n## Current\n\n## Ideas and open questions\n");

@@ -77,8 +77,9 @@ import { uniqueSessionName } from "./session-names.mjs";
 import { withDefaultModel } from "./agent-command.mjs";
 import { findCodexRollouts, launchWithConversation, newConversation, resumeCommand } from "./harness-conversation.mjs";
 import { clearGoalCleanup, readAllGoalCleanups, readGoalCleanup, writeGoalCleanup } from "./goal-cleanup-record.mjs";
-import { appendJournalEntry, appendMilestone, emergencyStartProblem, exportLegacyAudit, journalFiles, querySubtreeMilestones, readMilestones } from "./area-brain-domain.mjs";
+import { appendJournalEntry, appendMilestone, emergencyStartProblem, exportLegacyAudit, journalFiles, querySubtreeMilestones, readJournalEntry, readMilestones } from "./area-brain-domain.mjs";
 import { areaDirectory, areaFilePrefix, isRootArea, ROOT_AREA, rootAreaRow } from "./area-identity.mjs";
+import { createRememberedTurnMonitor } from "./brain-native-turns.mjs";
 import { materialOperationEvents, markOperationEventDelivered, readOperationEvents, writeOperationEvents } from "./operation-events.mjs";
 import { agentShellInstanceId, createSessionOwnership, SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 import { appendWorkerHandoverReceipt, pendingWorkerHandoverReceipts, recordWorkerHandoverNotice, workerHandoverReceipt } from "./worker-handover-receipt.mjs";
@@ -2140,6 +2141,8 @@ const messages = createMessageDelivery({
   wake: () => runtimeScheduler.wake(),
 });
 
+let rememberedTurnMonitor = null;
+
 const runtimeScheduler = createRuntimeScheduler([
   {
     name: "goal reconciliation", intervalMs: RECONCILE_INTERVAL_MS,
@@ -2165,6 +2168,12 @@ const runtimeScheduler = createRuntimeScheduler([
     /** Runs only while at least one target has queued messages. */
     active: messages.active,
     run: messages.tick,
+  },
+  {
+    name: "remembered brain turns", intervalMs: 1_000,
+    /** Native transcripts remain the exact user-message authority. */
+    active: () => true,
+    run: sweepRememberedBrainTurns,
   },
   {
     name: "processes", intervalMs: 10_000,
@@ -4479,12 +4488,18 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     if (resolvedLaunch.label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", resolvedLaunch.label]);
     if (launchRef(resolvedLaunch.ref)) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch_ref", launchRef(resolvedLaunch.ref)]);
     record.instanceId = INSTANCE_ID;
+    const registry = await launchCatalog.registry();
+    if (registry.error) throw new Error(registry.error);
+    const harness = registry.harnesses.find((item) => item.id === resolvedLaunch.ref.harness);
+    if (!harness) throw new Error(`harness ${resolvedLaunch.ref.harness} is no longer registered`);
+    const conversation = newConversation(harness);
     const entry = beginGeneration(record, name, resolvedLaunch);
     entry.instanceId = INSTANCE_ID;
     entry.target = target;
     entry.deliveryStatus = "pending";
     entry.firstMessage = message;
     entry.cwd = directory;
+    entry.providerSession = conversation ? structuredClone(conversation) : null;
     entry.notices = notices.map((notice) => ({ area: notice.area, id: notice.id, text: notice.text, createdAt: notice.createdAt }));
     record.health = { status: "starting", problem: null, updatedAt: new Date().toISOString() };
     /** Settles an asynchronous arm callback under the same Area lifecycle lock. */
@@ -4507,7 +4522,7 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     await armSession(name, { submit: true, prompt: message, onTyped: firstMessageTyped });
     armed = true;
     await writeBrain(BRAINS_ROOT, record);
-    await typeInto(name, withDefaultModel(resolvedLaunch.command), false);
+    await typeInto(name, launchWithConversation(harness, withDefaultModel(resolvedLaunch.command), conversation), false);
     await execFileAsync("tmux", ["send-keys", "-t", "=" + name + ":", "Enter"]);
     await sleep(250);
     return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch }, firstMessage: message, cwd: directory };
@@ -4593,10 +4608,14 @@ async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "",
       reattached: true,
     };
   }
-  // Recovery is controller-owned and always follows the Area's current
-  // policy. Only an explicit user start or resume can carry a one-attempt
-  // registry choice.
-  const resolvedLaunch = await resolveBrainAttemptLaunch({ area, choice: automaticRecovery ? null : choice, expectedLaunch, launchCatalog });
+  // Root has no Area note in which to declare a default. After its first
+  // explicit launch, reuse that exact registry ref for resume and recovery.
+  // Other Areas continue to follow their current note policy.
+  const rootPreviousChoice = isRootArea(area) && existing
+    ? currentGeneration(existing)?.resolvedLaunch?.ref ?? null
+    : null;
+  const attemptChoice = automaticRecovery ? rootPreviousChoice : (choice ?? rootPreviousChoice);
+  const resolvedLaunch = await resolveBrainAttemptLaunch({ area, choice: attemptChoice, expectedLaunch, launchCatalog });
   if (resolvedLaunch.error) return { status: resolvedLaunch.status ?? 409, error: resolvedLaunch.error, ...(resolvedLaunch.code ? { code: resolvedLaunch.code } : {}), ...(resolvedLaunch.launch ? { launch: resolvedLaunch.launch } : {}) };
   if (resume) {
     if (!existing) return { status: 404, error: "no brain to resume on this Area" };
@@ -5558,9 +5577,17 @@ async function executeAuthorizedRequestEffect(effect, brain) {
     const area = String(effect.area ?? "");
     const text = String(effect.text ?? "").trim();
     const areas = flattenAreaPaths(await readTree(TREES_ROOT));
-    if (!areas.includes(area) || !text) throw new Error("the authorized Journal route is invalid");
+    if ((!areas.includes(area) && !isRootArea(area)) || !text) throw new Error("the authorized Journal route is invalid");
+    const sourceEntryId = String(effect.sourceEntryId ?? "").trim();
+    if (sourceEntryId) {
+      const sourceEntry = await readJournalEntry(TREES_ROOT, brain.area, sourceEntryId);
+      if (!sourceEntry) throw new Error(`source Journal entry ${sourceEntryId} does not exist in ${brain.area}`);
+      if (!sourceEntry.text.includes(text)) throw new Error("the authorized Journal route is not an exact excerpt of its source entry");
+    }
     const id = String(effect.idempotencyKey ?? `request-route:${brain.area}:${createHash("sha256").update(text).digest("hex")}`);
-    const entry = await appendJournalEntry({ treesRoot: TREES_ROOT, area, text, idempotencyKey: id, source: `routed from ${brain.area}` });
+    const sourceArea = isRootArea(brain.area) ? "Root" : brain.area;
+    const source = sourceEntryId ? `Routed from ${sourceArea} Journal entry ${sourceEntryId}` : `routed from ${sourceArea}`;
+    const entry = await appendJournalEntry({ treesRoot: TREES_ROOT, area, text, idempotencyKey: id, source });
     if (!entry.duplicate) {
       const changed = journalChangedPaths(entry);
       const [relative] = changed;
@@ -5883,7 +5910,7 @@ const areaRoutesOperations = {
   async capture(body) {
     const area = String(body.area ?? "");
     if (!isRootArea(area) && !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) throw new Error("The destination Area does not exist.");
-    const entry = await appendJournalEntry({ treesRoot: TREES_ROOT, area, text: body.text, idempotencyKey: body.idempotencyKey || body.id, source: body.source || "capture" });
+    const entry = await appendJournalEntry({ treesRoot: TREES_ROOT, area, text: body.text, idempotencyKey: body.idempotencyKey || body.id, source: body.source || "capture", now: body.createdAt || new Date().toISOString() });
     if (entry.duplicate && await journalProcessingComplete(area, entry)) return { ...entry, route: "duplicate", files: [] };
     const pending = entry.duplicate ? await pendingJournalChangedPaths(area, entry) : { paths: journalChangedPaths(entry), persisted: false };
     const changed = pending.paths;
@@ -5922,6 +5949,39 @@ const areaRoutesOperations = {
     return moved;
   },
 };
+
+/** Captures each explicit complete-turn save request from its native transcript. */
+async function sweepRememberedBrainTurns() {
+  rememberedTurnMonitor ??= createRememberedTurnMonitor({
+    /** Resolves the generation's registered harness without caching policy. */
+    async harnessFor(id) {
+      const registry = await launchCatalog.registry();
+      return registry.error ? null : registry.harnesses.find((harness) => harness.id === id) ?? null;
+    },
+    /** Commits the exact native turn through the existing Journal route. */
+    async capture(record, turn) {
+      const source = isRootArea(record.area) ? "Root brain conversation" : `Area ${record.area} brain conversation`;
+      try {
+        return await areaRoutesOperations.capture({
+          area: record.area,
+          text: turn.text,
+          idempotencyKey: turn.id,
+          createdAt: turn.createdAt,
+          source,
+        });
+      } catch (error) {
+        return { route: "not-committed", commitError: String(error.stderr ?? error.message ?? error) };
+      }
+    },
+    /** Gives the brain an honest retry notice after an unsuccessful commit. */
+    async failure(record, turn, result) {
+      await notifyBrain(record.area, `Tangent could not save remembered turn ${turn.id} to the Journal: ${result.commitError || "the vault commit failed"}. It will retry; no success receipt was recorded.`, { idempotencyKey: `journal-save-error:${turn.id}` });
+    },
+  });
+  for (const record of await readAllBrains(BRAINS_ROOT)) {
+    await rememberedTurnMonitor.check(record).catch((error) => console.error("remembered turn capture:", record.area, error.message ?? error));
+  }
+}
 const areaRoutes = createAreaRoutes(areaRoutesOperations);
 
 /** Persists each material Operation edge and delivers it to the exact Area inbox once. */

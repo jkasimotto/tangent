@@ -15,6 +15,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const PRE_JOURNAL_MEMORY_ROOT_AGENTS_SHA256 = "ccdb0bea5e2062651bd59b959541fc5b63a3ffe8edd52dca492ba498e75ca6e3";
 
 /** The text of the vault root AGENTS.md this build ships, for a vault that has none. */
 export async function vaultRootAgentsText() {
@@ -90,6 +91,13 @@ export async function ensureVaultRootLinks({ treesRoot, agentsText }) {
   if (!existsSync(agents)) {
     await writeFile(agents, agentsText, "utf8");
     changed.push("AGENTS.md");
+  } else {
+    const current = await readFile(agents, "utf8");
+    const currentHash = createHash("sha256").update(current).digest("hex");
+    if (currentHash === PRE_JOURNAL_MEMORY_ROOT_AGENTS_SHA256 && current !== agentsText) {
+      await writeFile(agents, agentsText, "utf8");
+      changed.push("AGENTS.md");
+    }
   }
   const made = await ensureLink(treesRoot, "CLAUDE.md", "AGENTS.md");
   if (made) changed.push(made);

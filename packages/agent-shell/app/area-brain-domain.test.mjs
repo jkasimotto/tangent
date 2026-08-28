@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { promisify } from "node:util";
-import { appendJournalEntry, appendMilestone, emergencyStartProblem, exportLegacyAudit, JOURNAL_LIMIT_BYTES, MILESTONE_SUMMARY_LIMIT, newGoalQueue, operationFromProgram, querySubtreeMilestones, startNextAssignment, submitWorkerReport } from "./area-brain-domain.mjs";
+import { appendJournalEntry, appendMilestone, emergencyStartProblem, exportLegacyAudit, JOURNAL_LIMIT_BYTES, MILESTONE_SUMMARY_LIMIT, newGoalQueue, operationFromProgram, querySubtreeMilestones, readJournalEntry, startNextAssignment, submitWorkerReport } from "./area-brain-domain.mjs";
 import { ROOT_AREA } from "./area-identity.mjs";
 
 test("a stored milestone summary is clipped where it is written", async () => {
@@ -40,6 +40,14 @@ test("Root Journal capture writes at the vault root without creating a root fold
   assert.equal(entry.file, path.join(root, "journal.md"));
   assert.equal((await readFile(entry.file, "utf8")).includes(text), true);
   await assert.rejects(readFile(path.join(root, "root", "journal.md"), "utf8"));
+});
+
+test("a Journal entry can be resolved by its stable route identifier", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-journal-source-"));
+  await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "First line.\nExact routed excerpt.", idempotencyKey: "native-source-1" });
+  const entry = await readJournalEntry(root, "otto/test", "native-source-1");
+  assert.equal(entry.text, "First line.\nExact routed excerpt.");
+  assert.equal(await readJournalEntry(root, "otto/test", "missing"), null);
 });
 
 test("Journal intake stays exactly once after a rollover archives the entry", async () => {

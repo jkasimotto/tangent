@@ -924,13 +924,14 @@ Remove all concurrency checks in the name of permissiveness. This loses because 
 45. Keep queue revision, idempotency, immutable target, and live-owner fences.
 46. Let `tangent agent send` address an Area brain even when it has no live session.
 47. Update ADR-0034 and Brain prompt authority text with the implementation.
+48. Merge the `:` command menu into the `?` key sheet (Julian, 2026-08-28: "There is no distinction between commands and keys to me. Don't need both on the UI. Keep keys."). `?`, the toolbar Keys button, and a row's `⋯` open one state-owned sheet: every registered command that applies to the cursor row, with its key, runnable by picking it; keyless row outcomes (End current agent, Mark done, Archive, Choose Areas, Capture note) sit in the same list. The Goal reader's `?` shows the Goal's commands above the reading keys. The `commands` record, the Commands button, and the reader's keyless "Available actions" section are gone.
 
 ### Acceptance evidence for the future implementation
 
 - `h` and `l` operate Area and Subgoal tree nodes and restore the correct parent focus.
 - Work has no `z` command, Goal checkbox, shared-selection bar, or folded dependency preview.
 - Area Enter uses the Brain path. Goal Enter uses its agent path.
-- `o`, `c`, `x`, and `:` have matching pointer actions and visible shortcut labels.
+- `o`, `c`, `x`, and `?` have matching pointer actions and visible shortcut labels; `:` no longer exists.
 - A far-right pointer action opens after another transient surface closes.
 - Delayed Brain launch options do not steal focus from the instruction field.
 - Every launch region and pending-step action works without a pointer.

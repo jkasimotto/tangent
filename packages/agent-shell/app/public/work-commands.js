@@ -2,37 +2,38 @@
  * Work's object-command registry.
  *
  * Product code renders labels and shortcut teaching from this table. Keyboard
- * code matches the same records, so a pointer label, command palette, and key
- * handler cannot silently assign different keys to one action.
+ * code matches the same records, so a pointer label, the `?` key sheet, and a
+ * key handler cannot silently assign different keys to one action. The `?`
+ * sheet is the one list of commands: it shows every key and runs the row you
+ * pick, so there is no separate command menu.
  */
 const records = [
   { id: "moveRows", keyDisplay: "j / k", ariaKeyshortcuts: "j k", scope: "work", kind: "navigation", label: "Move between rows", help: "Move to the next or previous Work row.", shortcuts: [{ key: "j" }, { key: "k" }] },
   { id: "firstLast", keyDisplay: "gg / G", ariaKeyshortcuts: null, scope: "work", kind: "navigation", label: "First or last row", help: "Move to the first or last Work row." },
   { id: "halfPage", keyDisplay: "^D / ^U", ariaKeyshortcuts: "Control+D Control+U", scope: "work", kind: "navigation", label: "Half a page", help: "Move the cursor half a screen of rows down or up.", shortcuts: [{ key: "d", ctrlKey: true }, { key: "u", ctrlKey: true }] },
-  { id: "previousArea", keyDisplay: "{", ariaKeyshortcuts: "Shift+[", scope: "area", kind: "navigation", palette: true, label: "Previous Area", help: "Jump to the previous Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "{", shiftKey: "any" }] },
-  { id: "nextArea", keyDisplay: "}", ariaKeyshortcuts: "Shift+]", scope: "area", kind: "navigation", palette: true, label: "Next Area", help: "Jump to the next Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "}", shiftKey: "any" }] },
+  { id: "previousArea", keyDisplay: "{", ariaKeyshortcuts: "Shift+[", scope: "area", kind: "navigation", label: "Previous Area", help: "Jump to the previous Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "{", shiftKey: "any" }] },
+  { id: "nextArea", keyDisplay: "}", ariaKeyshortcuts: "Shift+]", scope: "area", kind: "navigation", label: "Next Area", help: "Jump to the next Area header that is not folded away, top-level or sub-Area.", shortcuts: [{ key: "}", shiftKey: "any" }] },
   { id: "open", keyDisplay: "↵", ariaKeyshortcuts: "Enter", scope: "work", kind: "action", label: "Open", help: "Open this Goal to read it, or fold an Area. Escape comes back.", shortcuts: [{ key: "Enter" }] },
-  { id: "openBrain", keyDisplay: "b", ariaKeyshortcuts: "b", scope: "area", kind: "action", palette: true, label: "Open brain", help: "On an Area: open its brain, or message it to start one. On a Goal: open the nearest active brain up its Area chain.", shortcuts: [{ key: "b" }] },
-  { id: "stopBrain", keyDisplay: "s", ariaKeyshortcuts: "s", scope: "area", kind: "action", palette: true, label: "Stop brain", help: "Stop this Area brain without stopping its worker agents.", shortcuts: [{ key: "s" }] },
-  { id: "defaults", keyDisplay: "d", ariaKeyshortcuts: "d", scope: "area", kind: "action", palette: true, label: "Defaults", help: "Change this Area's default Work and brain agents.", shortcuts: [{ key: "d" }] },
-  { id: "messageBrain", keyDisplay: "a", ariaKeyshortcuts: "a", scope: "area", kind: "action", palette: true, label: "Message brain", help: "Tell this Area's brain what you want. It starts if it is not running.", shortcuts: [{ key: "a" }] },
+  { id: "openBrain", keyDisplay: "b", ariaKeyshortcuts: "b", scope: "area", kind: "action", label: "Open brain", help: "On an Area: open its brain, or message it to start one. On a Goal: open the nearest active brain up its Area chain.", shortcuts: [{ key: "b" }] },
+  { id: "stopBrain", keyDisplay: "s", ariaKeyshortcuts: "s", scope: "area", kind: "action", label: "Stop brain", help: "Stop this Area brain without stopping its worker agents.", shortcuts: [{ key: "s" }] },
+  { id: "defaults", keyDisplay: "d", ariaKeyshortcuts: "d", scope: "area", kind: "action", label: "Defaults", help: "Change this Area's default Work and brain agents.", shortcuts: [{ key: "d" }] },
+  { id: "messageBrain", keyDisplay: "a", ariaKeyshortcuts: "a", scope: "area", kind: "action", label: "Message brain", help: "Tell this Area's brain what you want. It starts if it is not running.", shortcuts: [{ key: "a" }] },
   { id: "session", keyDisplay: "⌘⇧↵", ariaKeyshortcuts: "Meta+Shift+Enter", scope: "work", kind: "navigation", label: "Enter the agent", help: "Open the live agent, step, or brain for this row; in the Goal reader, this Goal's agent. The same key comes back.", shortcuts: [{ key: "Enter", metaKey: true, shiftKey: true }] },
-  { id: "starArea", keyDisplay: "f", ariaKeyshortcuts: "f", scope: "area", kind: "action", palette: true, label: "Star Area", help: "Star this Area so Work puts it first. Press again to unstar. On a Goal, stars its Area.", shortcuts: [{ key: "f" }] },
-  { id: "starredOnly", keyDisplay: "F", ariaKeyshortcuts: "Shift+F", scope: "work", kind: "action", palette: true, label: "Only starred Areas", help: "Show only the starred Areas. Press again to show every Area.", shortcuts: [{ key: "F", shiftKey: true }] },
-  { id: "chooseAreas", keyDisplay: "", ariaKeyshortcuts: null, scope: "area", kind: "action", palette: true, label: "Choose Areas…", help: "Pick several Areas to star at once." },
-  { id: "collapse", keyDisplay: "h", ariaKeyshortcuts: "h", scope: "work", kind: "navigation", palette: true, label: "Collapse or move to parent", help: "Collapse this tree node. From a collapsed node or leaf, move to its parent.", shortcuts: [{ key: "h" }] },
-  { id: "expand", keyDisplay: "l", ariaKeyshortcuts: "l", scope: "work", kind: "navigation", palette: true, label: "Expand or move to child", help: "Expand this tree node. From an expanded node, move to its first child.", shortcuts: [{ key: "l" }] },
-  { id: "questions", keyDisplay: "r", ariaKeyshortcuts: "r", scope: "area", kind: "action", palette: true, label: "Review questions", help: "Review the open questions from this Area's brains.", shortcuts: [{ key: "r" }] },
-  { id: "note", keyDisplay: "", ariaKeyshortcuts: null, scope: "area", kind: "action", palette: true, label: "Capture note", help: "Save a Journal note and send it to this Area brain." },
-  { id: "readGoal", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "goal", kind: "action", palette: true, label: "Read Goal", help: "Read this Goal, its notes, dependencies, queue, and attempts.", shortcuts: [{ key: "o" }] },
-  { id: "resumeAttempt", keyDisplay: "r", ariaKeyshortcuts: "r", scope: "goal", kind: "action", palette: true, label: "Resume agent", help: "Attach to this Goal's live agent. When it is gone, open a new session in its folder with the resume command typed, not submitted.", shortcuts: [{ key: "r" }] },
-  { id: "changeAgent", keyDisplay: "c", ariaKeyshortcuts: "c", scope: "goal", kind: "surface", palette: true, label: "Change agent", help: "Ask this Area's brain to replace the agent on the current attempt.", shortcuts: [{ key: "c" }] },
-  { id: "goalStatus", keyDisplay: "x", ariaKeyshortcuts: "x", scope: "goal", kind: "surface", palette: true, label: "Goal status", help: "Choose Done, Check it myself, Won't do, Park, or Reopen for this Goal.", shortcuts: [{ key: "x" }] },
-  { id: "commands", keyDisplay: ":", ariaKeyshortcuts: ":", scope: "work", kind: "surface", label: "Commands", help: "Open the commands for the current Work object.", shortcuts: [{ key: ":", shiftKey: "any" }] },
-  { id: "search", keyDisplay: "/", ariaKeyshortcuts: "/", scope: "work", kind: "search", palette: true, label: "Search rows", help: "Type part of a row. The cursor follows the first match. Enter keeps the pattern, Escape returns to where you were.", shortcuts: [{ key: "/" }] },
+  { id: "starArea", keyDisplay: "f", ariaKeyshortcuts: "f", scope: "area", kind: "action", label: "Star Area", help: "Star this Area so Work puts it first. Press again to unstar. On a Goal, stars its Area.", shortcuts: [{ key: "f" }] },
+  { id: "starredOnly", keyDisplay: "F", ariaKeyshortcuts: "Shift+F", scope: "work", kind: "action", label: "Only starred Areas", help: "Show only the starred Areas. Press again to show every Area.", shortcuts: [{ key: "F", shiftKey: true }] },
+  { id: "chooseAreas", keyDisplay: "", ariaKeyshortcuts: null, scope: "area", kind: "action", label: "Choose Areas…", help: "Pick several Areas to star at once." },
+  { id: "collapse", keyDisplay: "h", ariaKeyshortcuts: "h", scope: "work", kind: "navigation", label: "Collapse or move to parent", help: "Collapse this tree node. From a collapsed node or leaf, move to its parent.", shortcuts: [{ key: "h" }] },
+  { id: "expand", keyDisplay: "l", ariaKeyshortcuts: "l", scope: "work", kind: "navigation", label: "Expand or move to child", help: "Expand this tree node. From an expanded node, move to its first child.", shortcuts: [{ key: "l" }] },
+  { id: "questions", keyDisplay: "r", ariaKeyshortcuts: "r", scope: "area", kind: "action", label: "Review questions", help: "Review the open questions from this Area's brains.", shortcuts: [{ key: "r" }] },
+  { id: "note", keyDisplay: "", ariaKeyshortcuts: null, scope: "area", kind: "action", label: "Capture note", help: "Save a Journal note and send it to this Area brain." },
+  { id: "readGoal", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "goal", kind: "action", label: "Read Goal", help: "Read this Goal, its notes, dependencies, queue, and attempts.", shortcuts: [{ key: "o" }] },
+  { id: "resumeAttempt", keyDisplay: "r", ariaKeyshortcuts: "r", scope: "goal", kind: "action", label: "Resume agent", help: "Attach to this Goal's live agent. When it is gone, open a new session in its folder with the resume command typed, not submitted.", shortcuts: [{ key: "r" }] },
+  { id: "changeAgent", keyDisplay: "c", ariaKeyshortcuts: "c", scope: "goal", kind: "surface", label: "Change agent", help: "Ask this Area's brain to replace the agent on the current attempt.", shortcuts: [{ key: "c" }] },
+  { id: "goalStatus", keyDisplay: "x", ariaKeyshortcuts: "x", scope: "goal", kind: "surface", label: "Goal status", help: "Choose Done, Check it myself, Won't do, Park, or Reopen for this Goal.", shortcuts: [{ key: "x" }] },
+  { id: "search", keyDisplay: "/", ariaKeyshortcuts: "/", scope: "work", kind: "search", label: "Search rows", help: "Type part of a row. The cursor follows the first match. Enter keeps the pattern, Escape returns to where you were.", shortcuts: [{ key: "/" }] },
   { id: "nextMatch", keyDisplay: "n", ariaKeyshortcuts: "n", scope: "work", kind: "search", label: "Next match", help: "Move to the next row that matches the search, wrapping at the end.", shortcuts: [{ key: "n" }] },
   { id: "previousMatch", keyDisplay: "N", ariaKeyshortcuts: "Shift+N", scope: "work", kind: "search", label: "Previous match", help: "Move to the previous row that matches the search, wrapping at the top.", shortcuts: [{ key: "N", shiftKey: "any" }] },
-  { id: "keys", keyDisplay: "?", ariaKeyshortcuts: "?", scope: "work", kind: "surface", palette: true, label: "Keys", help: "Show every Work shortcut as a separate row.", shortcuts: [{ key: "?", shiftKey: "any" }] },
+  { id: "keys", keyDisplay: "?", ariaKeyshortcuts: "?", scope: "work", kind: "surface", label: "Keys", help: "Show every key for this row. Pick a row to run it.", shortcuts: [{ key: "?", shiftKey: "any" }] },
 ];
 
 /** Immutable command records, in the order used by the Work key sheet. */
@@ -49,8 +50,8 @@ export function workCommand(id) {
 }
 
 /** Returns commands for one consumer without exposing mutable registry state. */
-export function workCommandsFor({ scope = "", palette = false } = {}) {
-  return WORK_COMMANDS.filter((command) => (!scope || command.scope === scope) && (!palette || command.palette));
+export function workCommandsFor({ scope = "" } = {}) {
+  return WORK_COMMANDS.filter((command) => !scope || command.scope === scope);
 }
 
 /**
@@ -68,7 +69,6 @@ const captionKeysByRow = Object.freeze({
     { ids: ["previousArea", "nextArea"], word: "areas", join: " " },
     { ids: ["questions"], word: "questions" },
     { ids: ["search"], word: "search" },
-    { ids: ["commands"], word: "more" },
     { ids: ["keys"], word: "all" },
   ],
   goal: [
@@ -80,7 +80,6 @@ const captionKeysByRow = Object.freeze({
     { ids: ["changeAgent"], word: "agent" },
     { ids: ["resumeAttempt"], word: "resume" },
     { ids: ["collapse", "expand"], word: "fold" },
-    { ids: ["commands"], word: "more" },
     { ids: ["keys"], word: "all" },
   ],
   definition: [
@@ -112,7 +111,7 @@ export function workCaptionKeys(kind = "none") {
   return entries.map(({ ids, word, join = "/" }) => ({ ids: [...ids], keyDisplay: ids.map((id) => workCommand(id).keyDisplay).filter(Boolean).join(join), word, join }));
 }
 
-/** Rows for the `?` sheet. Each row stays separate; consumers never parse prose. */
+/** Rows for the `?` sheet, one per registered command; consumers never parse prose. */
 export function workCommandHelpRows() {
   return WORK_COMMANDS.map(({ id, keyDisplay, ariaKeyshortcuts, scope, label, help, kind }) => ({ id, keyDisplay, ariaKeyshortcuts, scope, label, help, kind }));
 }

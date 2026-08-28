@@ -85,7 +85,7 @@ test("every verb button in Work prints its key in one kbd", async () => {
   const open = document.querySelector(".work-table button.desk-action[data-open-close], .work-table button.desk-action[data-open-goal-run]");
   assert.equal(open.querySelector("kbd").textContent, "↵", "Open prints Enter");
   assert.equal(document.querySelector(".work-table .work-group-brain kbd").textContent, "b");
-  assert.equal(document.querySelector(".work-table .desk-action-menu-trigger kbd").textContent, ":");
+  assert.equal(document.querySelector(".work-table .desk-action-menu-trigger kbd").textContent, "?");
   assert.equal(document.querySelector(".work-table [data-review-questions] kbd").textContent, "r");
   assert.equal(workCommand("open")?.keyDisplay, "↵", "Enter is a registered Work command");
 });
@@ -116,14 +116,15 @@ test("the caption prints the current row's keys from the same table as the ? she
   await settle(window);
   assert.equal(document.querySelector(".work-keyboard-hint").dataset.workCaptionRow, "area");
   const areaKeys = captionKeys(document);
-  for (const key of ["h/l", "b", ":", "a", "?"]) assert.ok(areaKeys.includes(key), `an Area row teaches ${key}: ${areaKeys.join(" ")}`);
+  for (const key of ["h/l", "b", "a", "?"]) assert.ok(areaKeys.includes(key), `an Area row teaches ${key}: ${areaKeys.join(" ")}`);
+  assert.equal(areaKeys.includes(":"), false, "there is no separate command menu");
   assert.match(document.querySelector(".work-keyboard-hint").textContent, /h\/l fold/, "the triangle's keys are printed beside the word fold");
 
   press(window, "j");
   await settle(window);
   assert.equal(document.querySelector(".work-keyboard-hint").dataset.workCaptionRow, "goal");
   const goalKeys = captionKeys(document);
-  for (const key of ["↵", "o", "x", ":", "?"]) assert.ok(goalKeys.includes(key), `a Goal row teaches ${key}: ${goalKeys.join(" ")}`);
+  for (const key of ["↵", "o", "x", "?"]) assert.ok(goalKeys.includes(key), `a Goal row teaches ${key}: ${goalKeys.join(" ")}`);
 
   const sheet = new Map(workCommandHelpRows().map((row) => [row.id, row.keyDisplay]));
   for (const kind of ["area", "goal", "definition", "none"]) {
@@ -137,6 +138,7 @@ test("the caption prints the current row's keys from the same table as the ? she
   assert.equal(workRowKind(""), "none");
 
   press(window, "?");
-  const rows = [...document.querySelectorAll("#modal-copy .key-sheet > div")];
-  assert.ok(rows.some((row) => row.querySelector("kbd")?.textContent === "↵" && row.querySelector("strong")?.textContent === "Open"), "the ? sheet lists Enter as Open");
+  await settle(window);
+  const rows = [...document.querySelectorAll("[data-modal-action]")];
+  assert.ok(rows.some((row) => row.dataset.modalKey === "↵" && row.querySelector("strong")?.textContent === "Open"), "the ? sheet lists Enter as Open");
 });

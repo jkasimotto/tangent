@@ -104,8 +104,7 @@ test("Go to offers an unstarted Area brain and Work has no Browse or Describe to
 
   assert.equal(window.document.querySelector("[data-show-areas]"), null);
   assert.equal(window.document.querySelector("[data-describe-work]"), null);
-  assert.ok(window.document.querySelector("[data-work-commands]"));
-  assert.match(window.document.querySelector("[data-work-commands]").textContent, /Commands\s*:/);
+  assert.equal(window.document.querySelector("[data-work-commands]"), null, "Commands and Keys are one ? sheet");
   assert.ok(window.document.querySelector("[data-work-keys]"));
   assert.match(window.document.querySelector("[data-work-keys]").textContent, /Keys\s*\?/);
   assert.equal(window.document.querySelector("[data-work-filter]"), null, "Current and Planned controls are retired");

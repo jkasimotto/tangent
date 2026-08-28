@@ -1,7 +1,7 @@
 import { journalCaptureNeedsRetry, journalCaptureToast } from "./journal-capture-core.js";
 import { keyboardEventIsComposing, resolveKeyboardContext } from "./keyboard-context.js";
 import { documentReadingCommands, documentReadingScrollTarget, matchDocumentReadingCommand } from "./document-reading-commands.js";
-import { workCommandHelpRows, workCommandMatches, workCommandsFor } from "./work-commands.js";
+import { workCommandMatches, workCommandsFor } from "./work-commands.js";
 import { createChordEngine, motions, resolveMotion } from "./motion-keys.js";
 import { createWorkSearchBar } from "./work-search-bar.js";
 import { activeBrainForArea, nearestActiveBrain } from "./brain-ownership.js";
@@ -625,14 +625,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   /** Lets the shared modal close its informational key sheet. */
   function closeKeySheet() { return true; }
 
-  /** Opens the Work key sheet from either its key or its visible button. */
-  function openWorkKeySheet() {
-    const rows = workCommandHelpRows().map((command) => ({
-      key: command.keyDisplay,
-      label: command.label,
-      help: command.help,
-    }));
-    return openModal({ kicker: "Work keys", title: "Move around Work", copy: "", rows, confirmLabel: "Close", onConfirm: closeKeySheet });
+  /**
+   * `?` and its button open the one Work key sheet: every registered command
+   * with its key, scoped to the cursor row, and each row runs when picked. It
+   * is the same surface the row's `⋯` opens, so keys and commands are one list.
+   */
+  function openWorkKeySheet(row = cursorRow()) {
+    return openObjectActions(row);
   }
 
   /** Opens every Goal outcome behind one keyboard and pointer surface. */
@@ -799,8 +798,19 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (id === "search") return searchBar.open();
     if (id === "nextMatch") return searchBar.step(1) || showToast("Press / to search first.");
     if (id === "previousMatch") return searchBar.step(-1) || showToast("Press / to search first.");
-    if (id === "keys") return openWorkKeySheet();
+    if (id === "keys") return openWorkKeySheet(row);
     if (id === "open") return openWorkRow(row);
+    if (id === "session") return enterCursorSession();
+    // Picked from the key sheet, a motion runs once in its forward direction.
+    if (["moveRows", "firstLast", "halfPage"].includes(id)) {
+      const rows = visibleCursorRows();
+      if (!rows.length) return showToast("There is no Work row to move to.");
+      const index = rows.indexOf(row);
+      const pageRows = Math.max(1, Math.floor(screen.clientHeight / Math.max(1, row?.offsetHeight || 40) / 2));
+      if (id === "firstLast") return setWorkCursor(rows[0]);
+      if (id === "halfPage") return setWorkCursor(rows[Math.min(rows.length - 1, Math.max(0, index) + pageRows)]);
+      return setWorkCursor(rows[index < 0 ? 0 : Math.min(rows.length - 1, index + 1)]);
+    }
     return undefined;
   }
 
@@ -862,26 +872,33 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
   }
 
-  /** Opens one state-owned action surface for the current Work object. */
+  /**
+   * Opens the one state-owned key sheet for the current Work object: every
+   * registered command that applies to this row, with its key, runnable by
+   * picking it. Row-specific outcomes without a key (End current agent, Mark
+   * done, Archive) join the same list, so nothing has a second menu.
+   */
   function openObjectActions(row = cursorRow()) {
-    if (!row) return showToast("There is no Work object to act on.");
-    rememberWorkCursor(row);
+    if (row) rememberWorkCursor(row);
     const area = commandAreaForRow(row);
-    const goal = goalByFile(row.dataset.goalAnchor ?? "");
+    const goal = goalByFile(row?.dataset.goalAnchor ?? "");
     const brain = area ? brainForAreaCard(area) : null;
-    const isArea = row.classList.contains("work-group-row") && area;
-    const options = workCommandsFor({ palette: true }).filter((command) => {
+    const isArea = Boolean(row?.classList.contains("work-group-row") && area);
+    const searching = Boolean(state.searchPattern);
+    const options = workCommandsFor().filter((command) => {
       if (["openBrain", "starArea"].includes(command.id)) return Boolean(isArea || goal);
-      if (["commands", "stopBrain", "defaults", "messageBrain", "chooseAreas", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return Boolean(isArea);
+      if (["stopBrain", "defaults", "messageBrain", "chooseAreas", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return isArea;
       if (["readGoal", "changeAgent", "goalStatus"].includes(command.id)) return Boolean(goal);
       if (command.id === "resumeAttempt") return Boolean(goal) && !isArea;
-      return ["collapse", "expand", "starredOnly", "search", "keys"].includes(command.id);
+      if (["open", "session", "collapse", "expand"].includes(command.id)) return Boolean(row);
+      return command.id !== "keys";
     }).map((command) => {
       const tree = treeCommandAvailability(command.id, row);
       const replacement = command.id === "changeAgent" ? replacementTargetForGoal(goal) : null;
       const resumable = command.id === "resumeAttempt" ? resumeAvailabilityForGoal(goal) : null;
-      const enabled = command.id === "stopBrain" ? Boolean(brain?.live) : replacement ? replacement.enabled : resumable ? resumable.enabled : tree.enabled;
-      const reason = command.id === "stopBrain" && !brain?.live ? "This Area has no live brain." : replacement ? replacement.reason : resumable ? resumable.reason : tree.reason;
+      const match = ["nextMatch", "previousMatch"].includes(command.id);
+      const enabled = command.id === "stopBrain" ? Boolean(brain?.live) : replacement ? replacement.enabled : resumable ? resumable.enabled : match ? searching : tree.enabled;
+      const reason = command.id === "stopBrain" && !brain?.live ? "This Area has no live brain." : replacement ? replacement.reason : resumable ? resumable.reason : match && !searching ? "Press / to search first." : tree.reason;
       const label = command.id === "starArea" && area && state.areaFocus.includes(area) ? "Unstar Area"
         : command.id === "starredOnly" && state.areaFocusOnly ? "Show every Area" : command.label;
       return { value: command.id, key: command.keyDisplay, label, help: command.help, enabled, reason };
@@ -906,10 +923,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (currentAssignment.index < (record.steps?.length ?? 0)) options.splice(2, 0, { value: "skipAssignment", key: "", label: `Skip to assignment ${currentAssignment.index + 1}`, help: "End this stopped assignment and advance to the next one.", enabled: true });
       options.splice(2, 0, { value: "endPipeline", key: "", label: "End work", help: "End the run while keeping the Goal open and preserving its history.", enabled: true });
     }
-    const cursor = row.dataset.workCursor;
+    const cursor = row?.dataset.workCursor ?? "";
     /** Resolves the repainted semantic object before it runs the chosen command. */
     const run = (id) => {
-      const currentRow = visibleCursorRows().find((item) => item.dataset.workCursor === cursor) ?? row;
+      const currentRow = visibleCursorRows().find((item) => item.dataset.workCursor === cursor) ?? row ?? cursorRow();
       if (id === "stopWork" && goal) {
         rememberGoal(goal.file);
         confirmStop();
@@ -930,16 +947,19 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return executeWorkCommand(id, currentRow);
     };
     return openModal({
-      kicker: goal ? "Goal actions" : "Area actions",
+      kicker: goal ? "Goal keys" : isArea ? "Area keys" : "Work keys",
       title: goal?.title ?? (area ? areaLabel(area) : "Work"),
-      copy: "The pointer action and shortcut run the same command.",
+      copy: "Every key for this row. Pick one to run it.",
       field: { kind: "actions", label: "Actions", options },
       confirmLabel: "",
       onConfirm: run,
     });
   }
 
-  /** Opens the server-reported Goal actions from the stable Goal reader. */
+  /**
+   * `?` in the Goal reader opens one sheet: the Goal's commands with their
+   * keys, runnable, above the reading keys. Keys and commands are one list.
+   */
   function openReaderGoalActions(opener = document.querySelector("[data-reader-goal-actions]")) {
     const detail = state.goalDetail;
     const goal = detail?.goal;
@@ -964,18 +984,29 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return false;
     };
     return openModal({
-      kicker: "Goal actions",
+      kicker: "Goal keys",
       title: goal.title,
-      copy: "Availability and disabled reasons come from the Goal detail model.",
-      field: { kind: "actions", label: "Goal actions", options },
+      copy: "Pick a command to run it. Reading keys follow.",
+      rows: documentKeyRows({ quick: false }),
+      field: { kind: "actions", label: "Goal keys", options },
       confirmLabel: "",
       onConfirm: run,
     });
   }
 
-  /** Opens the shared key sheet for either Document reading surface. */
+  /**
+   * Opens the key sheet for either Document reading surface. A Goal in the
+   * full reader gets its commands in the same sheet (`openReaderGoalActions`).
+   */
   function openDocumentKeySheet({ quick = Boolean(state.documentPeek) } = {}) {
-    const rows = [
+    if (!quick && state.goalDetail?.goal) return openReaderGoalActions();
+    const rows = documentKeyRows({ quick });
+    return openModal({ kicker: quick ? "Quick Document keys" : "Document keys", title: "Read without the mouse", copy: "", rows, confirmLabel: "Close", onConfirm: closeKeySheet });
+  }
+
+  /** The reading keys as sheet rows, shared by the Document and Goal sheets. */
+  function documentKeyRows({ quick }) {
+    return [
       { key: "j / k", label: "Move by line", help: "Move down or up one reading line." },
       { key: "Ctrl-D / Ctrl-U", label: "Move by half page", help: "Move down or up half a page." },
       { key: "gg / G", label: "Top or bottom", help: "Move to the start or end of this Document." },
@@ -990,7 +1021,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       ] : []),
       { key: "Esc", label: "Step back", help: "Clear selected text, clear the active comment, then close the reader." },
     ];
-    return openModal({ kicker: quick ? "Quick Document keys" : "Document keys", title: "Read without the mouse", copy: "", rows, confirmLabel: "Close", onConfirm: closeKeySheet });
   }
 
   /** Gives an open key sheet its own compact Vim scrolling mode. */
@@ -1357,7 +1387,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const workKeys = target.closest?.("[data-work-keys]");
     if (workKeys) return openWorkKeySheet();
     if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: false });
-    const objectActions = target.closest?.("[data-work-object-actions], [data-work-commands]");
+    const objectActions = target.closest?.("[data-work-object-actions]");
     if (objectActions) {
       objectActions.focus?.({ preventScroll: true });
       return openObjectActions(cursor ?? cursorRow());
@@ -2721,24 +2751,19 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (workCommandMatches(event, "search")) { event.preventDefault(); return executeWorkCommand("search", current); }
       if (state.searchPattern && workCommandMatches(event, "nextMatch")) { event.preventDefault(); return executeWorkCommand("nextMatch", current); }
       if (state.searchPattern && workCommandMatches(event, "previousMatch")) { event.preventDefault(); return executeWorkCommand("previousMatch", current); }
-      if (workCommandMatches(event, "commands")) { event.preventDefault(); return openObjectActions(current); }
       if (workCommandMatches(event, "open") && !event.shiftKey && enterOwnsWorkRow(event.target, current)) {
         event.preventDefault();
         return executeWorkCommand("open", current);
       }
       if (workCommandMatches(event, "keys")) {
         event.preventDefault();
-        return openWorkKeySheet();
+        return openWorkKeySheet(current);
       }
     }
     if (context === "document" && event.key === "Escape" && closeNearestOpenDetails(event.target)) {
       event.preventDefault();
       event.stopPropagation();
       return;
-    }
-    if (context === "document" && state.goalDetail?.goal && event.key === ":" && !event.metaKey && !event.ctrlKey && !event.altKey) {
-      event.preventDefault();
-      return openReaderGoalActions();
     }
     if (context === "document" && handleDocumentReadingKey(event)) return;
     if (context === "document" && event.metaKey && event.altKey && !event.shiftKey && !event.ctrlKey) {

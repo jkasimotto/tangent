@@ -140,7 +140,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         <div class="document-reader-actions">
           ${documentOutlineMenu()}
           ${documentCommentControls()}
-          <button class="document-keys-action" type="button" data-document-keys aria-keyshortcuts="Shift+/" title="Document reading keys (?)">Keys <kbd>?</kbd></button>
+          ${state.goalDetail?.goal ? "" : `<button class="document-keys-action" type="button" data-document-keys aria-keyshortcuts="Shift+/" title="Document reading keys (?)">Keys <kbd>?</kbd></button>`}
           ${brain ? `<details class="reader-brain-actions">
             <summary title="${escapeHtml(notifyLabel)}"><span>${escapeHtml(notifyLabel)}</span><i aria-hidden="true">⌄</i></summary>
             <div class="reader-brain-actions-popover" role="group" aria-label="Brain actions">
@@ -148,7 +148,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
               <button type="button" data-open-brain="${escapeHtml(brain.session)}">Go to brain</button>
             </div>
           </details>` : `<button class="reader-notify-brain" type="button" title="${escapeHtml(notifyTitle)}" disabled>${escapeHtml(notifyLabel)}</button>`}
-          ${state.goalDetail?.goal ? `<button class="quiet-button reader-goal-actions" type="button" data-reader-goal-actions="${escapeHtml(state.goalDetail.goal.file)}" data-focus-key="reader:goal-actions:${escapeHtml(state.goalDetail.goal.file)}" aria-keyshortcuts=":" title="Goal actions (:)">Goal actions <kbd>:</kbd></button>` : ""}
+          ${state.goalDetail?.goal ? `<button class="quiet-button reader-goal-actions" type="button" data-reader-goal-actions="${escapeHtml(state.goalDetail.goal.file)}" data-focus-key="reader:goal-actions:${escapeHtml(state.goalDetail.goal.file)}" aria-keyshortcuts="Shift+/" title="Goal keys (?)">Keys <kbd>?</kbd></button>` : ""}
           ${goalCanOpenAgent ? `<button class="reader-agent-action" type="button" data-open-reader-agent>Open agent</button>` : ""}
           <button class="reader-close-action" type="button" data-leave-document aria-keyshortcuts="Escape" title="Leave the Document reader (Esc)">Close <kbd>esc</kbd></button>
         </div>
@@ -200,7 +200,6 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
     ];
     const assignments = detail.queue?.assignments ?? detail.queue?.steps ?? [];
     const attempts = detail.attempts ?? [];
-    const commands = detail.commands ?? [];
     const relatedDocuments = detail.relatedDocuments ?? [];
     return `<section class="goal-reader-detail" aria-label="Goal details">
       <div class="goal-reader-facts">
@@ -213,7 +212,6 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         <section><h2>Related Documents</h2>${relatedDocuments.length ? `<ul>${relatedDocuments.map((item) => { const record = typeof item === "string" ? { file: item, title: item } : item; return `<li><button type="button" data-open-document="${escapeHtml(record.file)}">${escapeHtml(record.title || record.file)}</button></li>`; }).join("")}</ul>` : `<p>None.</p>`}</section>
         <section><h2>Queue</h2>${assignments.length ? `<ol>${assignments.map((item, index) => `<li><span>${escapeHtml(String(item.index ?? index + 1))}</span><strong>${escapeHtml(item.instruction || item.label || "Assignment")}</strong><small>${escapeHtml([item.status, goalLaunchLabel(item)].filter(Boolean).join(" · "))}</small></li>`).join("")}</ol>` : `<p>No assignments.</p>`}</section>
         <section><h2>Attempt history</h2>${attempts.length ? `<ol>${attempts.map((item) => attemptHistoryRow(item, goal.file)).join("")}</ol>` : `<p>No attempts.</p>`}</section>
-        <section><h2>Available actions</h2>${commands.length ? `<ul>${commands.map((item) => `<li class="${item.enabled === false ? "disabled" : ""}"><strong>${escapeHtml(item.label || item.id)}</strong>${item.reason ? `<small>${escapeHtml(item.reason)}</small>` : ""}</li>`).join("")}</ul>` : `<p>No actions reported.</p>`}</section>
       </div>
     </section>`;
   }

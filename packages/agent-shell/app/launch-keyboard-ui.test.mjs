@@ -222,7 +222,7 @@ test("launch choices expose selected state and trap Tab while options load", asy
   assert.equal(selectedHarness.closest("[role='radiogroup']")?.getAttribute("aria-label"), "Harness");
 });
 
-test("a cached chooser opened from Commands keeps focus after the command modal closes", async () => {
+test("a cached chooser opened from the ? sheet keeps focus after the sheet closes", async () => {
   const { window, document } = await bootWorkTable(workTableFixture(), { launchOptions });
   let area = document.querySelector("[data-work-group='otto/onboarding'] .work-group-row");
   area.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
@@ -234,10 +234,10 @@ test("a cached chooser opened from Commands keeps focus after the command modal 
   await settle(window);
   area = document.querySelector("[data-work-group='otto/onboarding'] .work-group-row");
   area.querySelector("[data-work-cursor-control]").focus();
-  press(window, ":", { shiftKey: true });
+  press(window, "?", { shiftKey: true });
   await settle(window);
   const commands = document.querySelector("[data-modal-action='defaults']");
-  assert.ok(commands, "Commands uses the same state-owned action rows as the pointer menu");
+  assert.ok(commands, "the ? sheet uses the same state-owned action rows as the pointer menu");
   commands.click();
   await settle(window, 5);
 

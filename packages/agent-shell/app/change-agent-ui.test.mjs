@@ -131,7 +131,7 @@ test("the Goal reader exposes Change agent as the same message to the brain", as
 
   const readerAction = document.querySelector("[data-reader-goal-actions]");
   readerAction.focus();
-  press(window, ":", { shiftKey: true });
+  press(window, "?", { shiftKey: true, code: "Slash" });
   await settle(window);
   const change = document.querySelector("[data-modal-action='change-agent']");
   assert.equal(change.dataset.modalKey, "c");

@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootWorkTable, press, settle } from "./work-table-harness.mjs";
 import { workTableFixture, withDirectAsks, plannedWorkFixture, withBrainOnlyArea } from "./work-table-fixture.mjs";
-import { workCommand, workCommandHelpRows } from "./public/work-commands.js";
+import { workCommand } from "./public/work-commands.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,7 +69,7 @@ test("every status carries a word, and every icon-only control carries a name", 
     assert.match(name, /\S/, `every control is named: ${control.outerHTML.slice(0, 80)}`);
   }
   for (const trigger of document.querySelectorAll(".work-table .desk-action-menu-trigger")) {
-    assert.match(trigger.getAttribute("aria-label"), /^Actions for .+/, "an icon-only action trigger names its object");
+    assert.match(trigger.getAttribute("aria-label"), /^Keys for .+/, "an icon-only key-sheet trigger names its object");
   }
   assert.equal(document.querySelectorAll(".work-table th:empty").length, 0, "no header cell is empty");
 });
@@ -86,7 +86,7 @@ test("Area pointers, toolbar help, and the state-owned action surface share one 
     assert.equal(pointer.dataset.modalKey, command.keyDisplay);
     assert.match(pointer.textContent, new RegExp(command.label));
   }
-  for (const id of ["commands", "keys"]) {
+  for (const id of ["keys"]) {
     const command = workCommand(id);
     const pointer = document.querySelector(`[data-work-command='${id}']`);
     assert.equal(pointer.textContent.trim(), `${command.label} ${command.keyDisplay}`);
@@ -412,24 +412,21 @@ test("Work keys expose their help and stay inert in text and terminal input", as
   press(window, "Escape");
   await settle(window);
   press(window, "?");
-  assert.equal(document.querySelector("#modal-title").textContent, "Move around Work");
-  const helpRows = [...document.querySelectorAll("#modal-copy .key-sheet > div")];
-  assert.equal(helpRows.length, workCommandHelpRows().length, "each registered command gets its own readable row");
-  assert.equal(helpRows.find((row) => row.querySelector("kbd")?.textContent === "s")?.querySelector("strong")?.textContent, "Stop brain");
-  assert.equal(helpRows.find((row) => row.querySelector("kbd")?.textContent === "d")?.querySelector("strong")?.textContent, "Defaults");
-  const scroller = document.querySelector("#modal-copy");
-  Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 200 });
-  Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 900 });
-  press(window, "j");
-  assert.equal(scroller.scrollTop, 34, "j scrolls the complete key sheet by one compact row");
-  press(window, "d", { ctrlKey: true });
-  assert.equal(scroller.scrollTop, 134, "Ctrl-D scrolls the key sheet by half a page");
-  press(window, "G");
-  assert.equal(scroller.scrollTop, 700, "G reaches the last command");
-  press(window, "g");
-  press(window, "g");
-  assert.equal(scroller.scrollTop, 0, "gg returns to the first command");
-  document.querySelector("[data-modal-confirm]").click();
+  await settle(window);
+  assert.equal(document.querySelector("#modal-kicker").textContent, "Area keys", "? on an Area row opens that Area's sheet");
+  const helpRows = [...document.querySelectorAll("[data-modal-action]")];
+  const ids = helpRows.map((row) => row.dataset.modalAction);
+  for (const id of ["moveRows", "firstLast", "halfPage", "open", "session", "search", "stopBrain", "defaults", "starArea"]) assert.ok(ids.includes(id), `the sheet lists ${id}: ${ids.join(" ")}`);
+  assert.equal(ids.includes("commands"), false, "there is no second command menu");
+  assert.equal(ids.includes("keys"), false, "the sheet does not list itself");
+  assert.equal(helpRows.find((row) => row.dataset.modalKey === "s")?.querySelector("strong")?.textContent, "Stop brain");
+  assert.equal(helpRows.find((row) => row.dataset.modalKey === "d")?.querySelector("strong")?.textContent, "Defaults");
+  assert.equal(helpRows.find((row) => row.dataset.modalAction === "nextMatch")?.getAttribute("aria-disabled"), "true", "n waits for a search");
+  const before = document.querySelector("[data-work-cursor].cursor").dataset.workCursor;
+  document.querySelector("[data-modal-action='moveRows']").click();
+  await settle(window);
+  assert.equal(document.querySelector("#modal-layer").hidden, true, "picking a row closes the sheet");
+  assert.notEqual(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, before, "picking Move between rows moves the cursor once");
 
   const live = document.querySelector("[data-work-cursor='goal:otto/standards/goal-framework-docs.md']");
   live.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));

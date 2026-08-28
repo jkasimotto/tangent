@@ -1452,6 +1452,13 @@ details.more-work .area-work-list { margin-top: 18px; }
 }
 .modal-field { margin-top: 20px; }
 .modal.action-surface .modal-field { min-height: 0; overflow-y: auto; }
+/* A Goal reader sheet carries commands and reading keys; the commands scroll, the keys sit below. */
+.modal.key-sheet-surface.action-surface { width: min(860px, 100%); grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
+.modal.key-sheet-surface.action-surface .kicker { order: -3; }
+.modal.key-sheet-surface.action-surface #modal-title { order: -2; }
+.modal.key-sheet-surface.action-surface .modal-field { order: -1; }
+.modal.key-sheet-surface.action-surface .modal-copy { overflow: visible; margin-top: 12px; }
+.modal.key-sheet-surface.action-surface .key-sheet-hint { display: none; }
 .modal-action-list { display: grid; overflow: hidden; border: 1px solid #343b44; border-radius: 8px; }
 .modal-action-list button { display: grid; gap: 4px; padding: 10px 12px; border: 0; border-bottom: 1px solid #2a3037; background: #11151a; color: #d8dee5; cursor: pointer; text-align: left; }
 .modal-action-list button:last-child { border-bottom: 0; }

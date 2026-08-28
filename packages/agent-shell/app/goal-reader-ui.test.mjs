@@ -45,10 +45,10 @@ test("o opens one stable Goal reader with narrative, coordination facts, and ser
   assert.match(reader.textContent, /Keyboard contract/);
   assert.match(reader.textContent, /Implement the UI/);
   assert.match(reader.textContent, /tangent-worker/);
-  assert.match(reader.textContent, /Build the foundation is still open/);
 
+  assert.equal(document.querySelector("[data-document-keys]"), null, "a Goal reader has one Keys button, not two");
   document.querySelector("[data-reader-goal-actions]").focus();
-  press(window, ":", { shiftKey: true });
+  press(window, "?", { shiftKey: true, code: "Slash" });
   await settle(window);
   const unavailable = document.querySelector("[data-modal-action='start']");
   assert.equal(unavailable.getAttribute("aria-disabled"), "true");

@@ -1607,7 +1607,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           </div>
           <div class="work-group-controls">
             ${brainButton}
-            <button class="desk-action-menu-trigger" type="button" data-work-object-actions data-work-object-area="${escapeHtml(area.path)}" data-focus-key="menu:area:${escapeHtml(area.path)}" ${workCommandAttributes("commands")} aria-label="Actions for ${escapeHtml(name)}">⋯${workKey("commands")}</button>
+            <button class="desk-action-menu-trigger" type="button" data-work-object-actions data-work-object-area="${escapeHtml(area.path)}" data-focus-key="menu:area:${escapeHtml(area.path)}" ${workCommandAttributes("keys")} aria-label="Keys for ${escapeHtml(name)}">⋯${workKey("keys")}</button>
           </div>
         </div>
       </th>
@@ -1650,7 +1650,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           ? `<button class="desk-action" type="button" ${route} data-focus-key="open:${escapeHtml(goal.file)}" aria-label="${escapeHtml(action.action)}: ${escapeHtml(goal.title)}">${escapeHtml(action.action)}${workKey("open")}</button>`
           : "";
     return `<td class="work-cell-action"><span class="desk-goal-actions">${cleanupControl}${primary}
-      <button class="desk-action-menu-trigger" type="button" data-work-object-actions data-work-object-goal="${escapeHtml(goal.file)}" data-focus-key="menu:${escapeHtml(goal.file)}" ${workCommandAttributes("commands")} aria-label="Actions for ${escapeHtml(goal.title)}">⋯${workKey("commands")}</button></span></td>`;
+      <button class="desk-action-menu-trigger" type="button" data-work-object-actions data-work-object-goal="${escapeHtml(goal.file)}" data-focus-key="menu:${escapeHtml(goal.file)}" ${workCommandAttributes("keys")} aria-label="Keys for ${escapeHtml(goal.title)}">⋯${workKey("keys")}</button></span></td>`;
   }
 
   /**
@@ -2032,7 +2032,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           <div class="work-tool-actions">
             ${starredOnlyButton()}
             <button class="quiet-button" type="button" data-work-search ${workCommandAttributes("search")}>${workCommandContent("search")}</button>
-            <button class="quiet-button" type="button" data-work-commands ${workCommandAttributes("commands")}>${workCommandContent("commands")}</button>
             <button class="quiet-button" type="button" data-work-keys ${workCommandAttributes("keys")}>${workCommandContent("keys")}</button>
           </div>
         </div>

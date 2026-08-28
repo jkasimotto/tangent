@@ -383,7 +383,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2, "search never hides a row");
   assert.match(window.document.querySelector("[data-work-cursor].cursor").dataset.searchText, /tangent/i, "the cursor follows the first match");
   assert.equal(window.document.querySelector(".document-result"), null, "Work search never switches to Document results");
-  assert.ok(window.document.querySelector("[data-work-commands]"), "Commands remain visible while searching");
+  assert.ok(window.document.querySelector("[data-work-keys]"), "Keys remain visible while searching");
   search.value = "liveedit";
   search.dispatchEvent(new window.Event("input", { bubbles: true }));
   assert.match(window.document.querySelector("[data-work-cursor].cursor").dataset.searchText, /Live Edit/, "a pattern typed without spaces still lands");

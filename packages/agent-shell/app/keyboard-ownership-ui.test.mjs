@@ -111,19 +111,18 @@ test("a modal blocks lower shortcuts, traps focus, and restores its opener", asy
   const modal = document.querySelector("#modal-layer");
   assert.equal(modal.hidden, false);
   assert.equal(document.querySelector("#screen").hasAttribute("inert"), true);
+  const firstKey = modal.querySelector("[data-modal-action]:not([aria-disabled='true'])").dataset.modalAction;
+  assert.equal(document.activeElement.dataset.modalAction, firstKey, "the first runnable key row is the first focus stop");
   keyFrom(window, document.activeElement, "k", { metaKey: true });
   keyFrom(window, document.activeElement, "j");
   assert.equal(document.querySelector("#go-to-layer").hidden, true);
   assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, cursor);
-
-  const keySheet = modal.querySelector(".modal-copy");
-  assert.equal(document.activeElement, keySheet, "the scrollable key sheet is the first focus stop");
-  const confirm = modal.querySelector("[data-modal-confirm]");
-  confirm.focus();
+  assert.notEqual(document.activeElement.dataset.modalAction, firstKey, "j moves inside the sheet, not in Work");
+  modal.querySelector("[data-modal-cancel]").focus();
   press(window, "Tab");
-  assert.equal(document.activeElement, keySheet, "Tab wraps from Close to the scrollable key sheet");
+  assert.equal(document.activeElement.dataset.modalAction, modal.querySelector("[data-modal-action]").dataset.modalAction, "Tab wraps from Cancel to the first key row");
   press(window, "Tab", { shiftKey: true });
-  assert.equal(document.activeElement, confirm, "Shift-Tab wraps back to Close");
+  assert.ok(document.activeElement.matches("[data-modal-cancel]"), "Shift-Tab wraps back to Cancel");
   press(window, "Escape");
   assert.equal(modal.hidden, true);
   assert.equal(document.querySelector("#screen").hasAttribute("inert"), false);
@@ -136,7 +135,7 @@ test("a command modal hands focus to a live session instead of restoring inert W
   const area = document.querySelector("[data-work-group='otto/onboarding'] .work-group-row");
   area.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   area.querySelector("[data-work-cursor-control]").focus();
-  press(window, ":", { shiftKey: true });
+  press(window, "?", { shiftKey: true });
   await settle(window);
   document.querySelector("[data-modal-action='openBrain']").click();
   await settle(window, 5);

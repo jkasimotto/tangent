@@ -12,9 +12,10 @@ test("Work command records are unique, complete, and own the settled shortcuts",
     assert.match(command.help, /\S/);
     assert.ok(Object.isFrozen(command));
   }
-  const settled = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "messageBrain", "starArea", "starredOnly", "collapse", "expand", "questions", "readGoal", "goalStatus", "commands", "search", "nextMatch", "previousMatch", "keys"];
-  assert.deepEqual(settled.map((id) => workCommand(id).keyDisplay), ["{", "}", "b", "s", "d", "a", "f", "F", "h", "l", "r", "o", "x", ":", "/", "n", "N", "?"]);
-  assert.equal(workCommand("note").keyDisplay, "", "Capture note has no key (Julian, 2026-08-28); it stays in the : menu");
+  const settled = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "messageBrain", "starArea", "starredOnly", "collapse", "expand", "questions", "readGoal", "goalStatus", "search", "nextMatch", "previousMatch", "keys"];
+  assert.deepEqual(settled.map((id) => workCommand(id).keyDisplay), ["{", "}", "b", "s", "d", "a", "f", "F", "h", "l", "r", "o", "x", "/", "n", "N", "?"]);
+  assert.equal(workCommand("note").keyDisplay, "", "Capture note has no key (Julian, 2026-08-28); it stays in the ? sheet");
+  assert.equal(workCommand("commands"), null, "commands and keys are one list under ? (Julian, 2026-08-28)");
   assert.equal(workCommand("filter"), null, "the Work filter is gone; / searches");
   assert.equal(workCommand("fold"), null, "z and the toggle command have left Work");
 });
@@ -34,7 +35,6 @@ test("matching reads the registry and rejects unintended modifiers", () => {
   assert.equal(workCommandMatches(event("Enter", { metaKey: true, shiftKey: true }), "session"), true);
   assert.equal(workCommandMatches(event("Enter", { metaKey: true }), "session"), false, "Command-Enter alone submits forms");
   assert.equal(workCommandMatches(event("Enter", { shiftKey: true }), "session"), false);
-  assert.equal(workCommandMatches(event(":", { shiftKey: true }), "commands"), true);
   assert.equal(workCommandMatches(event("?", { shiftKey: true }), "keys"), true);
   assert.equal(workCommandMatches(event("{", { shiftKey: true }), "previousArea"), true);
   assert.equal(workCommandMatches(event("}", { shiftKey: true }), "nextArea"), true);
@@ -42,11 +42,10 @@ test("matching reads the registry and rejects unintended modifiers", () => {
   assert.equal(workCommandMatches(event("g"), "firstLast"), false, "a sequence is handled by keyboard state, not misreported as one ARIA shortcut");
 });
 
-test("palette and help consumers receive structured records", () => {
-  const palette = workCommandsFor({ palette: true });
-  assert.ok(palette.some((command) => command.id === "stopBrain"));
-  assert.ok(palette.some((command) => command.id === "defaults"));
-  assert.deepEqual(palette.filter((command) => command.kind === "navigation").map((command) => command.id), ["previousArea", "nextArea", "collapse", "expand"]);
+test("sheet and help consumers receive structured records", () => {
+  const sheet = workCommandsFor();
+  assert.equal(sheet.length, WORK_COMMANDS.length, "the ? sheet lists every command");
+  assert.deepEqual(workCommandsFor({ scope: "goal" }).map((command) => command.id), ["readGoal", "resumeAttempt", "changeAgent", "goalStatus"]);
   const help = workCommandHelpRows();
   assert.equal(help.length, WORK_COMMANDS.length);
   assert.deepEqual(Object.keys(help[0]), ["id", "keyDisplay", "ariaKeyshortcuts", "scope", "label", "help", "kind"]);

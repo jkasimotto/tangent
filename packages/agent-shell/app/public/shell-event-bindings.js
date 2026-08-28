@@ -25,7 +25,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     openDescribeSession, addDescribeSource,
     openGoalAgent, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
-    applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, renderWork, paintWorkCaption, describeLaunchArea, describeWorkSessions,
+    applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, toggleActiveOnly, renderWork, paintWorkCaption, describeLaunchArea, describeWorkSessions,
     goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded,
   } = work;
   const {
@@ -781,6 +781,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return toggleAreaStar(target);
     }
     if (id === "starredOnly") return toggleStarredOnly();
+    if (id === "activeOnly") return toggleActiveOnly();
     if (id === "chooseAreas") return openAreaFocusPicker();
     if (id === "collapse") return collapseWorkTree(row) || showToast(treeCommandAvailability(id, row).reason);
     if (id === "expand") return expandWorkTree(row) || showToast(treeCommandAvailability(id, row).reason);
@@ -902,7 +903,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const enabled = command.id === "stopBrain" ? Boolean(brain?.live) : replacement ? replacement.enabled : resumable ? resumable.enabled : match ? searching : tree.enabled;
       const reason = command.id === "stopBrain" && !brain?.live ? "This Area has no live brain." : replacement ? replacement.reason : resumable ? resumable.reason : match && !searching ? "Press / to search first." : tree.reason;
       const label = command.id === "starArea" && area && state.areaFocus.includes(area) ? "Unstar Area"
-        : command.id === "starredOnly" && state.areaFocusOnly ? "Show every Area" : command.label;
+        : command.id === "starredOnly" && state.areaFocusOnly ? "Show every Area"
+        : command.id === "activeOnly" && state.activeOnly ? "Show every Area" : command.label;
       return { value: command.id, key: command.keyDisplay, label, help: command.help, enabled, reason };
     });
     const record = goal ? pipelineRecordForGoal(goal) : null;
@@ -1399,6 +1401,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const starArea = target.closest?.("[data-star-area]");
     if (starArea) return toggleAreaStar(starArea.dataset.starArea);
     if (target.closest?.("[data-starred-only]")) return toggleStarredOnly();
+    if (target.closest?.("[data-active-only]")) return toggleActiveOnly();
     if (target.closest?.("[data-cancel-area-focus]")) return cancelAreaFocusPicker();
     const stopBrain = target.closest("[data-stop-brain-area]");
     if (stopBrain) return confirmStopBrain(stopBrain.dataset.stopBrainArea, stopBrain.dataset.stopBrainAttempt);
@@ -2494,14 +2497,15 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   /**
    * Unwinds Work one visible stage at a time. The order is deliberate: a
-   * temporary surface, staged Focus, search, applied Focus, and
-   * finally the Work tab.
+   * temporary surface, staged Focus, search, active-only, applied Focus,
+   * and finally the Work tab.
    */
   function unwindWork() {
     chords.clear("work");
     if (closeTransientSurface()) return;
     if (state.areaFocusPicker) return cancelAreaFocusPicker();
     if (searchBar.clear()) return;
+    if (state.activeOnly) return toggleActiveOnly();
     if (state.areaFocusOnly) return toggleStarredOnly();
     if (state.areaFocus.length) return clearAreaFocus();
     workTab.focus();
@@ -2745,6 +2749,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       }
       if (workCommandMatches(event, "starArea")) { event.preventDefault(); return executeWorkCommand("starArea", current); }
       if (workCommandMatches(event, "starredOnly")) { event.preventDefault(); return executeWorkCommand("starredOnly", current); }
+      if (workCommandMatches(event, "activeOnly")) { event.preventDefault(); return executeWorkCommand("activeOnly", current); }
       if (workCommandMatches(event, "readGoal")) {
         event.preventDefault();
         return executeWorkCommand("readGoal", current);

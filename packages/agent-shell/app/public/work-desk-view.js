@@ -198,6 +198,36 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return focusWorkCursor();
   }
 
+  /**
+   * Shows only the active little brains and their running work, or every
+   * Area again (Julian, 2026-08-28: "shift A to focus the active little
+   * brains and work, similar to shift F"). Active means a live brain, a live
+   * agent on a Goal, or a Describe session; a Goal that merely waits on
+   * Julian is not active.
+   */
+  function toggleActiveOnly() {
+    state.activeOnly = !state.activeOnly;
+    const cursorArea = commandAreaOfCursor();
+    if (state.activeOnly && cursorArea && !activeAreas().has(cursorArea)) moveCursorOffArea(cursorArea);
+    try { localStorage.setItem("agent-shell.active-only", String(state.activeOnly)); } catch { /* the switch still works for this page */ }
+    paint(true);
+    return focusWorkCursor();
+  }
+
+  /**
+   * The Areas that own something live right now: a live brain, a Goal tree
+   * with a live agent or a running pipeline step, or a Describe session.
+   * Ancestors are not included; the desk nests a live sub-Area under its
+   * parent header on its own.
+   */
+  function activeAreas() {
+    const paths = new Set();
+    for (const brain of state.brains ?? []) if (brain.status === "active" && brain.live) paths.add(brain.area);
+    for (const tree of goalTrees()) if (goalTreeIsActive(tree)) paths.add(tree.path);
+    for (const session of describeWorkSessions()) if (session.area) paths.add(session.area);
+    return paths;
+  }
+
   /** The Area that owns the current cursor row, read from the painted desk. */
   function commandAreaOfCursor() {
     const row = document.querySelector("[data-work-cursor].cursor");
@@ -344,6 +374,18 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       : "Star an Area with f, then F shows only the starred Areas";
     const storageNote = state.areaFocusStorageError ? `<p class="area-focus-storage-note">Area Focus persistence is unavailable in this browser.</p>` : "";
     return `<span class="area-focus-control"><button class="quiet-button area-focus-switch${only ? " on" : ""}" type="button" data-starred-only aria-pressed="${only}" ${workCommandAttributes("starredOnly", title)}>${only ? "★" : "☆"} Starred${roots.length ? ` <span class="area-focus-count">${roots.length}</span>` : ""}${workKey("starredOnly")}</button>${storageNote}${areaFocusPickerMarkup()}</span>`;
+  }
+
+  /**
+   * The switch between every Area and the active ones, next to the starred
+   * switch. Both scope the desk; together they show the active work inside
+   * the starred Areas.
+   */
+  function activeOnlyButton() {
+    const only = Boolean(state.activeOnly);
+    const count = activeAreas().size;
+    const title = `${only ? "Show every Area" : "Show only the active brains and running work"} (A)`;
+    return `<button class="quiet-button area-focus-switch${only ? " on" : ""}" type="button" data-active-only aria-pressed="${only}" ${workCommandAttributes("activeOnly", title)}>${only ? "●" : "○"} Active${count ? ` <span class="area-focus-count">${count}</span>` : ""}${workKey("activeOnly")}</button>`;
   }
 
   /** Expands the ancestors of one area so the selected row stays visible. */
@@ -991,8 +1033,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const roots = state.areaFocusOnly ? areaFocusRoots() : [];
     /** True when one projected record stays inside the applied scope. */
     const inFocus = scope ?? ((path) => isInAreaFocus(path, roots));
+    // Active-only (A) keeps only the trees an agent runs on; the Areas with
+    // nothing live lose their rows below, so they earn no header.
+    const activeOnly = Boolean(state.activeOnly);
     const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"))
-      .filter((tree) => inFocus(tree.path));
+      .filter((tree) => inFocus(tree.path))
+      .filter((tree) => !activeOnly || goalTreeIsActive(tree));
     const descriptions = (state.workFilter === "inactive" ? [] : describeWorkSessions())
       .filter((session) => inFocus(session.area));
     const core = areaMapCore;
@@ -1028,8 +1074,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, liveBrainAreas.includes(area.path) ? 1 : 0, panelRoots.length ? areaPrograms.length : 0));
     }
     // Every not-done Area earns a row. A done Area keeps its row only while
-    // it has open work under the current filter.
-    const rowCounts = new Map([...openCounts].filter(([path, count]) => count > 0 || !underDoneArea(path)));
+    // it has open work under the current filter. Active-only keeps only the
+    // Areas with something live.
+    const rowCounts = new Map([...openCounts].filter(([path, count]) => count > 0 || (!activeOnly && !underDoneArea(path))));
     const panelDefs = core.deskPanels(rowCounts, panelRoots).filter((panel) => headerAreas.has(panel.path));
     const covered = new Set(panelDefs.flatMap((panel) => [panel.path, ...panel.sections]));
     const panels = panelDefs.map((panel) => {
@@ -1047,7 +1094,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         || state.programs.operations.some((program) => core.isInside(program.area, panel.path));
       return { area, trees: own.trees, descriptions: own.descriptions, sections, programs, brain, focusRoot, focusHasWork };
     }).filter((record) => record.area);
-    if (state.workFilter === "all") {
+    if (state.workFilter === "all" && !activeOnly) {
       for (const area of areaList) {
         if (covered.has(area.path)) continue;
         if (!(area.documents ?? []).length) continue;
@@ -2034,7 +2081,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const maxElapsedMs = deskMaxElapsedMs(records, Date.now());
     const roots = areaFocusRoots();
     const focusNames = areaFocusLabels(roots).join(" + ");
-    const emptyCopy = `${state.areaFocusOnly ? `Starred Areas (${escapeHtml(focusNames)}): ` : ""}No open work.`;
+    const emptyCopy = `${state.areaFocusOnly ? `Starred Areas (${escapeHtml(focusNames)}): ` : ""}${state.activeOnly ? "Nothing is running. " : ""}No open work.`;
     const content = `${records.length
       ? workTable(records, maxElapsedMs)
       : `<div class="empty-state">${emptyCopy}</div>`}${workProcessSections(records)}`;
@@ -2044,6 +2091,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         <div class="work-tools">
           <div class="work-tool-actions">
             ${starredOnlyButton()}
+            ${activeOnlyButton()}
             <button class="quiet-button" type="button" data-work-search ${workCommandAttributes("search")}>${workCommandContent("search")}</button>
             <button class="quiet-button" type="button" data-work-keys ${workCommandAttributes("keys")}>${workCommandContent("keys")}</button>
           </div>
@@ -2054,5 +2102,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, renderWork, paintWorkCaption };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, toggleActiveOnly, renderWork, paintWorkCaption };
 }

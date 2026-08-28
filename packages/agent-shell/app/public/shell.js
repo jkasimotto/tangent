@@ -441,7 +441,7 @@ const {
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
   forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers,
   goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea,
-  openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, renderWork, paintWorkCaption,
+  openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, toggleActiveOnly, renderWork, paintWorkCaption,
 } = workDeskView;
 
 const programView = createProgramView({
@@ -635,7 +635,7 @@ function renderKey() {
     state.describeSessionName,
     state.areaSelection,
     [...state.expandedAreas].sort(),
-    [state.workFilter, state.areaFocus, state.areaFocusOnly, [...state.collapsedDeskSections].sort(), [...state.collapsedGoalTrees].sort(), Boolean(state.areaFocusPicker)],
+    [state.workFilter, state.areaFocus, state.areaFocusOnly, state.activeOnly, [...state.collapsedDeskSections].sort(), [...state.collapsedGoalTrees].sort(), Boolean(state.areaFocusPicker)],
     // The card's durations count up, so a repaint is due once a minute even
     // when nothing else changed.
     Math.floor(Date.now() / 60_000),
@@ -1494,7 +1494,7 @@ shellBindings = bindShellEvents({
     openDescribeSession, addDescribeSource,
     openGoalAgent, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
-    applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, renderWork, paintWorkCaption, describeLaunchArea, describeWorkSessions,
+    applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, toggleActiveOnly, renderWork, paintWorkCaption, describeLaunchArea, describeWorkSessions,
     goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea,
   },
   areas: {

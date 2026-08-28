@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { builtInProviderAdapters } from "../dist/index.js";
 import { normalizeClaudeNativeRecords } from "../dist/providers/claude/native/normalize.js";
-import { loadNativeSourceFiles } from "../dist/providers/native/load.js";
+import { loadNativeSourceFile, loadNativeSourceFiles } from "../dist/providers/native/load.js";
 import { claudeProjectKey, discoverClaudeNative } from "../dist/providers/claude/native/discover.js";
 import { normalizeGeminiNativeRecords } from "../dist/providers/gemini/native/normalize.js";
 import { readGeminiNative } from "../dist/providers/gemini/native/read.js";
@@ -44,6 +44,29 @@ test("indexes an active claude transcript instead of waiting for the quiet windo
   } finally {
     if (previousHome === undefined) delete process.env.CLAUDE_HOME;
     else process.env.CLAUDE_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("loads one active native transcript without discovering the rest of the provider corpus", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "native-one-"));
+  const file = path.join(home, "turn.jsonl");
+  const text = "Remember this.\nI am unsure.\nKeep both lines.";
+  writeFileSync(file, JSON.stringify({
+    type: "user",
+    timestamp: "2026-08-28T04:00:00.000Z",
+    uuid: "native-user-message-1",
+    sessionId: "native-session-1",
+    message: { role: "user", content: text }
+  }) + "\n");
+
+  try {
+    const result = await loadNativeSourceFile(file, "claude", new Date("2026-08-28T04:00:01.000Z"));
+    assert.deepEqual(result.warnings, []);
+    const message = result.file.events.find((event) => event.kind === "message.user");
+    assert.equal(message.data.text, text);
+    assert.equal(message.links.message_id, "native-user-message-1");
+  } finally {
     rmSync(home, { recursive: true, force: true });
   }
 });

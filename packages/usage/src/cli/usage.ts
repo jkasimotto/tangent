@@ -7,10 +7,12 @@ import type { UsageIndexSource } from "@tangent/usage-index-sqlite/sdk/indexStor
 import { importNative } from "@tangent/usage-index-sqlite/sdk/importNative";
 import { status } from "@tangent/usage-index-sqlite/sdk/status";
 import { inspectNativeLogFile } from "@tangent/usage-providers/providers/native/inspect";
+import { loadNativeSourceFile } from "@tangent/usage-providers/providers/native/load";
 import { listNativeSchemas } from "@tangent/usage-providers/providers/native/schema-registry";
 import { nativeSchemaStatus } from "@tangent/usage-providers/providers/native/status";
 import type { NativeLogInspection, NativeProviderSchemaStatus } from "@tangent/usage-providers/providers/native/types";
 import type { UsageDataset, VisibleMessage } from "@tangent/usage-core/core/dataset";
+import { eventsToProjections } from "@tangent/usage-core/core/projections";
 import { isUsageProvider, usageProviders, type UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { runUsageInsightsCommand } from "./insights.js";
 import { runUsageResourceCommand } from "./resource-commands.js";
@@ -258,6 +260,16 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
     const inspection = await inspectNativeLogFile(requiredPath(args._[2], "usage native inspect requires a path."));
     if (args.json) console.log(JSON.stringify(inspection, null, 2));
     else printNativeInspection(inspection);
+    return;
+  }
+
+  if (command === "native" && subcommand === "messages") {
+    const provider = providerArgOrUndefined(args.provider);
+    if (!provider) throw new Error("usage native messages requires --provider claude, codex, or gemini.");
+    const loaded = await loadNativeSourceFile(requiredPath(args._[2], "usage native messages requires a path."), provider);
+    const messages = loaded.file ? eventsToProjections(loaded.file.events).messages : [];
+    const result = { data: messages, warnings: loaded.warnings };
+    console.log(JSON.stringify(result, null, args.json ? 2 : 0));
     return;
   }
 

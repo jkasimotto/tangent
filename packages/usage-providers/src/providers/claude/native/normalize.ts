@@ -253,6 +253,7 @@ export function normalizeClaudeNativeRecord(record: unknown, sourcePath: string,
       kind: "message.user",
       actor: { role: "user" },
       data: contentText ? { text: contentText, text_preview: previewText(contentText) } : { raw: record },
+      links: { message_id: stringValue(item.uuid) || deterministicMessageId(sourcePath, line) },
       availability: { confidence: "partial", notes: ["Imported from Claude native transcript."] }
     }];
   }

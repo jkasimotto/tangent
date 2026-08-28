@@ -106,6 +106,7 @@ export const usageCommandSpec: CliCommandSpec = {
       subcommands: [
         { name: "schemas", description: "List known native log schema descriptors", options: commonJsonOptions(["provider", "json"]) },
         { name: "inspect", description: "Inspect one native log JSONL file", args: "<path>", options: commonJsonOptions(["json"]) },
+        { name: "messages", description: "Read normalized messages from one native transcript", args: "<path>", options: commonJsonOptions(["provider", "json"]) },
         { name: "status", description: "Show native log schema compatibility", args: "[repo]", options: commonJsonOptions(["provider", "json"]) }
       ]
     },

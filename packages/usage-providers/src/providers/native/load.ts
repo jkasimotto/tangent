@@ -28,6 +28,48 @@ export type LoadNativeOptions = {
   skipUnchanged?: (file: NativeSourceFileStat) => boolean;
 };
 
+/** Parses and normalizes one already-resolved native transcript. */
+export async function loadNativeSourceFile(filePath: string, provider: UsageProvider, now = new Date()): Promise<{
+  file?: NativeSourceFile;
+  warnings: UsageWarning[];
+}> {
+  const warnings: UsageWarning[] = [];
+  try {
+    const fileStat = await stat(filePath);
+    const geminiMap = provider === "gemini" ? await buildGeminiProjectMap() : undefined;
+    const parsed = provider === "gemini" ? await readGeminiNative(filePath) : await readNativeJsonl(filePath);
+    const eligibility = provider === "codex"
+      ? codexEligibility(parsed.records, fileStat.mtimeMs, now)
+      : nonMarkerEligibility(parsed.records, fileStat.mtimeMs, now, provider);
+    warnings.push(...parsed.warnings);
+    if (!eligibility.eligible) return { warnings };
+    const events = provider === "codex"
+      ? normalizeCodexNativeRecords(parsed.records as CodexNativeRecord[], {
+        sourcePath: filePath,
+        completed: eligibility.completed,
+        inferredComplete: eligibility.inferredComplete
+      })
+      : provider === "gemini"
+        ? normalizeGeminiNativeRecords(parsed.records as GeminiNativeRecord[], {
+          sourcePath: filePath,
+          cwd: geminiCwd(parsed.records, filePath, geminiMap),
+          completed: eligibility.completed,
+          inferredComplete: eligibility.inferredComplete
+        })
+        : normalizeClaudeNativeRecords(parsed.records as ClaudeNativeRecord[], {
+          sourcePath: filePath,
+          inferredComplete: eligibility.inferredComplete || eligibility.completed
+        });
+    return {
+      file: { path: filePath, provider, mtimeMs: fileStat.mtimeMs, size: fileStat.size, events },
+      warnings
+    };
+  } catch (error) {
+    warnings.push({ code: `${provider}-native-parse-failed`, message: (error as Error).message, path: filePath });
+    return { warnings };
+  }
+}
+
 /** Discovers, parses, and normalizes native transcripts for the requested providers. */
 export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise<{
   files: NativeSourceFile[];
@@ -41,8 +83,6 @@ export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise
   const warnings: UsageWarning[] = [];
   const now = options.now || new Date();
 
-  const geminiMap: GeminiProjectMap | undefined = options.providers.includes("gemini") ? await buildGeminiProjectMap() : undefined;
-
   for (const provider of options.providers) {
     const paths = await discoverNative(provider, options.repoRoot);
     for (const filePath of paths) {
@@ -54,36 +94,9 @@ export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise
           skipped.push(source);
           continue;
         }
-        const parsed = provider === "gemini" ? await readGeminiNative(filePath) : await readNativeJsonl(filePath);
-        const eligibility = provider === "codex"
-          ? codexEligibility(parsed.records, fileStat.mtimeMs, now)
-          : nonMarkerEligibility(parsed.records, fileStat.mtimeMs, now, provider);
-        if (!eligibility.eligible) continue;
-        const events = provider === "codex"
-          ? normalizeCodexNativeRecords(parsed.records as CodexNativeRecord[], {
-            sourcePath: filePath,
-            completed: eligibility.completed,
-            inferredComplete: eligibility.inferredComplete
-          })
-          : provider === "gemini"
-            ? normalizeGeminiNativeRecords(parsed.records as GeminiNativeRecord[], {
-              sourcePath: filePath,
-              cwd: geminiCwd(parsed.records, filePath, geminiMap),
-              completed: eligibility.completed,
-              inferredComplete: eligibility.inferredComplete
-            })
-            : normalizeClaudeNativeRecords(parsed.records as ClaudeNativeRecord[], {
-              sourcePath: filePath,
-              inferredComplete: eligibility.inferredComplete || eligibility.completed
-            });
-        files.push({
-          path: filePath,
-          provider,
-          mtimeMs: fileStat.mtimeMs,
-          size: fileStat.size,
-          events
-        });
-        warnings.push(...parsed.warnings);
+        const loaded = await loadNativeSourceFile(filePath, provider, now);
+        if (loaded.file) files.push(loaded.file);
+        warnings.push(...loaded.warnings);
       } catch (error) {
         warnings.push({ code: `${provider}-native-parse-failed`, message: (error as Error).message, path: filePath });
       }

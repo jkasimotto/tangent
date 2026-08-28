@@ -40,7 +40,8 @@ test("one rotating triangle folds Areas and Goals with Subgoals; the pill is gon
   assert.equal(areaFold.parentElement.firstElementChild, areaFold, "the triangle sits at the far left of the name");
   assert.equal(areaFold.querySelector("kbd"), null, "the triangle prints no key of its own");
   const name = areaFold.nextElementSibling;
-  assert.ok(name.matches("[data-work-cursor-control][data-open-area-brain], [data-work-cursor-control][data-open-brain]"), "the name button keeps the brain route");
+  const area = name.closest("[data-work-area]").dataset.workArea;
+  assert.equal(name.dataset.openDocument, `${area}/${area.split("/").pop()}.md`, "the name button opens the Area note, not the brain");
 
   areaFold.click();
   await settle(window);

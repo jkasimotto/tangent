@@ -19,6 +19,15 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   const { shortcutKbd, whatHappenedOverlay } = chrome;
   const openingBrains = new Set();
 
+  /**
+   * The Area note that Enter on an Area row opens: `neara/neara.md` for
+   * `neara`, `neara/portland/portland.md` for `neara/portland`. The server
+   * names it the same way, and serves a fresh note when none exists yet.
+   */
+  function areaNoteFile(area) {
+    return `${area}/${area.split("/").pop()}.md`;
+  }
+
   /** Shared command attributes teach the same shortcut on every pointer. */
   function workCommandAttributes(id, title = "") {
     const command = workCommand(id);
@@ -1656,7 +1665,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="${sub ? "row" : "rowgroup"}" id="${workGroupId(area.path)}">
         <div class="work-group-layout">
           <div class="work-group-identity">
-            <span class="work-group-name">${workFoldTriangle({ open: !folded, area: area.path, name })}<button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)}`)}>${escapeHtml(name)}</button>${starButton}</span>
+            <span class="work-group-name">${workFoldTriangle({ open: !folded, area: area.path, name })}<button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" data-open-document="${escapeHtml(areaNoteFile(area.path))}" ${workCommandAttributes("open", `Read the ${areaLabel(area.path)} note (↵)`)}>${escapeHtml(name)}</button>${starButton}</span>
             <span class="work-group-count">${escapeHtml(summary.text)}</span>
             ${!sub && area.noteSignal ? `<span class="area-note-signal work-group-note${area.noteSignal.warning ? " warning" : ""}" title="The brain reads this note every turn. Keep it under 100 lines and rewrite Current every two weeks.">${escapeHtml(area.noteSignal.text)}</span>` : ""}
             ${!showState

@@ -1,7 +1,5 @@
-// Pure rules for the worker context handover (design-worker-context-handover):
-// when a reminder is due, the reminder and repeat text, the fresh session's
-// derived name, and the prompt section a continued session reads. No fs, no
-// tmux, no HTTP; the server owns time, spawning, and records.
+// Compatibility helpers for explicit worker continuation records. No fs, no
+// tmux, and no HTTP. Token fill never invokes these helpers.
 
 import { boundedSessionName } from "./session-names.mjs";
 
@@ -26,39 +24,6 @@ function stemOf(name) {
     if (withoutG !== stem) { stem = withoutG; changed = true; }
   }
   return stem;
-}
-
-/**
- * Whether a reminder is due for a session, and which level. Null (never
- * remind) when the fill is unknown, the session's window is at or under the
- * threshold (small-window exemption: that model just uses its full window),
- * or a number fails to parse. "first" fires once at the threshold; "repeat"
- * fires once more a tenth past it. State never clears once set, so a
- * compaction dip never re-arms a level that already fired.
- */
-export function reminderDue({ fill, thresholdTokens, reminders }) {
-  if (!fill) return null;
-  const { usedTokens, windowTokens } = fill;
-  if (!Number.isFinite(usedTokens) || !Number.isFinite(windowTokens) || !Number.isFinite(thresholdTokens)) return null;
-  if (windowTokens <= thresholdTokens) return null;
-  if (usedTokens >= thresholdTokens && !reminders?.firstAt) return "first";
-  if (usedTokens >= thresholdTokens * 1.1 && reminders?.firstAt && !reminders?.repeatAt) return "repeat";
-  return null;
-}
-
-/** The first-level reminder: send the brain a note, never self-replace. */
-export function contextReminderText({ usedTokens, windowTokens, subject }) {
-  const used = Math.round(usedTokens / 1000);
-  const window = Math.round(windowTokens / 1000);
-  const pct = Math.round((usedTokens / windowTokens) * 100);
-  return `Your context is at ${used}k of ${window}k (${pct}%). At the next natural pause, send the brain what is done and what is next with: tangent send brain "<facts>". Do not replace yourself. The brain starts a fresh attempt when it needs one. If the ${subject} is nearly done, finish it and send --done.`;
-}
-
-/** The second, stronger reminder once carried context is a tenth past the threshold. */
-export function contextRepeatText({ usedTokens, thresholdTokens, subject }) {
-  const used = Math.round(usedTokens / 1000);
-  const threshold = Math.round(thresholdTokens / 1000);
-  return `Your context is well past ${threshold}k tokens (${used}k). Send the brain what is done and what is next for this ${subject} now: tangent send brain "<facts>". Do not replace yourself. The brain starts a fresh attempt when it needs one.`;
 }
 
 /**

@@ -22,7 +22,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
   const state = {
     vault: null,
     programs: { operations: [], processes: [], problems: [], areas: [], liveCount: 0 },
-    sessions: [], contextHandoverTokens: 0,
+    sessions: [],
     currentFile: requestedGoal || storage.getItem("agent-shell.current-goal") || "", view: initialView,
     document: null, goalDetail: null, documentReturn: null, documentTrail: [], documentTrailIndex: -1, documentPositions: new Map(),
     documentPeek: null,

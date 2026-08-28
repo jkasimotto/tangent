@@ -30,7 +30,7 @@ import { mapWithConcurrency } from "./bounded-work.mjs";
 import { createObservationCache } from "./observation-cache.mjs";
 import { appendSteps, continuationSource, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllPipelines, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
-import { contextReminderText, contextRepeatText, continuationSection, reminderDue } from "./context-handover.mjs";
+import { continuationSection } from "./context-handover.mjs";
 import { messageBanner, noticeMessage, normalizeMessage } from "./agent-messages.mjs";
 import { beginGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, brainSessionNames, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { resolveBrainAttemptLaunch } from "./brain-launch.mjs";
@@ -52,7 +52,6 @@ import { createAgentRoutes } from "./agent-routes.mjs";
 import { resolveAgentContext, unassignedAgentContext } from "./agent-context.mjs";
 import { workerShellExitNotice } from "./agent-recovery.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
-import { pipelineExecution } from "./execution-record.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
 import { createProcessRoutes } from "./process-routes.mjs";
@@ -241,12 +240,6 @@ const BRAIN_IDLE_NOTICE_MS = Number(process.env.TANGENT_BRAIN_IDLE_MINUTES ?? 10
 // must never notify.
 const BRAIN_WAIT_NOTICE_MS = Number(process.env.TANGENT_BRAIN_WAIT_MINUTES ?? 5) * 60_000;
 const RECONCILE_INTERVAL_MS = Math.max(10, Number(process.env.TANGENT_RECONCILE_INTERVAL_MS ?? 10_000));
-// The carried-context threshold at which a worker must report context risk
-// to its queue controller. One
-// absolute token count, never a percentage: a model whose window is at or
-// under this just uses its full window, today's behavior.
-const CONTEXT_HANDOVER_TOKENS = Number(process.env.TANGENT_CONTEXT_HANDOVER_TOKENS ?? 300_000);
-
 /**
  * The closing section of every worker prompt: the one Tangent command a
  * worker has (D5). The same four lines close a review step; --done on a
@@ -2527,7 +2520,6 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
     }
     await reconcilePipelines(sessions, snapshotAt);
     await reconcileBrains(sessions);
-    await reconcileContextHandovers(sessions.filter((session) => session.owned));
     const missingFinishedGoals = new Set();
     for (const s of sessions) {
       if (!s.goal) continue;
@@ -5065,72 +5057,6 @@ async function reconcileBrains(sessions) {
   }
 }
 
-/**
- * Reminds a worker whose carried context has passed the handover threshold
- * to hand its step or Goal to a fresh copy of itself (D1 C, D3). Scope:
- * pipeline steps and solo Goal sessions (kind "goal", phase "execute");
- * brains, work-definition, and study sessions never see this.
- * The reminder holder is the running step (pipeline) or a lazily-created
- * solo continuation record (no record churn on a quiet session).
- */
-async function reconcileContextHandovers(sessions) {
-  for (const session of sessions) {
-    if (session.kind !== "goal" || session.phase !== "execute") continue;
-    const pipelineHit = await pipelineStepForSession(session.name);
-    let execution;
-    if (pipelineHit) {
-      const { record, step } = pipelineHit;
-      execution = pipelineExecution({
-        record,
-        step,
-        /** Persists the enclosing pipeline record. */
-        save: (next) => writePipeline(PIPELINES_ROOT, next),
-      });
-    } else if (session.goal) {
-      const byFile = await goalsByFile();
-      const o = byFile.get(session.goal);
-      if (!o) continue;
-      const record = await migrateLiveSoloExecution(o, sessions);
-      const step = record?.steps.find((item) => item.status === "running" && item.session === session.name);
-      if (!record || !step) continue;
-      execution = pipelineExecution({
-        record,
-        step,
-        /** Persists the migrated authoritative queue. */
-        save: (next) => writePipeline(PIPELINES_ROOT, next),
-      });
-    } else {
-      continue;
-    }
-    const { area, subject } = execution;
-    const reminders = execution.reminder(session.name);
-    const level = reminderDue({ fill: session.context, thresholdTokens: CONTEXT_HANDOVER_TOKENS, reminders });
-    if (!level) continue;
-    const now = new Date().toISOString();
-    await execution.saveReminder(session.name, { firstAt: reminders?.firstAt ?? (level === "first" ? now : null), repeatAt: level === "repeat" ? now : reminders?.repeatAt ?? null });
-    const handoverText = level === "first"
-      ? `Your context is nearly full. At the next natural pause, send the brain what is done and what is next with: tangent send brain "<facts>". Do not replace yourself. The brain starts a fresh attempt when it needs one.`
-      : `Your context is well past the threshold. Send now with: tangent send brain "<facts>". Do not replace yourself. The brain starts a fresh attempt when it needs one.`;
-    messages.queue(session.name, {
-      from: "tangent",
-      area,
-      kind: "context-reminder",
-      text: handoverText,
-      // Rebuilt at delivery time so the fill number is current, not the one
-      // read at queue time (design touchpoint 1).
-      /** Rebuilds the reminder with the latest pane context at delivery time. */
-      render: () => {
-        const fill = paneObserver.context(session.name);
-        if (!fill) return null;
-        return level === "first"
-          ? contextReminderText({ ...fill, subject })
-          : contextRepeatText({ usedTokens: fill.usedTokens, thresholdTokens: CONTEXT_HANDOVER_TOKENS, subject });
-      },
-      queuedAt: now,
-    });
-  }
-}
-
 /** The plan text of one brain record, or "" when the plan does not exist yet. */
 async function brainPlanText(record) {
   if (!record?.planFile) return "";
@@ -6426,7 +6352,6 @@ const shellStateRoutes = createShellStateRoutes({
       pipelines,
       attemptReplacements,
       brains,
-      contextHandoverTokens: CONTEXT_HANDOVER_TOKENS,
     };
   },
   /** Returns the compact browser read model with a semantic content hash. */
@@ -6452,7 +6377,7 @@ const shellStateRoutes = createShellStateRoutes({
           pendingCommits: revisions.commits, rebuild, goalCleanups: await readAllGoalCleanups(GOAL_CLEANUPS_ROOT),
           caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions,
           runtime: { instanceId: INSTANCE_ID, ownershipKey: SESSION_OWNER_OPTION, sessions: sessionObservation.status() },
-          pipelines, attemptReplacements, brains, contextHandoverTokens: CONTEXT_HANDOVER_TOKENS,
+          pipelines, attemptReplacements, brains,
         };
       })(),
       (async () => {

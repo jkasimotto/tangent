@@ -217,12 +217,12 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
     return ticking;
   }
 
-  /** Moves non-reminder messages after a worker changes session names. */
+  /** Moves pending messages after a worker changes session names. */
   function retarget(oldName, newName) {
     const pending = queues.get(oldName);
     if (!pending) return;
     queues.delete(oldName);
-    const kept = pending.filter((entry) => entry.kind !== "context-reminder");
+    const kept = pending;
     if (kept.length) {
       const merged = [...(queues.get(newName) ?? []), ...kept];
       const accepted = merged.slice(0, maxPerTarget);

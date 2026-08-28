@@ -2,59 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  contextReminderText,
-  contextRepeatText,
   continuationSection,
-  continuationSessionName,
-  reminderDue
+  continuationSessionName
 } from "./context-handover.mjs";
-
-const THRESHOLD = 300_000;
-
-test("reminderDue is null below the threshold", () => {
-  assert.equal(reminderDue({ fill: { usedTokens: 299_999, windowTokens: 1_000_000 }, thresholdTokens: THRESHOLD, reminders: undefined }), null);
-});
-
-test("reminderDue fires 'first' exactly once at the threshold", () => {
-  const fill = { usedTokens: 300_000, windowTokens: 1_000_000 };
-  assert.equal(reminderDue({ fill, thresholdTokens: THRESHOLD, reminders: undefined }), "first");
-  assert.equal(reminderDue({ fill, thresholdTokens: THRESHOLD, reminders: { firstAt: "2026-08-23T10:00:00.000Z", repeatAt: null } }), null);
-});
-
-test("reminderDue fires 'repeat' once carried context passes a tenth past the threshold", () => {
-  const firstOnly = { firstAt: "2026-08-23T10:00:00.000Z", repeatAt: null };
-  assert.equal(reminderDue({ fill: { usedTokens: 329_999, windowTokens: 1_000_000 }, thresholdTokens: THRESHOLD, reminders: firstOnly }), null);
-  assert.equal(reminderDue({ fill: { usedTokens: 330_000, windowTokens: 1_000_000 }, thresholdTokens: THRESHOLD, reminders: firstOnly }), "repeat");
-  assert.equal(reminderDue({ fill: { usedTokens: 330_000, windowTokens: 1_000_000 }, thresholdTokens: THRESHOLD, reminders: { firstAt: "2026-08-23T10:00:00.000Z", repeatAt: "2026-08-23T11:00:00.000Z" } }), null, "a repeat that already fired does not fire again");
-  assert.equal(reminderDue({ fill: { usedTokens: 330_000, windowTokens: 1_000_000 }, thresholdTokens: THRESHOLD, reminders: undefined }), "first", "past-repeat fill with no recorded first still fires first, since first has not fired yet");
-});
-
-test("reminderDue is null for a small-window model whose window is at or under the threshold", () => {
-  assert.equal(reminderDue({ fill: { usedTokens: 300_000, windowTokens: 300_000 }, thresholdTokens: THRESHOLD, reminders: undefined }), null);
-  assert.equal(reminderDue({ fill: { usedTokens: 200_000, windowTokens: 200_000 }, thresholdTokens: THRESHOLD, reminders: undefined }), null);
-});
-
-test("reminderDue is null for unknown fill", () => {
-  assert.equal(reminderDue({ fill: null, thresholdTokens: THRESHOLD, reminders: undefined }), null);
-  assert.equal(reminderDue({ fill: { usedTokens: NaN, windowTokens: 1_000_000 }, thresholdTokens: THRESHOLD, reminders: undefined }), null);
-});
-
-test("reminderDue: a compaction dip below the threshold never re-arms a level that already fired", () => {
-  const alreadyFired = { firstAt: "2026-08-23T10:00:00.000Z", repeatAt: null };
-  assert.equal(reminderDue({ fill: { usedTokens: 50_000, windowTokens: 1_000_000 }, thresholdTokens: THRESHOLD, reminders: alreadyFired }), null);
-});
-
-test("contextReminderText and contextRepeatText keep queue recovery permissive without self-replacement", () => {
-  const reminder = contextReminderText({ usedTokens: 310_000, windowTokens: 1_000_000, subject: "step" });
-  assert.match(reminder, /Your context is at 310k of 1000k \(31%\)/);
-  assert.match(reminder, /tangent send brain "<facts>"/);
-  assert.match(reminder, /The brain starts a fresh attempt when it needs one/);
-
-  const repeat = contextRepeatText({ usedTokens: 331_000, thresholdTokens: THRESHOLD, subject: "Goal" });
-  assert.match(repeat, /well past 300k tokens \(331k\)/);
-  assert.match(repeat, /for this Goal now: tangent send brain "<facts>"/);
-  assert.match(repeat, /do not replace yourself/i);
-});
 
 test("continuationSessionName: fresh, second, and collision cases", () => {
   // normName (matching pipelineStepSessionName and brainSessionName)

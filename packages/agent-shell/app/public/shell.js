@@ -1260,7 +1260,6 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
     state.sessions = sessionPayload.sessions || [];
     state.pipelines = sessionPayload.pipelines || [];
     state.brains = sessionPayload.brains || [];
-    state.contextHandoverTokens = Number(sessionPayload.contextHandoverTokens || 0);
     forgetVerdictLines();
     state.programs = {
       operations: programs.operations || [],

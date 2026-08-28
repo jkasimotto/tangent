@@ -2,7 +2,7 @@
 
 Date: 2026-08-23
 
-Status: accepted. The brain handover it builds on is gone (ADR-0041); the worker continuation below stays.
+Status: superseded by ADR-0046. Token fill is telemetry only. It does not cause a reminder, handover, or replacement.
 
 ## Context
 

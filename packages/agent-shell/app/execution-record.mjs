@@ -24,17 +24,6 @@ export function soloExecution({ record, area, save }) {
 
 /** Creates the common mutable view over either stored execution shape. */
 function execution({ kind, area, subject, record, unit, save }) {
-  /** Returns the reminder timestamps stored for one session. */
-  function reminder(session) {
-    return unit.contextReminders?.[session];
-  }
-
-  /** Stores reminder timestamps for one session and persists the record. */
-  async function saveReminder(session, value) {
-    unit.contextReminders = { ...(unit.contextReminders ?? {}), [session]: value };
-    await save(record);
-  }
-
   /** Appends one context continuation and points execution at its replacement. */
   async function continueTo(entry) {
     unit.continuations = unit.continuations ?? [];
@@ -59,7 +48,5 @@ function execution({ kind, area, subject, record, unit, save }) {
     unit,
     continueTo,
     failContinuation,
-    reminder,
-    saveReminder,
   };
 }

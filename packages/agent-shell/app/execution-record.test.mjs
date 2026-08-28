@@ -25,12 +25,3 @@ test("pipeline and solo records expose the same continuation contract", async ()
   }
   assert.equal(saved.length, 4);
 });
-
-test("pipeline and solo records store reminders through the same interface", async () => {
-  const record = { area: "otto", session: "goal" };
-  /** Persists the record. */
-  const saveRecord = async () => {};
-  const execution = soloExecution({ record, area: "otto", save: saveRecord });
-  await execution.saveReminder("goal", { firstAt: "now" });
-  assert.deepEqual(execution.reminder("goal"), { firstAt: "now" });
-});

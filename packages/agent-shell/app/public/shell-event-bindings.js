@@ -531,11 +531,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       chooseLaunchOption(checkedIn(columns[next]));
       return true;
     }
-    if (!column) return false;
     event.preventDefault();
     event.stopPropagation();
-    const choices = [...column.querySelectorAll(".launch-option")];
-    const current = choices.indexOf(option);
+    // From outside the columns (focus opens on Start), j/k act on the first
+    // column straight away instead of waiting for l to enter it.
+    const target = column ?? columns[0];
+    const choices = [...target.querySelectorAll(".launch-option")];
+    const current = choices.indexOf(column ? option : checkedIn(target));
     const delta = ["j", "ArrowDown"].includes(event.key) ? 1 : -1;
     const index = current < 0 ? (delta > 0 ? 0 : choices.length - 1) : Math.max(0, Math.min(choices.length - 1, current + delta));
     chooseLaunchOption(choices[index]);

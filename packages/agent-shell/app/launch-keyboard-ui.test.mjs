@@ -98,6 +98,15 @@ test("a Goal row never opens a chooser; brain spawning owns the Harness, Model, 
   assert.ok(document.activeElement.hasAttribute("data-launch-start"), "brain spawn starts on Start, so Enter is the common path");
   press(window, "Tab");
   assert.ok(document.activeElement.closest("[data-launch-popover]"), "Tab stays inside the chooser");
+  document.querySelector("[data-launch-start]").focus();
+  press(window, "j");
+  await settle(window);
+  assert.ok(document.activeElement.dataset.launchHarness, "j from Start acts on the Harness column straight away");
+  assert.notEqual(document.activeElement.dataset.launchHarness, "codex", "j moved the checked harness past the default");
+  press(window, "k");
+  await settle(window);
+  assert.equal(document.activeElement.dataset.launchHarness, "codex", "k moves back to the default harness");
+  document.querySelector("[data-launch-start]").focus();
   press(window, "l");
   await settle(window);
   assert.equal(document.activeElement.dataset.launchHarness, "codex", "l from the actions enters the Harness column on its checked value");

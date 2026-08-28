@@ -8,6 +8,7 @@ export function createGoalPresentationRoutes(operations) {
     const handlers = {
       "/api/goals/present": operations.present,
       "/api/goals/withdraw-presentation": operations.withdraw,
+      "/api/goals/dismiss-presentation": operations.dismiss,
       "/api/goals/presented-opened": operations.opened,
     };
     const operation = handlers[url.pathname];

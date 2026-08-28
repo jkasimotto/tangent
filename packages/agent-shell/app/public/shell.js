@@ -1517,7 +1517,7 @@ shellBindings = bindShellEvents({
     activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
     closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading,
-    leaveQuickPath,
+    leaveQuickPath, openDocumentPeek,
   },
 });
 

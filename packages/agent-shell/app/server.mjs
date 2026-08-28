@@ -91,7 +91,7 @@ import { notifyGoalWaitsForCheck, removeGoalCheckNotification } from "./julian-n
 import { appendIdea, areaNoteTemplate, areaTitle, currentSectionKey, ensureAreaNoteLinks, ensureVaultRootLinks, ideasFilePath, ideasFromFile, noteSignal, orderGoals, vaultRootAgentsText } from "./area-note-links.mjs";
 import { newAttemptReplacement, readAllAttemptReplacements, readAttemptReplacement, sameAttemptReplacementRequest, transitionAttemptReplacement, unsettledAttemptReplacements, writeAttemptReplacement } from "./goal-attempt-replacement.mjs";
 import { GoalExecutionTransitionError, attachLateSourceEvidence, parkCurrentGoalAttempt, promoteReadyReplacement, reopenParkedGoalQueue } from "./goal-execution-transition.mjs";
-import { markGoalDocumentOpened, presentGoalDocument, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalDocument } from "./goal-presentations.mjs";
+import { dismissGoalDocument, markGoalDocumentOpened, presentGoalDocument, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalDocument } from "./goal-presentations.mjs";
 import { createGoalPresentationRoutes } from "./goal-presentation-routes.mjs";
 
 const rawExecFileAsync = promisify(execFile);
@@ -1040,7 +1040,7 @@ async function buildVaultIndex() {
       .map((record) => ({ file: record.file, title: record.title, kind: record.kind, docKind: record.docKind, changedAt: record.changedAt }));
     const presentationRecord = presentationsByGoal.get(goal.file);
     const presented = projectPresentations(presentationRecord);
-    goal.presentations = presented.filter((item) => item.openedAt === null).map((item) => ({ ...item }));
+    goal.presentations = presented.map((item) => ({ ...item }));
     for (const item of presented.reverse()) {
       const existing = goal.documents.findIndex((document) => document.file === item.file);
       const projected = { file: item.file, title: item.title, kind: "document", root: item.root, repository: item.repository, presentedBy: item.presentedBy, presentedAt: item.presentedAt, note: item.note };
@@ -6259,7 +6259,16 @@ const goalPresentationRoutes = createGoalPresentationRoutes({
     const result = await withdrawGoalDocument(PRESENTATIONS_ROOT, goal, String(body.file ?? ""));
     return result.changed ? { status: 200, value: { ok: true } } : { status: 404, error: "no active presentation for that document" };
   },
-  /** Clears active attention for a Document that a reader opened. */
+  /** Hides one presentation on Julian's word until its content changes. */
+  async dismiss(body) {
+    const goals = await goalsByFile();
+    const requested = String(body.goal ?? "");
+    const goal = goals.get(requested) ?? [...goals.values()].find((item) => item.slug === requested);
+    if (!goal) return { status: 404, error: `no Goal ${requested}` };
+    const result = await dismissGoalDocument(PRESENTATIONS_ROOT, goal, String(body.file ?? ""));
+    return result.changed ? { status: 200, value: { ok: true } } : { status: 404, error: "no active presentation for that document" };
+  },
+  /** Records that a reader opened a presented Document. The row stays on Work. */
   async opened(body) {
     const goals = await goalsByFile();
     const requested = String(body.goal ?? "");

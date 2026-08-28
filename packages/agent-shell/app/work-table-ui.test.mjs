@@ -65,15 +65,56 @@ test("presented Documents are capped child rows with human titles and keyboard v
   }));
   const { window, document, posts } = await bootWorkTable(fixture);
   const rows = [...document.querySelectorAll("[data-presentation-goal]")];
-  assert.equal(rows.length, 3, "Work renders no more than three unopened presentations");
+  assert.equal(rows.length, 3, "Work renders no more than three presentations");
   assert.match(rows[0].textContent, /Readable design 1/);
   assert.match(document.querySelector("[data-work-cursor^='document-more:']").textContent, /and 1 more/);
   rows[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   rows[0].querySelector("[data-work-row-title]").focus();
   press(window, "x");
   await settle(window);
-  assert.equal(posts.at(-1).path, "/api/goals/withdraw-presentation");
+  assert.equal(posts.at(-1).path, "/api/goals/dismiss-presentation");
   assert.equal(posts.at(-1).body.file, "otto/onboarding/design-1.md");
+});
+
+test("presented Documents stay on Work after Enter opens one, o is the full-reader alias, and x dismisses only its own row", async () => {
+  const fixture = workTableFixture();
+  const goal = fixture.goals[0];
+  goal.presentations = [1, 2].map((number) => ({
+    file: `otto/onboarding/design-${number}.md`, root: "vault", title: `Readable design ${number}`,
+    presentedBy: { session: "worker-a" }, presentedAt: `2026-08-28T00:00:0${number}.000Z`, note: "",
+  }));
+  /** Serves one fake Document for any reader request. */
+  const documentRecord = (url) => ({ file: url.searchParams.get("file"), title: "Readable design", hash: "h1", markdown: "# Readable design\n\nBody.", html: "<h1>Readable design</h1><p>Body.</p>", headings: [], comments: [] });
+  const { window, document, posts } = await bootWorkTable(fixture, { documentRecord });
+  /** Reads the presented file under the Work cursor. */
+  const rowFile = () => document.querySelector("[data-presentation-goal].cursor")?.dataset.presentationFile;
+  /** Lists the presented files rendered beneath the Goal. */
+  const rows = () => [...document.querySelectorAll("[data-presentation-goal]")].map((row) => row.dataset.presentationFile);
+  const first = document.querySelector("[data-presentation-goal]");
+  first.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  first.querySelector("[data-work-row-title]").focus();
+  press(window, "Enter");
+  await settle(window);
+  assert.equal(window.document.querySelector("#document-peek-layer").hidden, false, "Enter opens the highlighted Document in the quick layer");
+  assert.equal(posts.filter((post) => post.path === "/api/goals/presented-opened").length, 1, "opening is recorded once");
+  press(window, "Escape");
+  await settle(window);
+  assert.deepEqual(rows(), ["otto/onboarding/design-1.md", "otto/onboarding/design-2.md"], "opening removes nothing: both presentations stay beneath the Goal");
+  assert.equal(rowFile(), "otto/onboarding/design-1.md", "Escape returns to the same presented row");
+  press(window, "o");
+  await settle(window);
+  assert.equal(window.document.querySelector("#document-peek-layer").hidden, true, "o leaves the quick layer for the full reader");
+  assert.ok(window.document.querySelector("#screen .document-reader"), "o opens the full reader");
+  press(window, "Escape");
+  await settle(window);
+  assert.equal(window.document.querySelector("#screen .document-reader"), null, "Escape leaves the reader");
+  assert.equal(rowFile(), "otto/onboarding/design-1.md", "the cursor is back on the presented row");
+  press(window, "x");
+  await settle(window);
+  const dismiss = posts.at(-1);
+  assert.equal(dismiss.path, "/api/goals/dismiss-presentation", "x dismisses directly on Julian's word, not through the brain's withdraw");
+  assert.equal(dismiss.body.file, "otto/onboarding/design-1.md", "only the highlighted presentation is dismissed");
+  assert.equal(posts.some((post) => post.path === "/api/goals/withdraw-presentation"), false);
 });
 
 test("every status carries a word, and every icon-only control carries a name", async () => {

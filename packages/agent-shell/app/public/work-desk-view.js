@@ -417,7 +417,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** Finds the live session bound to one goal. */
   function sessionForGoal(goal) {
     if (!goal || ["done", "dropped", "parked", "deferred"].includes(goal.status)) return null;
-    const bound = state.sessions.filter((session) => session.goal === goal.file || session.name === goal.session);
+    const bound = state.sessions.filter((session) => session.kind !== "brain" && (session.goal === goal.file || session.name === goal.session));
     const record = pipelineRecordForGoal(goal);
     const current = record?.steps?.find((step) => step.id === record.currentAssignmentId)
       ?? record?.steps?.find((step) => step.status === "running");
@@ -2003,7 +2003,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return `<tr class="desk-document work-row presented-document${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(goal.area)}" data-presentation-goal="${escapeHtml(goal.file)}" data-presentation-file="${escapeHtml(item.file)}" data-search-text="${escapeHtml(`${item.title} ${item.file}`)}">
       <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<span class="work-goal-copy"><span class="work-goal-primary"><button type="button" class="work-row-title" data-work-row-title data-open-document="${escapeHtml(item.file)}" data-document-root="${escapeHtml(item.root ?? "vault")}" title="${escapeHtml(item.file)}">↳ Read · ${escapeHtml(item.title)}</button></span></span></span></th>
       <td><small>${escapeHtml(item.note || item.presentedBy?.session || "Presented")}</small></td><td></td>
-      <td><span class="work-row-controls"><button type="button" data-presentation-full="${escapeHtml(item.file)}" title="Open full reader">o full</button><button type="button" data-withdraw-presentation="${escapeHtml(item.file)}" title="Withdraw presentation">x dismiss</button></span></td>
+      <td><span class="work-row-controls"><button type="button" data-presentation-full="${escapeHtml(item.file)}" title="Open full reader">o full</button><button type="button" data-withdraw-presentation="${escapeHtml(item.file)}" title="Dismiss presentation">x dismiss</button></span></td>
     </tr>`;
   }
 

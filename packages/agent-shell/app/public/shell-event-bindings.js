@@ -47,7 +47,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     cancelCommentComposer, submitCommentComposer, commentIdentity, syncCommentCursor, activeCommentIdentity, focusCommentIdentity,
     editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
-    closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading,
+    closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading, openDocumentPeek,
     leaveQuickPath,
   } = documents;
   const awakeButton = document.querySelector("#awake-button");
@@ -738,7 +738,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const goal = goalByFile(row?.dataset.goalAnchor ?? "");
     if (id === "fullDocument" && row?.dataset.presentationFile) return openDocument(row.dataset.presentationFile);
     if (id === "dismissPresentation" && row?.dataset.presentationFile) {
-      return post("/api/goals/withdraw-presentation", { goal: row.dataset.presentationGoal, file: row.dataset.presentationFile }).then(() => refresh());
+      return post("/api/goals/dismiss-presentation", { goal: row.dataset.presentationGoal, file: row.dataset.presentationFile }).then(() => refresh());
     }
     if (id === "previousArea" || id === "nextArea") return moveAreaCursor(id === "previousArea" ? -1 : 1, row);
     if (id === "openBrain") {
@@ -1675,7 +1675,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const withdrawPresentation = target.closest("[data-withdraw-presentation]");
     if (withdrawPresentation) {
       const row = withdrawPresentation.closest("[data-presentation-goal]");
-      await post("/api/goals/withdraw-presentation", { goal: row.dataset.presentationGoal, file: withdrawPresentation.dataset.withdrawPresentation });
+      await post("/api/goals/dismiss-presentation", { goal: row.dataset.presentationGoal, file: withdrawPresentation.dataset.withdrawPresentation });
       return refresh();
     }
     const readerGoalActions = target.closest("[data-reader-goal-actions]");

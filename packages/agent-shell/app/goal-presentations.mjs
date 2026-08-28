@@ -37,11 +37,13 @@ export function presentationHash(text) {
 export async function presentGoalDocument(root, goal, document, presenter = {}, note = "", now = new Date().toISOString()) {
   const record = await readGoalPresentations(root, goal.area, goal.slug);
   const current = record.items.find((item) => item.file === document.file && item.root === document.root);
-  if (current?.presentedHash === document.hash && current.withdrawnAt === null && current.openedAt === null) return { record, item: current, changed: false };
+  // Same content, still presented: nothing to do. A dismissal is fenced to the
+  // presented hash, so re-presenting unchanged content cannot bring it back.
+  if (current?.presentedHash === document.hash && current.withdrawnAt === null) return { record, item: current, changed: false };
   const item = current ?? { id: randomUUID(), file: document.file, root: document.root };
   Object.assign(item, {
     title: document.title, presentedBy: presenter, presentedAt: now, presentedHash: document.hash,
-    note: String(note ?? "").trim(), openedAt: null, openedHash: null, withdrawnAt: null,
+    note: String(note ?? "").trim(), openedAt: null, openedHash: null, withdrawnAt: null, dismissedAt: null, dismissedHash: null,
     ...(document.repository ? { repository: document.repository } : {}),
   });
   if (!current) record.items.push(item);
@@ -59,7 +61,18 @@ export async function withdrawGoalDocument(root, goal, file, now = new Date().to
   return { record, item, changed: true };
 }
 
-/** Marks one active presentation opened on any reader surface. */
+/** Records that Julian dismissed one presentation. It stays hidden until the content changes. */
+export async function dismissGoalDocument(root, goal, file, now = new Date().toISOString()) {
+  const record = await readGoalPresentations(root, goal.area, goal.slug);
+  const item = record.items.find((entry) => entry.file === file && entry.withdrawnAt === null && !entry.dismissedAt);
+  if (!item) return { record, item: null, changed: false };
+  item.dismissedAt = now;
+  item.dismissedHash = item.presentedHash;
+  await save(root, record);
+  return { record, item, changed: true };
+}
+
+/** Records the first opening of one presentation. Opening never hides the row. */
 export async function markGoalDocumentOpened(root, goal, file, hash = null, now = new Date().toISOString()) {
   const record = await readGoalPresentations(root, goal.area, goal.slug);
   const item = record.items.find((entry) => entry.file === file && entry.openedAt === null && entry.withdrawnAt === null);
@@ -87,7 +100,7 @@ export async function pruneMissingPresentations(root, record, exists) {
   return { record, changed: true };
 }
 
-/** Projects every non-withdrawn item in newest-first order. */
+/** Projects every presentation that is neither withdrawn nor dismissed, newest first. Opened ones stay. */
 export function projectPresentations(record) {
-  return [...record.items].filter((item) => item.withdrawnAt === null).sort((a, b) => b.presentedAt.localeCompare(a.presentedAt));
+  return [...record.items].filter((item) => item.withdrawnAt === null && !item.dismissedAt).sort((a, b) => b.presentedAt.localeCompare(a.presentedAt));
 }

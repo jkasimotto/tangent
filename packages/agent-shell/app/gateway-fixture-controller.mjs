@@ -6,7 +6,8 @@ const boot = randomUUID();
 const server = http.createServer((request, response) => {
   if (request.url === "/api/sessions") {
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ boot, sessions: [{ name: "durable-agent", state: "working" }] }));
+    const fixtureBytes = Number(process.env.TANGENT_GATEWAY_FIXTURE_SNAPSHOT_BYTES ?? 0);
+    response.end(JSON.stringify({ boot, sessions: [{ name: "durable-agent", state: "working" }], fixture: "x".repeat(fixtureBytes) }));
     return;
   }
   if (request.url === "/api/block") {

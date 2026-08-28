@@ -49,7 +49,10 @@ const CONTROLLER_RESPONSE_TIMEOUT_MS = Number(process.env.TANGENT_CONTROLLER_RES
 const CONTROLLER_STABLE_MS = Number(process.env.TANGENT_CONTROLLER_STABLE_MS ?? 30_000);
 const RESTART_BASE_MS = Number(process.env.TANGENT_CONTROLLER_RESTART_BASE_MS ?? 250);
 const RESTART_MAX_MS = Number(process.env.TANGENT_CONTROLLER_RESTART_MAX_MS ?? 10_000);
-const MAX_SNAPSHOT_BYTES = Number(process.env.TANGENT_GATEWAY_SNAPSHOT_MAX_BYTES ?? 8 * 1024 * 1024);
+// Pipeline and brain history are part of the complete Work projection. A busy
+// vault can legitimately exceed 8 MiB, so keep a generous bounded allowance
+// rather than misclassifying a valid controller response as a restart.
+const MAX_SNAPSHOT_BYTES = Number(process.env.TANGENT_GATEWAY_SNAPSHOT_MAX_BYTES ?? 32 * 1024 * 1024);
 const MAX_CONTROLLER_REQUESTS = Number(process.env.TANGENT_GATEWAY_CONTROLLER_REQUESTS ?? 64);
 
 startEventLoopWatchdog({

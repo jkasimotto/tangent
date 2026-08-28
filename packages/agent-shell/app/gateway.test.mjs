@@ -100,6 +100,26 @@ test("gateway keeps health and cached sessions available across a stuck controll
   assert.match(gateway.errors.join(""), /terminating controller/);
 });
 
+test("gateway accepts a complete session snapshot above the old 8 MiB limit", async (context) => {
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") return context.skip("local listeners are not permitted");
+    throw error;
+  }
+  await startGateway(context, port, { TANGENT_GATEWAY_FIXTURE_SNAPSHOT_BYTES: String(9 * 1024 * 1024) });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForHealth(base, (health) => health.controller.state === "ready");
+
+  const response = await fetch(`${base}/api/sessions`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("x-tangent-stale"), "0");
+  const snapshot = await response.json();
+  assert.equal(snapshot.sessions[0].name, "durable-agent");
+  assert.equal(snapshot.fixture.length, 9 * 1024 * 1024);
+});
+
 test("gateway rejects duplicate reads while one controller request is active", async (context) => {
   let port;
   try {

@@ -69,6 +69,7 @@ function TangentMap({ host, bridge, options }) {
   const fingerprintRef = useRef(core.authoredFingerprint(sceneRef.current.elements));
   const viewFingerprintRef = useRef(JSON.stringify(core.viewFromAppState(sceneRef.current.appState, options.view)));
   const pointerRef = useRef(null);
+  const projectedRegionFingerprintRef = useRef("");
 
   const documents = options.getDocuments();
   const targetArea = picker?.area ?? options.area;
@@ -281,8 +282,15 @@ function TangentMap({ host, bridge, options }) {
         if (selected !== bridge.selected) { bridge.selected = selected; setSelectionTick((value) => value + 1); }
         if (fingerprint === fingerprintRef.current) return;
         fingerprintRef.current = fingerprint;
-        const fenced = core.fenceRegionGeometry(core.stripSpatialProjections(core.sceneForSave(elements, appState)), canonicalRef.current);
+        const authoredElements = core.stripSpatialProjections(core.sceneForSave(elements, appState));
+        const fenced = core.fenceRegionGeometry(authoredElements, canonicalRef.current);
         const authored = fenced.scene;
+        const regionFingerprint = JSON.stringify(authoredElements.elements.filter(core.isAreaRegion).map((element) => [element.id, Math.round(element.x * 100) / 100, Math.round(element.y * 100) / 100, Math.round(element.width * 100) / 100, Math.round(element.height * 100) / 100, Math.round(element.angle * 100) / 100]));
+        if (regionFingerprint !== projectedRegionFingerprintRef.current) {
+          projectedRegionFingerprintRef.current = regionFingerprint;
+          const projected = core.projectSpatialChildren(authored, options.area, options.childScenes);
+          api?.updateScene({ elements: projected.scene.elements, captureUpdate: "NEVER" });
+        }
         if (fenced.refused) setNotice(`${fenced.refused.region.split("/").at(-1)} stays in its parent Area · use Move Area for an ownership change`);
         sceneRef.current = authored;
         setSceneTick((value) => value + 1);

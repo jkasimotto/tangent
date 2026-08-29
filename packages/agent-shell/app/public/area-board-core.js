@@ -6,6 +6,8 @@ const BOUNDARY_MARGIN = 80;
 const DEFAULT_SCOPE_WIDTH = 1600;
 const DEFAULT_SCOPE_HEIGHT = 1000;
 const ANCESTRY_BAND = 140;
+const LABEL_BAND = 40;
+const REGION_MIN_CONTENT = 24;
 // Colours are stored the way Excalidraw stores them: for its light theme. The
 // editor's dark theme inverts them on the canvas, so the scene never stores
 // dark-theme colours; a scene that did would render inverted, with white ink
@@ -174,6 +176,10 @@ function blockLabel(fact) {
   const badge = `${String(fact.kind || "document").toUpperCase()}${fact.live ? "  ●" : ""}`;
   return [badge, wrapLabelLine(fact.title || "Untitled"), wrapLabelLine(fact.status || "", " · ")].filter(Boolean).join("\n");
 }
+/** Formats the compact one-line label bound to an Area region. */
+function regionLabel(fact) {
+  return `${fact.title || "Untitled"}${fact.live ? " ★" : ""}${fact.status ? ` · ${fact.status}` : ""}`;
+}
 
 /** Creates a connectable shape and its fact-cache text. */
 function createBlockElements({ id, kind, ref, title = ref, status = "", x = 0, y = 0, width = BLOCK_WIDTH, height = BLOCK_HEIGHT, style = {} }) {
@@ -190,7 +196,7 @@ function createRegionElements({ id, ref, title = ref, status = "", x = 0, y = 0,
   const regionId = String(id);
   const textId = `${regionId}-tangent-label`;
   const block = createShapeElement({ id: regionId, type: "rectangle", x, y, width, height, style: { backgroundColor: "transparent", strokeColor: "#4c6ef5", ...style }, customData: { tangent: { kind: "area", ref: String(ref), role: "region" } }, boundElements: [{ id: textId, type: "text" }] });
-  const text = createTextElement({ id: textId, text: blockLabel({ kind: "area", title, status }), x: x + 14, y: y + 12, width: Math.max(80, width - 28), height: 64, containerId: regionId, style: { fontSize: 20, textAlign: "left", verticalAlign: "top", strokeColor: INK } });
+  const text = createTextElement({ id: textId, text: regionLabel({ title, status }), x: x + 14, y: y + 8, width: Math.max(80, width - 28), height: LABEL_BAND - 8, containerId: regionId, style: { fontSize: 20, textAlign: "left", verticalAlign: "top", strokeColor: INK } });
   return [block, text];
 }
 
@@ -223,12 +229,10 @@ function ancestryFrames(area, context = {}, canonicalScene = createEmptyScene())
     let rect; let toArea;
     if (canAuthor) {
       const boundary = ancestor.boundary; const region = ancestor.regionForChild; const childBoundary = child.boundary;
-      const header = Math.min(82, region.height * 0.24);
-      const scale = Math.min(region.width / childBoundary.width, Math.max(1, region.height - header) / childBoundary.height);
-      const offsetX = region.x + (region.width - childBoundary.width * scale) / 2 - childBoundary.x * scale;
-      const offsetY = region.y + header + (region.height - header - childBoundary.height * scale) / 2 - childBoundary.y * scale;
-      rect = { x: (boundary.x - offsetX) / scale, y: (boundary.y - offsetY) / scale, width: boundary.width / scale, height: boundary.height / scale };
-      toArea = { scale, offsetX, offsetY };
+      const offsetX = region.x - childBoundary.x;
+      const offsetY = region.y + LABEL_BAND - childBoundary.y;
+      rect = { x: boundary.x - offsetX, y: boundary.y - offsetY, width: boundary.width, height: boundary.height };
+      toArea = { scale: 1, offsetX, offsetY };
     } else {
       defaultChain = true;
       rect = { x: scopeRect.x - ANCESTRY_BAND * distance, y: scopeRect.y - ANCESTRY_BAND * distance, width: scopeRect.width + ANCESTRY_BAND * distance * 2, height: scopeRect.height + ANCESTRY_BAND * distance * 2 };
@@ -308,10 +312,13 @@ function refreshTangentFacts(scene, documents = []) {
     if (!block.isDeleted && referenceCounts.get(tangentKey) > 1) fact = { ...fact, status: [fact.status, "duplicate"].filter(Boolean).join(" · ") };
     const label = block.boundElements?.find((entry) => entry.type === "text");
     const text = label ? byId.get(label.id) : null;
-    const words = blockLabel(fact);
+    const words = isAreaRegion(block) ? regionLabel(fact) : blockLabel(fact);
     if (text?.type === "text" && (text.text !== words || text.originalText !== words)) {
       text.text = words; text.originalText = words; text.version = Number(text.version || 0) + 1;
       text.versionNonce = seedFor(`${text.id}:${text.version}:${words}`); changed = true;
+    }
+    if (text?.type === "text" && isAreaRegion(block)) {
+      Object.assign(text, { fontSize: 20, fontFamily: 5, textAlign: "left", verticalAlign: "top", lineHeight: 1.25, x: block.x + 14, y: block.y + 8, width: Math.max(80, block.width - 28), height: LABEL_BAND - 8 });
     }
     const tangent = { ...block.customData.tangent };
     const wasGhost = tangent.ghost === true;
@@ -416,6 +423,7 @@ function fenceRegionGeometry(candidate, previous) {
   const next = structuredClone(candidate);
   const previousById = new Map((previous?.elements ?? []).map((element) => [element.id, element]));
   const boundary = next.elements.find(isAreaBoundary);
+  const oldBoundary = previousById.get(boundary?.id);
   let refused = null;
   /** Reports whether two region rectangles visually overlap. */
   const overlaps = (left, right) => left.x < right.x + right.width && right.x < left.x + left.width && left.y < right.y + right.height && right.y < left.y + left.height;
@@ -423,13 +431,19 @@ function fenceRegionGeometry(candidate, previous) {
     const old = previousById.get(region.id);
     if (!old) continue;
     const outside = boundary && (region.x < boundary.x || region.y < boundary.y || region.x + region.width > boundary.x + boundary.width || region.y + region.height > boundary.y + boundary.height);
+    const rotated = Math.abs(Number(region.angle || 0)) > 0.0001;
+    const tooSmall = region.height < LABEL_BAND + REGION_MIN_CONTENT;
     const collision = next.elements.some((other) => other.id !== region.id && !other.isDeleted && isAreaRegion(other) && overlaps(region, other));
-    if (!outside && !collision) continue;
+    if (!outside && !collision && !rotated && !tooSmall) continue;
     Object.assign(region, { x: old.x, y: old.y, width: old.width, height: old.height, angle: old.angle, version: Number(region.version || 0) + 1 });
     const label = next.elements.find((element) => element.containerId === region.id);
     const oldLabel = previousById.get(label?.id);
     if (label && oldLabel) Object.assign(label, { x: oldLabel.x, y: oldLabel.y, width: oldLabel.width, height: oldLabel.height, version: Number(label.version || 0) + 1 });
-    refused = { region: areaForBlock(region), reason: outside ? "outside-parent" : "overlap" };
+    refused = { region: areaForBlock(region), reason: rotated ? "rotate" : tooSmall ? "min-size" : outside ? "outside-parent" : "overlap" };
+  }
+  if (boundary && oldBoundary && (boundary.x !== oldBoundary.x || boundary.y !== oldBoundary.y || boundary.angle !== oldBoundary.angle) && !boundary.isDeleted) {
+    Object.assign(boundary, { x: oldBoundary.x, y: oldBoundary.y, angle: oldBoundary.angle, version: Number(boundary.version || 0) + 1 });
+    refused ||= { region: areaForBlock(boundary), reason: Math.abs(Number(boundary.angle || 0)) > 0.0001 ? "rotate" : "boundary-move" };
   }
   return { scene: next, refused };
 }
@@ -445,17 +459,19 @@ function projectSpatialChildren(scene, area, childScenes = new Map()) {
     if (!child?.elements) continue;
     const boundary = child.elements.find((element) => !element.isDeleted && isAreaBoundary(element));
     if (!boundary) continue;
-    const header = Math.min(82, region.height * 0.24);
-    const scale = Math.min(region.width / boundary.width, Math.max(1, region.height - header) / boundary.height);
-    const offsetX = region.x + (region.width - boundary.width * scale) / 2 - boundary.x * scale;
-    const offsetY = region.y + header + (region.height - header - boundary.height * scale) / 2 - boundary.y * scale;
+    const windowId = `projection:${childArea}:window`;
+    const offsetX = region.x - boundary.x;
+    const offsetY = region.y + LABEL_BAND - boundary.y;
+    const window = createShapeElement({ id: windowId, type: "frame", x: region.x, y: region.y + LABEL_BAND, width: region.width, height: Math.max(0, region.height - LABEL_BAND), name: "", style: { locked: true }, customData: { tangentProjection: { area: childArea, role: "window" } } });
+    next.elements.push(window); projectedIds.add(windowId);
+    if (window.height <= REGION_MIN_CONTENT) continue;
     for (const element of child.elements) {
       if (element.isDeleted || isAreaBoundary(element)) continue;
       const clone = structuredClone(element);
       const originalId = clone.id;
       clone.id = `projection:${childArea}:${originalId}`;
-      clone.x = offsetX + clone.x * scale; clone.y = offsetY + clone.y * scale;
-      clone.width *= scale; clone.height *= scale;
+      clone.x += offsetX; clone.y += offsetY;
+      clone.frameId = windowId;
       clone.opacity = Math.min(Number(clone.opacity ?? 100), 70);
       clone.locked = true;
       clone.customData = { ...(clone.customData ?? {}), tangentProjection: { area: childArea, sourceId: originalId } };
@@ -467,6 +483,11 @@ function projectSpatialChildren(scene, area, childScenes = new Map()) {
       projectedIds.add(clone.id);
       next.elements.push(clone);
     }
+    const outline = structuredClone(boundary);
+    outline.id = `projection:${childArea}:outline`; outline.x += offsetX; outline.y += offsetY; outline.frameId = windowId;
+    outline.locked = true; outline.opacity = 70; outline.strokeStyle = "dashed"; outline.backgroundColor = "transparent";
+    outline.customData = { tangentProjection: { area: childArea, role: "outline" } };
+    next.elements.push(outline); projectedIds.add(outline.id);
   }
   return { scene: next, projectedIds };
 }

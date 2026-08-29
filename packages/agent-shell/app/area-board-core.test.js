@@ -3,9 +3,34 @@ import test from "node:test";
 import core from "./public/area-board-core.js";
 
 const documents = [
-  { file: "otto/goal-map.md", kind: "goal", title: "Make the map", status: "active" },
+  { file: "otto/goal-map.md", area: "otto", kind: "goal", title: "Make the map", status: "active" },
   { file: "otto/otto.md", kind: "document", title: "Otto" },
 ];
+
+test("Focus hides only blocks and restores their canonical geometry before save", () => {
+  const scene = core.createEmptyScene();
+  scene.elements.push(...core.createBlockElements({ id: "near", kind: "area", ref: "neara/pgande/pgande.md", title: "PG&E", x: 10 }));
+  scene.elements.push(...core.createBlockElements({ id: "other", kind: "area", ref: "otto/tangent/tangent.md", title: "Tangent", x: 400 }));
+  scene.elements.push(core.createTextElement({ id: "ink", text: "Keep this ink", x: 800 }));
+  const records = [
+    { file: "neara/pgande/pgande.md", area: "neara/pgande", kind: "area", title: "PG&E" },
+    { file: "otto/tangent/tangent.md", area: "otto/tangent", kind: "area", title: "Tangent" },
+  ];
+  const projected = core.focusProjection(scene, records, { areas: ["neara"], only: true }, "neara/pgande/megabranch/viz-input");
+  assert.equal(projected.scene.elements.find((element) => element.id === "near").isDeleted, false);
+  assert.equal(projected.scene.elements.find((element) => element.id === "other").isDeleted, true);
+  assert.equal(projected.scene.elements.find((element) => element.id === "ink").isDeleted, false, "Focus never hides Julian-owned ink");
+  const restored = core.restoreFocusedElements(projected.scene, scene, projected.hiddenIds);
+  assert.deepEqual(restored.elements, scene.elements, "a Focus projection cannot enter the canonical scene");
+});
+
+test("location chooses an exact nested Area before its placed ancestor", () => {
+  const scene = core.createEmptyScene();
+  scene.elements.push(...core.createBlockElements({ id: "parent", kind: "area", ref: "neara/pgande/pgande.md" }));
+  scene.elements.push(...core.createBlockElements({ id: "deep", kind: "area", ref: "neara/pgande/megabranch/viz-input/viz-input.md" }));
+  assert.equal(core.locateAreaBlock(scene, "neara/pgande/megabranch/viz-input").element.id, "deep");
+  assert.equal(core.locateAreaBlock(scene, "neara/pgande/megabranch/other").element.id, "parent");
+});
 
 test("creates connectable fact-backed blocks with one authoritative reference", () => {
   const [block, label] = core.createBlockElements({ id: "goal", kind: "goal", ref: "otto/goal-map.md", title: "Cached" });

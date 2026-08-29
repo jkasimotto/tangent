@@ -93,6 +93,58 @@ function splitReference(ref) {
   return index < 0 ? { file: ref } : { file: ref.slice(0, index), subpath: ref.slice(index) };
 }
 
+/** Returns the authoritative Area path represented by one Tangent block. */
+function areaForBlock(element, documents = []) {
+  const tangent = tangentOf(element);
+  if (!tangent || tangent.kind === "link") return "";
+  const file = splitReference(tangent.ref).file ?? "";
+  if (tangent.kind === "area") return file.replace(/\/[^/]+\.md$/, "");
+  return documents.find((item) => item.file === file)?.area ?? file.replace(/\/[^/]+$/, "");
+}
+
+/** Finds the located Area block, or its deepest placed ancestor. */
+function locateAreaBlock(scene, area, documents = []) {
+  return (scene?.elements ?? []).filter((element) => !element.isDeleted && tangentOf(element))
+    .map((element) => ({ element, area: areaForBlock(element, documents) }))
+    .filter((entry) => entry.area && (entry.area === area || String(area).startsWith(`${entry.area}/`)))
+    .sort((left, right) => right.area.length - left.area.length)[0] ?? null;
+}
+
+/** True when a block stays visible under the shared Work Focus switches. */
+function blockMatchesFocus(element, documents, focus = {}, locatedArea = "") {
+  const area = areaForBlock(element, documents);
+  if (!area) return true;
+  const onLocatedPath = area === locatedArea || String(locatedArea).startsWith(`${area}/`);
+  const starred = !focus.only || !(focus.areas ?? []).length || focus.areas.some((root) => area === root || area.startsWith(`${root}/`));
+  const fact = factForBlock(element, documents);
+  const active = !focus.activeOnly || Boolean(fact?.live);
+  return onLocatedPath || starred && active;
+}
+
+/** Projects Focus as disposable Excalidraw deletions while leaving ink unchanged. */
+function focusProjection(scene, documents, focus = {}, locatedArea = "") {
+  const next = structuredClone(scene);
+  const hiddenIds = new Set();
+  for (const block of next.elements ?? []) {
+    if (!tangentOf(block) || block.isDeleted || blockMatchesFocus(block, documents, focus, locatedArea)) continue;
+    hiddenIds.add(block.id);
+    for (const binding of block.boundElements ?? []) if (binding.type === "text") hiddenIds.add(binding.id);
+  }
+  for (const element of next.elements ?? []) if (hiddenIds.has(element.id)) element.isDeleted = true;
+  return { scene: next, hiddenIds };
+}
+
+/** Removes disposable Focus deletions from an authored editor update. */
+function restoreFocusedElements(scene, canonical, hiddenIds = new Set()) {
+  if (!hiddenIds.size) return scene;
+  const next = structuredClone(scene);
+  const currentById = new Map((next.elements ?? []).map((element) => [element.id, element]));
+  for (const element of canonical?.elements ?? []) if (hiddenIds.has(element.id)) currentById.set(element.id, structuredClone(element));
+  next.elements = (canonical?.elements ?? []).map((element) => currentById.get(element.id)).filter(Boolean)
+    .concat((next.elements ?? []).filter((element) => !(canonical?.elements ?? []).some((old) => old.id === element.id)));
+  return next;
+}
+
 /** Packs pieces into lines of at most `columns` characters so a block label fits its block instead of being clipped. */
 function wrapLabelLine(line, separator = " ", columns = LABEL_COLUMNS) {
   const lines = [];
@@ -376,6 +428,6 @@ function legacyCanvasToExcalidraw(canvas) {
   return scene;
 }
 
-const api = { addBlock, appStateWithView, authoredFingerprint, blockLabel, createBlockElements, createEmptyScene, createShapeElement, createTextElement, entityChoices, factForBlock, insertionPoint, kindForReference, legacyCanvasToExcalidraw, normalizeSceneColors, referenceFromText, refreshTangentFacts, sceneForSave, sceneOutline, setBlockHidden, splitReference, tangentOf, viewFromAppState };
-export { addBlock, appStateWithView, authoredFingerprint, blockLabel, createBlockElements, createEmptyScene, createShapeElement, createTextElement, entityChoices, factForBlock, insertionPoint, kindForReference, legacyCanvasToExcalidraw, normalizeSceneColors, referenceFromText, refreshTangentFacts, sceneForSave, sceneOutline, setBlockHidden, splitReference, tangentOf, viewFromAppState };
+const api = { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, createBlockElements, createEmptyScene, createShapeElement, createTextElement, entityChoices, factForBlock, focusProjection, insertionPoint, kindForReference, legacyCanvasToExcalidraw, locateAreaBlock, normalizeSceneColors, referenceFromText, refreshTangentFacts, restoreFocusedElements, sceneForSave, sceneOutline, setBlockHidden, splitReference, tangentOf, viewFromAppState };
+export { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, createBlockElements, createEmptyScene, createShapeElement, createTextElement, entityChoices, factForBlock, focusProjection, insertionPoint, kindForReference, legacyCanvasToExcalidraw, locateAreaBlock, normalizeSceneColors, referenceFromText, refreshTangentFacts, restoreFocusedElements, sceneForSave, sceneOutline, setBlockHidden, splitReference, tangentOf, viewFromAppState };
 export default api;

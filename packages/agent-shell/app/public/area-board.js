@@ -32,7 +32,7 @@ function initialScene(area, documents) {
 }
 
 /** Mounts the Excalidraw editor island and the existing durable save contract. */
-function mount(host, { area, payload, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, brainLive = false, ignoreDraft = false }) {
+function mount(host, { area, payload, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, locatedArea = area, focus = null, onToggleAreaStar = null, onToggleStarredOnly = null, onToggleActiveOnly = null, brainLive = false, ignoreDraft = false }) {
   host.replaceChildren();
   const drafts = draftStore.create(localStorage);
   const pendingDraft = !ignoreDraft ? drafts.load(area) : null;
@@ -52,9 +52,9 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
     choice.innerHTML = `<strong>A draft from ${time} was not saved.</strong><button type="button" data-draft-restore>Restore</button><button type="button" data-draft-discard>Discard</button>`;
     choice.querySelector("[data-draft-restore]").addEventListener("click", () => {
       const scene = pendingDraft.scene ?? pendingDraft.canvas;
-      controller = mount(host, { area, payload: { ...payload, exists: true, hash: pendingDraft.baseHash, scene, canvas: scene, restoreDraft: true }, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, brainLive, ignoreDraft: true });
+      controller = mount(host, { area, payload: { ...payload, exists: true, hash: pendingDraft.baseHash, scene, canvas: scene, restoreDraft: true }, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true });
     });
-    choice.querySelector("[data-draft-discard]").addEventListener("click", () => { drafts.clear(area); controller = mount(host, { area, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, brainLive, ignoreDraft: true }); });
+    choice.querySelector("[data-draft-discard]").addEventListener("click", () => { drafts.clear(area); controller = mount(host, { area, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true }); });
     host.append(choice);
     return {
       /** Returns the restored or discarded draft controller's scene. */
@@ -161,7 +161,7 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
     editor = module.mountAreaBoardEditor(host, {
       area, scene: current, view: payload.view, proposals: payload.proposals ?? [], getDocuments,
       initialSaveState: { state: "saved", label: payload.migrated ? "Converted from canvas" : undefined },
-      brainLive, onBack,
+      brainLive, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly,
       /** Queues a Julian-authored scene edit for durable save. */
       onSceneChange(next) { current = next; saver.edit(current); },
       /** Accepts a fact-only repaint without dirtying the shared scene. */
@@ -178,7 +178,7 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
     return editor;
   }).catch((error) => {
     host.innerHTML = `<section class="area-board-empty"><h2>The drawing tools did not load.</h2><p>${String(error?.message ?? error)}</p><button type="button">Retry</button></section>`;
-    host.querySelector("button")?.addEventListener("click", () => mount(host, { area, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, brainLive, ignoreDraft: true }));
+    host.querySelector("button")?.addEventListener("click", () => mount(host, { area, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true }));
     throw error;
   });
 

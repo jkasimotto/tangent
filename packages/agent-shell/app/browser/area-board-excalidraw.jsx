@@ -53,7 +53,10 @@ function TangentMap({ host, bridge, options }) {
   const [selectionTick, setSelectionTick] = useState(0);
   const [sceneTick, setSceneTick] = useState(0);
   const [proposals, setProposals] = useState(options.proposals ?? []);
-  const sceneRef = useRef(core.refreshTangentFacts(options.scene, options.getDocuments()).scene);
+  const canonicalRef = useRef(core.refreshTangentFacts(options.scene, options.getDocuments()).scene);
+  const initialProjection = core.focusProjection(canonicalRef.current, options.getDocuments(), options.focus, options.locatedArea);
+  const hiddenFocusIdsRef = useRef(initialProjection.hiddenIds);
+  const sceneRef = useRef(initialProjection.scene);
   const fingerprintRef = useRef(core.authoredFingerprint(sceneRef.current.elements));
   const viewFingerprintRef = useRef(JSON.stringify(core.viewFromAppState(sceneRef.current.appState, options.view)));
   const pointerRef = useRef(null);
@@ -64,15 +67,23 @@ function TangentMap({ host, bridge, options }) {
   const currentText = selectedText(api, sceneRef.current);
   const hiddenBlocks = sceneRef.current.elements.filter((element) => element.isDeleted && core.tangentOf(element));
   const outline = core.sceneOutline(sceneRef.current, documents);
+  const located = core.locateAreaBlock(canonicalRef.current, options.locatedArea, documents);
+  const locatedDocument = documents.find((item) => item.kind === "area" && item.area === options.locatedArea);
+  const locatedChoice = locatedDocument ? { kind: "area", ref: locatedDocument.file, title: locatedDocument.title || options.locatedArea, status: locatedDocument.status || "" } : null;
+  const outsideStars = Boolean(options.focus?.only && (options.focus?.areas ?? []).length && !(options.focus.areas ?? []).some((root) => options.locatedArea === root || options.locatedArea?.startsWith(`${root}/`)));
 
   /** Publishes an authored edit or a non-dirty fact repaint. */
   function publish(next, { authored = true } = {}) {
-    sceneRef.current = next;
-    fingerprintRef.current = core.authoredFingerprint(next.elements);
-    api?.updateScene({ elements: next.elements, appState: next.appState });
+    const canonical = authored ? core.restoreFocusedElements(next, canonicalRef.current, hiddenFocusIdsRef.current) : next;
+    if (authored) canonicalRef.current = canonical;
+    const projection = core.focusProjection(canonical, options.getDocuments(), options.focus, options.locatedArea);
+    hiddenFocusIdsRef.current = projection.hiddenIds;
+    sceneRef.current = projection.scene;
+    fingerprintRef.current = core.authoredFingerprint(projection.scene.elements);
+    api?.updateScene({ elements: projection.scene.elements, appState: projection.scene.appState });
     setSceneTick((value) => value + 1);
-    if (authored) options.onSceneChange(core.sceneForSave(next.elements, api?.getAppState?.() ?? next.appState));
-    else options.onFactScene?.(next);
+    if (authored) options.onSceneChange(core.sceneForSave(canonical.elements, api?.getAppState?.() ?? canonical.appState));
+    else options.onFactScene?.(canonical);
   }
 
   /** Places one selected entity block near the current pointer or viewport. */
@@ -143,6 +154,15 @@ function TangentMap({ host, bridge, options }) {
   }, [api]);
 
   useEffect(() => {
+    if (!api || !located?.element) return;
+    api.updateScene({ appState: { selectedElementIds: { [located.element.id]: true } } });
+    api.scrollToContent([located.element], { fitToContent: true, animate: true });
+    host.classList.add("tangent-map-locating");
+    const timer = window.setTimeout(() => host.classList.remove("tangent-map-locating"), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [api]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       const refreshed = core.refreshTangentFacts(sceneRef.current, options.getDocuments());
       if (refreshed.changed) publish(refreshed.scene, { authored: false });
@@ -157,13 +177,17 @@ function TangentMap({ host, bridge, options }) {
       const key = event.key.toLowerCase();
       const block = selectedBlock(api, sceneRef.current);
       if ((event.metaKey || event.ctrlKey) && key === "s") { stop(event); options.onSaveNow?.(); return; }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && key === "f") { stop(event); options.onToggleStarredOnly?.(); return; }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && key === "a") { stop(event); options.onToggleActiveOnly?.(); return; }
       if (event.key === "?" || event.key === "/" && event.shiftKey) { stop(event); setHelp(true); return; }
       if (event.key === "Escape" && !picker && !help && !outlineOpen && api?.getAppState?.().activeTool?.type === "selection" && Object.keys(api.getAppState().selectedElementIds ?? {}).length === 0) { stop(event); options.onBack?.(); return; }
       if (block) {
         if (event.key === "Enter" || key === "o") { stop(event); openBlock(block, key === "o" ? "read" : "open"); return; }
         if (["a", "c", "b"].includes(key)) { stop(event); openBlock(block, key === "a" ? "ask" : key === "c" ? "correct" : "enter"); return; }
         if (key === "x" || event.key === "Delete" || event.key === "Backspace") { stop(event); hideBlock(block); return; }
+        if (key === "f" && core.areaForBlock(block, documents)) { stop(event); options.onToggleAreaStar?.(core.areaForBlock(block, documents)); return; }
       }
+      if (event.key === "Enter" && !located && locatedChoice) { stop(event); place(locatedChoice); return; }
       if (key === "b") { stop(event); setPicker(true); return; }
     };
     /** Opens a Tangent block instead of editing its cached label. */
@@ -210,9 +234,12 @@ function TangentMap({ host, bridge, options }) {
         if (selected !== bridge.selected) { bridge.selected = selected; setSelectionTick((value) => value + 1); }
         if (fingerprint === fingerprintRef.current) return;
         fingerprintRef.current = fingerprint;
-        sceneRef.current = core.sceneForSave(elements, appState);
+        const authored = core.sceneForSave(elements, appState);
+        sceneRef.current = authored;
         setSceneTick((value) => value + 1);
-        options.onSceneChange(sceneRef.current);
+        const canonical = core.restoreFocusedElements(authored, canonicalRef.current, hiddenFocusIdsRef.current);
+        canonicalRef.current = canonical;
+        options.onSceneChange(canonical);
       }}
     />
 
@@ -225,8 +252,11 @@ function TangentMap({ host, bridge, options }) {
       <span className="tangent-map-brain">{options.brainLive ? "brain live" : "no brain"}</span>
     </div>
 
-    {(proposals.length > 0 || hiddenBlocks.length > 0) && <section className="tangent-map-inbox" aria-label="Map inbox">
+    {(outsideStars || !located && locatedChoice) && <div className="tangent-map-location" role="status">{outsideStars ? <>Outside your stars · <button type="button" onClick={options.onToggleStarredOnly}>F shows all</button></> : <>{options.locatedArea.split("/").at(-1)} is not on this map yet · <button type="button" onClick={() => place(locatedChoice)}>Place it ↵</button></>}</div>}
+
+    {(proposals.length > 0 || hiddenBlocks.length > 0 || !located && locatedChoice) && <section className="tangent-map-inbox" aria-label="Map inbox">
       <strong>Inbox</strong>
+      {!located && locatedChoice && <button type="button" onClick={() => place(locatedChoice)}>{locatedChoice.title} · not placed<small>Place it ↵</small></button>}
       {proposals.map((proposal) => <button type="button" key={proposal.id} onClick={() => { const source = proposal.source || {}; const ref = source.file ? `${source.file}${source.subpath || ""}` : source.url; const choice = { kind: proposal.kind === "link" ? "link" : core.kindForReference(ref), ref, title: proposal.note || ref }; place(choice); options.onProposalPlaced?.(proposal); setProposals((items) => items.filter((item) => item.id !== proposal.id)); }}>{proposal.note || proposal.source?.file || proposal.source?.url}<small>Place</small></button>)}
       {hiddenBlocks.map((block) => <button type="button" key={block.id} onClick={() => restoreBlock(block.id)}>{core.factForBlock(block, documents)?.title || core.tangentOf(block).ref}<small>Restore</small></button>)}
     </section>}
@@ -238,7 +268,7 @@ function TangentMap({ host, bridge, options }) {
       <p><kbd>Enter</kbd> place · <kbd>⇧Enter</kbd> place another · <kbd>Esc</kbd> close</p>
     </section></div>}
 
-    {help && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p>Space-drag pans. ⌘-wheel zooms. ⌘Z undoes. ⌘S saves now. Esc with nothing selected returns to Work.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>A</kbd> asks the brain · <kbd>C</kbd> corrects · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelp(false)}>Close</button></section></div>}
+    {help && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p>Space-drag pans. ⌘-wheel zooms. ⌘Z undoes. ⌘S saves now. Esc with nothing selected returns to Work.</p><p>Scope: <kbd>f</kbd> stars the selected Area. <kbd>⌘⇧F</kbd> shows starred Areas. <kbd>⌘⇧A</kbd> shows active work.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>A</kbd> asks the brain · <kbd>C</kbd> corrects · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelp(false)}>Close</button></section></div>}
 
     <section className={outlineOpen ? "tangent-map-outline visible" : "tangent-map-outline visually-hidden"} aria-label="Map outline">
       {outlineOpen && <header><strong>Outline</strong><button type="button" className="tangent-map-outline-close" onClick={() => setOutlineOpen(false)} aria-label="Close outline">✕</button></header>}

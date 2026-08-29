@@ -56,7 +56,7 @@ test("the work table states its rows and columns in the accessibility tree", asy
   assert.equal(row.children.length, columns.length, "a Goal row fills every column");
 });
 
-test("Area Map controls and m open the exact parent and nested maps through the browser event path", async () => {
+test("Area Map controls and m open the broad root map, then drill and return without losing the Work row", async () => {
   const fixture = workTableFixture();
   const rootGoal = { ...fixture.goals[0], area: "otto", file: "otto/goal-root.md", slug: "root", title: "Root work" };
   fixture.goals = [rootGoal, ...fixture.goals];
@@ -92,8 +92,17 @@ test("Area Map controls and m open the exact parent and nested maps through the 
   childRow.querySelector("[data-work-cursor-control]").focus();
   press(window, "m");
   await settle(window);
-  assert.match(document.querySelector(".map-screen h1").textContent, /^otto\/tangent · Map$/);
-  assert.ok(gets.some((url) => new URL(url).searchParams.get("area") === "otto/tangent"), "m requests the child Area's own canvas");
+  assert.match(document.querySelector(".map-screen h1").textContent, /^otto \/ tangent · Map$/);
+  assert.equal(new URL(gets.at(-1)).searchParams.get("area"), "otto", "m requests the top-level root canvas");
+  assert.match(document.querySelector(".map-focus-controls").textContent, /Starred.*Active/, "the map prints the shared Focus switches");
+
+  document.querySelector('[data-map-breadcrumb="otto/tangent"]').click();
+  await settle(window);
+  assert.equal(new URL(gets.at(-1)).searchParams.get("area"), "otto/tangent", "a breadcrumb segment drills into its Area-owned file");
+
+  press(window, "Escape");
+  await settle(window);
+  assert.equal(new URL(gets.at(-1)).searchParams.get("area"), "otto", "Escape widens one map layer before leaving the map");
 
   press(window, "Escape");
   await settle(window);

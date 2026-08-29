@@ -867,7 +867,7 @@ function renderScreen() {
   else if (state.view === "harnesses") screen.innerHTML = renderHarnessEditor();
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument() + launchPopover();
-  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header"><button type="button" data-map-back>Work <kbd>Esc</kbd></button><h1>${escapeHtml(state.mapArea || "Area")} · Map</h1></header><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the map…</p></div></section>`;
+  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header map-screen-header"><button type="button" data-map-back>${mapTrail.length ? "Back" : "Work"} <kbd>Esc</kbd></button><h1><span class="map-breadcrumb">${mapBreadcrumb()}</span><span> · Map</span></h1><div class="map-focus-controls"><button type="button" data-starred-only aria-pressed="${state.areaFocusOnly}">${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd></button><button type="button" data-active-only aria-pressed="${state.activeOnly}">${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd></button></div></header><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the map…</p></div></section>`;
   else {
     state.view = "work";
     screen.innerHTML = renderWork();
@@ -1482,6 +1482,19 @@ function selectModelConcept(concept) {
 let shellBindings = null;
 let mapReturnCursor = "";
 let activeAreaBoard = null;
+let mapTrail = [];
+let mapLocatedArea = "";
+/** Returns the top-level Area that owns the broad map for one nested Area. */
+function rootMapArea(area) { return String(area ?? "").split("/").filter(Boolean)[0] ?? ""; }
+/** Prints the full launch path while keeping each Area segment actionable. */
+function mapBreadcrumb() {
+  const parts = String(mapLocatedArea || state.mapArea || "").split("/").filter(Boolean);
+  return parts.map((part, index) => {
+    const area = parts.slice(0, index + 1).join("/");
+    const current = area === state.mapArea;
+    return `<button type="button" data-map-breadcrumb="${escapeHtml(area)}"${current ? " aria-current=\"page\"" : ""}>${escapeHtml(part)}</button>`;
+  }).join("<span aria-hidden=\"true\"> / </span>");
+}
 /** Builds the live entity index consumed by Tangent blocks and their picker. */
 function areaMapEntities() {
   const records = new Map((state.vault?.documents ?? []).map((record) => [record.file, record]));
@@ -1514,22 +1527,39 @@ function areaMapEntityVerb(action) {
     if (action.kind === "area" && area) return openOrStartBrain(area);
   }
   if (action.kind === "link") { window.open(action.ref, "_blank", "noopener"); return; }
-  if (action.kind === "area" && area) return openAreaMap(area);
+  if (action.kind === "area" && area) return drillAreaMap(area);
   if (source.file) { disposeAreaMap(); return openDocument(source.file); }
 }
 /** Opens an Area's living map and remembers the Work return row. */
 function openAreaMap(area, trigger) {
-  if (state.view === "map" && state.mapArea !== area) {
-    disposeAreaMap();
-  }
+  disposeAreaMap();
   const row = trigger?.closest?.("[data-work-cursor]");
   if (row?.dataset.workCursor) mapReturnCursor = row.dataset.workCursor;
-  state.mapArea = area;
+  mapLocatedArea = area;
+  mapTrail = [];
+  state.mapArea = rootMapArea(area);
   state.view = "map";
+  paint(true);
+}
+/** Narrows to an Area-owned file and keeps the prior map layer for Escape. */
+function drillAreaMap(area) {
+  if (!area || area === state.mapArea) return;
+  disposeAreaMap();
+  mapTrail.push({ area: state.mapArea, locatedArea: mapLocatedArea });
+  state.mapArea = area;
+  mapLocatedArea = area;
   paint(true);
 }
 /** Returns from a map to the exact Work row and its visible Map control. */
 function closeAreaMap() {
+  if (mapTrail.length) {
+    disposeAreaMap();
+    const previous = mapTrail.pop();
+    state.mapArea = previous.area;
+    mapLocatedArea = previous.locatedArea;
+    paint(true);
+    return;
+  }
   disposeAreaMap();
   state.view = "work";
   paint(true);
@@ -1545,7 +1575,7 @@ function mountDedicatedAreaMap() {
   host.dataset.loaded = "loading";
   api(`/api/areas/canvas?area=${encodeURIComponent(state.mapArea)}`).then((payload) => {
     host.dataset.loaded = "yes";
-    activeAreaBoard = areaBoardView.mount(host, { area: state.mapArea, payload, documents: areaMapEntities(), getDocuments: areaMapEntities, api, onOpenDocument: openDocument, onSelectArea: openAreaMap, onEntityVerb: areaMapEntityVerb, onBack: closeAreaMap, brainLive: Boolean(state.brains.find((brain) => brain.area === state.mapArea && brain.live)) });
+    activeAreaBoard = areaBoardView.mount(host, { area: state.mapArea, payload, documents: areaMapEntities(), getDocuments: areaMapEntities, api, onOpenDocument: openDocument, onSelectArea: drillAreaMap, onEntityVerb: areaMapEntityVerb, onBack: closeAreaMap, locatedArea: mapLocatedArea, focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly }, onToggleAreaStar: toggleAreaStar, onToggleStarredOnly: toggleStarredOnly, onToggleActiveOnly: toggleActiveOnly, brainLive: Boolean(state.brains.find((brain) => brain.area === state.mapArea && brain.live)) });
   }).catch(() => { host.dataset.loaded = "error"; host.innerHTML = `<section class="area-board-empty"><h2>Agent Shell did not answer.</h2><p>The map could not be loaded.</p><button type="button" data-map-retry>Retry</button></section>`; });
 }
 shellBindings = bindShellEvents({
@@ -1555,7 +1585,7 @@ shellBindings = bindShellEvents({
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
     confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, restoreReturnPoint,
     showDecision, showDescribe, toggleAwake, openModal, closeModal, modalConfirm: getModalConfirm, openSessionLayer, closeSessionLayer,
-    openAreaMap, closeAreaMap,
+    openAreaMap, drillAreaMap, closeAreaMap,
   },
   prompts: {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,

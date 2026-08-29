@@ -13,7 +13,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
-    showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap, closeAreaMap,
+    showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap, drillAreaMap, closeAreaMap,
   } = chrome;
   const {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
@@ -1489,6 +1489,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const mapButton = target.closest?.("[data-open-area-map]");
     if (mapButton) return openAreaMap(mapButton.dataset.openAreaMap, mapButton);
     if (target.closest?.("[data-map-back]")) return closeAreaMap();
+    const mapBreadcrumb = target.closest?.("[data-map-breadcrumb]");
+    if (mapBreadcrumb) return drillAreaMap(mapBreadcrumb.dataset.mapBreadcrumb);
     if (target.closest?.("[data-map-retry]")) { state.view = "map"; paint(true); return; }
     if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: false });
     const objectActions = target.closest?.("[data-work-object-actions]");

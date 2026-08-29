@@ -196,7 +196,7 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await row.dispatchEvent("click");
     await row.locator("[data-work-cursor-control]").focus();
     await page.keyboard.press("m");
-    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
+    await page.locator('[data-tangent-area-map="otto"] .excalidraw canvas.interactive').waitFor();
     await page.keyboard.press("b");
     await page.getByRole("dialog", { name: "Place a Tangent block" }).getByRole("textbox").fill("compact table");
     await page.keyboard.press("Enter");
@@ -212,14 +212,14 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await page.mouse.up();
     await page.getByText("Saving…", { exact: true }).waitFor();
     await page.getByText("Saved", { exact: true }).waitFor({ timeout: 10_000 });
-    assert.match(await page.locator(".map-screen h1").textContent(), /^otto\/tangent · Map$/);
+    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/);
 
     await page.reload();
     const reloadedRow = page.locator('[data-work-cursor="area:otto/tangent"]');
     await reloadedRow.dispatchEvent("click");
     await reloadedRow.locator("[data-work-cursor-control]").focus();
     await page.keyboard.press("m");
-    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
+    await page.locator('[data-tangent-area-map="otto"] .excalidraw canvas.interactive').waitFor();
     await page.waitForFunction(() => document.body.textContent.includes("Redesign Work as a compact table"));
     assert.ok(scene.elements.some((element) => element.type === "rectangle" && !element.customData?.tangent), "the drawn shape survived reload");
     assert.ok(scene.elements.some((element) => element.customData?.tangent), "the Tangent block survived reload");
@@ -237,7 +237,7 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     /** Reports whether two boxes overlap. */
     const overlaps = (a, b) => a && b && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
     assert.equal(overlaps(structure.toolbar, structure.controls), false, "Tangent controls do not cover the tool bar");
-    assert.equal(overlaps(structure.save, structure.help), false, "the save status does not cover Excalidraw's help button");
+    assert.equal(Boolean(overlaps(structure.save, structure.help)), false, "the save status does not cover Excalidraw's help button");
     assert.equal(structure.library === null || structure.library.right === structure.library.left, true, "the unused library trigger is hidden");
     assert.match(structure.theme, /theme--dark/);
     assert.equal(structure.canvas, "rgb(18, 18, 18)", "the map ground is dark behind a dark-theme editor");

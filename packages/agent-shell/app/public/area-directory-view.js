@@ -1,5 +1,6 @@
 import areaMapCore from "./area-map-core.js";
 import areaMapView from "./area-map.js";
+import areaBoardView from "./area-board.js";
 import areaWorkCore from "./area-work-core.js";
 import whatHappenedCore from "./what-happened-core.js";
 import { clip, escapeHtml } from "./text-format.js";
@@ -182,6 +183,15 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     const view = areaMapView;
     const area = host.dataset.areaMap;
     if (!view || !area || !state.vault) return;
+    if (!host.dataset.boardChecked) {
+      host.dataset.boardChecked = "loading";
+      api(`/api/areas/canvas?area=${encodeURIComponent(area)}`).then((payload) => {
+        host.dataset.boardChecked = "board";
+        areaBoardView.mount(host, { area, payload, documents: state.vault.documents ?? [], api, onOpenDocument: openDocument, onSelectArea: (path) => { state.areaSelection = path; localStorage.setItem("agent-shell.last-area", path); revealArea(path); paint(true); }, narrow: host.clientWidth > 0 && host.clientWidth < 640 });
+      }).catch(() => { host.dataset.boardChecked = "legacy"; mountAreaMap(host); });
+      return;
+    }
+    if (host.dataset.boardChecked === "loading" || host.dataset.boardChecked === "board") return;
     loadMapState(area);
     const stored = state.mapStates.get(area);
     const selectFile = state.mapSelectFile;

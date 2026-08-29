@@ -56,6 +56,8 @@ import { beginRecoveryStep, expireRecoverySteps, finishRecoveryStep, nextRecover
 import { REPAIR_REFUSAL, endRepair, extendRepairLease, liveRepair, newRepair, readAllRepairs, readRepair, repairDispatchDecision, writeRepair } from "./repair-crew.mjs";
 import { observeTranscript } from "./transcript-tail.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
+import { createAreaCanvasRepository } from "./area-canvas-repository.mjs";
+import { createAreaCanvasRoutes } from "./area-canvas-routes.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
 import { createProcessRoutes } from "./process-routes.mjs";
@@ -180,6 +182,8 @@ const sessionOwnership = createSessionOwnership({
 /** Runs one Git command for the vault repository boundary. */
 const runRepositoryGit = (args) => execFileAsync("git", args);
 const vaultRepository = createVaultRepository({ root: TREES_ROOT, runGit: runRepositoryGit });
+const areaCanvasRepository = createAreaCanvasRepository({ root: TREES_ROOT, runGit: runRepositoryGit, commit: vaultRepository.commit });
+const areaCanvasRoutes = createAreaCanvasRoutes({ repository: areaCanvasRepository, areaExists: async (area) => Boolean(cleanAreaPath(area) && existsSync(areaDirectory(TREES_ROOT, area))) });
 const launchMemory = createLaunchMemory(process.env.TANGENT_LAUNCH_MEMORY ?? path.join(os.homedir(), ".tangent", "agent-shell", "launch-memory.json"));
 const launchCatalog = createLaunchCatalog({
   root: TREES_ROOT,
@@ -7726,6 +7730,7 @@ const server = http.createServer(async (req, res) => {
     if (await pipelineRoutes.handle(req, res, url)) return;
     if (await agentRoutes.handle(req, res, url)) return;
     if (await areaRoutes.handle(req, res, url)) return;
+    if (await areaCanvasRoutes.handle(req, res, url)) return;
     if (await programRoutes.handle(req, res, url)) return;
     if (await processRoutes.handle(req, res, url)) return;
     if (await goalPresentationRoutes.handle(req, res, url)) return;

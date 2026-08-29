@@ -733,10 +733,26 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return { enabled: true };
   }
 
+  /** Resolves the fenced route for the exact owner/file pair painted on a row. */
+  function presentedDocumentDismissal(row, file = row?.dataset.presentationFile) {
+    if (!row || !file) return null;
+    if (row.dataset.presentationArea) return { path: "/api/areas/dismiss-presentation", body: { area: row.dataset.presentationArea, file } };
+    if (row.dataset.presentationGoal) return { path: "/api/goals/dismiss-presentation", body: { goal: row.dataset.presentationGoal, file } };
+    return null;
+  }
+
   /** Dismisses one exact presented Document through Julian's fenced route. */
   async function dismissPresentedDocument(row, file = row?.dataset.presentationFile) {
-    if (!row?.dataset.presentationGoal || !file) return false;
-    await post("/api/goals/dismiss-presentation", { goal: row.dataset.presentationGoal, file });
+    const dismissal = presentedDocumentDismissal(row, file);
+    if (!dismissal) return false;
+    const rows = visibleCursorRows();
+    const index = rows.indexOf(row);
+    const survivor = rows[index + 1] ?? rows[index - 1] ?? null;
+    await post(dismissal.path, dismissal.body);
+    if (state.workCursor === row.dataset.workCursor && survivor?.dataset.workCursor) {
+      state.workCursor = survivor.dataset.workCursor;
+      localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+    }
     await refresh();
     return true;
   }
@@ -745,7 +761,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   function executeWorkCommand(id, row = cursorRow()) {
     const area = commandAreaForRow(row);
     const goal = goalByFile(row?.dataset.goalAnchor ?? "");
-    if (id === "fullDocument" && row?.dataset.presentationFile) return openDocument(row.dataset.presentationFile);
+    if (id === "fullDocument" && row?.dataset.presentationFile) return openDocument(row.dataset.presentationFile, { presentation: row });
     if (id === "dismissPresentation" && row?.dataset.presentationFile) {
       return dismissPresentedDocument(row);
     }

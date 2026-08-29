@@ -63,7 +63,9 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
     if (pathname === "/api/harnesses" && harnessRegistry) return jsonResponse({ registry: harnessRegistry });
     if (pathname === "/api/goals/detail" && goalDetail) return jsonResponse(typeof goalDetail === "function" ? goalDetail(requestUrl) : goalDetail);
     if (pathname === "/api/document" && documentRecord) return jsonResponse(typeof documentRecord === "function" ? documentRecord(requestUrl) : documentRecord);
-    return jsonResponse(fixture.vault);
+    // Real Response.json() returns a fresh object for each endpoint. Keep the
+    // fixture faithful when /api/work and /api/vault are read in one refresh.
+    return jsonResponse(structuredClone(fixture.vault));
   };
   window.eval(bundle);
   await settle(window);

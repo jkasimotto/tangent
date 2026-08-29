@@ -121,6 +121,86 @@ test("presented Documents stay on Work after Enter opens one, o is the full-read
   assert.equal(posts.some((post) => post.path === "/api/goals/withdraw-presentation"), false);
 });
 
+test("Area presentation keys preserve owner scope and restore focus after dismissal", async () => {
+  const fixture = workTableFixture();
+  const area = fixture.vault.areas.find((item) => item.path === "otto/tangent");
+  area.presentations = [{ file: "otto/tangent/design-area-keyboard.md", root: "vault", title: "Area keyboard", presentedBy: { session: "otto-tangent--brain" }, presentedAt: "2026-08-28T00:00:00Z", note: "Read this" }];
+  /** Serves the Area Document opened by the keyboard. */
+  const documentRecord = (url) => ({ file: url.searchParams.get("file"), title: "Area keyboard", hash: "h1", markdown: "# Area keyboard", html: "<h1>Area keyboard</h1>", headings: [], comments: [] });
+  const { window, document, posts } = await bootWorkTable(fixture, { documentRecord });
+  const row = document.querySelector("[data-presentation-area='otto/tangent']");
+  row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  row.querySelector("[data-work-row-title]").focus();
+  press(window, "o");
+  await settle(window);
+  assert.ok(document.querySelector("#screen .document-reader"), "o opens an Area presentation in the full reader");
+  assert.deepEqual(posts.find((post) => post.path === "/api/areas/presented-opened")?.body, { area: area.path, file: "otto/tangent/design-area-keyboard.md", hash: "h1" });
+  assert.equal(posts.filter((post) => post.path === "/api/goals/presented-opened").length, 0, "o preserves the selected Area scope");
+  press(window, "Escape");
+  await settle(window);
+  press(window, "x");
+  await settle(window);
+  assert.deepEqual(posts.at(-1), { path: "/api/areas/dismiss-presentation", body: { area: area.path, file: "otto/tangent/design-area-keyboard.md" } });
+  assert.ok(document.activeElement.closest("[data-work-cursor]"), "dismissal restores focus to surviving Work");
+});
+
+test("duplicate presented files keep owner-scoped selection for keyboard and pointer dismissal", async () => {
+  const fixture = workTableFixture();
+  const [firstGoal, secondGoal] = fixture.goals;
+  const area = fixture.vault.areas.find((item) => item.path === "otto/tangent");
+  const file = "otto/shared/design.md";
+  /** Builds one owner-specific presentation of the shared file. */
+  const presentation = (title) => ({ file, root: "vault", title, presentedBy: { session: "presenter" }, presentedAt: "2026-08-28T00:00:00Z", note: "" });
+  firstGoal.presentations = [presentation("First Goal copy")];
+  secondGoal.presentations = [presentation("Second Goal copy")];
+  area.presentations = [presentation("Area copy")];
+  /** Serves the one file shared by all presentation owners. */
+  const documentRecord = () => ({ file, title: "Shared design", hash: "shared-hash", markdown: "# Shared design", html: "<h1>Shared design</h1>", headings: [], comments: [] });
+  /** Applies a successful dismissal to the fixture returned by refresh. */
+  const postHandler = ({ path, body, fixture: current }) => {
+    if (path === "/api/goals/dismiss-presentation") {
+      const owner = current.goals.find((goal) => goal.file === body.goal);
+      owner.presentations = owner.presentations.filter((item) => item.file !== body.file);
+    }
+    if (path === "/api/areas/dismiss-presentation") {
+      const owner = current.vault.areas.find((item) => item.path === body.area);
+      owner.presentations = owner.presentations.filter((item) => item.file !== body.file);
+    }
+    return { ok: true };
+  };
+  const { window, document, posts } = await bootWorkTable(fixture, { documentRecord, postHandler });
+  /** Selects the shared file under one exact Goal owner. */
+  const selector = (owner) => `[data-presentation-goal='${owner}'][data-presentation-file='${file}']`;
+  const cursors = [
+    document.querySelector(selector(firstGoal.file)).dataset.workCursor,
+    document.querySelector(selector(secondGoal.file)).dataset.workCursor,
+    document.querySelector(`[data-presentation-area='${area.path}'][data-presentation-file='${file}']`).dataset.workCursor,
+  ];
+  assert.equal(new Set(cursors).size, 3, "the same file has one selection identity per owner");
+
+  let row = document.querySelector(selector(secondGoal.file));
+  row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  row.querySelector("[data-work-row-title]").focus();
+  press(window, "/");
+  press(window, "x");
+  assert.equal(posts.length, 0, "x in Work text entry does not dismiss the selected row");
+  press(window, "Escape");
+  await settle(window);
+  press(window, "x");
+  await settle(window);
+  assert.deepEqual(posts.at(-1), { path: "/api/goals/dismiss-presentation", body: { goal: secondGoal.file, file } });
+  assert.ok(document.querySelector(selector(firstGoal.file)), "the duplicate under the other Goal remains");
+  assert.ok(document.querySelector(`[data-presentation-area='${area.path}'][data-presentation-file='${file}']`), "the duplicate under the Area remains");
+  assert.equal(document.querySelector(selector(secondGoal.file)), null, "only the selected Goal presentation leaves");
+  assert.ok(document.activeElement.closest("[data-work-cursor]"), "keyboard dismissal focuses surviving Work");
+
+  row = document.querySelector(`[data-presentation-area='${area.path}'][data-presentation-file='${file}']`);
+  row.querySelector("[data-withdraw-presentation]").click();
+  await settle(window);
+  assert.deepEqual(posts.at(-1), { path: "/api/areas/dismiss-presentation", body: { area: area.path, file } });
+  assert.ok(document.querySelector(selector(firstGoal.file)), "the visible Area control leaves the Goal-owned duplicate alone");
+});
+
 test("every status carries a word, and every icon-only control carries a name", async () => {
   const { document } = await bootWorkTable(withDirectAsks(workTableFixture()));
   for (const state of document.querySelectorAll(".work-table .desk-state")) {

@@ -2060,7 +2060,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** One temporary attention row for a Document that an agent presented. */
   function workPresentedDocumentRow(goal, item) {
-    const cursor = `document:${item.file}`;
+    const cursor = `document:${goal.file}:${item.file}`;
     return `<tr class="desk-document work-row presented-document${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(goal.area)}" data-presentation-goal="${escapeHtml(goal.file)}" data-presentation-file="${escapeHtml(item.file)}" data-search-text="${escapeHtml(`${item.title} ${item.file}`)}">
       <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<span class="work-goal-copy"><span class="work-goal-primary"><button type="button" class="work-row-title" data-work-row-title data-open-document="${escapeHtml(item.file)}" data-document-root="${escapeHtml(item.root ?? "vault")}" title="${escapeHtml(item.file)}">↳ Read · ${escapeHtml(item.title)}</button></span></span></span></th>
       <td><small>${escapeHtml(item.note || item.presentedBy?.session || "Presented")}</small></td><td></td>

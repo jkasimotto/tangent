@@ -17,6 +17,8 @@ Agent Shell centers each Area on one logical brain with an active or inactive li
 
 Work shows all open Goals in one projection. An explicit keyboard context owns each key. Terminal sessions keep native tmux input, except the visible leave shortcut. Work and Document actions expose matching keyboard and pointer paths. See ADR-0038.
 
+Each Area can have one `.excalidraw` map. The lazy browser island supplies Excalidraw's drawing surface, while vault notes remain authoritative for Tangent block facts. Only Julian's scene edits schedule map saves. See ADR-0049.
+
 An agent can present a Markdown document on its Goal. Work shows the human title until Julian opens or dismisses the document. The runtime record does not change the document or the Goal queue.
 
 Generic `tangent send` messages persist before pane wake or presentation. The controller restores them after a restart and keeps their exact target order. See ADR-0039.

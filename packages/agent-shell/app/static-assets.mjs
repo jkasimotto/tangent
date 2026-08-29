@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".map": "application/json", ".png": "image/png" };
+const MIME = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".map": "application/json", ".png": "image/png", ".woff2": "font/woff2" };
 const VENDORS = {
   "/vendor/d3/": {
     "d3-dispatch.min.js": "d3-dispatch/dist/d3-dispatch.min.js",
@@ -21,15 +21,21 @@ export async function serveStaticAsset(url, response, root) {
     let file;
     if (url.pathname === "/" || url.pathname === "/index.html") file = path.join(root, "public", "shell.html");
     else {
-      const vendor = Object.entries(VENDORS).find(([prefix]) => url.pathname.startsWith(prefix));
-      if (vendor) {
-        const [prefix, files] = vendor;
-        const relative = files[url.pathname.slice(prefix.length)];
-        if (!relative) return notFound(response);
-        file = path.join(root, "node_modules", relative);
+      const browserAsset = url.pathname === "/agent-shell-map.js" || url.pathname === "/agent-shell-map.css" || url.pathname.startsWith("/agent-shell-map-assets/");
+      if (browserAsset) {
+        const relative = path.normalize(url.pathname).replace(/^[/\\]+/, "");
+        file = path.join(root, "..", "dist", "browser", relative);
       } else {
-        const relative = path.normalize(url.pathname).replace(/^([.][.][/\\])+/, "");
-        file = path.join(root, "public", relative);
+        const vendor = Object.entries(VENDORS).find(([prefix]) => url.pathname.startsWith(prefix));
+        if (vendor) {
+          const [prefix, files] = vendor;
+          const relative = files[url.pathname.slice(prefix.length)];
+          if (!relative) return notFound(response);
+          file = path.join(root, "node_modules", relative);
+        } else {
+          const relative = path.normalize(url.pathname).replace(/^([.][.][/\\])+/, "");
+          file = path.join(root, "public", relative);
+        }
       }
     }
     const body = await readFile(file);

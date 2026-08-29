@@ -1,6 +1,6 @@
 # ADR-0048: Area JSON Canvas authority
 
-Status: Accepted
+Status: Superseded by ADR-0049
 
 ## Context
 

@@ -1,69 +1,199 @@
-import boardCore from "./area-board-core.js";
-import factResolver from "./area-fact-resolver.js";
+import core from "./area-board-core.js";
 import draftStore from "./area-board-draft-store.js";
 import boardSave from "./area-board-save.js";
-import { escapeHtml } from "./text-format.js";
 
-/** Returns the current accessible label for a resolved board item. */
-const nodeLabel = (item) => item.fact?.title || item.node.label || item.node.text || item.node.url || item.node.file || item.node.id;
-
-/** Mounts one editable or narrow-screen read-only Area board. */
-function mount(host, { area, payload, documents, api, onOpenDocument, onSelectArea, narrow = false }) {
-  host.replaceChildren();
-  if (!payload.exists) {
-    const empty = document.createElement("section"); empty.className = "area-board-empty";
-    empty.innerHTML = `<h3>No living map yet</h3><p>The Area list stays authoritative. Create a map when spatial arrangement will help.</p><button type="button" ${narrow ? "disabled" : ""}>Create map <kbd>m</kbd></button>`;
-    /** Creates the only deterministic initial layout from the visible Area references. */
-    const create = async () => { if (narrow) return; const refs = (documents ?? []).filter((item) => item.file?.startsWith(`${area}/`)).slice(0, 12); const next = { nodes: refs.map((item, index) => ({ id: crypto.randomUUID(), type: "file", file: item.file, x: 40 + index % 3 * 300, y: 40 + Math.floor(index / 3) * 160, width: 260, height: 120 })), edges: [] }; const saved = await api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area, baseHash: null, canvas: next, operationId: crypto.randomUUID() }) }); mount(host, { area, payload: { ...payload, exists: true, hash: saved.hash, canvas: next }, documents, api, onOpenDocument, onSelectArea, narrow }); };
-    /** Returns the absent canvas for the empty-state controller. */
-    const currentCanvas = () => payload.canvas;
-    /** Has no pending save before a canvas exists. */
-    const flushCanvas = async () => null;
-    empty.querySelector("button").addEventListener("click", create); empty.addEventListener("keydown", (event) => { if (event.key.toLowerCase() === "m") { event.preventDefault(); create(); } }); empty.tabIndex = 0; host.append(empty); return { current: currentCanvas, flush: flushCanvas };
-  }
-  const canvas = structuredClone(payload.canvas);
-  let current = canvas; let selected = null; let arrowFrom = null; const folded = new Set(payload.view?.foldedGroupIds ?? []); const inline = new Set(payload.view?.openInlineAreaNodeIds ?? []); const drafts = draftStore.create(localStorage);
-  const saver = boardSave.create({ area, drafts,
-    /** Posts one complete conflict-checked canvas. */
-    post: (next, baseHash) => api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area, baseHash, canvas: next, operationId: crypto.randomUUID() }) }),
-    /** Announces save state without changing authored content. */
-    onState: ({ state }) => { status.textContent = state === "dirty" ? "Saving…" : state === "saved" ? "Saved" : "Save stopped. Reload or recover the draft."; },
+/** Loads the editor's generated stylesheet only when the map opens. */
+function loadEditorStyle() {
+  const existing = document.querySelector('link[data-tangent-area-map-style]');
+  if (existing) return existing.dataset.loaded === "yes" ? Promise.resolve() : new Promise((resolve, reject) => {
+    existing.addEventListener("load", resolve, { once: true });
+    existing.addEventListener("error", reject, { once: true });
   });
-  saver.start(payload.hash);
-  const toolbar = document.createElement("div"); toolbar.className = "area-board-toolbar";
-  toolbar.innerHTML = `<strong>Living map</strong><button type="button" data-board-add-text ${narrow ? "disabled" : ""}>Text</button><button type="button" data-board-add-frame ${narrow ? "disabled" : ""}>Frame</button><button type="button" data-board-add-reference ${narrow ? "disabled" : ""}>Reference</button><button type="button" data-board-add-arrow ${narrow ? "disabled" : ""}>Arrow</button><button type="button" data-board-fold>Fold</button><button type="button" data-board-hide ${narrow ? "disabled" : ""}>Hide</button><button type="button" data-board-show ${narrow ? "disabled" : ""}>Show hidden</button><button type="button" data-board-zoom-out aria-label="Zoom out">−</button><button type="button" data-board-zoom-in aria-label="Zoom in">+</button><span class="area-board-status" role="status">${narrow ? "Read-only at this width" : "Saved"}</span>`;
-  const status = toolbar.querySelector(".area-board-status"); const viewport = document.createElement("div"); viewport.className = "area-board-viewport"; viewport.tabIndex = 0; viewport.setAttribute("role", "application"); viewport.setAttribute("aria-label", `Living map for ${area}`);
-  const surface = document.createElement("div"); surface.className = "area-board-surface"; viewport.append(surface); host.append(toolbar, viewport);
-  let zoom = Number(payload.view?.zoom) || 1;
-  /** Persists view-only state outside the standards-only canvas. */
-  const saveView = () => api("/api/map-state", { method: "POST", body: JSON.stringify({ area, state: { schema: "area-board-view.v1", pan: payload.view?.pan ?? { x: 0, y: 0 }, zoom, foldedGroupIds: [...folded], openInlineAreaNodeIds: [...inline], hiddenKinds: payload.view?.hiddenKinds ?? [], showDone: payload.view?.showDone ?? false } }) }).catch(() => {});
-  /** Re-renders current facts without changing authored geometry. */
-  function render() {
-    const resolved = factResolver.resolveCanvas(current, documents); const hidden = boardCore.hiddenNodeIds(current); const foldedMembers = new Set(); for (const id of folded) for (const node of current.nodes) { const group = current.nodes.find((item) => item.id === id); if (group && boardCore.contains(group, node)) foldedMembers.add(node.id); } surface.style.transform = `scale(${zoom})`; surface.replaceChildren();
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.classList.add("area-board-edges"); svg.setAttribute("aria-hidden", "true");
-    for (const edge of current.edges) { const from = current.nodes.find((node) => node.id === edge.fromNode); const to = current.nodes.find((node) => node.id === edge.toNode); if (!from || !to || hidden.has(from.id) || hidden.has(to.id) || foldedMembers.has(from.id) || foldedMembers.has(to.id)) continue; const a = boardCore.center(from); const b = boardCore.center(to); svg.insertAdjacentHTML("beforeend", `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" ${edge.toEnd === "arrow" ? 'marker-end="url(#area-board-arrow)"' : ""}></line>`); }
-    surface.append(svg);
-    for (const item of resolved) {
-      const node = item.node; if ((hidden.has(node.id) && node.id !== "tangent-inbox-v1") || foldedMembers.has(node.id)) continue; const element = document.createElement(node.type === "group" ? "section" : "button"); element.className = `area-board-node ${node.type} ${item.fact?.ghost ? "ghost" : ""} ${selected === node.id ? "selected" : ""}`; element.dataset.boardNode = node.id; element.style.cssText = `left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`;
-      element.setAttribute("aria-label", `${item.fact?.kind || node.type}: ${nodeLabel(item)}${item.fact?.ghost ? ", missing reference" : ""}`); element.innerHTML = node.type === "group" ? `<h4>${escapeHtml(node.label || "Frame")}</h4>` : `<span>${escapeHtml(nodeLabel(item))}</span>${item.fact?.status ? `<small>${escapeHtml(item.fact.status)}</small>` : ""}`; surface.append(element);
-    }
-    const relations = document.createElement("ol"); relations.className = "sr-only"; relations.setAttribute("aria-label", "Map relations");
-    for (const edge of current.edges) { const from = current.nodes.find((node) => node.id === edge.fromNode); const to = current.nodes.find((node) => node.id === edge.toNode); if (from && to) relations.insertAdjacentHTML("beforeend", `<li>${escapeHtml(from.label || from.text || from.file || from.id)} to ${escapeHtml(to.label || to.text || to.file || to.id)}${edge.label ? `: ${escapeHtml(edge.label)}` : ""}</li>`); }
-    surface.append(relations);
-  }
-  /** Applies one authored edit and schedules its complete-canvas save. */
-  function edit(next) { current = next; saver.edit(current); render(); }
-  toolbar.addEventListener("click", (event) => { if (event.target.closest("[data-board-zoom-in]")) { zoom = Math.min(2, zoom + .1); render(); saveView(); } if (event.target.closest("[data-board-zoom-out]")) { zoom = Math.max(.25, zoom - .1); render(); saveView(); } if (!narrow && event.target.closest("[data-board-add-text]")) edit(boardCore.addNode(current, { id: crypto.randomUUID(), type: "text", text: "New text", x: 40, y: 40, width: 220, height: 100 })); if (!narrow && event.target.closest("[data-board-add-frame]")) edit(boardCore.addNode(current, { id: crypto.randomUUID(), type: "group", label: "Frame", x: 20, y: 20, width: 500, height: 320 })); if (!narrow && event.target.closest("[data-board-add-reference]")) { const file = window.prompt("Vault Markdown file"); if (file) edit(boardCore.addNode(current, { id: crypto.randomUUID(), type: "file", file, x: 40, y: 180, width: 260, height: 120 })); } if (!narrow && event.target.closest("[data-board-add-arrow]")) { if (!selected) status.textContent = "Select the first block"; else if (!arrowFrom) { arrowFrom = selected; status.textContent = "Select the second block, then Arrow"; } else if (arrowFrom !== selected) { edit(boardCore.addEdge(current, { id: crypto.randomUUID(), fromNode: arrowFrom, toNode: selected, toEnd: "arrow" })); arrowFrom = null; } } if (event.target.closest("[data-board-fold]") && selected && current.nodes.find((node) => node.id === selected)?.type === "group") { folded.has(selected) ? folded.delete(selected) : folded.add(selected); render(); saveView(); } if (!narrow && event.target.closest("[data-board-hide]") && selected) edit(boardCore.moveIntoInbox(boardCore.ensureInbox(current), selected)); if (!narrow && event.target.closest("[data-board-show]")) { const id = [...boardCore.hiddenNodeIds(current)][0]; if (id) edit(boardCore.moveOutOfInbox(current, id)); else status.textContent = "No hidden blocks"; } });
-  viewport.addEventListener("dblclick", (event) => { const node = current.nodes.find((item) => item.id === event.target.closest("[data-board-node]")?.dataset.boardNode); if (node?.type === "text" && !narrow) { const text = window.prompt("Text", node.text); if (text !== null && text.trim()) edit(boardCore.updateNode(current, node.id, { text })); } else if (node?.type === "file") { const areaTarget = node.file.replace(/\/[^/]+\.md$/, ""); if (node.file.endsWith(`/${areaTarget.split("/").pop()}.md`)) onSelectArea(areaTarget); else onOpenDocument(node.file); } });
-  viewport.addEventListener("keydown", (event) => { if (!narrow && event.key.toLowerCase() === "m" && !event.metaKey && !event.ctrlKey && !event.altKey) { event.preventDefault(); edit(boardCore.addNode(current, { id: crypto.randomUUID(), type: "text", text: "New text", x: 40, y: 40, width: 220, height: 100 })); return; } const selectedNode = current.nodes.find((node) => node.id === selected); const areaTarget = selectedNode?.type === "file" ? selectedNode.file.replace(/\/[^/]+\.md$/, "") : null; const isArea = areaTarget && selectedNode.file.endsWith(`/${areaTarget.split("/").pop()}.md`); if (event.key === "Enter" && isArea) { event.preventDefault(); onSelectArea(areaTarget); return; } if (event.key === " " && isArea) { event.preventDefault(); inline.has(selected) ? inline.delete(selected) : inline.add(selected); status.textContent = inline.has(selected) ? `Child map ${areaTarget} opened read-only` : `Child map ${areaTarget} folded`; saveView(); return; } const direction = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down", h: "left", l: "right", k: "up", j: "down" }[event.key]; if (!direction) return; event.preventDefault(); selected = (boardCore.directionalNode(current.nodes.filter((node) => node.type !== "group"), selected, direction) || boardCore.spatialOrder(current.nodes.filter((node) => node.type !== "group"))[0])?.id ?? null; render(); if (selected) surface.querySelector(`[data-board-node="${CSS.escape(selected)}"]`)?.focus(); });
-  let drag = null;
-  viewport.addEventListener("pointerdown", (event) => { if (narrow) return; const element = event.target.closest("[data-board-node]"); const node = current.nodes.find((item) => item.id === element?.dataset.boardNode); if (!node) return; selected = node.id; drag = { id: node.id, x: event.clientX, y: event.clientY, left: node.x, top: node.y }; element.setPointerCapture(event.pointerId); render(); });
-  viewport.addEventListener("pointermove", (event) => { if (!drag) return; current = boardCore.updateNode(current, drag.id, { x: drag.left + (event.clientX - drag.x) / zoom, y: drag.top + (event.clientY - drag.y) / zoom }); render(); });
-  viewport.addEventListener("pointerup", () => { if (!drag) return; drag = null; saver.edit(current); });
-  if (payload.proposals?.length) { const strip = document.createElement("section"); strip.className = "area-board-proposals"; strip.setAttribute("aria-label", "Brain-proposed blocks"); for (const proposal of payload.proposals) { const row = document.createElement("div"); row.innerHTML = `<span>${escapeHtml(proposal.note || proposal.source.file || proposal.source.url)}</span><button type="button">Place</button>`; row.querySelector("button").addEventListener("click", async () => { const source = proposal.source; const node = source.file ? { type: "file", file: source.file, ...(source.subpath ? { subpath: source.subpath } : {}) } : { type: "link", url: source.url }; edit(boardCore.addNode(current, { id: crypto.randomUUID(), ...node, x: 40, y: 320, width: 260, height: 120 })); const saved = await saver.flush(); if (!saved?.error && saved?.status !== 409 && saved?.status !== 503) { await api("/api/areas/map-proposals/decide", { method: "POST", body: JSON.stringify({ area, id: proposal.id, version: proposal.version, decision: "placed" }) }); row.remove(); } }); strip.append(row); } host.append(strip); }
-  /** Returns the newest in-memory authored canvas. */
-  const currentCanvas = () => current;
-  render(); return { current: currentCanvas, flush: saver.flush };
+  return new Promise((resolve, reject) => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet"; link.href = "/agent-shell-map.css"; link.dataset.tangentAreaMapStyle = "";
+    link.addEventListener("load", () => { link.dataset.loaded = "yes"; resolve(); }, { once: true });
+    link.addEventListener("error", reject, { once: true });
+    document.head.append(link);
+  });
 }
 
-export default { mount };
+/** Loads the test editor or the production Excalidraw browser bundle. */
+const editorLoader = () => globalThis.__TANGENT_AREA_EDITOR_LOADER__?.() ?? loadEditorStyle().then(() => import("/agent-shell-map.js"));
+
+/** Builds the first scene from Area-scoped authoritative references. */
+function initialScene(area, documents) {
+  const scene = core.createEmptyScene();
+  for (const [index, choice] of core.entityChoices(area, documents).slice(0, 12).entries()) {
+    const column = index % 3; const row = Math.floor(index / 3);
+    scene.elements.push(...core.createBlockElements({ id: crypto.randomUUID(), ...choice, x: 60 + column * 330, y: 60 + row * 180 }));
+  }
+  return scene;
+}
+
+/** Mounts the Excalidraw editor island and the existing durable save contract. */
+function mount(host, { area, payload, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, brainLive = false, ignoreDraft = false }) {
+  host.replaceChildren();
+  const drafts = draftStore.create(localStorage);
+  const pendingDraft = !ignoreDraft ? drafts.load(area) : null;
+  let controller = {
+    /** Returns the scene while the editor is starting. */
+    current: () => payload.scene ?? payload.canvas,
+    /** Has no pending save before the editor starts. */
+    flush: async () => null,
+    /** Has no mounted editor to destroy before startup. */
+    destroy() {},
+  };
+
+  if (pendingDraft?.canvas || pendingDraft?.scene) {
+    const choice = document.createElement("section");
+    choice.className = "area-board-draft-choice";
+    const time = pendingDraft.savedAt ? new Date(pendingDraft.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "an earlier session";
+    choice.innerHTML = `<strong>A draft from ${time} was not saved.</strong><button type="button" data-draft-restore>Restore</button><button type="button" data-draft-discard>Discard</button>`;
+    choice.querySelector("[data-draft-restore]").addEventListener("click", () => {
+      const scene = pendingDraft.scene ?? pendingDraft.canvas;
+      controller = mount(host, { area, payload: { ...payload, exists: true, hash: pendingDraft.baseHash, scene, canvas: scene, restoreDraft: true }, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, brainLive, ignoreDraft: true });
+    });
+    choice.querySelector("[data-draft-discard]").addEventListener("click", () => { drafts.clear(area); controller = mount(host, { area, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, brainLive, ignoreDraft: true }); });
+    host.append(choice);
+    return {
+      /** Returns the restored or discarded draft controller's scene. */
+      current: () => controller.current(),
+      /** Flushes the restored or discarded draft controller. */
+      flush: () => controller.flush(),
+      /** Destroys the restored or discarded draft controller. */
+      destroy: () => controller.destroy(),
+    };
+  }
+
+  let current = structuredClone(payload.scene ?? payload.canvas ?? core.createEmptyScene());
+  current.appState = core.appStateWithView(current.appState, payload.view);
+  let baseHash = payload.hash ?? null;
+  let editor = null;
+  let viewTimer = null;
+  let pendingView = null;
+  const loader = document.createElement("div");
+  loader.className = "area-board-loading";
+  loader.innerHTML = `<p>Loading drawing tools…</p>`;
+  host.append(loader);
+
+  const saver = boardSave.create({
+    area,
+    drafts,
+    /** Persists a scene against the last known repository hash. */
+    post: (next, hash) => api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area, baseHash: hash, canvas: next, operationId: crypto.randomUUID() }) }),
+    /** Reflects the save machine state in the mounted editor. */
+    onState: ({ state, result }) => {
+      if (result?.hash) baseHash = result.hash;
+      const visible = state === "blocked" && result?.status === 409 ? "conflict" : state;
+      editor?.setSaveState({ state: visible, result, label: payload.migrated && state === "saved" ? "Converted from canvas" : undefined });
+    },
+  });
+  saver.start(baseHash);
+
+  /** Creates and saves a first scene when the Area has no map file. */
+  async function ensureScene() {
+    if (payload.exists) return;
+    current = initialScene(area, getDocuments());
+    const created = await api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area, baseHash: null, canvas: current, operationId: crypto.randomUUID() }) });
+    baseHash = created.hash;
+    saver.start(baseHash);
+  }
+
+  /** Replaces a conflicted local scene with the repository version. */
+  async function reload() {
+    const latest = await api(`/api/areas/canvas?area=${encodeURIComponent(area)}`);
+    current = structuredClone(latest.scene ?? latest.canvas);
+    baseHash = latest.hash;
+    drafts.clear(area);
+    saver.start(baseHash);
+    editor?.updateScene(current);
+    editor?.setSaveState({ state: "saved" });
+  }
+
+  /** Resubmits the local scene against a newly acknowledged repository hash. */
+  async function keepMine(conflict) {
+    const hash = conflict?.currentHash;
+    if (hash === undefined) return;
+    baseHash = hash;
+    saver.start(baseHash);
+    saver.edit(current);
+    await saver.flush();
+  }
+
+  /** Retries the current scene after a temporary save failure. */
+  async function retry() {
+    saver.start(baseHash);
+    saver.edit(current);
+    await saver.flush();
+  }
+
+  /** Routes a Tangent block verb through the shell or its basic fallback. */
+  function entityVerb(action) {
+    if (onEntityVerb) return onEntityVerb(action);
+    if (action.kind === "link") { window.open(action.ref, "_blank", "noopener"); return; }
+    const source = core.splitReference(action.ref);
+    if (action.kind === "area") onSelectArea?.(source.file.replace(/\/[^/]+\.md$/, ""));
+    else if (source.file) onOpenDocument?.(source.file);
+  }
+
+  /** Removes an inbox proposal only after its placed block is durable. */
+  async function proposalPlaced(proposal) {
+    const saved = await saver.flush();
+    if (!saved?.error && saved?.status !== 409 && saved?.status !== 503) await api("/api/areas/map-proposals/decide", { method: "POST", body: JSON.stringify({ area, id: proposal.id, version: proposal.version, decision: "placed" }) });
+  }
+
+  /** Debounces private pan and zoom state outside the shared scene file. */
+  function viewChanged(view) {
+    pendingView = view;
+    if (viewTimer !== null) window.clearTimeout(viewTimer);
+    viewTimer = window.setTimeout(() => {
+      viewTimer = null;
+      const state = pendingView;
+      pendingView = null;
+      api("/api/map-state", { method: "POST", body: JSON.stringify({ area, state }) }).catch(() => {});
+    }, 350);
+  }
+
+  const ready = ensureScene().then(() => editorLoader()).then((module) => {
+    loader.remove();
+    editor = module.mountAreaBoardEditor(host, {
+      area, scene: current, view: payload.view, proposals: payload.proposals ?? [], getDocuments,
+      initialSaveState: { state: "saved", label: payload.migrated ? "Converted from canvas" : undefined },
+      brainLive, onBack,
+      /** Queues a Julian-authored scene edit for durable save. */
+      onSceneChange(next) { current = next; saver.edit(current); },
+      /** Accepts a fact-only repaint without dirtying the shared scene. */
+      onFactScene(next) { current = next; },
+      onViewChange: viewChanged,
+      /** Flushes the debounced scene save immediately. */
+      onSaveNow: () => saver.flush(),
+      onReload: reload, onKeepMine: keepMine, onRetry: retry,
+      onEntityVerb: entityVerb, onProposalPlaced: proposalPlaced,
+      /** Promotes plain map text to an Area-brain idea. */
+      onPromoteIdea: async (description) => api("/api/idea/new", { method: "POST", body: JSON.stringify({ area, description }) }),
+    });
+    if (payload.restoreDraft) saver.edit(current);
+    return editor;
+  }).catch((error) => {
+    host.innerHTML = `<section class="area-board-empty"><h2>The drawing tools did not load.</h2><p>${String(error?.message ?? error)}</p><button type="button">Retry</button></section>`;
+    host.querySelector("button")?.addEventListener("click", () => mount(host, { area, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, brainLive, ignoreDraft: true }));
+    throw error;
+  });
+
+  return {
+    /** Returns the latest authored or fact-refreshed scene. */
+    current: () => editor?.current?.() ?? current,
+    /** Waits for editor startup and flushes pending scene changes. */
+    async flush() { await ready.catch(() => null); return saver.flush(); },
+    /** Saves private view state and releases the editor island. */
+    destroy() {
+      if (viewTimer !== null) window.clearTimeout(viewTimer);
+      if (pendingView) api("/api/map-state", { method: "POST", body: JSON.stringify({ area, state: pendingView }) }).catch(() => {});
+      editor?.destroy?.();
+    },
+  };
+}
+
+export { initialScene, mount };
+export default { initialScene, mount };

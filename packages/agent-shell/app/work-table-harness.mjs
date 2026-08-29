@@ -34,6 +34,22 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
   window.setInterval = () => 0;
   window.structuredClone = globalThis.structuredClone;
   window.HTMLCanvasElement.prototype.getContext = () => null;
+  window.__TANGENT_AREA_EDITOR_LOADER__ = async () => ({
+    /** Mounts a small editor boundary; Excalidraw itself has separate browser-path coverage. */
+    mountAreaBoardEditor(host, options) {
+      host.innerHTML = `<div data-tangent-area-map="${options.area}"></div>`;
+      return {
+        /** Returns the scene supplied to the test boundary. */
+        current: () => options.scene,
+        /** Accepts save-state updates without rendering Excalidraw. */
+        setSaveState() {},
+        /** Accepts external scene replacements without rendering Excalidraw. */
+        updateScene() {},
+        /** Releases the inert test boundary. */
+        destroy() {},
+      };
+    },
+  });
   window.localStorage.setItem("agent-shell.work-filter", workFilter);
   if (areaFocus.length) window.localStorage.setItem(AREA_FOCUS_KEY, JSON.stringify({ schema: AREA_FOCUS_SCHEMA, areas: areaFocus, ...(areaFocusOnly ? { only: true } : {}) }));
   Object.defineProperty(window, "innerWidth", { value: width, configurable: true });

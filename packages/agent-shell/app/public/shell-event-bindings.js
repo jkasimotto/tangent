@@ -2842,6 +2842,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (handleGlobalShortcut(event)) return;
     if (handleCommandEnter(event)) return;
     if (state.view === "map" && event.key === "Escape") {
+      // Excalidraw owns Escape while its surface has a tool or selection. The
+      // editor island calls closeAreaMap only after both are clear.
+      if (event.target.closest?.("[data-tangent-area-map]")) return;
       event.preventDefault();
       return closeAreaMap();
     }

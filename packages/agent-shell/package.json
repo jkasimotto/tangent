@@ -23,13 +23,15 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node app/build-browser.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "start": "node app/gateway.mjs",
     "test": "npm run build -w @tangent/core && npm run build -w @tangent/agent-runtime && npm run build -w @tangent/repo && npm run build && node --test test/*.test.mjs",
-    "test:app": "node --test app/*.test.mjs"
+    "test:app": "node --test app/*.test.mjs",
+    "test:area-map-browser": "TANGENT_BROWSER_TEST=1 node --test app/area-board-browser.test.mjs"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
     "@tangent/agent-runtime": "^0.1.0",
     "@tangent/core": "^0.1.0",
     "@tangent/repo": "^0.1.0",
@@ -38,7 +40,13 @@
     "@xterm/xterm": "^5.5.0",
     "d3-force": "^3.0.0",
     "node-pty": "^1.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "esbuild": "^0.25.12"
   },
   "license": "MIT",
   "engines": {

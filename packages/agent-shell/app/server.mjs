@@ -58,6 +58,7 @@ import { observeTranscript } from "./transcript-tail.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
 import { createAreaCanvasRepository } from "./area-canvas-repository.mjs";
 import { createAreaCanvasRoutes } from "./area-canvas-routes.mjs";
+import { areaCanvasSummary } from "./area-canvas.mjs";
 import { createAreaMapRoutes } from "./area-map-routes.mjs";
 import { createAreaMapRecordStore } from "./area-map-record-store.mjs";
 import { createAreaPictures } from "./area-pictures.mjs";
@@ -1283,7 +1284,7 @@ async function readMapState(area) {
   }
 }
 
-/** Reads only the JSON Canvas view state, never the retired force-graph state. */
+/** Reads only the Area-board view state, never authored scene content. */
 async function readAreaBoardView(area) {
   if (!validAreaPath(area)) return null;
   try {
@@ -6484,6 +6485,7 @@ const areaRoutesOperations = {
     const resolved = await describeAreaResources(TREES_ROOT, area);
     const canvas = await areaCanvasRepository.read(area);
     const openProposals = await areaMapProposals.list(area, { openOnly: true });
+    const mapSummary = canvas.ok ? areaCanvasSummary(canvas.scene) : null;
     return {
       area,
       status: parseFrontmatter(text).status ?? "",
@@ -6504,10 +6506,7 @@ const areaRoutesOperations = {
         exists: canvas.exists,
         file: canvas.file,
         hash: canvas.hash,
-        references: canvas.canvas.nodes.filter((node) => node.type === "file" || node.type === "link").map((node) => node.type === "file" ? { id: node.id, file: node.file, subpath: node.subpath ?? null } : { id: node.id, url: node.url }),
-        ink: canvas.canvas.nodes.filter((node) => node.type === "text").map((node) => ({ id: node.id, text: node.text })),
-        frames: canvas.canvas.nodes.filter((node) => node.type === "group").map((node) => ({ id: node.id, label: node.label ?? "" })),
-        arrows: canvas.canvas.edges.map((edge) => ({ id: edge.id, from: edge.fromNode, to: edge.toNode, label: edge.label ?? "" })),
+        ...mapSummary,
         proposals: openProposals.map((proposal) => ({ id: proposal.id, version: proposal.version, kind: proposal.kind, source: proposal.source, note: proposal.note })),
       } : { exists: true, file: canvas.file, hash: canvas.hash, errors: canvas.errors },
     };

@@ -9,6 +9,7 @@ export async function browserBundle() {
   const result = await build({
     entryPoints: [path.join(here, "public", "shell.js")],
     bundle: true,
+    external: ["/agent-shell-map.js"],
     format: "iife",
     globalName: "AgentShellTest",
     footer: { js: "Object.assign(globalThis, AgentShellTest);" },

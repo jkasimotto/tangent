@@ -9,7 +9,7 @@ The published package API is `src/cli/`. The same package also carries the local
 - `src/cli/commands/vault.ts`: the one command that shells out itself. `vault commit` uses `@tangent/repo`'s `git()` to commit directly to `~/.tangent/trees` with the same message shape and trailers as the server's `vaultCommit()`.
 - `src/cli/commands/study.ts` and `study-contract.ts`: the second command that does not talk to the server. `tangent study` spawns a local interactive `claude` process with `stdio: "inherit"`, carrying the partner contract as an appended system prompt; the terminal belongs to that session until it exits (ADR-0026). No repo argument, no server involvement: scoping happens in the opening conversation, and the partner's own tool rights (read anywhere, edit and run only in a per-repo study worktree) come entirely from the contract text in `study-contract.ts`, not from code.
 
-Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-runtime` (`runProcess` for `tmux display-message`), `@tangent/repo` (git for `vault commit`). The package does not import browser code, Eval, Usage, Rollup, Search, or Threads.
+Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-runtime` (`runProcess` for `tmux display-message`), and `@tangent/repo` (git for `vault commit`). The Area-map browser island uses React and `@excalidraw/excalidraw`; the rest of Agent Shell stays framework-free. The package does not import Eval, Usage, Rollup, Search, or Threads.
 
 ## Application boundaries
 
@@ -43,6 +43,8 @@ The browser refreshes through one compact `GET /api/work` read model. The model 
 - `area-brain-domain.mjs`: activation material, bounded Area memory, selected Document references, Journal intake, Goal queue transitions, Operation projection, and detached audit export.
 
 The browser entry `app/public/shell.js` composes feature ports. `shell-coordinator.js` owns cross-feature navigation. Views and controllers receive cohesive `shell`, `work`, `areas`, `programs`, `launch`, `documents`, and chrome records. A record groups one authority; it is not a generic service locator. Browser capabilities must not be attached to functions. Gateway admission limits duplicate and total controller work. Telemetry does not publish projection invalidations.
+
+Area maps are complete Excalidraw scenes in the vault. `area-canvas.mjs` validates scenes and converts the former JSON Canvas file once. `area-canvas-repository.mjs` owns hash checks and path-limited commits. The React editor bundle loads only when Work opens a map. Tangent block text is a cache of facts from vault Markdown; refreshes do not change geometry or schedule a save (ADR-0049).
 
 Private module and controller-loopback contracts can change with all in-repository callers. The public loopback URL, Vault Markdown, Git provenance, tmux bindings, and persisted workflow schemas remain compatible. The runtime ownership key remains `@tangent_agent_shell_instance`. See ADR-0031, ADR-0032, and ADR-0036.
 

@@ -4,6 +4,7 @@ import areaMapCore from "./area-map-core.js";
 import goalCardCore from "./goal-card-core.js";
 import goToCore from "./go-to-core.js";
 import areaMapView from "./area-map.js";
+import areaBoardCore from "./area-board-core.js";
 import { createApiClient } from "./api-client.js";
 import { createShellState } from "./shell-state.js";
 import { shellDom } from "./shell-dom.js";
@@ -1480,8 +1481,47 @@ function selectModelConcept(concept) {
 /** The handles bindShellEvents returns; set once the bindings exist. */
 let shellBindings = null;
 let mapReturnCursor = "";
+let activeAreaBoard = null;
+/** Builds the live entity index consumed by Tangent blocks and their picker. */
+function areaMapEntities() {
+  const records = new Map((state.vault?.documents ?? []).map((record) => [record.file, record]));
+  for (const area of state.vault?.areas ?? []) {
+    const leaf = area.path.split("/").at(-1);
+    const file = `${area.path}/${leaf}.md`;
+    const brain = (state.brains ?? []).find((item) => item.area === area.path);
+    records.set(file, { ...records.get(file), file, area: area.path, kind: "area", title: area.name || leaf, status: area.status || "", live: Boolean(brain?.live) });
+    for (const goal of area.goals ?? []) {
+      const live = Boolean(goal.run?.steps?.some((step) => step.live) || state.sessions.some((session) => session.name === goal.session));
+      records.set(goal.file, { ...records.get(goal.file), ...goal, kind: "goal", live });
+    }
+  }
+  return [...records.values()];
+}
+/** Flushes and unmounts the lazy editor before another shell view replaces it. */
+function disposeAreaMap() {
+  activeAreaBoard?.flush?.();
+  activeAreaBoard?.destroy?.();
+  activeAreaBoard = null;
+}
+/** Routes the Tangent verb row without letting cached block words become commands. */
+function areaMapEntityVerb(action) {
+  const source = areaBoardCore.splitReference(action.ref);
+  const entity = areaMapEntities().find((record) => record.file === source.file);
+  const area = action.kind === "area" ? source.file?.replace(/\/[^/]+\.md$/, "") : entity?.area ?? source.file?.replace(/\/[^/]+$/, "");
+  if (action.verb === "ask" || action.verb === "correct") return openAreaCapture(area);
+  if (action.verb === "enter") {
+    if (action.kind === "goal" && source.file) { disposeAreaMap(); return openGoalRun(source.file); }
+    if (action.kind === "area" && area) return openOrStartBrain(area);
+  }
+  if (action.kind === "link") { window.open(action.ref, "_blank", "noopener"); return; }
+  if (action.kind === "area" && area) return openAreaMap(area);
+  if (source.file) { disposeAreaMap(); return openDocument(source.file); }
+}
 /** Opens an Area's living map and remembers the Work return row. */
 function openAreaMap(area, trigger) {
+  if (state.view === "map" && state.mapArea !== area) {
+    disposeAreaMap();
+  }
   const row = trigger?.closest?.("[data-work-cursor]");
   if (row?.dataset.workCursor) mapReturnCursor = row.dataset.workCursor;
   state.mapArea = area;
@@ -1490,6 +1530,7 @@ function openAreaMap(area, trigger) {
 }
 /** Returns from a map to the exact Work row and its visible Map control. */
 function closeAreaMap() {
+  disposeAreaMap();
   state.view = "work";
   paint(true);
   window.setTimeout(() => {
@@ -1504,7 +1545,7 @@ function mountDedicatedAreaMap() {
   host.dataset.loaded = "loading";
   api(`/api/areas/canvas?area=${encodeURIComponent(state.mapArea)}`).then((payload) => {
     host.dataset.loaded = "yes";
-    areaBoardView.mount(host, { area: state.mapArea, payload, documents: state.vault?.documents ?? [], api, narrow: window.innerWidth < 640, onOpenDocument: openDocument, onSelectArea: openAreaMap });
+    activeAreaBoard = areaBoardView.mount(host, { area: state.mapArea, payload, documents: areaMapEntities(), getDocuments: areaMapEntities, api, onOpenDocument: openDocument, onSelectArea: openAreaMap, onEntityVerb: areaMapEntityVerb, onBack: closeAreaMap, brainLive: Boolean(state.brains.find((brain) => brain.area === state.mapArea && brain.live)) });
   }).catch(() => { host.dataset.loaded = "error"; host.innerHTML = `<section class="area-board-empty"><h2>Agent Shell did not answer.</h2><p>The map could not be loaded.</p><button type="button" data-map-retry>Retry</button></section>`; });
 }
 shellBindings = bindShellEvents({

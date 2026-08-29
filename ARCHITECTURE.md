@@ -23,7 +23,7 @@ root CLI
 installed app packages
   -> agent-shell/server | agent-shell vault CLI | usage SDK/CLI/server | rollup SDK/CLI | eval CLI/server | search SDK/CLI | governance CLI
 
-agent-shell -> agent-runtime, core, repo
+agent-shell -> agent-runtime, core, repo, React, Excalidraw
 rollup -> usage-index-sqlite, core, repo, agent-runtime
 eval  -> usage-index-sqlite, core, repo, agent-runtime, ui-server, eval-ui
 usage -> usage-core, usage-index-sqlite, usage-providers, core, repo, ui-server, usage-ui, usage-ui-data
@@ -59,9 +59,9 @@ Raw, debug, and CI commands remain callable but hidden from default help.
 
 Agent Shell centers each Area on one logical brain. The vault owns Area knowledge, and each bound repository owns code-agent instructions.
 
-Each Area can store one standards-only JSON Canvas file at `<area>/<leaf>.canvas`. Plain-text notes own referenced facts, and Julian owns canvas geometry.
+Each Area can store one Excalidraw scene at `<area>/<leaf>.excalidraw`. Plain-text notes own referenced facts. Julian owns scene geometry, style, and ink. Tangent entity blocks use `customData.tangent` only to address their authoritative source (ADR-0049).
 
-Agent Shell saves a canvas through a hash-checked, path-limited repository boundary. Runtime records hold brain pictures, proposals, and promotion progress (ADR-0048).
+Agent Shell embeds the upstream Excalidraw editor as a bundled browser island. It saves a complete scene through a hash-checked, path-limited repository boundary. Fact refresh changes only the displayed cache and does not dirty the scene. Runtime records hold brain pictures, proposals, and promotion progress (ADR-0049).
 Area skills live at `<area>/.agents/skills/<name>/SKILL.md`. Tangent creates `<area>/.claude/skills` as a relative link, so Codex and Claude discover the same inherited files. Legacy `skill-<slug>.md` Documents remain readable during migration. See ADR-0045.
 Agent Shell derives inherited sources by path. It owns bounded runtime projections, Journal delivery, Requests, Goal queues, presented-document attention, and Operation health.
 Each Area can declare allowed agent launches. Child policies intersect with parent policies. Agent Shell remembers the last successful Brain and Work launch separately.

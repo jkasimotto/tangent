@@ -21,8 +21,38 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="vi
 import { mountAreaBoardEditor } from "/agent-shell-map.js";
 const scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: { theme: "dark", viewBackgroundColor: "#121216" }, files: {} };
 const documents = [{ file: "otto/goal-map.md", kind: "goal", title: "Map quality", status: "active" }];
-window.editor = mountAreaBoardEditor(document.querySelector("#map"), { area: "otto", scene, proposals: [], getDocuments: () => documents, onSceneChange: (next) => { window.lastScene = next; }, onFactScene: () => {}, onEntityVerb: () => {}, onBack: () => {}, onSaveNow: () => {} });
+window.editor = mountAreaBoardEditor(document.querySelector("#map"), { area: "otto", scene, view: null, proposals: [], getDocuments: () => documents, onSceneChange: (next) => { window.lastScene = next; }, onFactScene: () => {}, onEntityVerb: () => {}, onBack: () => {}, onSaveNow: () => {} });
 </script></body></html>`;
+
+const failureFixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/agent-shell-map.css"><style>html,body,#map{width:100%;height:100%;margin:0}</style></head><body><div id="map"></div><script type="module">
+import { mountAreaBoardEditor } from "/agent-shell-map.js";
+const scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: { theme: "dark", viewBackgroundColor: "#121216" }, files: {} };
+let fail = true;
+mountAreaBoardEditor(document.querySelector("#map"), { area: "otto", scene, view: null, proposals: [], getDocuments: () => { if (fail) throw new Error("fixture render failed"); return []; }, onEditorError: () => { fail = false; }, onSceneChange: () => {}, onFactScene: () => {} });
+</script></body></html>`;
+
+test("an editor render failure explains the problem and retry mounts the canvas", { skip: !enabled, timeout: 90_000 }, async () => {
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    if (url.pathname === "/failure-fixture") { response.writeHead(200, { "content-type": "text/html" }); response.end(failureFixture); return; }
+    await serveStaticAsset(url, response, here);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  let browser = null;
+  try {
+    browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath(), headless: true });
+    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
+    await page.goto(`http://127.0.0.1:${server.address().port}/failure-fixture`);
+    const alert = page.getByRole("alert");
+    await alert.getByRole("heading", { name: "The drawing tools did not load." }).waitFor();
+    assert.match(await alert.textContent(), /fixture render failed/);
+    await alert.getByRole("button", { name: "Retry" }).click();
+    await page.locator(".excalidraw canvas.interactive").waitFor();
+  } finally {
+    await browser?.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
 
 test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulation, and a bound arrow", { skip: !enabled, timeout: 90_000 }, async () => {
   const server = http.createServer(async (request, response) => {
@@ -38,6 +68,8 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
     await page.goto(`http://127.0.0.1:${server.address().port}/fixture`);
     await page.locator(".excalidraw canvas.interactive").waitFor();
+    for (const name of ["Selection", "Rectangle", "Diamond", "Ellipse", "Arrow", "Draw", "Text"]) await page.getByRole("radio", { name: new RegExp(name, "i") }).first().waitFor();
+    await page.getByRole("button", { name: "Block" }).waitFor();
 
     await page.keyboard.press("b");
     await page.getByRole("dialog", { name: "Place a Tangent block" }).getByRole("textbox").fill("map");
@@ -116,14 +148,22 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
 
 test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 90_000 }, async () => {
   const work = workTableFixture();
-  const scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: { theme: "dark", viewBackgroundColor: "#121216" }, files: {} };
+  let scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: { theme: "dark", viewBackgroundColor: "#121216" }, files: {} };
+  let savedHash = "scene-1";
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
     if (url.pathname === "/api/work") return sendJson(response, 404, { error: "use compatibility projection" });
     if (url.pathname === "/api/vault") return sendJson(response, 200, work.vault);
     if (url.pathname === "/api/sessions") return sendJson(response, 200, { boot: "test", pipelines: work.pipelines, sessions: work.sessions, brains: work.brains });
     if (url.pathname === "/api/operations") return sendJson(response, 200, { operations: [], processes: [], problems: [], areas: [], liveCount: 0 });
-    if (url.pathname === "/api/areas/canvas") return sendJson(response, 200, { area: url.searchParams.get("area"), file: "otto/tangent/tangent.excalidraw", exists: true, hash: "scene-1", scene, canvas: scene, proposals: [], warnings: [] });
+    if (url.pathname === "/api/areas/canvas" && request.method === "POST") {
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      scene = JSON.parse(body).canvas;
+      savedHash = `scene-${Number(savedHash.split("-")[1]) + 1}`;
+      return sendJson(response, 200, { hash: savedHash });
+    }
+    if (url.pathname === "/api/areas/canvas") return sendJson(response, 200, { area: url.searchParams.get("area"), file: "otto/tangent/tangent.excalidraw", exists: true, hash: savedHash, scene, canvas: scene, view: null, proposals: [], warnings: [] });
     if (url.pathname.startsWith("/api/")) return sendJson(response, 200, { ok: true });
     await serveStaticAsset(url, response, here);
   });
@@ -143,7 +183,32 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await page.getByRole("dialog", { name: "Place a Tangent block" }).getByRole("textbox").fill("compact table");
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelector("[data-tangent-area-map]") && document.body.textContent.includes("Redesign Work as a compact table"));
+    const canvas = page.locator(".excalidraw canvas.interactive");
+    const box = await canvas.boundingBox();
+    assert.ok(box);
+    await page.mouse.click(box.x + box.width - 70, box.y + box.height - 70);
+    await page.keyboard.press("r");
+    await page.mouse.move(box.x + 650, box.y + 250);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 790, box.y + 350, { steps: 6 });
+    await page.mouse.up();
+    await page.getByText("Saving…", { exact: true }).waitFor();
+    await page.getByText("Saved", { exact: true }).waitFor({ timeout: 10_000 });
     assert.match(await page.locator(".map-screen h1").textContent(), /^otto\/tangent · Map$/);
+
+    await page.reload();
+    const reloadedRow = page.locator('[data-work-cursor="area:otto/tangent"]');
+    await reloadedRow.dispatchEvent("click");
+    await reloadedRow.locator("[data-work-cursor-control]").focus();
+    await page.keyboard.press("m");
+    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
+    await page.waitForFunction(() => document.body.textContent.includes("Redesign Work as a compact table"));
+    assert.ok(scene.elements.some((element) => element.type === "rectangle" && !element.customData?.tangent), "the drawn shape survived reload");
+    assert.ok(scene.elements.some((element) => element.customData?.tangent), "the Tangent block survived reload");
+
+    await page.setViewportSize({ width: 520, height: 760 });
+    await page.locator(".excalidraw canvas.interactive").waitFor();
+    await page.getByRole("button", { name: "Block" }).waitFor();
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

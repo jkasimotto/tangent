@@ -12,6 +12,24 @@ const stop = (event) => { event.preventDefault(); event.stopPropagation(); };
 /** Reports whether a keyboard target accepts text input. */
 const isTyping = (target) => target instanceof HTMLElement && (target.matches("input, textarea, select") || target.isContentEditable);
 
+/** Keeps an editor render failure visible and lets the user try the mount again. */
+class AreaMapErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null, retry: 0 }; }
+  /** Converts a descendant render failure into visible boundary state. */
+  static getDerivedStateFromError(error) { return { error }; }
+  /** Reports the failure after React commits the fallback. */
+  componentDidCatch(error) { this.props.onError?.(error); }
+  /** Renders the editor or its actionable failure state. */
+  render() {
+    if (!this.state.error) return <TangentMap key={this.state.retry} {...this.props.mapProps} />;
+    return <section className="area-board-empty" role="alert">
+      <h2>The drawing tools did not load.</h2>
+      <p>{String(this.state.error?.message ?? this.state.error)}</p>
+      <button type="button" onClick={() => this.setState(({ retry }) => ({ error: null, retry: retry + 1 }))}>Retry</button>
+    </section>;
+  }
+}
+
 /** Returns the selected Tangent block, when selection contains one. */
 function selectedBlock(api, scene) {
   const selected = api?.getAppState?.().selectedElementIds ?? {};
@@ -239,7 +257,7 @@ export function mountAreaBoardEditor(host, options) {
     appState: () => null,
   };
   const root = createRoot(host);
-  root.render(<TangentMap host={host} bridge={bridge} options={options} />);
+  root.render(<AreaMapErrorBoundary mapProps={{ host, bridge, options }} onError={options.onEditorError} />);
   return {
     /** Returns the latest editor scene. */
     current: () => bridge.current(),

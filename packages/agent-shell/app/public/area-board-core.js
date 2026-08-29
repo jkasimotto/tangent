@@ -228,14 +228,15 @@ function appStateWithView(appState = {}, view = null) {
 
 /** Projects an Excalidraw viewport into the shell-owned Area view record. */
 function viewFromAppState(appState = {}, previous = {}) {
+  const base = previous ?? {};
   return {
     schema: "area-board-view.v1",
     pan: { x: Number(appState.scrollX ?? 0), y: Number(appState.scrollY ?? 0) },
     zoom: Number(appState.zoom?.value ?? appState.zoom ?? 1) || 1,
-    foldedGroupIds: previous.foldedGroupIds ?? [],
-    openInlineAreaNodeIds: previous.openInlineAreaNodeIds ?? [],
-    hiddenKinds: previous.hiddenKinds ?? [],
-    showDone: previous.showDone ?? false,
+    foldedGroupIds: base.foldedGroupIds ?? [],
+    openInlineAreaNodeIds: base.openInlineAreaNodeIds ?? [],
+    hiddenKinds: base.hiddenKinds ?? [],
+    showDone: base.showDone ?? false,
   };
 }
 

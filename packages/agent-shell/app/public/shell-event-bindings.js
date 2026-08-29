@@ -13,7 +13,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
-    showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer,
+    showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap,
   } = chrome;
   const {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
@@ -607,8 +607,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   /**
    * Opens the live thing owned by the cursor row: a Goal's agent, a
    * definition session, or an Area's brain. A Goal with no live session
-   * takes the same route as its Open control: ask the brain to start one,
-   * because only the brain starts agents (D8).
+   * opens its launch editor, so the agent is reachable from this one key on
+   * every Goal; starting still takes an explicit key inside that editor.
    */
   function enterCursorSession() {
     const row = cursorRow();
@@ -757,6 +757,40 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return true;
   }
 
+  /** Resolves the Goal and card painted on one Work row. */
+  function cardForRow(row) {
+    const goal = goalByFile(row?.dataset.cardGoal ?? "");
+    return { goal, card: (goal?.cards ?? []).find((item) => item.id === row?.dataset.cardId) };
+  }
+
+  /** Runs the primary action of one presented card. */
+  async function runCardAction(row) {
+    const { goal, card } = cardForRow(row);
+    if (!goal || !card) return showToast("This card is no longer available.");
+    if (card.kind === "copy") {
+      try { await navigator.clipboard.writeText(card.fields.text); announceWork("Copied"); showToast("Copied"); }
+      catch { announceWork("Could not copy"); showToast("Could not copy"); }
+      return true;
+    }
+    if (card.kind === "link") {
+      const url = card.fields.url;
+      if (url.href) {
+        if (!window.open(url.href, "_blank", "noopener")) { announceWork(`Could not open ${url.host}`); showToast(`Could not open ${url.host}`); }
+        return true;
+      }
+      return openDocumentPeek(url.file, { origin: row.querySelector("[data-card-action]") });
+    }
+    return openDocument(goal.file, { heading: "presented" });
+  }
+
+  /** Dismisses one exact card and refreshes Work. */
+  async function dismissCard(row) {
+    if (!row?.dataset.cardGoal || !row?.dataset.cardId) return false;
+    try { await post("/api/goals/dismiss-card", { goal: row.dataset.cardGoal, id: row.dataset.cardId }); await refresh(); }
+    catch { announceWork("Could not dismiss"); }
+    return true;
+  }
+
   /** Runs one Work command against one semantic row. Pointer and keys share it. */
   function executeWorkCommand(id, row = cursorRow()) {
     const area = commandAreaForRow(row);
@@ -765,6 +799,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (id === "dismissPresentation" && row?.dataset.presentationFile) {
       return dismissPresentedDocument(row);
     }
+    if (id === "readGoalPresented" && row?.dataset.cardGoal) return openDocument(row.dataset.cardGoal, { heading: "presented" });
+    if (id === "dismissCard" && row?.dataset.cardId) return dismissCard(row);
     if (id === "previousArea" || id === "nextArea") return moveAreaCursor(id === "previousArea" ? -1 : 1, row);
     if (id === "openBrain") {
       if (!area) return showToast("This row has no Area command header.");
@@ -804,6 +840,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return result;
     }
     if (id === "messageBrain") return area ? showDescribe({ area }) : showToast("This row has no Area command header.");
+    if (id === "map") return area ? openAreaMap(area, row) : showToast("This row has no Area map.");
     if (id === "questions") return area ? openQuestionsReview(area) : showToast("This row has no Area command header.");
     if (id === "note") return area ? openAreaCapture(area) : showToast("This row has no Area command header.");
     if (id === "starArea") {
@@ -1441,6 +1478,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     // (work-screen-refresh D7): the line teaches the key and takes the pointer.
     const captionCommand = target.closest?.("[data-work-caption-command]");
     if (captionCommand && state.view === "work") return executeWorkCommand(captionCommand.dataset.workCaptionCommand, cursorRow());
+    const mapButton = target.closest?.("[data-open-area-map]");
+    if (mapButton) return openAreaMap(mapButton.dataset.openAreaMap, mapButton);
+    if (target.closest?.("[data-map-back]")) { state.view = "work"; paint(true); window.setTimeout(() => mapReturnPoint?.focus?.(), 0); return; }
+    if (target.closest?.("[data-map-retry]")) { state.view = "map"; paint(true); return; }
     if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: false });
     const objectActions = target.closest?.("[data-work-object-actions]");
     if (objectActions) {
@@ -1712,15 +1753,21 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     const documentButton = target.closest("[data-open-document]");
     if (documentButton) {
-      const presentation = documentButton.closest("[data-presentation-goal]");
-      if (presentation) return openDocumentPeek(documentButton.dataset.openDocument, { origin: documentButton });
+      const presentation = documentButton.closest("[data-presentation-goal], [data-presentation-area]");
+      if (presentation) return openDocumentPeek(documentButton.dataset.openDocument, { origin: documentButton, presentation });
       return openDocument(documentButton.dataset.openDocument);
     }
+    const cardAction = target.closest("[data-card-action]");
+    if (cardAction) return runCardAction(cardAction.closest("[data-card-id]"));
+    const cardGoal = target.closest("[data-card-goal-open]");
+    if (cardGoal) { const row = cardGoal.closest("[data-card-goal]"); return openDocument(row.dataset.cardGoal, { heading: "presented" }); }
+    const cardDismiss = target.closest("[data-card-dismiss]");
+    if (cardDismiss) return dismissCard(cardDismiss.closest("[data-card-id]"));
     const presentationFull = target.closest("[data-presentation-full]");
-    if (presentationFull) return openDocument(presentationFull.dataset.presentationFull);
+    if (presentationFull) return openDocument(presentationFull.dataset.presentationFull, { presentation: presentationFull.closest("[data-presentation-goal], [data-presentation-area]") });
     const withdrawPresentation = target.closest("[data-withdraw-presentation]");
     if (withdrawPresentation) {
-      const row = withdrawPresentation.closest("[data-presentation-goal]");
+      const row = withdrawPresentation.closest("[data-presentation-goal], [data-presentation-area]");
       return dismissPresentedDocument(row, withdrawPresentation.dataset.withdrawPresentation);
     }
     const readerGoalActions = target.closest("[data-reader-goal-actions]");
@@ -2786,6 +2833,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (handleGlobalShortcut(event)) return;
     if (handleCommandEnter(event)) return;
+    if (state.view === "map" && event.key === "Escape") {
+      event.preventDefault();
+      state.view = "work";
+      paint(true);
+      window.setTimeout(() => document.querySelector(`[data-open-area-map="${CSS.escape(state.mapArea || "")}"]`)?.focus?.(), 0);
+      return;
+    }
     if (context === "work" && event.key === "Escape") {
       event.preventDefault();
       return leaveCurrentSurface();
@@ -2802,6 +2856,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (current?.dataset.presentationFile && workCommandMatches(event, "dismissPresentation")) {
         event.preventDefault();
         return executeWorkCommand("dismissPresentation", current);
+      }
+      if (current?.dataset.cardId && workCommandMatches(event, "readGoalPresented")) {
+        event.preventDefault();
+        return executeWorkCommand("readGoalPresented", current);
+      }
+      if (current?.dataset.cardId && workCommandMatches(event, "dismissCard")) {
+        event.preventDefault();
+        return executeWorkCommand("dismissCard", current);
       }
       if (workCommandMatches(event, "stopAgent")) {
         event.preventDefault();
@@ -2826,6 +2888,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return executeWorkCommand(current?.dataset.goalAnchor ? "resumeAttempt" : "questions", current);
       }
       if (workCommandMatches(event, "starArea")) { event.preventDefault(); return executeWorkCommand("starArea", current); }
+      if (workCommandMatches(event, "map")) { event.preventDefault(); return executeWorkCommand("map", current); }
       if (workCommandMatches(event, "starredOnly")) { event.preventDefault(); return executeWorkCommand("starredOnly", current); }
       if (workCommandMatches(event, "activeOnly")) { event.preventDefault(); return executeWorkCommand("activeOnly", current); }
       if (workCommandMatches(event, "readGoal")) {

@@ -16,6 +16,7 @@ import { currentBriefFields, storyEntries } from "./goal-narrative.js";
 import { createWhatHappenedView } from "./what-happened-view.js";
 import { createWorkDeskView } from "./work-desk-view.js";
 import { createAreaDirectoryView } from "./area-directory-view.js";
+import areaBoardView from "./area-board.js";
 import { createProgramView } from "./program-view.js";
 import { createGoalLaunchView } from "./goal-launch-view.js";
 import { createAgentDecisionView } from "./agent-decision-view.js";
@@ -611,7 +612,7 @@ function launchPopover() {
 function vaultRenderProjection() {
   if (!state.vault) return null;
   /** Selects the Goal fields that affect visible rendering. */
-  const goalFields = (goal) => [goal.file, goal.title, goal.status, goal.doneWhen, goal.mtime, goal.changedAt, goal.depth, goal.waitingOn, goal.storyText, goal.agents, goal.firstStartAt, goal.lastEndAt, (goal.documents ?? []).map((document) => [document.file, document.changedAt])];
+  const goalFields = (goal) => [goal.file, goal.title, goal.status, goal.doneWhen, goal.mtime, goal.changedAt, goal.depth, goal.waitingOn, goal.storyText, goal.agents, goal.firstStartAt, goal.lastEndAt, (goal.documents ?? []).map((document) => [document.file, document.changedAt]), (goal.cards ?? []).map((card) => [card.id, card.fieldsHash, card.updatedAt, card.presenterLive])];
   return [
     (state.vault.map ?? []).map((group) => [group.path, (group.goals ?? []).map(goalFields)]),
     (state.vault.areas ?? []).map((area) => [area.path, area.status, area.children, area.purpose, area.body, area.noteSignal?.text, area.noteSignal?.warning, (area.goals ?? []).map(goalFields), (area.documents ?? []).map((document) => [document.file, document.title, document.mtime, document.changedAt])]),
@@ -836,7 +837,7 @@ function updateLiveHeader() {
 function renderScreen() {
   const goal = currentGoal();
   const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "prompts", "area-edit", "program-detail", "program-create", "program-session", "document", "harnesses"];
-  if (!goal && !goalFreeViews.includes(state.view)) state.view = "work";
+  if (!goal && !goalFreeViews.includes(state.view) && state.view !== "map") state.view = "work";
   const session = sessionForGoal(goal);
   const describeSession = describeWorkSession();
   if (["program-detail", "program-session"].includes(state.view) && !currentProgram()) state.view = "areas";
@@ -865,6 +866,8 @@ function renderScreen() {
   else if (state.view === "harnesses") screen.innerHTML = renderHarnessEditor();
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument() + launchPopover();
+  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header"><button type="button" data-map-back>Work <kbd>Esc</kbd></button><h1>${escapeHtml(state.mapArea || "Area")} · Map</h1></header><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the map…</p></div></section>`;
+  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header"><button type="button" data-map-back>Work <kbd>Esc</kbd></button><h1>${escapeHtml(state.mapArea || "Area")} · Map</h1></header><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the map…</p></div></section>`;
   else {
     state.view = "work";
     screen.innerHTML = renderWork();
@@ -874,6 +877,8 @@ function renderScreen() {
   restoreScreenScroll(scrollPositions);
   restoreScreenFocus(focusKey);
   if (state.view === "work") reconcileWorkCursor();
+  if (state.view === "map") mountDedicatedAreaMap();
+  if (state.view === "map") mountDedicatedAreaMap();
   shellBindings?.paintWorkSearch?.();
   if (state.view === "document") {
     bindDocumentReader();
@@ -1476,6 +1481,19 @@ function selectModelConcept(concept) {
 
 /** The handles bindShellEvents returns; set once the bindings exist. */
 let shellBindings = null;
+let mapReturnPoint = null;
+/** Opens an Area's living map and remembers the Work return row. */
+function openAreaMap(area, trigger) { mapReturnPoint = trigger?.closest?.("[data-work-cursor]") || null; state.mapArea = area; state.view = "map"; paint(true); }
+/** Mounts the existing board on the dedicated map screen. */
+function mountDedicatedAreaMap() {
+  const host = screen.querySelector("[data-dedicated-area-map]");
+  if (!host || !state.mapArea || host.dataset.loaded) return;
+  host.dataset.loaded = "loading";
+  api(`/api/areas/canvas?area=${encodeURIComponent(state.mapArea)}`).then((payload) => {
+    host.dataset.loaded = "yes";
+    areaBoardView.mount(host, { area: state.mapArea, payload, documents: state.vault?.documents ?? [], api, narrow: window.innerWidth < 640, onOpenDocument: openDocument, onSelectArea: openAreaMap });
+  }).catch(() => { host.dataset.loaded = "error"; host.innerHTML = `<section class="area-board-empty"><h2>Agent Shell did not answer.</h2><p>The map could not be loaded.</p><button type="button" data-map-retry>Retry</button></section>`; });
+}
 shellBindings = bindShellEvents({
   shell: { state, post, paint, refresh, showToast },
   chrome: {

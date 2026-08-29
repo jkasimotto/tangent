@@ -7,6 +7,8 @@ import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, toggleAreaFocusR
 import { journalCaptureNeedsRetry, journalCaptureToast } from "./journal-capture-core.js";
 import { workCommand, workCaptionKeys, workRowKind } from "./work-commands.js";
 
+const PRESENTED_ROWS_PER_GOAL = 3;
+
 /** Creates the work desk from shell, launch, Area, and Program capabilities. */
 export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
   const { state, api, post, paint, refresh, showToast, openModal, captureReturnPoint, saveDescribeSession, openSessionLayer } = shell;
@@ -1701,6 +1703,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       && !allDescriptions.length && !summary.questions && !brain?.live && !activeLoopsForArea(area.path).length;
     const starred = areaFocusRoots().includes(area.path);
     const starButton = `<button class="work-star${starred ? " starred" : ""}" type="button" data-star-area="${escapeHtml(area.path)}" aria-pressed="${starred}" ${workCommandAttributes("starArea", `${starred ? "Unstar" : "Star"} ${areaLabel(area.path)} (f)`)} aria-label="${starred ? "Unstar" : "Star"} ${escapeHtml(areaLabel(area.path))}"><span aria-hidden="true">${starred ? "★" : "☆"}</span></button>`;
+    const mapButton = `<button class="desk-action" type="button" data-open-area-map="${escapeHtml(area.path)}" ${workCommandAttributes("map", `Open map for ${areaLabel(area.path)} (m)`)}>Map <kbd>m</kbd></button>`;
     // The visible text identifies the agent as the brain. The shared agent
     // entry command supplies its key and keyboard label.
     const brainButton = `<button class="work-group-brain" type="button" ${route} ${workCommandAttributes("session", `${label} for ${areaLabel(area.path)} (${workCommand("session").keyDisplay})`)} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}" data-brain-verb="${escapeHtml(label)}"><span class="work-group-brain-text">brain</span>${workKey("session")}</button>${brainLoopMark(area.path)}`;
@@ -1717,7 +1720,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
                 : `<span class="desk-state ${status.kind}" title="${escapeHtml(status.title)}">${escapeHtml(status.label)}</span>`}
           </div>
           <div class="work-group-controls work-row-controls">
-            ${brainButton}
+            ${mapButton}${brainButton}
             <button class="desk-action-menu-trigger" type="button" data-work-object-actions data-work-object-area="${escapeHtml(area.path)}" data-focus-key="menu:area:${escapeHtml(area.path)}" ${workCommandAttributes("keys")} aria-label="Keys for ${escapeHtml(name)}">⋯${workKey("keys")}</button>
           </div>
         </div>
@@ -1896,6 +1899,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       return brain?.repair?.current || brain?.agentState?.owner === "you";
     })) return true;
     return [record, ...record.sections].some((part) => part.descriptions.length
+      || (part.area.presentations ?? []).length
       || part.trees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status))));
   }
 
@@ -1906,6 +1910,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // one flat sub-header in path order, and its rows sit under that, so no
     // row needs a path tag (work-view-sub-areas Decision 1).
     const own = [
+      ...areaPresentationRows(area),
       ...descriptions.map((session) => workDefinitionRow(session)),
       ...orderedGoalTrees(trees).map((tree) => workTreeRows(tree, area.path, null, facts)),
     ].join("");
@@ -1950,6 +1955,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const header = workGroupHeaderRow({ area: section.area, trees: section.trees, descriptions: section.descriptions, sections: folded ? descendants : [] }, facts, { parentPath: parentArea.path });
     if (folded) return header;
     const rows = [
+      ...areaPresentationRows(section.area),
       ...section.descriptions.map((session) => workDefinitionRow(session)),
       ...orderedGoalTrees(section.trees).map((tree) => workTreeRows(tree, section.area.path, null, facts, { subArea: true })),
     ].join("");
@@ -2051,11 +2057,25 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         subgoalCount: node.children.length,
         expanded,
       });
-      const presentations = (node.goal.presentations ?? []).slice(0, 3);
-      const presentationRows = presentations.map((item) => workPresentedDocumentRow(node.goal, item)).join("");
-      const overflow = (node.goal.presentations ?? []).length - presentations.length;
+      const children = [...(node.goal.presentations ?? []).map((item) => ({ type: "document", item })), ...(node.goal.cards ?? []).map((item) => ({ type: "card", item }))];
+      const visible = children.slice(0, PRESENTED_ROWS_PER_GOAL);
+      const presentationRows = visible.map(({ type, item }) => type === "card" ? workCardRow(node.goal, item) : workPresentedDocumentRow(node.goal, item)).join("");
+      const overflow = children.length - visible.length;
       return `${goalRow}${presentationRows}${overflow > 0 ? workPresentationOverflowRow(node.goal, overflow) : ""}`;
     }).join("");
+  }
+
+  /** One product-owned row for validated card data. */
+  function workCardRow(goal, card) {
+    const cursor = `card:${goal.file}:${card.id}`;
+    const action = card.kind === "copy" ? "copy" : card.kind === "link" ? "open" : "show";
+    const stopped = card.presenterLive === false ? " (brain stopped)" : "";
+    const presentedBy = card.presentedBy?.session || "brain";
+    return `<tr class="desk-document work-row presented-card${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(goal.area)}" data-card-goal="${escapeHtml(goal.file)}" data-card-id="${escapeHtml(card.id)}" data-card-kind="${escapeHtml(card.kind)}" data-search-text="${escapeHtml(`${card.kind} ${card.title} ${card.summary ?? ""}`)}">
+      <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<span class="work-goal-copy"><span class="work-goal-primary"><button type="button" class="work-row-title" data-work-row-title data-card-action aria-label="${escapeHtml(`${card.kind}: ${card.title}, presented by ${presentedBy}`)}" aria-keyshortcuts="Enter" title="${escapeHtml(`Presented by ${presentedBy}${stopped}`)}">↳ ${escapeHtml(card.kind)} · ${escapeHtml(card.title)}</button></span></span></span></th>
+      <td><small>${escapeHtml(card.summary ?? "")}</small></td><td></td>
+      <td><span class="work-row-controls"><button type="button" data-card-action aria-keyshortcuts="Enter">↵ ${action}</button><button type="button" data-card-goal-open aria-keyshortcuts="o">o goal</button><button type="button" data-card-dismiss aria-keyshortcuts="x">x dismiss</button></span></td>
+    </tr>`;
   }
 
   /** One temporary attention row for a Document that an agent presented. */
@@ -2066,6 +2086,25 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       <td><small>${escapeHtml(item.note || item.presentedBy?.session || "Presented")}</small></td><td></td>
       <td><span class="work-row-controls"><button type="button" data-presentation-full="${escapeHtml(item.file)}" title="Open full reader">o full</button><button type="button" data-withdraw-presentation="${escapeHtml(item.file)}" title="Dismiss presentation">x dismiss</button></span></td>
     </tr>`;
+  }
+
+  /** Area-scoped attention rows use the same Document surface without a Goal. */
+  function areaPresentationRows(area) {
+    const items = area.presentations ?? [];
+    const rows = items.slice(0, PRESENTED_ROWS_PER_GOAL).map((item) => {
+      const cursor = `area-document:${area.path}:${item.file}`;
+      const presenter = item.presentedBy?.session || "brain";
+      return `<tr class="desk-document work-row presented-document${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}" data-presentation-area="${escapeHtml(area.path)}" data-presentation-file="${escapeHtml(item.file)}" data-search-text="${escapeHtml(`${item.title} ${item.file}`)}">
+        <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<span class="work-goal-copy"><span class="work-goal-primary"><button type="button" class="work-row-title" data-work-row-title data-open-document="${escapeHtml(item.file)}" data-document-root="vault" aria-label="${escapeHtml(`Read ${item.title}, in ${area.path}, presented by ${presenter}`)}" title="${escapeHtml(item.file)}">↳ Read · ${escapeHtml(item.title)}</button></span></span></span></th>
+        <td><small>${escapeHtml(item.note || presenter)}</small></td><td></td>
+        <td><span class="work-row-controls"><button type="button" data-presentation-full="${escapeHtml(item.file)}" title="Open full reader">o full</button><button type="button" data-withdraw-presentation="${escapeHtml(item.file)}" title="Dismiss presentation">x dismiss</button></span></td>
+      </tr>`;
+    });
+    if (items.length > PRESENTED_ROWS_PER_GOAL) {
+      const hidden = items[PRESENTED_ROWS_PER_GOAL];
+      rows.push(`<tr class="desk-document work-row presented-document overflow" data-work-area="${escapeHtml(area.path)}"><th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<button type="button" data-open-document="${escapeHtml(hidden.file)}" data-presentation-area="${escapeHtml(area.path)}">and ${items.length - PRESENTED_ROWS_PER_GOAL} more · o</button></span></th><td></td><td></td><td></td></tr>`);
+    }
+    return rows;
   }
 
   /** One compact row for presentations beyond the desk cap. */

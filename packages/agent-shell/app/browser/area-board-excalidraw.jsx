@@ -4,6 +4,7 @@ import { Excalidraw } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import "./area-board-excalidraw.css";
 import core from "../public/area-board-core.js";
+import pickerModel from "../public/area-board-picker.js";
 
 globalThis.EXCALIDRAW_ASSET_PATH = "/agent-shell-map-assets/";
 
@@ -45,8 +46,9 @@ function selectedText(api, scene) {
 /** Renders Excalidraw with Tangent blocks, verbs, inbox, and outline. */
 function TangentMap({ host, bridge, options }) {
   const [api, setApi] = useState(null);
-  const [picker, setPicker] = useState(false);
+  const [picker, setPicker] = useState(null);
   const [query, setQuery] = useState("");
+  const [wide, setWide] = useState(false);
   const [help, setHelp] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [saveState, setSaveState] = useState(options.initialSaveState ?? { state: "saved" });
@@ -55,8 +57,12 @@ function TangentMap({ host, bridge, options }) {
   const [proposals, setProposals] = useState(options.proposals ?? []);
   const [collapsedIds, setCollapsedIds] = useState(options.view?.foldedGroupIds ?? []);
   const [notice, setNotice] = useState("");
+  const [camera, setCamera] = useState({ scrollX: options.scene.appState?.scrollX ?? 0, scrollY: options.scene.appState?.scrollY ?? 0, zoom: options.scene.appState?.zoom?.value ?? 1 });
+  const frames = options.frames ?? core.ancestryFrames(options.area, options.context, options.scene);
   const canonicalRef = useRef(core.refreshTangentFacts(options.scene, options.getDocuments()).scene);
-  const spatial = core.projectSpatialChildren(canonicalRef.current, options.area, options.childScenes);
+  const framed = structuredClone(canonicalRef.current);
+  framed.elements.unshift(...core.ancestryProjection(frames));
+  const spatial = core.projectSpatialChildren(framed, options.area, options.childScenes);
   const initialProjection = core.focusProjection(core.collapseSpatialRegions(spatial.scene, options.view?.foldedGroupIds), options.getDocuments(), options.focus, options.locatedArea);
   const hiddenFocusIdsRef = useRef(initialProjection.hiddenIds);
   const sceneRef = useRef(initialProjection.scene);
@@ -65,12 +71,13 @@ function TangentMap({ host, bridge, options }) {
   const pointerRef = useRef(null);
 
   const documents = options.getDocuments();
-  const choices = useMemo(() => core.entityChoices(options.area, documents), [options.area, documents, sceneTick]);
+  const targetArea = picker?.area ?? options.area;
+  const choices = useMemo(() => wide ? pickerModel.wideChoices(query, documents) : core.entityChoices(targetArea, documents), [wide, query, targetArea, documents, sceneTick]);
   const currentBlock = selectedBlock(api, sceneRef.current);
   const currentText = selectedText(api, sceneRef.current);
   const hiddenBlocks = sceneRef.current.elements.filter((element) => element.isDeleted && core.tangentOf(element));
   const outline = core.sceneOutline(sceneRef.current, documents);
-  const located = core.locateAreaBlock(canonicalRef.current, options.locatedArea, documents);
+  const located = options.locatedArea === options.area || core.locateAreaBlock(canonicalRef.current, options.locatedArea, documents);
   const locatedDocument = documents.find((item) => item.kind === "area" && item.area === options.locatedArea);
   const locatedChoice = locatedDocument ? { kind: "area", ref: locatedDocument.file, title: locatedDocument.title || options.locatedArea, status: locatedDocument.status || "" } : null;
   const outsideStars = Boolean(options.focus?.only && (options.focus?.areas ?? []).length && !(options.focus.areas ?? []).some((root) => options.locatedArea === root || options.locatedArea?.startsWith(`${root}/`)));
@@ -83,7 +90,9 @@ function TangentMap({ host, bridge, options }) {
     const canonical = fenced.scene;
     if (fenced.refused) setNotice(`${fenced.refused.region.split("/").at(-1)} stays in its parent Area · use Move Area for an ownership change`);
     canonicalRef.current = canonical;
-    const children = core.projectSpatialChildren(canonical, options.area, options.childScenes);
+    const withAncestry = structuredClone(canonical);
+    withAncestry.elements.unshift(...core.ancestryProjection(frames));
+    const children = core.projectSpatialChildren(withAncestry, options.area, options.childScenes);
     const projection = core.focusProjection(core.collapseSpatialRegions(children.scene, collapsedIds), options.getDocuments(), options.focus, options.locatedArea);
     hiddenFocusIdsRef.current = projection.hiddenIds;
     sceneRef.current = projection.scene;
@@ -95,12 +104,26 @@ function TangentMap({ host, bridge, options }) {
   }
 
   /** Places one selected entity block near the current pointer or viewport. */
-  function place(choice, keepOpen = false) {
+  async function place(choice, keepOpen = false) {
     if (!choice) return;
-    const point = core.insertionPoint(api?.getAppState?.(), pointerRef.current);
+    const appState = api?.getAppState?.() ?? {};
+    const selected = sceneRef.current.elements.filter((element) => appState.selectedElementIds?.[element.id]);
+    const point = core.placementPoint(appState, pointerRef.current, selected, frames.find((frame) => frame.role === "scope"));
+    if (picker?.area && picker.area !== options.area) {
+      try { await options.onPlaceInto?.(picker, choice, point); } catch (error) { setNotice(String(error.message ?? error)); }
+      setPicker(keepOpen ? picker : null); setQuery(""); return;
+    }
     publish(core.addBlock(sceneRef.current, choice, point));
     setQuery("");
-    setPicker(keepOpen);
+    setPicker(keepOpen ? picker : null);
+  }
+
+  /** Opens the picker for the smallest Area frame under the pointer. */
+  function openPicker() {
+    const appState = api?.getAppState?.() ?? {};
+    const point = core.placementPoint(appState, pointerRef.current, [], frames.find((frame) => frame.role === "scope"));
+    setWide(false);
+    setPicker(core.areaAtPoint(frames, point, appState.zoom?.value ?? 1));
   }
 
   /** Sends a selected block verb to the Agent Shell. */
@@ -211,7 +234,7 @@ function TangentMap({ host, bridge, options }) {
         if (event.key === " " && core.isAreaRegion(block)) { stop(event); toggleRegion(block); return; }
       }
       if (event.key === "Enter" && !located && locatedChoice) { stop(event); place(locatedChoice); return; }
-      if (key === "b") { stop(event); setPicker(true); return; }
+      if (key === "b") { stop(event); openPicker(); return; }
     };
     /** Opens a Tangent block instead of editing its cached label. */
     const doubleClick = (event) => {
@@ -244,6 +267,7 @@ function TangentMap({ host, bridge, options }) {
       {currentBlock ? <><button type="button" onClick={() => openBlock()}>Open <kbd>Enter</kbd></button>{core.isAreaRegion(currentBlock) && <button type="button" onClick={() => toggleRegion()}>{collapsedIds.includes(currentBlock.id) ? "Expand" : "Collapse"} <kbd>Space</kbd></button>}<button type="button" onClick={() => openBlock(currentBlock, "ask")}>Ask brain <kbd>A</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "correct")}>Correct <kbd>C</kbd></button><button type="button" onClick={() => hideBlock()}>Hide <kbd>X</kbd></button></> : <><button type="button" onClick={promoteIdea}>Send to brain as idea</button>{core.referenceFromText(currentText.text, choices) && <button type="button" onClick={makeSelectedTextBlock}>Make block</button>}</>}
     </div>}<button type="button" onClick={() => setOutlineOpen(true)} aria-expanded={outlineOpen} title="Outline"><span aria-hidden="true" className="tangent-map-glyph">≣</span><span className="tangent-map-label">Outline</span></button><button type="button" onClick={() => setHelp(true)} aria-keyshortcuts="?" title="Map keys (?)"><span aria-hidden="true" className="tangent-map-glyph">?</span><span className="tangent-map-label">Keys</span><kbd>?</kbd></button></div>}
       onPointerUpdate={({ pointer }) => { pointerRef.current = pointer; }}
+      onScrollChange={(scrollX, scrollY, zoom) => setCamera({ scrollX, scrollY, zoom: zoom?.value ?? zoom ?? 1 })}
       onPaste={(data) => { if (data.files?.length) return true; const choice = core.referenceFromText(data.text, choices); if (!choice) return false; place(choice); return true; }}
       onChange={(elements, appState) => {
         const view = core.viewFromAppState(appState, { ...(options.view ?? {}), foldedGroupIds: collapsedIds });
@@ -268,7 +292,9 @@ function TangentMap({ host, bridge, options }) {
       }}
     />
 
-
+    <div className="tangent-map-ancestry" aria-label="Area ancestry">
+      {frames.map((frame, index) => <button type="button" key={frame.area} style={{ left: `${(frame.rect.x + camera.scrollX) * camera.zoom + 12}px`, top: `${(frame.rect.y + camera.scrollY) * camera.zoom + 10}px` }} aria-label={frame.role === "scope" ? `${frame.label.name}, your scope` : `${frame.label.name}, inside ${frames[index - 1]?.label.name ?? "vault"}`} onClick={() => frame.role === "ancestor" && options.onSelectArea?.(frame.area)}><strong>{frame.label.name}</strong> <span>{frame.label.status}</span></button>)}
+    </div>
 
     <div className={`tangent-map-save ${saveState.state}`} role="status">
       <span>{saveState.state === "dirty" ? "Saving…" : saveState.state === "conflict" ? "Changed elsewhere" : saveState.state === "blocked" ? "Save stopped" : saveState.label || "Saved"}</span>
@@ -280,18 +306,19 @@ function TangentMap({ host, bridge, options }) {
 
     {(outsideStars || !located && locatedChoice) && <div className="tangent-map-location" role="status">{outsideStars ? <>Outside your stars · <button type="button" onClick={options.onToggleStarredOnly}>F shows all</button></> : <>{options.locatedArea.split("/").at(-1)} is not on this map yet · <button type="button" onClick={() => place(locatedChoice)}>Place it ↵</button></>}</div>}
 
-    {(proposals.length > 0 || hiddenBlocks.length > 0 || !located && locatedChoice) && <section className="tangent-map-inbox" aria-label="Map inbox">
+    {(core.scopedEntities(options.area, documents).children.length > 0 || proposals.length > 0 || hiddenBlocks.length > 0 || !located && locatedChoice) && <section className="tangent-map-inbox" aria-label="Map inbox">
       <strong>Inbox</strong>
+      {core.scopedEntities(options.area, documents).children.length > 0 && <span>{core.scopedEntities(options.area, documents).children.length} Areas not placed · B</span>}
       {!located && locatedChoice && <button type="button" onClick={() => place(locatedChoice)}>{locatedChoice.title} · not placed<small>Place it ↵</small></button>}
       {proposals.map((proposal) => <button type="button" key={proposal.id} onClick={() => { const source = proposal.source || {}; const ref = source.file ? `${source.file}${source.subpath || ""}` : source.url; const choice = { kind: proposal.kind === "link" ? "link" : core.kindForReference(ref), ref, title: proposal.note || ref }; place(choice); options.onProposalPlaced?.(proposal); setProposals((items) => items.filter((item) => item.id !== proposal.id)); }}>{proposal.note || proposal.source?.file || proposal.source?.url}<small>Place</small></button>)}
       {hiddenBlocks.map((block) => <button type="button" key={block.id} onClick={() => restoreBlock(block.id)}>{core.factForBlock(block, documents)?.title || core.tangentOf(block).ref}<small>Restore</small></button>)}
     </section>}
 
-    {picker && <div className="tangent-map-dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) setPicker(false); }}><section className="tangent-map-picker" role="dialog" aria-modal="true" aria-labelledby="tangent-block-picker-title">
-      <h2 id="tangent-block-picker-title">Place a Tangent block</h2>
-      <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { stop(event); setPicker(false); } else if (event.key === "Enter" && filtered[0]) { stop(event); place(filtered[0], event.shiftKey); } }} placeholder="Goal, Document, Area, idea, or URL" />
+    {picker && <div className="tangent-map-dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) setPicker(false); }}><section className="tangent-map-picker" role="dialog" aria-modal="true" aria-label="Place a Tangent block">
+      <h2 id="tangent-block-picker-title">{wide ? "Place from the whole vault" : `Place in ${picker.label?.name ?? options.area.split("/").at(-1)}`}</h2>
+      <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Tab") { stop(event); setWide((value) => !value); } else if (event.key === "Escape") { stop(event); setPicker(false); } else if (event.key === "Enter" && filtered[0]) { stop(event); place(filtered[0], event.shiftKey); } }} placeholder="Goal, Document, Area, idea, or URL" />
       <ul role="listbox">{filtered.slice(0, 30).map((choice) => <li key={`${choice.kind}:${choice.ref}`}><button type="button" onClick={() => place(choice)}><small>{choice.kind}</small><span>{choice.title}</span><em>{choice.status}</em></button></li>)}</ul>
-      <p><kbd>Enter</kbd> place · <kbd>⇧Enter</kbd> place another · <kbd>Esc</kbd> close</p>
+      <p><kbd>Tab</kbd> {wide ? "return here" : "whole vault"} · <kbd>Enter</kbd> place · <kbd>⇧Enter</kbd> place another · <kbd>Esc</kbd> close</p>
     </section></div>}
 
     {help && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p>Space-drag pans. ⌘-wheel zooms. ⌘Z undoes. ⌘S saves now. Esc with nothing selected returns to Work.</p><p>Scope: <kbd>f</kbd> stars the selected Area. <kbd>⌘⇧F</kbd> shows starred Areas. <kbd>⌘⇧A</kbd> shows active work.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>A</kbd> asks the brain · <kbd>C</kbd> corrects · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelp(false)}>Close</button></section></div>}
@@ -301,7 +328,7 @@ function TangentMap({ host, bridge, options }) {
       <ol>{outline.map((item) => <li key={item.id}><button type="button" onClick={() => selectOutline(item.id)}>{item.label}</button></li>)}</ol>
       {outlineOpen && outline.length === 0 && <p>Nothing on the map yet.</p>}
     </section>
-    {sceneRef.current.elements.filter((element) => !element.isDeleted).length === 0 && <p className="tangent-map-empty-hint">B places a block · T writes · P draws</p>}
+    {canonicalRef.current.elements.filter((element) => !element.isDeleted && !core.isAreaBoundary(element)).length === 0 && <p className="tangent-map-empty-hint">Empty · B places a block · draw anywhere</p>}
   </div>;
 }
 

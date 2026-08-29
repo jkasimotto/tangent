@@ -191,6 +191,7 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
       const selectedScene = area === "otto/tangent" ? childScene : scene;
       return sendJson(response, 200, { area, file: `${area}/${area.split("/").at(-1)}.excalidraw`, exists: true, hash: savedHash, scene: selectedScene, canvas: selectedScene, view: null, proposals: [], warnings: [] });
     }
+    if (url.pathname === "/api/areas/map-context") return sendJson(response, 200, { area: "otto/tangent", hash: savedHash, ancestors: [{ area: "otto", name: "Otto", status: "active", exists: true, hash: savedHash, boundary: { x: 0, y: 0, width: 1200, height: 800 }, regionForChild: { x: 100, y: 100, width: 820, height: 580 }, placedChildren: ["otto/tangent"] }], legacyBaseline: null });
     if (url.pathname.startsWith("/api/")) return sendJson(response, 200, { ok: true });
     await serveStaticAsset(url, response, here);
   });
@@ -205,11 +206,9 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await row.dispatchEvent("click");
     await row.locator("[data-work-cursor-control]").focus();
     await page.keyboard.press("m");
-    await page.locator('[data-tangent-area-map="otto"] .excalidraw canvas.interactive').waitFor();
-    await page.getByRole("button", { name: "Outline" }).click();
-    const parentOutline = await page.locator(".tangent-map-outline button").allTextContents();
-    assert.ok(parentOutline.some((label) => label.includes("area: tangent")), `Work opens the parent picture with a nested Area region: ${JSON.stringify(parentOutline)}`);
-    await page.getByRole("button", { name: "Close outline" }).click();
+    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
+    await page.getByRole("button", { name: "Otto, inside vault" }).waitFor();
+    await page.getByRole("button", { name: "tangent, your scope" }).waitFor();
     await page.getByRole("button", { name: "Block" }).click();
     await page.getByRole("dialog", { name: "Place a Tangent block" }).getByRole("textbox").fill("compact table");
     await page.keyboard.press("Enter");
@@ -232,22 +231,16 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await reloadedRow.dispatchEvent("click");
     await reloadedRow.locator("[data-work-cursor-control]").focus();
     await page.keyboard.press("m");
-    await page.locator('[data-tangent-area-map="otto"] .excalidraw canvas.interactive').waitFor();
+    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
     await page.waitForFunction(() => document.body.textContent.includes("Redesign Work as a compact table"));
-    assert.ok(scene.elements.some((element) => element.type === "rectangle" && !element.customData?.tangent), "the drawn shape survived reload");
-    assert.ok(scene.elements.some((element) => element.customData?.tangent), "the Tangent block survived reload");
+    assert.ok(childScene.elements.some((element) => element.type === "rectangle" && !element.customData?.tangent), "the drawn shape survived reload");
+    assert.ok(childScene.elements.some((element) => element.customData?.tangent), "the Tangent block survived reload");
 
-    await page.getByRole("button", { name: "Outline" }).click();
-    await page.getByRole("button", { name: /area: Tangent/i }).click();
-    await page.keyboard.press("Enter");
     await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
     assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/);
     await page.getByRole("button", { name: "Outline" }).click();
     await page.getByRole("button", { name: "note: inside Tangent" }).waitFor();
     await page.getByRole("button", { name: "Close outline" }).click();
-    await page.keyboard.press("Escape");
-    await page.locator('[data-tangent-area-map="otto"] .excalidraw canvas.interactive').waitFor();
-
     await page.setViewportSize({ width: 520, height: 760 });
     await page.locator(".excalidraw canvas.interactive").waitFor();
     await page.getByRole("button", { name: "Block" }).waitFor();

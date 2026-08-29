@@ -105,6 +105,7 @@ import { newAttemptReplacement, readAllAttemptReplacements, readAttemptReplaceme
 import { GoalExecutionTransitionError, attachLateSourceEvidence, parkCurrentGoalAttempt, promoteReadyReplacement, reopenParkedGoalQueue } from "./goal-execution-transition.mjs";
 import { dismissGoalDocument, markGoalDocumentOpened, presentGoalDocument, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalDocument } from "./goal-presentations.mjs";
 import { createGoalPresentationRoutes } from "./goal-presentation-routes.mjs";
+import { createAreaMapContextRoutes } from "./area-map-context-routes.mjs";
 import { projectWork } from "./work-projection.mjs";
 import { acknowledgeWorkerQuestion, answerWorkerQuestion, latestWorkerQuestion, openWorkerQuestion, transferWorkerQuestions, workerQuestionDelivery, workerQuestionPrompt, workerQuestionTarget } from "./worker-questions.mjs";
 
@@ -224,6 +225,11 @@ const areaMapPromotions = createAreaMapPromotions({ store: areaMapRecordStore })
 const areaCanvasRoutes = createAreaCanvasRoutes({ repository: areaCanvasRepository, proposals: areaMapProposals, view: readAreaBoardView,
   /** Confirms that the route's derived Area has a vault directory. */
   areaExists: async (area) => Boolean(cleanAreaPath(area) && existsSync(areaDirectory(TREES_ROOT, area))),
+});
+/** Confirms that a map read targets an existing vault Area. */
+const mapAreaExists = async (area) => Boolean(cleanAreaPath(area) && existsSync(areaDirectory(TREES_ROOT, area)));
+const areaMapContextRoutes = createAreaMapContextRoutes({ root: TREES_ROOT, repository: areaCanvasRepository, runGit: runRepositoryGit,
+  areaExists: mapAreaExists,
 });
 // One JSON record per Goal for a solo (non-pipeline) session's context
 // continuations: the same mechanism pipeline steps keep inline on the step
@@ -7884,6 +7890,7 @@ const server = http.createServer(async (req, res) => {
     if (await agentRoutes.handle(req, res, url)) return;
     if (await areaRoutes.handle(req, res, url)) return;
     if (await areaCanvasRoutes.handle(req, res, url)) return;
+    if (await areaMapContextRoutes.handle(req, res, url)) return;
     if (await areaMapRoutes.handle(req, res, url)) return;
     if (await programRoutes.handle(req, res, url)) return;
     if (await processRoutes.handle(req, res, url)) return;

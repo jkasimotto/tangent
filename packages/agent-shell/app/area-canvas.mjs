@@ -55,6 +55,7 @@ export function validateAreaCanvas(scene) {
   if (scene.type !== "excalidraw") errors.push("scene.type must be excalidraw");
   if (!Number.isInteger(scene.version) || scene.version < 1 || scene.version > 100) errors.push("scene.version must be a supported integer");
   safeString(scene.source, "scene.source", errors, { max: 2_000 });
+  if (scene.tangent !== undefined && (!scene.tangent || typeof scene.tangent !== "object" || Array.isArray(scene.tangent) || !Number.isInteger(scene.tangent.format) || scene.tangent.format < 1)) errors.push("scene.tangent.format must be a positive integer");
   if (!Array.isArray(scene.elements)) errors.push("scene.elements must be an array");
   if (!scene.appState || typeof scene.appState !== "object" || Array.isArray(scene.appState)) errors.push("scene.appState must be an object");
   if (!scene.files || typeof scene.files !== "object" || Array.isArray(scene.files)) errors.push("scene.files must be an object");

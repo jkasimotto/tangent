@@ -3,6 +3,9 @@ const BLOCK_WIDTH = 280;
 const BLOCK_HEIGHT = 132;
 const REGION_SIZES = Object.freeze({ small: { width: 300, height: 220 }, medium: { width: 460, height: 320 }, large: { width: 680, height: 460 } });
 const BOUNDARY_MARGIN = 80;
+const DEFAULT_SCOPE_WIDTH = 1600;
+const DEFAULT_SCOPE_HEIGHT = 1000;
+const ANCESTRY_BAND = 140;
 // Colours are stored the way Excalidraw stores them: for its light theme. The
 // editor's dark theme inverts them on the canvas, so the scene never stores
 // dark-theme colours; a scene that did would render inverted, with white ink
@@ -67,7 +70,7 @@ function createShapeElement({ id, type = "rectangle", x = 0, y = 0, width = 200,
 
 /** Creates an empty scene with authored content but no persisted viewport. */
 function createEmptyScene() {
-  return { type: "excalidraw", version: 2, source: TANGENT_SOURCE, elements: [], appState: { viewBackgroundColor: CANVAS }, files: {} };
+  return { type: "excalidraw", version: 2, source: TANGENT_SOURCE, elements: [], appState: { viewBackgroundColor: CANVAS }, files: {}, tangent: { format: 2 } };
 }
 
 /** Returns the normal Tangent metadata on one connectable block. */
@@ -194,6 +197,75 @@ function createRegionElements({ id, ref, title = ref, status = "", x = 0, y = 0,
 /** Creates the one authored boundary for an Area file. */
 function createAreaBoundary(area, bounds = {}) {
   return createShapeElement({ id: `tangent-boundary-${seedFor(area)}`, type: "rectangle", x: bounds.x ?? 0, y: bounds.y ?? 0, width: bounds.width ?? 1200, height: bounds.height ?? 800, style: { backgroundColor: "transparent", strokeColor: "#868e96", strokeStyle: "dashed", strokeWidth: 1 }, customData: { tangent: { kind: "area", ref: `${area}/${area.split("/").pop()}.md`, role: "boundary" } } });
+}
+
+/** Creates the deterministic boundary projected for an Area that has no file. */
+function defaultScopeBoundary(area, bounds = {}) {
+  return createAreaBoundary(area, { x: bounds.x ?? 0, y: bounds.y ?? 0, width: bounds.width ?? DEFAULT_SCOPE_WIDTH, height: bounds.height ?? DEFAULT_SCOPE_HEIGHT });
+}
+
+/** Returns a plain rectangle for one Excalidraw element. */
+function rectOf(element) { return element ? { x: Number(element.x), y: Number(element.y), width: Number(element.width), height: Number(element.height) } : null; }
+
+/** Builds the read-only ancestry frames around the opened Area. */
+function ancestryFrames(area, context = {}, canonicalScene = createEmptyScene()) {
+  const path = String(area).split("/").filter(Boolean);
+  const authoredBoundary = (canonicalScene.elements ?? []).find((element) => !element.isDeleted && isAreaBoundary(element));
+  const scopeBoundary = authoredBoundary ?? defaultScopeBoundary(area);
+  const scopeRect = rectOf(scopeBoundary);
+  const frames = [{ area, depth: path.length - 1, role: "scope", rect: scopeRect, toArea: { scale: 1, offsetX: 0, offsetY: 0 }, source: authoredBoundary ? "authored" : "default", elementId: scopeBoundary.id, label: { name: path.at(-1) || area, status: "active" }, order: -1 }];
+  const ancestors = [...(context.ancestors ?? [])].reverse();
+  let defaultChain = false;
+  for (let index = 0; index < ancestors.length; index += 1) {
+    const ancestor = ancestors[index]; const distance = index + 1;
+    const child = index === 0 ? { boundary: scopeRect } : ancestors[index - 1];
+    const canAuthor = !defaultChain && ancestor.boundary && ancestor.regionForChild && child.boundary;
+    let rect; let toArea;
+    if (canAuthor) {
+      const boundary = ancestor.boundary; const region = ancestor.regionForChild; const childBoundary = child.boundary;
+      const header = Math.min(82, region.height * 0.24);
+      const scale = Math.min(region.width / childBoundary.width, Math.max(1, region.height - header) / childBoundary.height);
+      const offsetX = region.x + (region.width - childBoundary.width * scale) / 2 - childBoundary.x * scale;
+      const offsetY = region.y + header + (region.height - header - childBoundary.height * scale) / 2 - childBoundary.y * scale;
+      rect = { x: (boundary.x - offsetX) / scale, y: (boundary.y - offsetY) / scale, width: boundary.width / scale, height: boundary.height / scale };
+      toArea = { scale, offsetX, offsetY };
+    } else {
+      defaultChain = true;
+      rect = { x: scopeRect.x - ANCESTRY_BAND * distance, y: scopeRect.y - ANCESTRY_BAND * distance, width: scopeRect.width + ANCESTRY_BAND * distance * 2, height: scopeRect.height + ANCESTRY_BAND * distance * 2 };
+      toArea = { scale: 1, offsetX: rect.x, offsetY: rect.y };
+    }
+    frames.unshift({ area: ancestor.area, depth: String(ancestor.area).split("/").length - 1, role: "ancestor", rect, toArea, source: canAuthor ? "authored" : "default", elementId: ancestor.elementId ?? null, label: { name: ancestor.name || String(ancestor.area).split("/").at(-1), status: ancestor.status || "active" }, order: -distance });
+  }
+  return frames;
+}
+
+/** Creates locked Excalidraw rectangles for the ancestry projection. */
+function ancestryProjection(frames = []) {
+  return frames.filter((frame) => frame.role === "ancestor").map((frame) => createShapeElement({ id: `ancestry:${frame.area}`, x: frame.rect.x, y: frame.rect.y, width: frame.rect.width, height: frame.rect.height, style: { backgroundColor: "transparent", strokeColor: "#868e96", strokeStyle: "dashed", strokeWidth: 1, opacity: 70, locked: true }, customData: { tangentProjection: { area: frame.area, role: "ancestor" } } }));
+}
+
+/** Finds the deepest visible Area rectangle containing a point. */
+function areaAtPoint(frames = [], point, zoom = 1, edgePx = 8) {
+  if (!point) return null;
+  const edge = edgePx / (Number(zoom) || 1);
+  return frames.filter((frame) => point.x >= frame.rect.x - edge && point.x <= frame.rect.x + frame.rect.width + edge && point.y >= frame.rect.y - edge && point.y <= frame.rect.y + frame.rect.height + edge)
+    .sort((left, right) => right.depth - left.depth || Number(right.order ?? 0) - Number(left.order ?? 0))[0] ?? null;
+}
+
+/** Chooses the exact spatial point used for Block placement. */
+function placementPoint(appState = {}, pointer = null, selection = [], scopeFrame = null) {
+  if (pointer && Number.isFinite(pointer.x) && Number.isFinite(pointer.y)) return pointer;
+  const selected = Array.isArray(selection) ? selection.find((element) => !element.isDeleted) : null;
+  if (selected) return { x: selected.x + selected.width / 2, y: selected.y + selected.height / 2 };
+  if (scopeFrame) return { x: scopeFrame.rect.x + scopeFrame.rect.width / 2, y: scopeFrame.rect.y + scopeFrame.rect.height / 2 };
+  return insertionPoint(appState, pointer);
+}
+
+/** Maps one scope-space point into the selected Area's own coordinates. */
+function toAreaSpace(point, frame) {
+  if (!frame || !point) return point;
+  const transform = frame.toArea ?? { scale: 1, offsetX: 0, offsetY: 0 };
+  return { x: point.x * transform.scale + transform.offsetX, y: point.y * transform.scale + transform.offsetY };
 }
 
 /** Resolves one Tangent block without treating its cached text as authority. */
@@ -441,7 +513,7 @@ function sceneForSave(elements, appState = {}) {
       ...(Number.isFinite(appState.gridStep) ? { gridStep: appState.gridStep } : {}),
       ...(typeof appState.gridModeEnabled === "boolean" ? { gridModeEnabled: appState.gridModeEnabled } : {}),
       ...(typeof appState.objectsSnapModeEnabled === "boolean" ? { objectsSnapModeEnabled: appState.objectsSnapModeEnabled } : {}),
-    }, files: {},
+    }, files: {}, tangent: { format: 2 },
   };
 }
 
@@ -468,7 +540,46 @@ function normalizeSceneColors(scene) {
 }
 
 /** Returns a stable content signal; view and selection changes do not affect it. */
-function authoredFingerprint(elements) { return JSON.stringify(elements); }
+function authoredFingerprint(elements) {
+  const transient = new Set(["index", "version", "versionNonce", "updated", "seed"]);
+  /** Removes transient Excalidraw fields recursively. */
+  const clean = (value, key = "") => {
+    if (transient.has(key)) return undefined;
+    if (typeof value === "number" && ["x", "y", "width", "height", "angle"].includes(key)) return Math.round(value * 1000) / 1000;
+    if (Array.isArray(value)) return value.map((item) => clean(item)).filter((item) => item !== undefined);
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, clean(item, name)]).filter(([, item]) => item !== undefined));
+    return value;
+  };
+  return JSON.stringify((elements ?? []).filter((element) => !element.customData?.tangentProjection).map((element) => clean(element)));
+}
+
+/** Converts an old auto-arranged scene while preserving authored positions and ink. */
+function convertToBlankSlate(scene, area, documents = [], baseline = null) {
+  if (Number(scene?.tangent?.format ?? 0) >= 2) return { scene, changed: false, kept: 0, retired: 0, inboxed: [] };
+  const source = structuredClone(scene ?? createEmptyScene());
+  const direct = new Set(scopedEntities(area, documents).children.map((choice) => choice.ref));
+  const removed = new Set(); const kept = []; const inboxed = [];
+  for (const element of source.elements ?? []) {
+    if (element.isDeleted) { removed.add(element.id); continue; }
+    const tangent = tangentOf(element);
+    if (!tangent || isAreaBoundary(element)) { kept.push(element); continue; }
+    const ownRef = `${area}/${area.split("/").at(-1)}.md`;
+    if (tangent.kind === "area" && tangent.ref === ownRef) { removed.add(element.id); continue; }
+    const original = baseline?.[element.id];
+    const automatic = original && Math.abs(element.x - original.x) < 1 && Math.abs(element.y - original.y) < 1;
+    if (automatic) { removed.add(element.id); if (direct.has(tangent.ref)) inboxed.push(tangent.ref); continue; }
+    if (tangent.kind === "area" && direct.has(tangent.ref) && !isAreaRegion(element)) {
+      const fact = factForBlock(element, documents);
+      const [region, label] = createRegionElements({ id: element.id, ref: tangent.ref, title: fact?.title, status: fact?.status, x: element.x, y: element.y, width: element.width, height: element.height, style: element });
+      kept.push(region, label); removed.add(element.boundElements?.find((item) => item.type === "text")?.id);
+    } else { if (tangent.kind === "area") element.customData.tangent.role ||= "shortcut"; kept.push(element); }
+  }
+  const keptIds = new Set(kept.map((element) => element.id));
+  source.elements = kept.filter((element) => !element.containerId || keptIds.has(element.containerId));
+  source.elements = withBoundary(source, area).elements;
+  source.tangent = { ...(source.tangent ?? {}), format: 2 };
+  return { scene: source, changed: true, kept: source.elements.filter((element) => !isAreaBoundary(element)).length, retired: removed.size, inboxed: [...new Set(inboxed)] };
+}
 
 /** Applies disposable viewport state to an editor app state. */
 function appStateWithView(appState = {}, view = null) {
@@ -591,4 +702,6 @@ function legacyCanvasToExcalidraw(canvas) {
 
 const api = { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, collapseSpatialRegions, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, fenceRegionGeometry, focusProjection, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, locateAreaBlock, migrateAreaCardsToRegions, normalizeSceneColors, projectSpatialChildren, referenceFromText, refreshTangentFacts, regionSize, restoreFocusedElements, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, stripSpatialProjections, tangentOf, viewFromAppState, withBoundary };
 export { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, collapseSpatialRegions, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, fenceRegionGeometry, focusProjection, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, locateAreaBlock, migrateAreaCardsToRegions, normalizeSceneColors, projectSpatialChildren, referenceFromText, refreshTangentFacts, regionSize, restoreFocusedElements, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, stripSpatialProjections, tangentOf, viewFromAppState, withBoundary };
+Object.assign(api, { ancestryFrames, ancestryProjection, areaAtPoint, convertToBlankSlate, defaultScopeBoundary, placementPoint, toAreaSpace });
+export { ancestryFrames, ancestryProjection, areaAtPoint, convertToBlankSlate, defaultScopeBoundary, placementPoint, toAreaSpace };
 export default api;

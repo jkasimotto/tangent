@@ -1537,7 +1537,7 @@ function openAreaMap(area, trigger) {
   if (row?.dataset.workCursor) mapReturnCursor = row.dataset.workCursor;
   mapLocatedArea = area;
   mapTrail = [];
-  state.mapArea = rootMapArea(area);
+  state.mapArea = area;
   state.view = "map";
   paint(true);
 }
@@ -1573,9 +1573,9 @@ function mountDedicatedAreaMap() {
   const host = screen.querySelector("[data-dedicated-area-map]");
   if (!host || !state.mapArea || host.dataset.loaded) return;
   host.dataset.loaded = "loading";
-  api(`/api/areas/canvas?area=${encodeURIComponent(state.mapArea)}`).then((payload) => {
+  Promise.all([api(`/api/areas/canvas?area=${encodeURIComponent(state.mapArea)}`), api(`/api/areas/map-context?area=${encodeURIComponent(state.mapArea)}`).catch(() => ({ area: state.mapArea, ancestors: [], legacyBaseline: null }))]).then(([payload, context]) => {
     host.dataset.loaded = "yes";
-    activeAreaBoard = areaBoardView.mount(host, { area: state.mapArea, payload, documents: areaMapEntities(), getDocuments: areaMapEntities, api, onOpenDocument: openDocument, onSelectArea: drillAreaMap, onEntityVerb: areaMapEntityVerb, onBack: closeAreaMap, locatedArea: mapLocatedArea, focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly }, onToggleAreaStar: toggleAreaStar, onToggleStarredOnly: toggleStarredOnly, onToggleActiveOnly: toggleActiveOnly, brainLive: Boolean(state.brains.find((brain) => brain.area === state.mapArea && brain.live)) });
+    activeAreaBoard = areaBoardView.mount(host, { area: state.mapArea, payload, context, documents: areaMapEntities(), getDocuments: areaMapEntities, api, onOpenDocument: openDocument, onSelectArea: drillAreaMap, onEntityVerb: areaMapEntityVerb, onBack: closeAreaMap, locatedArea: mapLocatedArea, focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly }, onToggleAreaStar: toggleAreaStar, onToggleStarredOnly: toggleStarredOnly, onToggleActiveOnly: toggleActiveOnly, brainLive: Boolean(state.brains.find((brain) => brain.area === state.mapArea && brain.live)) });
   }).catch(() => { host.dataset.loaded = "error"; host.innerHTML = `<section class="area-board-empty"><h2>Agent Shell did not answer.</h2><p>The map could not be loaded.</p><button type="button" data-map-retry>Retry</button></section>`; });
 }
 shellBindings = bindShellEvents({

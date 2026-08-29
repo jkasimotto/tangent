@@ -35,6 +35,10 @@
 .tangent-map-save.conflict { color: #e8a317; }
 .tangent-map-save.blocked { color: #e03131; }
 .tangent-map-save button { min-height: 28px; }
+.tangent-map-ancestry { position: absolute; z-index: 3; inset: 0; pointer-events: none; overflow: hidden; }
+.tangent-map-ancestry button { position: absolute; padding: 2px 6px; border: 0; border-radius: 4px; background: color-mix(in srgb, var(--tangent-island) 82%, transparent); color: var(--tangent-text); font: 14px Excalifont, Virgil, sans-serif; white-space: nowrap; pointer-events: auto; }
+.tangent-map-ancestry button strong { font-weight: 600; }
+.tangent-map-ancestry button span { color: var(--tangent-muted); font-size: 11px; }
 .tangent-map-brain { padding-left: 8px; border-left: 1px solid var(--tangent-border); color: var(--tangent-muted); }
 
 .tangent-map-inbox { position: absolute; z-index: 3; left: 50%; bottom: 16px; display: flex; align-items: stretch; gap: 7px; width: min(680px, calc(100% - 520px)); max-height: 74px; padding: 7px; overflow-x: auto; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); box-shadow: var(--tangent-shadow); transform: translateX(-50%); }

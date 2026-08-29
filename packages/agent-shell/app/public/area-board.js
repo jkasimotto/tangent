@@ -21,28 +21,15 @@ function loadEditorStyle() {
 /** Loads the test editor or the production Excalidraw browser bundle. */
 const editorLoader = () => globalThis.__TANGENT_AREA_EDITOR_LOADER__?.() ?? loadEditorStyle().then(() => import("/agent-shell-map.js"));
 
-/** Builds the first scene from Area-scoped authoritative references. */
-function initialScene(area, documents) {
+/** Builds an unsaved blank scope. No vault entity is placed automatically. */
+function initialScene(area) {
   const scene = core.createEmptyScene();
-  const scoped = core.scopedEntities(area, documents);
-  for (const [index, choice] of scoped.own.filter((item) => item.kind === "goal" && !["done", "dropped"].includes(item.status)).entries()) {
-    scene.elements.push(...core.createBlockElements({ id: crypto.randomUUID(), ...choice, x: 60, y: 80 + index * 160 }));
-  }
-  let x = scoped.own.some((item) => item.kind === "goal") ? 390 : 60;
-  let y = 80;
-  let rowHeight = 0;
-  for (const choice of scoped.children) {
-    const size = core.regionSize(choice, documents);
-    if (x + size.width > 1800) { x = 390; y += rowHeight + 80; rowHeight = 0; }
-    scene.elements.push(...core.createRegionElements({ id: crypto.randomUUID(), ...choice, x, y, ...size }));
-    x += size.width + 80;
-    rowHeight = Math.max(rowHeight, size.height);
-  }
-  return core.withBoundary(scene, area);
+  scene.elements.push(core.defaultScopeBoundary(area));
+  return scene;
 }
 
 /** Mounts the Excalidraw editor island and the existing durable save contract. */
-function mount(host, { area, payload, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, locatedArea = area, focus = null, onToggleAreaStar = null, onToggleStarredOnly = null, onToggleActiveOnly = null, brainLive = false, ignoreDraft = false }) {
+function mount(host, { area, payload, context = { ancestors: [] }, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, locatedArea = area, focus = null, onToggleAreaStar = null, onToggleStarredOnly = null, onToggleActiveOnly = null, brainLive = false, ignoreDraft = false }) {
   host.replaceChildren();
   const drafts = draftStore.create(localStorage);
   const pendingDraft = !ignoreDraft ? drafts.load(area) : null;
@@ -62,9 +49,9 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
     choice.innerHTML = `<strong>A draft from ${time} was not saved.</strong><button type="button" data-draft-restore>Restore</button><button type="button" data-draft-discard>Discard</button>`;
     choice.querySelector("[data-draft-restore]").addEventListener("click", () => {
       const scene = pendingDraft.scene ?? pendingDraft.canvas;
-      controller = mount(host, { area, payload: { ...payload, exists: true, hash: pendingDraft.baseHash, scene, canvas: scene, restoreDraft: true }, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true });
+      controller = mount(host, { area, context, payload: { ...payload, exists: true, hash: pendingDraft.baseHash, scene, canvas: scene, restoreDraft: true }, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true });
     });
-    choice.querySelector("[data-draft-discard]").addEventListener("click", () => { drafts.clear(area); controller = mount(host, { area, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true }); });
+    choice.querySelector("[data-draft-discard]").addEventListener("click", () => { drafts.clear(area); controller = mount(host, { area, context, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true }); });
     host.append(choice);
     return {
       /** Returns the restored or discarded draft controller's scene. */
@@ -77,8 +64,8 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
   }
 
   const normalized = core.normalizeSceneColors(structuredClone(payload.scene ?? payload.canvas ?? core.createEmptyScene()));
-  const spatial = payload.exists ? core.migrateAreaCardsToRegions(normalized.scene, area, getDocuments()) : { scene: normalized.scene, changed: false };
-  let current = spatial.scene;
+  const conversion = payload.exists ? core.convertToBlankSlate(normalized.scene, area, getDocuments(), context.legacyBaseline) : { scene: initialScene(area), changed: false, inboxed: [] };
+  let current = conversion.scene;
   current.appState = core.appStateWithView(current.appState, payload.view);
   let baseHash = payload.hash ?? null;
   let editor = null;
@@ -103,12 +90,11 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
   });
   saver.start(baseHash);
 
-  /** Creates and saves a first scene when the Area has no map file. */
-  async function ensureScene() {
-    if (payload.exists) return;
-    current = initialScene(area, getDocuments());
-    const created = await api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area, baseHash: null, canvas: current, operationId: crypto.randomUUID() }) });
-    baseHash = created.hash;
+  /** Converts legacy grid content once. A new map still writes nothing. */
+  async function convertLegacy() {
+    if (!conversion.changed) return;
+    const result = await api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area, baseHash, canvas: current, reason: "blank slate", operationId: crypto.randomUUID() }) });
+    baseHash = result.hash;
     saver.start(baseHash);
   }
 
@@ -149,6 +135,19 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
     else if (source.file) onOpenDocument?.(source.file);
   }
 
+  /** Writes a new block to the exact spatial target Area, then moves scope. */
+  async function placeInto(frame, choice, point) {
+    if (!frame || frame.area === area) return false;
+    const target = await api(`/api/areas/canvas?area=${encodeURIComponent(frame.area)}`);
+    let scene = structuredClone(target.scene ?? target.canvas ?? core.createEmptyScene());
+    if (!target.exists) scene = initialScene(frame.area);
+    scene = core.addBlock(scene, choice, core.toAreaSpace(point, frame));
+    const saved = await api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area: frame.area, baseHash: target.hash ?? null, canvas: scene, operationId: crypto.randomUUID() }) });
+    if (saved?.status === 409 || saved?.error) throw new Error(`${frame.label.name} changed elsewhere · try again`);
+    onSelectArea?.(frame.area);
+    return true;
+  }
+
   /** Removes an inbox proposal only after its placed block is durable. */
   async function proposalPlaced(proposal) {
     const saved = await saver.flush();
@@ -167,7 +166,7 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
     }, 350);
   }
 
-  const ready = ensureScene().then(async () => {
+  const ready = convertLegacy().then(async () => {
     const children = core.scopedEntities(area, getDocuments()).children;
     const entries = await Promise.all(children.map(async (child) => {
       try { const payload = await api(`/api/areas/canvas?area=${encodeURIComponent(child.area)}`); return [child.area, payload.exists && payload.ok !== false ? payload.scene ?? payload.canvas : null]; }
@@ -177,9 +176,9 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
   }).then(({ module, childScenes }) => {
     loader.remove();
     editor = module.mountAreaBoardEditor(host, {
-      area, scene: current, childScenes, view: payload.view, proposals: payload.proposals ?? [], getDocuments,
+      area, scene: current, context, frames: core.ancestryFrames(area, context, current), childScenes, view: payload.view, proposals: payload.proposals ?? [], inboxed: conversion.inboxed ?? [], getDocuments,
       initialSaveState: { state: "saved", label: payload.migrated ? "Converted from canvas" : undefined },
-      brainLive, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly,
+      brainLive, onBack, locatedArea, focus, onSelectArea, onPlaceInto: placeInto, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly,
       /** Queues a Julian-authored scene edit for durable save. */
       onSceneChange(next) { current = next; saver.edit(current); },
       /** Accepts a fact-only repaint without dirtying the shared scene. */
@@ -192,11 +191,11 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
       /** Promotes plain map text to an Area-brain idea. */
       onPromoteIdea: async (description) => api("/api/idea/new", { method: "POST", body: JSON.stringify({ area, description }) }),
     });
-    if (payload.restoreDraft || normalized.changed || spatial.changed) saver.edit(current);
+    if (payload.restoreDraft) saver.edit(current);
     return editor;
   }).catch((error) => {
     host.innerHTML = `<section class="area-board-empty"><h2>The drawing tools did not load.</h2><p>${String(error?.message ?? error)}</p><button type="button">Retry</button></section>`;
-    host.querySelector("button")?.addEventListener("click", () => mount(host, { area, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true }));
+    host.querySelector("button")?.addEventListener("click", () => mount(host, { area, context, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true }));
     throw error;
   });
 

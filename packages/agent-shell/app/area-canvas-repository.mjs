@@ -56,7 +56,7 @@ export function createAreaCanvasRepository({ root, runGit, commit, reportError =
   }
 
   /** Saves one validated scene with optimistic repository-hash protection. */
-  async function save(area, canvas, { baseHash = null, operationId = null, session = null } = {}) {
+  async function save(area, canvas, { baseHash = null, operationId = null, session = null, reason = null } = {}) {
     const current = await read(area);
     const text = serializeAreaCanvas(canvas);
     const desiredHash = canvasHash(text);
@@ -68,7 +68,8 @@ export function createAreaCanvasRepository({ root, runGit, commit, reportError =
     await writeFile(temporary, text, "utf8");
     await rename(temporary, safe.absolute);
     if (!current.exists) await runGit(["-C", root, "add", "--", current.file]);
-    const result = await commit([current.file], `${current.exists ? "update" : "add"}: ${area} spatial map`, area, session);
+    const suffix = reason ? ` · ${reason}` : "";
+    const result = await commit([current.file], `${current.exists ? "update" : "add"}: ${area} spatial map${suffix}`, area, session);
     if (!result.committed) {
       reportError(`canvas saved without a vault commit: ${current.file}: ${result.error}`);
       return { status: 503, saved: true, committed: false, error: result.error, hash: desiredHash, operationId };

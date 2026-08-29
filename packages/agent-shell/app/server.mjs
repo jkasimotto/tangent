@@ -106,6 +106,7 @@ import { GoalExecutionTransitionError, attachLateSourceEvidence, parkCurrentGoal
 import { dismissGoalDocument, markGoalDocumentOpened, presentGoalDocument, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalDocument } from "./goal-presentations.mjs";
 import { createGoalPresentationRoutes } from "./goal-presentation-routes.mjs";
 import { projectWork } from "./work-projection.mjs";
+import { acknowledgeWorkerQuestion, answerWorkerQuestion, latestWorkerQuestion, openWorkerQuestion, transferWorkerQuestions, workerQuestionDelivery, workerQuestionPrompt, workerQuestionTarget } from "./worker-questions.mjs";
 
 const rawExecFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = Number(process.env.TANGENT_TMUX_COMMAND_TIMEOUT_MS ?? 10_000);
@@ -1919,11 +1920,13 @@ async function pipelineStepPrompt(area, o, record, index, extras = [], sessionNa
     .map((item) => `### Handover from step ${item.index} (${item.label || "agent"}, ${item.status})\n\n${item.handover}`);
   trace?.mark("step controller resolved");
   const continuationEntries = step.continuations ?? [];
+  const questions = workerQuestionPrompt(step);
   return (
     `${assignment}\n\n` +
     `## Your step\n\n` +
     `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}${step.kind === "review" ? " This is the review step. --done means the review passed." : ""}\n\n` +
     (earlier.length ? `## Handovers so far\n\n${earlier.join("\n\n")}\n\n` : "") +
+    (questions ? `${questions}\n\n` : "") +
     (continuationEntries.length ? `${continuationSection({ index, total, entries: continuationEntries, subject: "step" })}\n\n` : "") +
     workerSendSection()
   );
@@ -2980,6 +2983,7 @@ async function startPipelineStep(record, index, trace = null) {
     endedAt: null,
     report: null,
   }];
+  transferWorkerQuestions(step, step.attempts.at(-1), step.startedAt);
   delete step.nextAttemptKind;
   record.currentAssignmentId = step.id;
   record.revision = Math.max(1, Number(record.revision) || 1) + 1;
@@ -3294,6 +3298,20 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
   if (found.record.migrationProblem || found.record.status === "paused" || found.record.controllerArea !== found.record.area) {
     return { status: 409, error: `The authoritative Goal queue is paused: ${found.record.migrationProblem ?? "it needs repair"}. Keep this worker session open and repair the queue for ${found.record.area}. Nothing was recorded.` };
   }
+  // A replacement prompt carries the exact open question and tells the new
+  // attempt to run the same worker command. Attach that command to the
+  // existing question instead of creating a second report or brain notice.
+  // This also makes a retry after answer delivery or acknowledgement idempotent.
+  const waitingQuestion = kind === "question" ? latestWorkerQuestion(found.step) : null;
+  if (waitingQuestion
+    && normalizeMessage(waitingQuestion.report.question ?? waitingQuestion.report.summary) === normalizeMessage(text)) {
+    const attempt = found.step.attempts?.at(-1) ?? null;
+    if (attempt?.session === sessionName) {
+      transferWorkerQuestions(found.step, attempt);
+      await writePipeline(PIPELINES_ROOT, found.record);
+      return { status: 200, state: "question-waiting", next: null, pipeline: found.record, receipt: null, repeated: true };
+    }
+  }
   const effectiveReport = report ?? reportFromSendKind(found.record, found.step, kind, text);
   const effectiveKind = report ? null : kind ?? "note";
   return completePipelineStep(found.record, found.step, text, "agent", effectiveReport, operationId, sessionName, effectiveKind);
@@ -3347,6 +3365,9 @@ async function completePipelineStep(record, step, text, source, report = null, i
   }
   if (report) {
     try {
+      if (report.type === "question-needed") {
+        report = openWorkerQuestion({ ...report, idempotencyKey }, { attempt: step.attempts?.at(-1) ?? null, session: workerSession, now: endedAt });
+      }
       typed = recordTypedReport(record, step, report, idempotencyKey, endedAt);
     } catch (error) {
       return { status: 409, error: source === "agent" ? workerReportRejection(error) : String(error.message ?? error) };
@@ -4522,6 +4543,79 @@ async function commandProvenance(session) {
 async function workerGoalForSession(session) {
   const pipeline = (await readAllPipelines(PIPELINES_ROOT)).find((record) => record.steps.some((step) => step.session === session || step.attempts?.some((attempt) => attempt.session === session)));
   return pipeline ? (await goalsByFile()).get(pipeline.goal) ?? null : null;
+}
+
+/** Finds one queue whose question is addressed through a current or historical worker session. */
+async function queueForWorkerQuestion(targetSession) {
+  return (await readAllPipelines(PIPELINES_ROOT)).find((record) => workerQuestionTarget(record, targetSession)) ?? null;
+}
+
+/**
+ * Converts an exact live brain message into a durable queue answer. Null
+ * means that the caller must keep the ordinary agent-message semantics.
+ */
+async function maybeAnswerWorkerQuestion(sender, targetSession, text, operationId) {
+  const candidate = await queueForWorkerQuestion(targetSession);
+  if (!candidate) return null;
+  const brain = await exactLiveBrainForArea(candidate.area);
+  if (!brain || sender.role !== "brain" || sender.session !== brain.session || sender.area !== candidate.area) return null;
+  return withGoalQueueMutation(candidate.goal, async () => {
+    const record = await readPipeline(PIPELINES_ROOT, candidate.area, candidate.slug);
+    if (!record) return { status: 404, error: "the worker question queue no longer exists", code: "question-queue-missing" };
+    try {
+      const answered = answerWorkerQuestion(record, {
+        targetSession,
+        text,
+        brainSession: sender.session,
+        operationId: String(operationId ?? "").trim() || randomUUID(),
+      });
+      if (answered.state === "not-question") return null;
+      if (!answered.repeated) await writePipeline(PIPELINES_ROOT, record);
+      stateEvents.changed("worker question answered");
+      return {
+        status: 200,
+        value: {
+          status: answered.repeated ? "repeated" : "answered",
+          to: answered.question.recipient?.session ?? record.area,
+          target: "worker-question",
+          question: answered.question,
+          queueRevision: record.revision,
+        },
+      };
+    } catch (error) {
+      return { status: 409, error: String(error.message ?? error), code: error.code ?? "question-answer-conflict" };
+    }
+  });
+}
+
+/** Reads one durable answer for the exact attempt wait channel. */
+async function readWorkerQuestion(body) {
+  for (const record of await readAllPipelines(PIPELINES_ROOT)) {
+    const delivery = workerQuestionDelivery(record, body);
+    if (delivery) return { status: 200, value: { ...delivery, goal: record.goal, assignmentId: workerQuestionTarget(record, delivery.question.askedSession)?.assignment?.id ?? null } };
+  }
+  return { status: 404, error: `no worker question ${String(body.questionId ?? "").trim()}`, code: "question-not-found" };
+}
+
+/** Records exact-attempt acknowledgement under the queue's existing mutation lock. */
+async function acknowledgeWorkerQuestionDelivery(body) {
+  const records = await readAllPipelines(PIPELINES_ROOT);
+  const candidate = records.find((record) => workerQuestionDelivery(record, body)) ?? null;
+  if (!candidate) return { status: 404, error: `no worker question ${String(body.questionId ?? "").trim()}`, code: "question-not-found" };
+  return withGoalQueueMutation(candidate.goal, async () => {
+    const record = await readPipeline(PIPELINES_ROOT, candidate.area, candidate.slug);
+    try {
+      const acknowledged = acknowledgeWorkerQuestion(record, {
+        ...body,
+        operationId: String(body.operationId ?? "").trim() || randomUUID(),
+      });
+      if (!acknowledged.repeated) await writePipeline(PIPELINES_ROOT, record);
+      stateEvents.changed("worker question acknowledged");
+      return { status: 200, value: { status: acknowledged.repeated ? "repeated" : "acknowledged", question: acknowledged.question, queueRevision: record.revision } };
+    } catch (error) {
+      return { status: error.code === "question-transferred" ? 409 : 400, error: String(error.message ?? error), code: error.code ?? "question-acknowledgement-failed" };
+    }
+  });
 }
 
 /**
@@ -6391,6 +6485,10 @@ const agentRoutes = createAgentRoutes({
     }
     return { ...projected, ...await rebuiltAgentPrompt(async () => goalPrompt(goal.area, goal, recoveredExtraGoals(projected, goalIndex), [], null, await promptWorkFolder(goal.area, projected.attempt))) };
   },
+  /** Reads one question through its control channel, never through a pane. */
+  question: readWorkerQuestion,
+  /** Records command-output delivery to the exact current attempt. */
+  acknowledgeQuestion: acknowledgeWorkerQuestionDelivery,
   /**
    * A worker's `tangent send brain`: the note lands on the worker's own
    * assignment and in the inbox of the brain that controls it. Only a worker
@@ -6429,7 +6527,10 @@ const agentRoutes = createAgentRoutes({
     }
     const area = result.receipt?.destinationArea ?? result.pipeline?.area ?? actor.area;
     const brain = area ? await liveBrainForArea(area) : null;
-    return { status: 200, value: { status: "sent", to: brain?.session ?? area, kind: kind ?? "note", state: result.state, receipt: result.receipt ?? null, pipeline: result.pipeline } };
+    const question = kind === "question"
+      ? latestWorkerQuestion(result.pipeline?.steps?.find((step) => step.session === session || step.attempts?.some((attempt) => attempt.session === session)))?.state ?? null
+      : null;
+    return { status: 200, value: { status: "sent", to: brain?.session ?? area, kind: kind ?? "note", state: result.state, receipt: result.receipt ?? null, pipeline: result.pipeline, ...(question ? { question } : {}) } };
   },
   /** Delivers or queues one normalized cross-agent message. */
   async send(body) {
@@ -6442,6 +6543,8 @@ const agentRoutes = createAgentRoutes({
     // Workers have one command (D5): their notes go to their own brain.
     if (sender.role === "worker") return { status: 403, error: WORKER_SEND_TARGET_REFUSAL };
     if (sender.role === "repair" && live?.kind === "goal" && live.area !== sender.area) return { status: 403, error: REPAIR_REFUSAL };
+    const answer = await maybeAnswerWorkerQuestion(sender, target ?? requested, text, body.operationId);
+    if (answer) return answer;
     const entry = { from: sender.session ?? "unknown sender", area: sender.area, text, durable: true, queuedAt: new Date().toISOString() };
     if (!live) {
       const inbox = areaInboxTarget(requested, { areas: [ROOT_AREA, ...flattenAreaPaths(tree)], brains });

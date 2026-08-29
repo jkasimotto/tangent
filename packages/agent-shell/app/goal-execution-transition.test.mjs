@@ -9,6 +9,7 @@ import {
   reopenParkedGoalQueue,
 } from "./goal-execution-transition.mjs";
 import { newPipeline } from "./pipeline-record.mjs";
+import { latestWorkerQuestion, openWorkerQuestion } from "./worker-questions.mjs";
 
 const oldLaunch = { harness: "claude", model: "sonnet-5", effort: "medium" };
 const newLaunch = { harness: "codex", model: "sol", effort: "high" };
@@ -148,6 +149,37 @@ test("a ready replacement atomically becomes current without rewriting assignmen
   const repeated = promoteReadyReplacement(queue, operation);
   assert.equal(repeated.state, "repeated");
   assert.equal(queue.steps[0].attempts.length, 2);
+});
+
+test("replacement promotion transfers an open worker question", () => {
+  const queue = queueFixture();
+  const assignment = queue.steps[0];
+  const report = openWorkerQuestion({
+    type: "question-needed", summary: "Use A or B?", question: "Use A or B?", idempotencyKey: "question-1", reportedAt: "2026-08-27T08:05:00.000Z",
+  }, { attempt: assignment.attempts[0], session: assignment.session });
+  assignment.reports = [report];
+  assignment.attempts[0].report = structuredClone(report);
+  assignment.attempts[0].result = structuredClone(report);
+  assignment.status = "waiting";
+  const sourceTarget = {
+    instanceId: "shell-1", area: queue.area, goal: queue.goal, assignmentId: "current", attemptId: "attempt-old",
+    session: "ship-old", target: "$4", generation: 1,
+  };
+  const operation = newAttemptReplacement(queue, {
+    goal: queue.goal, assignmentId: "current", expectedRevision: 7, expectedAttemptId: "attempt-old",
+    launch: newLaunch, operationId: "replace-question", sourceTarget,
+  });
+  transitionAttemptReplacement(operation, "replacement-starting", {
+    replacementAttemptId: "attempt-new",
+    replacementTarget: { ...sourceTarget, attemptId: "attempt-new", session: "ship-new", target: "$9" },
+    resolvedLaunch: { ref: newLaunch, command: "codex --model sol --effort high" },
+  });
+  transitionAttemptReplacement(operation, "replacement-ready", { readiness: { kind: "prompt-receipt" } });
+  promoteReadyReplacement(queue, operation, "2026-08-27T09:03:00.000Z");
+  const question = latestWorkerQuestion(queue.steps[0]).state;
+  assert.equal(question.status, "open");
+  assert.equal(question.recipient.attemptId, "attempt-new");
+  assert.equal(question.recipient.session, "ship-new");
 });
 
 test("late source evidence stays on replaced history and cannot advance the current attempt", () => {

@@ -5,7 +5,9 @@ export function createAgentRoutes(operations) {
   const routes = new Map([
     ["GET /api/agents", list],
     ["GET /api/agents/context", context],
+    ["GET /api/agents/questions", question],
     ["POST /api/agents/send", send],
+    ["POST /api/agents/questions/ack", acknowledgeQuestion],
   ]);
 
   /** Handles one matching request and reports whether this router owned it. */
@@ -38,11 +40,30 @@ export function createAgentRoutes(operations) {
   async function send(request, response) {
     const body = await readJson(request);
     try {
+      body.operationId ??= String(request.headers["x-tangent-operation-id"] ?? "").trim();
       const result = String(body.to ?? "").trim() === "brain" ? await operations.sendToBrain(body) : await operations.send(body);
       sendJson(response, result.status, result.status === 200 ? result.value : { error: result.error });
     } catch (error) {
       sendJson(response, 400, { error: String(error.message ?? error) });
     }
+  }
+
+  /** Reads one exact worker question without touching a pane. */
+  async function question(request, response, url) {
+    const result = await operations.question({
+      questionId: url.searchParams.get("question"),
+      attemptId: url.searchParams.get("attempt"),
+      session: url.searchParams.get("session"),
+    });
+    sendJson(response, result.status, result.status === 200 ? result.value : { error: result.error, ...(result.code ? { code: result.code } : {}) });
+  }
+
+  /** Acknowledges command-output delivery to the exact recipient attempt. */
+  async function acknowledgeQuestion(request, response) {
+    const body = await readJson(request);
+    body.operationId ??= String(request.headers["x-tangent-operation-id"] ?? "").trim();
+    const result = await operations.acknowledgeQuestion(body);
+    sendJson(response, result.status, result.status === 200 ? result.value : { error: result.error, ...(result.code ? { code: result.code } : {}) });
   }
 
   return { handle };

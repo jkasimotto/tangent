@@ -1,7 +1,7 @@
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, requiredString, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
-import { currentSessionIsWorker, currentTmuxSession, postJson, resolveServerUrl } from "../client.js";
+import { currentSessionIsWorker, currentTmuxSession, postJson, resolveServerUrl, vaultFetch } from "../client.js";
 import { sendCommandSpec } from "../spec.js";
 
 /** The one flag word of a send, or "note" when no flag is given. */
@@ -34,6 +34,21 @@ export async function runSendCli(argv = process.argv.slice(2)): Promise<void> {
     if (!from) throw new Error("tangent send brain works inside a worker session. Name a session or an Area path.");
     const present = stringsArg(args.present);
     const result = await postJson(server, "/api/agents/send", { to, text, from, kind, ...(present.length ? { present } : {}) });
+    if (kind === "question" && result.question?.id) {
+      console.log(`asked ${result.to}; waiting for the brain`);
+      const delivered = await waitForBrainAnswer(server, result.question, from);
+      if (delivered.status === "transferred") {
+        console.log(`question transferred to ${delivered.recipient?.session ?? "a replacement worker"}`);
+        return;
+      }
+      console.log(`[Answer from ${delivered.answer.brainSession}] ${delivered.answer.text}`);
+      await postJson(server, "/api/agents/questions/ack", {
+        questionId: result.question.id,
+        attemptId: result.question.recipient?.attemptId ?? result.question.askedAttemptId,
+        session: from,
+      });
+      return;
+    }
     console.log(`sent to ${result.to} (${result.kind ?? kind})`);
     return;
   }
@@ -41,6 +56,22 @@ export async function runSendCli(argv = process.argv.slice(2)): Promise<void> {
   if (!stringArg(args.session) && await currentSessionIsWorker()) throw new Error(WORKER_SEND_TARGET_REFUSAL);
   const result = await postJson(server, "/api/agents/send", { to, text, from });
   console.log(sendResultLine(result));
+}
+
+/** Waits across controller restarts for one durable control-plane answer. */
+export async function waitForBrainAnswer(server: URL, question: Record<string, any>, session: string): Promise<Record<string, any>> {
+  const attemptId = String(question.recipient?.attemptId ?? question.askedAttemptId ?? "");
+  const params = new URLSearchParams({ question: String(question.id), attempt: attemptId, session });
+  for (;;) {
+    try {
+      const result = await vaultFetch(server, `/api/agents/questions?${params}`);
+      if (result.status === "transferred" || result.answer) return result;
+    } catch {
+      // The queue is durable. A controller rebuild is a retry delay, not a
+      // reason to release the harness command that waits for the answer.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 }
 
 /** The one flag of this send. Two flags at once is an error. */

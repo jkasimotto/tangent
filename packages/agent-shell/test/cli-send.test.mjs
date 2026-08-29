@@ -85,3 +85,26 @@ test("a session or Area target uses the plain send path and refuses flags", asyn
   assert.deepEqual(lines, ["queued for otto/tangent (stored in the Area inbox; it will arrive when the brain starts)"]);
   await assert.rejects(() => runSendCli(["otto/tangent", "--done", "Done.", "--session", "some-brain"]), /work only with tangent send brain/);
 });
+
+test("a question waits for command-output delivery and acknowledges the exact attempt", async (context) => {
+  const previousFetch = globalThis.fetch;
+  const previousLog = console.log;
+  const requests = [];
+  const lines = [];
+  console.log = (line) => lines.push(String(line));
+  globalThis.fetch = async (input, init = {}) => {
+    const url = new URL(String(input));
+    requests.push({ path: url.pathname, query: url.search, body: init.body ? JSON.parse(String(init.body)) : null });
+    if (url.pathname === "/api/agents/send") return Response.json({
+      status: "sent", to: "otto-brain", kind: "question",
+      question: { id: "worker-question:q1", askedAttemptId: "attempt-1", recipient: { attemptId: "attempt-1", session: "worker-a" } },
+    });
+    if (url.pathname === "/api/agents/questions") return Response.json({ status: "answered", answer: { brainSession: "otto-brain", text: "Use A." } });
+    return Response.json({ status: "acknowledged" });
+  };
+  context.after(() => { globalThis.fetch = previousFetch; console.log = previousLog; });
+  await runSendCli(["brain", "--question", "Use A or B?", "--session", "worker-a"]);
+  assert.deepEqual(requests.map((request) => request.path), ["/api/agents/send", "/api/agents/questions", "/api/agents/questions/ack"]);
+  assert.deepEqual(requests[2].body, { questionId: "worker-question:q1", attemptId: "attempt-1", session: "worker-a" });
+  assert.deepEqual(lines, ["asked otto-brain; waiting for the brain", "[Answer from otto-brain] Use A."]);
+});

@@ -23,6 +23,8 @@ An agent can present a Markdown document on its Goal. Work shows the human title
 
 Generic `tangent send` messages persist before pane wake or presentation. The controller restores them after a restart and keeps their exact target order. See ADR-0039.
 
+Worker questions are queue control events. The exact Area brain answer resolves the stored question before the worker receives it through the wait and acknowledgement channel. Replacement and rebuilt prompts use the same stored answer. See ADR-0050.
+
 The brain receives its founding instruction, current checkpoint, bounded Area memory, selected current Document references, Questions, and material Operation events. Structural Area and repository paths define inherited context.
 
 This package never runs an agent itself except through `tangent study`. That command starts a local interactive session directly (ADR-0026). All other operations use the server.

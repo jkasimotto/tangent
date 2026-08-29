@@ -2,7 +2,8 @@ const FINAL_ASSIGNMENT = new Set(["complete", "ended", "skipped"]);
 
 /** Returns the latest durable worker report, or null. */
 export function latestAttemptReport(assignment) {
-  return [...(assignment?.reports ?? [])].reverse().find(Boolean) ?? assignment?.attempts?.at?.(-1)?.report ?? null;
+  const report = [...(assignment?.reports ?? [])].reverse().find(Boolean) ?? assignment?.attempts?.at?.(-1)?.report ?? null;
+  return report?.type === "question-needed" && report?.questionState?.answer ? null : report;
 }
 
 /** Converts a legacy pane row or a new observation into one observation. */

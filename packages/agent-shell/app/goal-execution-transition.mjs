@@ -1,3 +1,5 @@
+import { transferWorkerQuestions } from "./worker-questions.mjs";
+
 /** One structured refusal from an exact Goal execution transition. */
 export class GoalExecutionTransitionError extends Error {
   constructor(code, message, fields = {}) {
@@ -104,6 +106,7 @@ export function promoteReadyReplacement(queue, operation, now = new Date().toISO
   sourceAttempt.replacedByAttemptId = replacementAttempt.id;
   sourceAttempt.disposition = { type: "replaced", replacementAttemptId: replacementAttempt.id, operationId: operation.id, at: now };
   assignment.attempts = [...(assignment.attempts ?? []), replacementAttempt];
+  transferWorkerQuestions(assignment, replacementAttempt, now);
   // Only the desired launch and current runtime fields change. Instruction,
   // kind, path, continuation, reports, and every later assignment survive.
   assignment.launch = structuredClone(operation.launch);

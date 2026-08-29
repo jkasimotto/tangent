@@ -27,7 +27,7 @@ export async function settle(window, turns = 3) {
  * Renders the Work screen for one fixture and returns its window. `posts`
  * collects every mutation the page sends, so an action proof needs no server.
  */
-export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [], areaFocusOnly = false, launchOptions = null, harnessRegistry = null, goalDetail = null, documentRecord = null, postHandler = null } = {}) {
+export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [], areaFocusOnly = false, launchOptions = null, harnessRegistry = null, goalDetail = null, documentRecord = null, areaCanvas = null, postHandler = null } = {}) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -63,6 +63,7 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
     if (pathname === "/api/harnesses" && harnessRegistry) return jsonResponse({ registry: harnessRegistry });
     if (pathname === "/api/goals/detail" && goalDetail) return jsonResponse(typeof goalDetail === "function" ? goalDetail(requestUrl) : goalDetail);
     if (pathname === "/api/document" && documentRecord) return jsonResponse(typeof documentRecord === "function" ? documentRecord(requestUrl) : documentRecord);
+    if (pathname === "/api/areas/canvas" && areaCanvas) return jsonResponse(typeof areaCanvas === "function" ? areaCanvas(requestUrl) : areaCanvas);
     // Real Response.json() returns a fresh object for each endpoint. Keep the
     // fixture faithful when /api/work and /api/vault are read in one refresh.
     return jsonResponse(structuredClone(fixture.vault));

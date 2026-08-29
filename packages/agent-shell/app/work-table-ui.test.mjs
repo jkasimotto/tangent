@@ -56,6 +56,50 @@ test("the work table states its rows and columns in the accessibility tree", asy
   assert.equal(row.children.length, columns.length, "a Goal row fills every column");
 });
 
+test("Area Map controls and m open the exact parent and nested maps through the browser event path", async () => {
+  const fixture = workTableFixture();
+  const rootGoal = { ...fixture.goals[0], area: "otto", file: "otto/goal-root.md", slug: "root", title: "Root work" };
+  fixture.goals = [rootGoal, ...fixture.goals];
+  fixture.vault.areas = [
+    { path: "otto", name: "otto", goals: [rootGoal], documents: [] },
+    ...fixture.vault.areas,
+  ];
+  fixture.vault.map = [
+    { path: "otto", name: "otto", goals: [rootGoal] },
+    ...fixture.vault.map,
+  ];
+  /** Serves an empty canvas for the Area named by the browser request. */
+  const areaCanvas = (url) => ({
+    area: url.searchParams.get("area"), file: `${url.searchParams.get("area")}/map.canvas`,
+    exists: false, hash: null, canvas: { nodes: [], edges: [] }, warnings: [], proposals: [], view: null,
+  });
+  const { window, document, gets } = await bootWorkTable(fixture, { areaCanvas });
+
+  const rootMap = document.querySelector('[data-work-cursor="area:otto"] [data-open-area-map="otto"]');
+  assert.ok(rootMap, "the top-level Area has its visible Map control");
+  rootMap.click();
+  await settle(window);
+  assert.match(document.querySelector(".map-screen h1").textContent, /^otto · Map$/);
+  assert.ok(gets.some((url) => new URL(url).searchParams.get("area") === "otto"), "the opened screen requests the parent Area canvas");
+
+  document.querySelector("[data-map-back]").click();
+  await settle(window);
+  assert.equal(document.activeElement, document.querySelector('[data-work-cursor="area:otto"] [data-open-area-map]'), "Back restores focus to the opening Map control");
+
+  const childRow = document.querySelector('[data-work-cursor="area:otto/tangent"]');
+  assert.ok(childRow, "the child Area is a normal Work cursor row");
+  childRow.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  childRow.querySelector("[data-work-cursor-control]").focus();
+  press(window, "m");
+  await settle(window);
+  assert.match(document.querySelector(".map-screen h1").textContent, /^otto\/tangent · Map$/);
+  assert.ok(gets.some((url) => new URL(url).searchParams.get("area") === "otto/tangent"), "m requests the child Area's own canvas");
+
+  press(window, "Escape");
+  await settle(window);
+  assert.equal(document.activeElement, document.querySelector('[data-work-cursor="area:otto/tangent"] [data-open-area-map]'), "Escape restores focus to the child row's Map control");
+});
+
 test("presented Documents are capped child rows whose visible dismiss control uses Julian's fenced route", async () => {
   const fixture = workTableFixture();
   const goal = fixture.goals[0];

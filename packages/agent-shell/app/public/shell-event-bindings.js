@@ -13,7 +13,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
-    showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap,
+    showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap, closeAreaMap,
   } = chrome;
   const {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
@@ -183,6 +183,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const header = ownerHeaderRow(row);
     if (!headerHasBrainRoute(header)) return "";
     return header.dataset.workArea ?? "";
+  }
+
+  /** Returns the Area that owns a map action, independent of brain state. */
+  function mapAreaForRow(row) {
+    return ownerHeaderRow(row)?.dataset.workArea ?? "";
   }
 
   /** Finds one pointer action in the exact Area header that owns this row. */
@@ -840,7 +845,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return result;
     }
     if (id === "messageBrain") return area ? showDescribe({ area }) : showToast("This row has no Area command header.");
-    if (id === "map") return area ? openAreaMap(area, row) : showToast("This row has no Area map.");
+    if (id === "map") {
+      const mapArea = mapAreaForRow(row);
+      return mapArea ? openAreaMap(mapArea, row) : showToast("This row has no Area map.");
+    }
     if (id === "questions") return area ? openQuestionsReview(area) : showToast("This row has no Area command header.");
     if (id === "note") return area ? openAreaCapture(area) : showToast("This row has no Area command header.");
     if (id === "starArea") {
@@ -1480,7 +1488,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (captionCommand && state.view === "work") return executeWorkCommand(captionCommand.dataset.workCaptionCommand, cursorRow());
     const mapButton = target.closest?.("[data-open-area-map]");
     if (mapButton) return openAreaMap(mapButton.dataset.openAreaMap, mapButton);
-    if (target.closest?.("[data-map-back]")) { state.view = "work"; paint(true); window.setTimeout(() => mapReturnPoint?.focus?.(), 0); return; }
+    if (target.closest?.("[data-map-back]")) return closeAreaMap();
     if (target.closest?.("[data-map-retry]")) { state.view = "map"; paint(true); return; }
     if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: false });
     const objectActions = target.closest?.("[data-work-object-actions]");
@@ -2835,10 +2843,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (handleCommandEnter(event)) return;
     if (state.view === "map" && event.key === "Escape") {
       event.preventDefault();
-      state.view = "work";
-      paint(true);
-      window.setTimeout(() => document.querySelector(`[data-open-area-map="${CSS.escape(state.mapArea || "")}"]`)?.focus?.(), 0);
-      return;
+      return closeAreaMap();
     }
     if (context === "work" && event.key === "Escape") {
       event.preventDefault();

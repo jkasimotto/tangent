@@ -867,7 +867,6 @@ function renderScreen() {
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument() + launchPopover();
   else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header"><button type="button" data-map-back>Work <kbd>Esc</kbd></button><h1>${escapeHtml(state.mapArea || "Area")} · Map</h1></header><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the map…</p></div></section>`;
-  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header"><button type="button" data-map-back>Work <kbd>Esc</kbd></button><h1>${escapeHtml(state.mapArea || "Area")} · Map</h1></header><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the map…</p></div></section>`;
   else {
     state.view = "work";
     screen.innerHTML = renderWork();
@@ -877,7 +876,6 @@ function renderScreen() {
   restoreScreenScroll(scrollPositions);
   restoreScreenFocus(focusKey);
   if (state.view === "work") reconcileWorkCursor();
-  if (state.view === "map") mountDedicatedAreaMap();
   if (state.view === "map") mountDedicatedAreaMap();
   shellBindings?.paintWorkSearch?.();
   if (state.view === "document") {
@@ -1481,9 +1479,24 @@ function selectModelConcept(concept) {
 
 /** The handles bindShellEvents returns; set once the bindings exist. */
 let shellBindings = null;
-let mapReturnPoint = null;
+let mapReturnCursor = "";
 /** Opens an Area's living map and remembers the Work return row. */
-function openAreaMap(area, trigger) { mapReturnPoint = trigger?.closest?.("[data-work-cursor]") || null; state.mapArea = area; state.view = "map"; paint(true); }
+function openAreaMap(area, trigger) {
+  const row = trigger?.closest?.("[data-work-cursor]");
+  if (row?.dataset.workCursor) mapReturnCursor = row.dataset.workCursor;
+  state.mapArea = area;
+  state.view = "map";
+  paint(true);
+}
+/** Returns from a map to the exact Work row and its visible Map control. */
+function closeAreaMap() {
+  state.view = "work";
+  paint(true);
+  window.setTimeout(() => {
+    const row = [...document.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === mapReturnCursor);
+    row?.querySelector("[data-open-area-map]")?.focus?.({ preventScroll: true });
+  }, 0);
+}
 /** Mounts the existing board on the dedicated map screen. */
 function mountDedicatedAreaMap() {
   const host = screen.querySelector("[data-dedicated-area-map]");
@@ -1501,6 +1514,7 @@ shellBindings = bindShellEvents({
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
     confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, restoreReturnPoint,
     showDecision, showDescribe, toggleAwake, openModal, closeModal, modalConfirm: getModalConfirm, openSessionLayer, closeSessionLayer,
+    openAreaMap, closeAreaMap,
   },
   prompts: {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,

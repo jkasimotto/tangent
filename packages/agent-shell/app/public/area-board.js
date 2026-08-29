@@ -24,11 +24,21 @@ const editorLoader = () => globalThis.__TANGENT_AREA_EDITOR_LOADER__?.() ?? load
 /** Builds the first scene from Area-scoped authoritative references. */
 function initialScene(area, documents) {
   const scene = core.createEmptyScene();
-  for (const [index, choice] of core.entityChoices(area, documents).slice(0, 12).entries()) {
-    const column = index % 3; const row = Math.floor(index / 3);
-    scene.elements.push(...core.createBlockElements({ id: crypto.randomUUID(), ...choice, x: 60 + column * 330, y: 60 + row * 180 }));
+  const scoped = core.scopedEntities(area, documents);
+  for (const [index, choice] of scoped.own.filter((item) => item.kind === "goal" && !["done", "dropped"].includes(item.status)).entries()) {
+    scene.elements.push(...core.createBlockElements({ id: crypto.randomUUID(), ...choice, x: 60, y: 80 + index * 160 }));
   }
-  return scene;
+  let x = scoped.own.some((item) => item.kind === "goal") ? 390 : 60;
+  let y = 80;
+  let rowHeight = 0;
+  for (const choice of scoped.children) {
+    const size = core.regionSize(choice, documents);
+    if (x + size.width > 1800) { x = 390; y += rowHeight + 80; rowHeight = 0; }
+    scene.elements.push(...core.createRegionElements({ id: crypto.randomUUID(), ...choice, x, y, ...size }));
+    x += size.width + 80;
+    rowHeight = Math.max(rowHeight, size.height);
+  }
+  return core.withBoundary(scene, area);
 }
 
 /** Mounts the Excalidraw editor island and the existing durable save contract. */
@@ -67,7 +77,8 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
   }
 
   const normalized = core.normalizeSceneColors(structuredClone(payload.scene ?? payload.canvas ?? core.createEmptyScene()));
-  let current = normalized.scene;
+  const spatial = payload.exists ? core.migrateAreaCardsToRegions(normalized.scene, area, getDocuments()) : { scene: normalized.scene, changed: false };
+  let current = spatial.scene;
   current.appState = core.appStateWithView(current.appState, payload.view);
   let baseHash = payload.hash ?? null;
   let editor = null;
@@ -156,10 +167,17 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
     }, 350);
   }
 
-  const ready = ensureScene().then(() => editorLoader()).then((module) => {
+  const ready = ensureScene().then(async () => {
+    const children = core.scopedEntities(area, getDocuments()).children;
+    const entries = await Promise.all(children.map(async (child) => {
+      try { const payload = await api(`/api/areas/canvas?area=${encodeURIComponent(child.area)}`); return [child.area, payload.exists && payload.ok !== false ? payload.scene ?? payload.canvas : null]; }
+      catch { return [child.area, null]; }
+    }));
+    return { module: await editorLoader(), childScenes: new Map(entries.filter(([, scene]) => scene)) };
+  }).then(({ module, childScenes }) => {
     loader.remove();
     editor = module.mountAreaBoardEditor(host, {
-      area, scene: current, view: payload.view, proposals: payload.proposals ?? [], getDocuments,
+      area, scene: current, childScenes, view: payload.view, proposals: payload.proposals ?? [], getDocuments,
       initialSaveState: { state: "saved", label: payload.migrated ? "Converted from canvas" : undefined },
       brainLive, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly,
       /** Queues a Julian-authored scene edit for durable save. */
@@ -174,7 +192,7 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
       /** Promotes plain map text to an Area-brain idea. */
       onPromoteIdea: async (description) => api("/api/idea/new", { method: "POST", body: JSON.stringify({ area, description }) }),
     });
-    if (payload.restoreDraft || normalized.changed) saver.edit(current);
+    if (payload.restoreDraft || normalized.changed || spatial.changed) saver.edit(current);
     return editor;
   }).catch((error) => {
     host.innerHTML = `<section class="area-board-empty"><h2>The drawing tools did not load.</h2><p>${String(error?.message ?? error)}</p><button type="button">Retry</button></section>`;

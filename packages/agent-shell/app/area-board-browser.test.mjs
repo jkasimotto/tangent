@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { validateAreaCanvas } from "./area-canvas.mjs";
+import areaBoardCore from "./public/area-board-core.js";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { workTableFixture } from "./work-table-fixture.mjs";
 
@@ -166,7 +167,10 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
 
 test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 90_000 }, async () => {
   const work = workTableFixture();
-  let scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: { viewBackgroundColor: "#ffffff" }, files: {} };
+  let scene = areaBoardCore.withBoundary(areaBoardCore.createEmptyScene(), "otto");
+  scene.elements.push(...areaBoardCore.createRegionElements({ id: "tangent-region", ref: "otto/tangent/tangent.md", title: "Tangent", x: 100, y: 100, width: 820, height: 580 }));
+  let childScene = areaBoardCore.withBoundary(areaBoardCore.createEmptyScene(), "otto/tangent");
+  childScene.elements.push(areaBoardCore.createTextElement({ id: "child-note", text: "inside Tangent", x: 180, y: 180 }));
   let savedHash = "scene-1";
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -177,11 +181,16 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     if (url.pathname === "/api/areas/canvas" && request.method === "POST") {
       let body = "";
       for await (const chunk of request) body += chunk;
-      scene = JSON.parse(body).canvas;
+      const update = JSON.parse(body);
+      if (update.area === "otto/tangent") childScene = update.canvas; else scene = update.canvas;
       savedHash = `scene-${Number(savedHash.split("-")[1]) + 1}`;
       return sendJson(response, 200, { hash: savedHash });
     }
-    if (url.pathname === "/api/areas/canvas") return sendJson(response, 200, { area: url.searchParams.get("area"), file: "otto/tangent/tangent.excalidraw", exists: true, hash: savedHash, scene, canvas: scene, view: null, proposals: [], warnings: [] });
+    if (url.pathname === "/api/areas/canvas") {
+      const area = url.searchParams.get("area");
+      const selectedScene = area === "otto/tangent" ? childScene : scene;
+      return sendJson(response, 200, { area, file: `${area}/${area.split("/").at(-1)}.excalidraw`, exists: true, hash: savedHash, scene: selectedScene, canvas: selectedScene, view: null, proposals: [], warnings: [] });
+    }
     if (url.pathname.startsWith("/api/")) return sendJson(response, 200, { ok: true });
     await serveStaticAsset(url, response, here);
   });
@@ -197,7 +206,11 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await row.locator("[data-work-cursor-control]").focus();
     await page.keyboard.press("m");
     await page.locator('[data-tangent-area-map="otto"] .excalidraw canvas.interactive').waitFor();
-    await page.keyboard.press("b");
+    await page.getByRole("button", { name: "Outline" }).click();
+    const parentOutline = await page.locator(".tangent-map-outline button").allTextContents();
+    assert.ok(parentOutline.some((label) => label.includes("area: tangent")), `Work opens the parent picture with a nested Area region: ${JSON.stringify(parentOutline)}`);
+    await page.getByRole("button", { name: "Close outline" }).click();
+    await page.getByRole("button", { name: "Block" }).click();
     await page.getByRole("dialog", { name: "Place a Tangent block" }).getByRole("textbox").fill("compact table");
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelector("[data-tangent-area-map]") && document.body.textContent.includes("Redesign Work as a compact table"));
@@ -223,6 +236,17 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await page.waitForFunction(() => document.body.textContent.includes("Redesign Work as a compact table"));
     assert.ok(scene.elements.some((element) => element.type === "rectangle" && !element.customData?.tangent), "the drawn shape survived reload");
     assert.ok(scene.elements.some((element) => element.customData?.tangent), "the Tangent block survived reload");
+
+    await page.getByRole("button", { name: "Outline" }).click();
+    await page.getByRole("button", { name: /area: Tangent/i }).click();
+    await page.keyboard.press("Enter");
+    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
+    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/);
+    await page.getByRole("button", { name: "Outline" }).click();
+    await page.getByRole("button", { name: "note: inside Tangent" }).waitFor();
+    await page.getByRole("button", { name: "Close outline" }).click();
+    await page.keyboard.press("Escape");
+    await page.locator('[data-tangent-area-map="otto"] .excalidraw canvas.interactive').waitFor();
 
     await page.setViewportSize({ width: 520, height: 760 });
     await page.locator(".excalidraw canvas.interactive").waitFor();

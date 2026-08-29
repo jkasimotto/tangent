@@ -32,6 +32,53 @@ test("location chooses an exact nested Area before its placed ancestor", () => {
   assert.equal(core.locateAreaBlock(scene, "neara/pgande/megabranch/other").element.id, "parent");
 });
 
+test("first spatial migration makes direct children regions, deeper Areas shortcuts, and keeps ink", () => {
+  const records = [
+    { file: "neara/pgande/pgande.md", area: "neara/pgande", kind: "area", title: "PG&E" },
+    { file: "neara/pgande/megabranch/megabranch.md", area: "neara/pgande/megabranch", kind: "area", title: "Megabranch" },
+  ];
+  const scene = core.createEmptyScene();
+  scene.elements.push(...core.createBlockElements({ id: "parent", kind: "area", ref: records[0].file, x: 100, y: 120 }));
+  scene.elements.push(...core.createBlockElements({ id: "deep", kind: "area", ref: records[1].file, x: 700, y: 120 }));
+  scene.elements.push(core.createTextElement({ id: "ink", text: "ask Toby", x: 50, y: 600 }));
+  const migrated = core.migrateAreaCardsToRegions(scene, "neara", records);
+  assert.equal(migrated.changed, true);
+  assert.equal(core.isAreaBoundary(migrated.scene.elements[0]), true);
+  assert.equal(core.isAreaRegion(migrated.scene.elements.find((element) => element.id === "parent")), true);
+  assert.equal(migrated.scene.elements.find((element) => element.id === "deep").customData.tangent.role, "shortcut");
+  assert.equal(migrated.scene.elements.find((element) => element.id === "ink").text, "ask Toby");
+  assert.equal(core.migrateAreaCardsToRegions(migrated.scene, "neara", records).changed, false, "the migration runs once");
+});
+
+test("child maps project through regions as locked read-only content and never enter a parent save", () => {
+  const parent = core.withBoundary(core.createEmptyScene(), "neara");
+  parent.elements.push(...core.createRegionElements({ id: "pgande", ref: "neara/pgande/pgande.md", x: 100, y: 100, width: 800, height: 600 }));
+  const child = core.withBoundary(core.createEmptyScene(), "neara/pgande");
+  child.elements.push(...core.createRegionElements({ id: "megabranch", ref: "neara/pgande/megabranch/megabranch.md", x: 120, y: 120 }));
+  const projection = core.projectSpatialChildren(parent, "neara", new Map([["neara/pgande", child]]));
+  const nested = projection.scene.elements.find((element) => element.id === "projection:neara/pgande:megabranch");
+  assert.equal(core.isAreaRegion(nested), true);
+  assert.equal(nested.locked, true);
+  assert.equal(nested.opacity, 70);
+  assert.deepEqual(core.stripSpatialProjections(projection.scene).elements, parent.elements);
+  const collapsed = core.collapseSpatialRegions(projection.scene, ["pgande"]);
+  assert.equal(collapsed.elements.find((element) => element.id === nested.id).isDeleted, true);
+});
+
+test("region fences reject invented containment but leave ordinary blocks and ink alone", () => {
+  const previous = core.withBoundary(core.createEmptyScene(), "neara");
+  previous.elements.push(...core.createRegionElements({ id: "pgande", ref: "neara/pgande/pgande.md", x: 100, y: 100, width: 300, height: 220 }));
+  previous.elements.push(...core.createRegionElements({ id: "portland", ref: "neara/portland/portland.md", x: 500, y: 100, width: 300, height: 220 }));
+  previous.elements.push(core.createTextElement({ id: "note", text: "priority", x: 900, y: 900 }));
+  const changed = structuredClone(previous);
+  changed.elements.find((element) => element.id === "portland").x = 200;
+  changed.elements.find((element) => element.id === "note").x = 1200;
+  const fenced = core.fenceRegionGeometry(changed, previous);
+  assert.equal(fenced.refused.reason, "overlap");
+  assert.equal(fenced.scene.elements.find((element) => element.id === "portland").x, 500);
+  assert.equal(fenced.scene.elements.find((element) => element.id === "note").x, 1200, "Julian-owned ink is not fenced");
+});
+
 test("creates connectable fact-backed blocks with one authoritative reference", () => {
   const [block, label] = core.createBlockElements({ id: "goal", kind: "goal", ref: "otto/goal-map.md", title: "Cached" });
   assert.deepEqual(block.customData.tangent, { kind: "goal", ref: "otto/goal-map.md" });

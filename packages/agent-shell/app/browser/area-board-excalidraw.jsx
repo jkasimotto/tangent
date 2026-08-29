@@ -53,8 +53,11 @@ function TangentMap({ host, bridge, options }) {
   const [selectionTick, setSelectionTick] = useState(0);
   const [sceneTick, setSceneTick] = useState(0);
   const [proposals, setProposals] = useState(options.proposals ?? []);
+  const [collapsedIds, setCollapsedIds] = useState(options.view?.foldedGroupIds ?? []);
+  const [notice, setNotice] = useState("");
   const canonicalRef = useRef(core.refreshTangentFacts(options.scene, options.getDocuments()).scene);
-  const initialProjection = core.focusProjection(canonicalRef.current, options.getDocuments(), options.focus, options.locatedArea);
+  const spatial = core.projectSpatialChildren(canonicalRef.current, options.area, options.childScenes);
+  const initialProjection = core.focusProjection(core.collapseSpatialRegions(spatial.scene, options.view?.foldedGroupIds), options.getDocuments(), options.focus, options.locatedArea);
   const hiddenFocusIdsRef = useRef(initialProjection.hiddenIds);
   const sceneRef = useRef(initialProjection.scene);
   const fingerprintRef = useRef(core.authoredFingerprint(sceneRef.current.elements));
@@ -74,9 +77,14 @@ function TangentMap({ host, bridge, options }) {
 
   /** Publishes an authored edit or a non-dirty fact repaint. */
   function publish(next, { authored = true } = {}) {
-    const canonical = authored ? core.restoreFocusedElements(next, canonicalRef.current, hiddenFocusIdsRef.current) : next;
-    if (authored) canonicalRef.current = canonical;
-    const projection = core.focusProjection(canonical, options.getDocuments(), options.focus, options.locatedArea);
+    const owned = authored ? core.stripSpatialProjections(next) : next;
+    const restored = authored ? core.restoreFocusedElements(owned, canonicalRef.current, hiddenFocusIdsRef.current) : owned;
+    const fenced = authored ? core.fenceRegionGeometry(restored, canonicalRef.current) : { scene: restored, refused: null };
+    const canonical = fenced.scene;
+    if (fenced.refused) setNotice(`${fenced.refused.region.split("/").at(-1)} stays in its parent Area · use Move Area for an ownership change`);
+    canonicalRef.current = canonical;
+    const children = core.projectSpatialChildren(canonical, options.area, options.childScenes);
+    const projection = core.focusProjection(core.collapseSpatialRegions(children.scene, collapsedIds), options.getDocuments(), options.focus, options.locatedArea);
     hiddenFocusIdsRef.current = projection.hiddenIds;
     sceneRef.current = projection.scene;
     fingerprintRef.current = core.authoredFingerprint(projection.scene.elements);
@@ -108,6 +116,20 @@ function TangentMap({ host, bridge, options }) {
 
   /** Restores one hidden block from the inbox. */
   function restoreBlock(id) { publish(core.setBlockHidden(sceneRef.current, id, false)); }
+
+  /** Toggles private collapsed state without changing the Area scene. */
+  function toggleRegion(region = currentBlock) {
+    if (!core.isAreaRegion(region)) return;
+    const nextIds = collapsedIds.includes(region.id) ? collapsedIds.filter((id) => id !== region.id) : [...collapsedIds, region.id];
+    setCollapsedIds(nextIds);
+    options.onViewChange?.(core.viewFromAppState(api?.getAppState?.(), { ...(options.view ?? {}), foldedGroupIds: nextIds }));
+    const children = core.projectSpatialChildren(canonicalRef.current, options.area, options.childScenes);
+    const projection = core.focusProjection(core.collapseSpatialRegions(children.scene, nextIds), options.getDocuments(), options.focus, options.locatedArea);
+    hiddenFocusIdsRef.current = projection.hiddenIds;
+    sceneRef.current = projection.scene;
+    fingerprintRef.current = core.authoredFingerprint(projection.scene.elements);
+    api?.updateScene({ elements: projection.scene.elements });
+  }
 
   /** Converts selected reference text into a first-class Tangent block. */
   function makeSelectedTextBlock() {
@@ -147,7 +169,7 @@ function TangentMap({ host, bridge, options }) {
 
   useEffect(() => {
     bridge.setSaveState = setSaveState;
-    bridge.updateScene = (next) => publish(core.refreshTangentFacts(next, options.getDocuments()).scene, { authored: false });
+    bridge.updateScene = (next) => publish(core.refreshTangentFacts(core.stripSpatialProjections(next), options.getDocuments()).scene, { authored: false });
     bridge.current = () => sceneRef.current;
     bridge.appState = () => api?.getAppState?.() ?? null;
     return () => { bridge.setSaveState = null; bridge.updateScene = null; };
@@ -164,7 +186,7 @@ function TangentMap({ host, bridge, options }) {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      const refreshed = core.refreshTangentFacts(sceneRef.current, options.getDocuments());
+      const refreshed = core.refreshTangentFacts(canonicalRef.current, options.getDocuments());
       if (refreshed.changed) publish(refreshed.scene, { authored: false });
     }, 5_000);
     return () => window.clearInterval(timer);
@@ -186,6 +208,7 @@ function TangentMap({ host, bridge, options }) {
         if (["a", "c", "b"].includes(key)) { stop(event); openBlock(block, key === "a" ? "ask" : key === "c" ? "correct" : "enter"); return; }
         if (key === "x" || event.key === "Delete" || event.key === "Backspace") { stop(event); hideBlock(block); return; }
         if (key === "f" && core.areaForBlock(block, documents)) { stop(event); options.onToggleAreaStar?.(core.areaForBlock(block, documents)); return; }
+        if (event.key === " " && core.isAreaRegion(block)) { stop(event); toggleRegion(block); return; }
       }
       if (event.key === "Enter" && !located && locatedChoice) { stop(event); place(locatedChoice); return; }
       if (key === "b") { stop(event); setPicker(true); return; }
@@ -218,12 +241,12 @@ function TangentMap({ host, bridge, options }) {
       handleKeyboardGlobally={false}
       UIOptions={{ tools: { image: false }, canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false } }}
       renderTopRightUI={() => <div className="tangent-map-top-right"><div className="tangent-map-toolbar-extra"><button type="button" onClick={() => setPicker(true)} aria-keyshortcuts="b" title="Place a Tangent block (B)"><span aria-hidden="true">◈</span><span className="tangent-map-label">Block</span><kbd>B</kbd></button></div>{(currentBlock || currentText) && <div className="tangent-map-verbs" role="group" aria-label={currentBlock ? "Tangent block actions" : "Text actions"}>
-      {currentBlock ? <><button type="button" onClick={() => openBlock()}>Open <kbd>Enter</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "ask")}>Ask brain <kbd>A</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "correct")}>Correct <kbd>C</kbd></button><button type="button" onClick={() => hideBlock()}>Hide <kbd>X</kbd></button></> : <><button type="button" onClick={promoteIdea}>Send to brain as idea</button>{core.referenceFromText(currentText.text, choices) && <button type="button" onClick={makeSelectedTextBlock}>Make block</button>}</>}
+      {currentBlock ? <><button type="button" onClick={() => openBlock()}>Open <kbd>Enter</kbd></button>{core.isAreaRegion(currentBlock) && <button type="button" onClick={() => toggleRegion()}>{collapsedIds.includes(currentBlock.id) ? "Expand" : "Collapse"} <kbd>Space</kbd></button>}<button type="button" onClick={() => openBlock(currentBlock, "ask")}>Ask brain <kbd>A</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "correct")}>Correct <kbd>C</kbd></button><button type="button" onClick={() => hideBlock()}>Hide <kbd>X</kbd></button></> : <><button type="button" onClick={promoteIdea}>Send to brain as idea</button>{core.referenceFromText(currentText.text, choices) && <button type="button" onClick={makeSelectedTextBlock}>Make block</button>}</>}
     </div>}<button type="button" onClick={() => setOutlineOpen(true)} aria-expanded={outlineOpen} title="Outline"><span aria-hidden="true" className="tangent-map-glyph">≣</span><span className="tangent-map-label">Outline</span></button><button type="button" onClick={() => setHelp(true)} aria-keyshortcuts="?" title="Map keys (?)"><span aria-hidden="true" className="tangent-map-glyph">?</span><span className="tangent-map-label">Keys</span><kbd>?</kbd></button></div>}
       onPointerUpdate={({ pointer }) => { pointerRef.current = pointer; }}
       onPaste={(data) => { if (data.files?.length) return true; const choice = core.referenceFromText(data.text, choices); if (!choice) return false; place(choice); return true; }}
       onChange={(elements, appState) => {
-        const view = core.viewFromAppState(appState, options.view);
+        const view = core.viewFromAppState(appState, { ...(options.view ?? {}), foldedGroupIds: collapsedIds });
         const viewFingerprint = JSON.stringify(view);
         if (viewFingerprint !== viewFingerprintRef.current) {
           viewFingerprintRef.current = viewFingerprint;
@@ -234,7 +257,9 @@ function TangentMap({ host, bridge, options }) {
         if (selected !== bridge.selected) { bridge.selected = selected; setSelectionTick((value) => value + 1); }
         if (fingerprint === fingerprintRef.current) return;
         fingerprintRef.current = fingerprint;
-        const authored = core.sceneForSave(elements, appState);
+        const fenced = core.fenceRegionGeometry(core.stripSpatialProjections(core.sceneForSave(elements, appState)), canonicalRef.current);
+        const authored = fenced.scene;
+        if (fenced.refused) setNotice(`${fenced.refused.region.split("/").at(-1)} stays in its parent Area · use Move Area for an ownership change`);
         sceneRef.current = authored;
         setSceneTick((value) => value + 1);
         const canonical = core.restoreFocusedElements(authored, canonicalRef.current, hiddenFocusIdsRef.current);
@@ -251,6 +276,7 @@ function TangentMap({ host, bridge, options }) {
       {saveState.state === "blocked" && <button type="button" onClick={options.onRetry}>Retry</button>}
       <span className="tangent-map-brain">{options.brainLive ? "brain live" : "no brain"}</span>
     </div>
+    {notice && <div className="tangent-map-location" role="status">{notice} <button type="button" onClick={() => setNotice("")}>Dismiss</button></div>}
 
     {(outsideStars || !located && locatedChoice) && <div className="tangent-map-location" role="status">{outsideStars ? <>Outside your stars · <button type="button" onClick={options.onToggleStarredOnly}>F shows all</button></> : <>{options.locatedArea.split("/").at(-1)} is not on this map yet · <button type="button" onClick={() => place(locatedChoice)}>Place it ↵</button></>}</div>}
 

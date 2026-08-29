@@ -69,7 +69,7 @@ test("hidden blocks remain recoverable and the outline names facts and notes", (
 
 test("scene saves omit viewport and selection state", () => {
   const saved = core.sceneForSave([], { scrollX: 500, scrollY: -10, zoom: { value: 2 }, selectedElementIds: { a: true }, gridSize: 20, gridModeEnabled: true });
-  assert.deepEqual(saved.appState, { theme: "dark", viewBackgroundColor: "#121216", gridSize: 20, gridModeEnabled: true });
+  assert.deepEqual(saved.appState, { viewBackgroundColor: "#ffffff", gridSize: 20, gridModeEnabled: true });
 });
 
 test("viewport round-trips through disposable shell state, outside the scene save", () => {
@@ -78,4 +78,38 @@ test("viewport round-trips through disposable shell state, outside the scene sav
   assert.deepEqual(core.viewFromAppState(appState), { schema: "area-board-view.v1", pan: { x: 72, y: -14 }, zoom: 1.75, foldedGroupIds: [], openInlineAreaNodeIds: [], hiddenKinds: [], showDone: false });
   assert.deepEqual(core.viewFromAppState(appState, null), core.viewFromAppState(appState), "a missing persisted view arrives from the server as null");
   assert.equal("scrollX" in core.sceneForSave([], appState).appState, false);
+});
+
+test("scenes store Excalidraw's light-theme colours so the dark theme inverts them once", () => {
+  assert.deepEqual(core.createEmptyScene().appState, { viewBackgroundColor: "#ffffff" });
+  const [block, label] = core.createBlockElements({ id: "goal", kind: "goal", ref: "otto/goal-map.md" });
+  assert.equal(block.strokeColor, "#1971c2");
+  assert.equal(block.backgroundColor, "#a5d8ff");
+  assert.equal(label.strokeColor, "#1e1e1e", "the label uses the same ink as text a person types");
+  assert.equal(core.createTextElement({ id: "note", text: "why?" }).strokeColor, "#1e1e1e");
+});
+
+test("a scene saved with dark-theme colours is rewritten once on load", () => {
+  const legacy = { type: "excalidraw", version: 2, source: "test", appState: { theme: "dark", viewBackgroundColor: "#121216" }, files: {}, elements: [
+    { id: "b", type: "rectangle", strokeColor: "#a5d8ff", backgroundColor: "#1e1e2e" },
+    { id: "t", type: "text", strokeColor: "#f1f3f5", backgroundColor: "transparent" },
+    { id: "n", type: "text", strokeColor: "#e9ecef", backgroundColor: "transparent" },
+    { id: "own", type: "arrow", strokeColor: "#e03131", backgroundColor: "transparent" },
+  ] };
+  const { scene, changed } = core.normalizeSceneColors(legacy);
+  assert.equal(changed, true);
+  assert.deepEqual(scene.appState, { viewBackgroundColor: "#ffffff" });
+  assert.deepEqual(scene.elements.map((element) => [element.strokeColor, element.backgroundColor]), [["#1971c2", "#a5d8ff"], ["#1e1e1e", "transparent"], ["#1e1e1e", "transparent"], ["#e03131", "transparent"]]);
+  assert.equal(legacy.appState.viewBackgroundColor, "#121216", "the input is not mutated");
+  const current = core.createEmptyScene();
+  assert.equal(core.normalizeSceneColors(current).changed, false);
+  assert.equal(core.normalizeSceneColors(null).scene, null);
+});
+
+test("block labels wrap long titles instead of being clipped by the block", () => {
+  const label = core.blockLabel({ kind: "document", title: "A second comment lands on the text Julian selected", status: "active" });
+  assert.deepEqual(label.split("\n"), ["DOCUMENT", "A second comment lands on", "the text Julian selected", "active"]);
+  assert.ok(label.split("\n").every((line) => line.length <= 26));
+  assert.equal(core.blockLabel({ kind: "area", title: "desk", status: "active", live: true }), "AREA  ●\ndesk\nactive");
+  assert.deepEqual(core.blockLabel({ kind: "goal", title: "Map", status: "active · older than the notes · duplicate" }).split("\n"), ["GOAL", "Map", "active", "older than the notes", "duplicate"], "status phrases stay whole");
 });

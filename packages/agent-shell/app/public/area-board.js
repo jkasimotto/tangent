@@ -66,7 +66,8 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
     };
   }
 
-  let current = structuredClone(payload.scene ?? payload.canvas ?? core.createEmptyScene());
+  const normalized = core.normalizeSceneColors(structuredClone(payload.scene ?? payload.canvas ?? core.createEmptyScene()));
+  let current = normalized.scene;
   current.appState = core.appStateWithView(current.appState, payload.view);
   let baseHash = payload.hash ?? null;
   let editor = null;
@@ -173,7 +174,7 @@ function mount(host, { area, payload, documents, getDocuments = () => documents,
       /** Promotes plain map text to an Area-brain idea. */
       onPromoteIdea: async (description) => api("/api/idea/new", { method: "POST", body: JSON.stringify({ area, description }) }),
     });
-    if (payload.restoreDraft) saver.edit(current);
+    if (payload.restoreDraft || normalized.changed) saver.edit(current);
     return editor;
   }).catch((error) => {
     host.innerHTML = `<section class="area-board-empty"><h2>The drawing tools did not load.</h2><p>${String(error?.message ?? error)}</p><button type="button">Retry</button></section>`;

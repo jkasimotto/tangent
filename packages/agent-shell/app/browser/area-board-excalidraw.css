@@ -1,29 +1,87 @@
-.TangentAreaMap { position: relative; width: 100%; height: 100%; min-height: 620px; overflow: hidden; background: #121216; }
+/* Tangent controls on the Area map. Colours come from Excalidraw's own theme
+   variables so the controls match its islands in both themes. */
+.TangentAreaMap {
+  position: relative; width: 100%; height: 100%; min-height: 420px; overflow: hidden; background: var(--tangent-canvas);
+  /* Excalidraw's light theme values; the editor scopes its own variables to .excalidraw, so they are repeated here for the Tangent controls beside it. */
+  --tangent-canvas: #ffffff; --tangent-island: #ffffff; --tangent-border: #f1f0ff; --tangent-text: #1b1b1f; --tangent-muted: #7a7a7a; --tangent-hover: #f1f0ff; --tangent-accent: #6965db; --tangent-input: #ffffff; --tangent-overlay: rgba(255, 255, 255, .7);
+  --tangent-shadow: 0 0 .93px rgba(0, 0, 0, .17), 0 0 3.1px rgba(0, 0, 0, .08), 0 7px 14px rgba(0, 0, 0, .05);
+}
+.TangentAreaMap.theme--dark { --tangent-canvas: #121212; --tangent-island: #232329; --tangent-border: hsl(245, 10%, 21%); --tangent-text: #e3e3e8; --tangent-muted: #b8b8b8; --tangent-hover: #363541; --tangent-accent: #a8a5ff; --tangent-input: #121212; --tangent-overlay: rgba(0, 0, 0, .6); }
 .TangentAreaMap .excalidraw { font-family: Assistant, system-ui, sans-serif; }
-.tangent-map-toolbar-extra { position: absolute; z-index: 8; top: 12px; left: calc(50% + 286px); }
-.tangent-map-toolbar-extra button { display: grid; grid-template-columns: 24px 10px; align-items: center; width: 44px; height: 44px; border: 0; border-radius: 8px; background: #232329; color: #e9ecef; box-shadow: 0 1px 4px #0007; cursor: pointer; }
-.tangent-map-toolbar-extra button:hover { background: #34343c; }
-.tangent-map-toolbar-extra small { align-self: end; color: #adb5bd; font-size: 10px; }
-.tangent-map-top-right { position: absolute; z-index: 8; top: 12px; right: 12px; display: flex; align-items: center; gap: 8px; color: #adb5bd; font: 12px Assistant, system-ui, sans-serif; }
-.tangent-map-top-right button, .tangent-map-verbs button, .tangent-map-save button, .tangent-map-outline-close { border: 1px solid #454550; border-radius: 7px; padding: 7px 9px; background: #232329e8; color: #f1f3f5; cursor: pointer; }
-.tangent-map-top-right kbd, .tangent-map-verbs kbd { color: #868e96; }
-.tangent-map-verbs { position: absolute; z-index: 8; top: 84px; left: 12px; display: flex; flex-wrap: wrap; gap: 5px; max-width: 230px; padding: 7px; border-radius: 9px; background: #1b1b20e8; box-shadow: 0 2px 8px #0008; }
-.tangent-map-save { position: absolute; z-index: 8; right: 14px; bottom: 12px; display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 8px; background: #1b1b20e8; color: #ced4da; font: 12px Assistant, system-ui, sans-serif; }
-.tangent-map-save.conflict { color: #ffd43b; }.tangent-map-save.blocked { color: #ff8787; }.tangent-map-brain { padding-left: 8px; border-left: 1px solid #454550; color: #868e96; }
-.tangent-map-inbox { position: absolute; z-index: 7; left: 50%; bottom: 12px; display: flex; align-items: stretch; gap: 7px; width: min(680px, calc(100% - 430px)); max-height: 74px; padding: 7px; overflow-x: auto; border: 1px solid #454550; border-radius: 10px; background: #1b1b20ed; transform: translateX(-50%); }
-.tangent-map-inbox strong { align-self: center; padding: 0 6px; color: #adb5bd; font: 12px Assistant, system-ui, sans-serif; text-transform: uppercase; }
-.tangent-map-inbox button { display: flex; flex-direction: column; min-width: 170px; padding: 7px 9px; overflow: hidden; border: 1px dashed #5c5f66; border-radius: 7px; background: #232329; color: #f1f3f5; text-align: left; white-space: nowrap; text-overflow: ellipsis; }
-.tangent-map-inbox button small { color: #74c0fc; }
-.tangent-map-dialog-backdrop { position: absolute; z-index: 20; inset: 0; display: grid; place-items: start center; padding-top: 76px; background: #0008; }
-.tangent-map-picker, .tangent-map-help { width: min(560px, calc(100% - 32px)); max-height: min(680px, calc(100% - 110px)); padding: 18px; overflow: auto; border: 1px solid #5c5f66; border-radius: 12px; background: #1b1b20; color: #f1f3f5; box-shadow: 0 12px 50px #000c; font: 14px Assistant, system-ui, sans-serif; }
-.tangent-map-picker h2, .tangent-map-help h2 { margin: 0 0 12px; font-size: 18px; }
-.tangent-map-picker input { box-sizing: border-box; width: 100%; padding: 11px 12px; border: 1px solid #5c5f66; border-radius: 8px; background: #121216; color: #fff; }
-.tangent-map-picker ul { margin: 10px 0; padding: 0; list-style: none; }
-.tangent-map-picker li button { display: grid; grid-template-columns: 76px 1fr auto; gap: 8px; width: 100%; padding: 9px; border: 0; border-radius: 7px; background: transparent; color: #f1f3f5; text-align: left; }
-.tangent-map-picker li button:hover, .tangent-map-picker li button:focus { background: #34343c; }.tangent-map-picker li small { color: #74c0fc; text-transform: uppercase; }.tangent-map-picker li em { color: #868e96; font-style: normal; }
-.tangent-map-outline.visible { position: absolute; z-index: 18; top: 58px; right: 12px; width: min(420px, calc(100% - 24px)); max-height: calc(100% - 120px); margin: 0; padding: 10px; overflow: auto; border: 1px solid #5c5f66; border-radius: 10px; background: #1b1b20f5; list-style: none; }
-.tangent-map-outline li button { width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: #f1f3f5; text-align: left; }.tangent-map-outline li button:hover { background: #34343c; }
-.tangent-map-outline-close { position: absolute; z-index: 19; right: 22px; bottom: 22px; }
-.tangent-map-empty-hint { position: absolute; z-index: 6; top: 50%; left: 50%; margin: 0; color: #868e96; font: 16px Excalifont, sans-serif; transform: translate(-50%, -50%); pointer-events: none; }
-@media (max-width: 900px) { .tangent-map-toolbar-extra { top: auto; left: 12px; bottom: 66px; }.tangent-map-top-right span { display: none; }.tangent-map-inbox { left: 12px; width: calc(100% - 24px); transform: none; }.tangent-map-save { bottom: 92px; } }
+/* Tangent has no drawing library; the trigger would sit under the Outline button. */
+.TangentAreaMap .default-sidebar-trigger { display: none; }
+.TangentAreaMap .layer-ui__wrapper__top-right { gap: 8px; }
+
+.tangent-map-toolbar-extra { display: contents; }
+.tangent-map-toolbar-extra button { margin-right: 6px; }
+.tangent-map-toolbar-extra button > span[aria-hidden] { margin-right: 6px; }
+.tangent-map-glyph { display: none; font-size: 15px; }
+
+.tangent-map-top-right { display: flex; align-items: center; gap: 8px; }
+.tangent-map-top-right button, .tangent-map-verbs button, .tangent-map-save button, .tangent-map-outline-close, .tangent-map-help button {
+  min-height: 36px; padding: 0 11px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); white-space: nowrap; cursor: pointer; font: inherit; font-size: 13px; line-height: 1;
+}
+.tangent-map-top-right button:hover, .tangent-map-verbs button:hover, .tangent-map-save button:hover, .tangent-map-outline-close:hover, .tangent-map-help button:hover { background: var(--tangent-hover); }
+.tangent-map-top-right button:focus-visible, .tangent-map-verbs button:focus-visible, .tangent-map-save button:focus-visible, .tangent-map-outline-close:focus-visible, .tangent-map-help button:focus-visible, .tangent-map-inbox button:focus-visible { outline: 2px solid var(--tangent-accent); outline-offset: 1px; }
+.tangent-map-top-right button[aria-expanded="true"] { background: var(--tangent-hover); }
+.TangentAreaMap kbd { margin-left: 4px; color: var(--tangent-muted); font: inherit; font-size: 11px; }
+
+.tangent-map-verbs { display: flex; gap: 2px; margin-right: 6px; padding: 3px; border-radius: 8px; background: var(--tangent-island); box-shadow: var(--tangent-shadow); }
+.tangent-map-verbs button { min-height: 30px; box-shadow: none; border: 0; }
+
+/* Bottom right, left of Excalidraw's help button, which stays where users expect it. */
+.tangent-map-save { position: absolute; z-index: 4; right: 62px; bottom: 16px; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 11px; border-radius: 8px; background: var(--tangent-island); color: var(--tangent-muted); box-shadow: var(--tangent-shadow); font-size: 12px; }
+.tangent-map-save.dirty { color: var(--tangent-text); }
+.tangent-map-save.conflict { color: #e8a317; }
+.tangent-map-save.blocked { color: #e03131; }
+.tangent-map-save button { min-height: 28px; }
+.tangent-map-brain { padding-left: 8px; border-left: 1px solid var(--tangent-border); color: var(--tangent-muted); }
+
+.tangent-map-inbox { position: absolute; z-index: 3; left: 50%; bottom: 16px; display: flex; align-items: stretch; gap: 7px; width: min(680px, calc(100% - 520px)); max-height: 74px; padding: 7px; overflow-x: auto; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); box-shadow: var(--tangent-shadow); transform: translateX(-50%); }
+.tangent-map-inbox strong { align-self: center; padding: 0 6px; color: var(--tangent-muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.tangent-map-inbox button { display: flex; flex-direction: column; gap: 2px; min-width: 170px; max-width: 260px; padding: 6px 9px; overflow: hidden; border: 1px dashed var(--tangent-border); border-radius: 7px; background: transparent; color: var(--tangent-text); cursor: pointer; font: inherit; font-size: 13px; text-align: left; white-space: nowrap; text-overflow: ellipsis; }
+.tangent-map-inbox button:hover { background: var(--tangent-hover); }
+.tangent-map-inbox button small { color: var(--tangent-accent); font-size: 11px; }
+
+.tangent-map-dialog-backdrop { position: absolute; z-index: 20; inset: 0; display: grid; place-items: start center; padding-top: 72px; background: var(--tangent-overlay); }
+.tangent-map-picker, .tangent-map-help { box-sizing: border-box; width: min(560px, calc(100% - 32px)); max-height: calc(100% - 96px); padding: 18px; overflow: auto; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: 0 12px 50px rgba(0, 0, 0, .45); font: 14px Assistant, system-ui, sans-serif; line-height: 1.5; }
+.tangent-map-picker h2, .tangent-map-help h2 { margin: 0 0 12px; font-size: 17px; font-weight: 600; }
+.tangent-map-help p { margin: 0 0 10px; }
+.tangent-map-help button { margin-top: 6px; }
+.tangent-map-picker p { margin: 8px 0 0; color: var(--tangent-muted); font-size: 12px; }
+.tangent-map-picker input { box-sizing: border-box; width: 100%; padding: 10px 12px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-input); color: var(--tangent-text); font: inherit; }
+.tangent-map-picker input:focus { outline: 2px solid var(--tangent-accent); outline-offset: -1px; }
+.tangent-map-picker ul { margin: 10px 0 0; padding: 0; list-style: none; }
+.tangent-map-picker li button { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; width: 100%; padding: 8px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--tangent-text); cursor: pointer; font: inherit; text-align: left; }
+.tangent-map-picker li button span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tangent-map-picker li button:hover, .tangent-map-picker li button:focus-visible { background: var(--tangent-hover); outline: none; }
+.tangent-map-picker li small { color: var(--tangent-accent); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.tangent-map-picker li em { color: var(--tangent-muted); font-size: 12px; font-style: normal; }
+
+.tangent-map-outline.visible { position: absolute; z-index: 18; top: 62px; right: 12px; display: flex; flex-direction: column; box-sizing: border-box; width: min(360px, calc(100% - 24px)); max-height: calc(100% - 90px); padding: 8px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font-size: 13px; }
+.tangent-map-outline header { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px 9px; }
+.tangent-map-outline header strong { font-weight: 600; }
+.tangent-map-outline-close { min-height: 28px; padding: 0 8px; box-shadow: none; }
+.tangent-map-outline ol { flex: 1; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.tangent-map-outline p { margin: 4px 9px 8px; color: var(--tangent-muted); }
+.tangent-map-outline li button { width: 100%; padding: 7px 9px; overflow: hidden; border: 0; border-radius: 6px; background: transparent; color: var(--tangent-text); cursor: pointer; font: inherit; text-align: left; white-space: nowrap; text-overflow: ellipsis; }
+.tangent-map-outline li button:hover, .tangent-map-outline li button:focus-visible { background: var(--tangent-hover); outline: none; }
+
+.tangent-map-empty-hint { position: absolute; z-index: 2; top: 50%; left: 50%; margin: 0; color: var(--tangent-muted); font: 18px Excalifont, Virgil, sans-serif; text-align: center; transform: translate(-50%, -50%); pointer-events: none; }
+
+/* Narrow windows: the Tangent buttons shrink to glyphs so Excalidraw's toolbar keeps its room. */
+@media (max-width: 960px) {
+  .tangent-map-toolbar-extra button .tangent-map-label, .tangent-map-top-right > button .tangent-map-label, .tangent-map-top-right > button kbd, .tangent-map-toolbar-extra kbd { display: none; }
+  .tangent-map-toolbar-extra button > span[aria-hidden] { margin-right: 0; }
+  .tangent-map-glyph { display: inline; }
+  .tangent-map-top-right > button, .tangent-map-toolbar-extra button { padding: 0 10px; }
+  .tangent-map-inbox { left: 12px; width: calc(100% - 24px); transform: none; }
+}
+/* Under 730px Excalidraw uses its mobile layout: a wrapped tool island at the top and a bar along the bottom.
+   The Tangent row leaves the top grid so the island keeps one line, and the bottom controls step above the bar. */
+.excalidraw--mobile .tangent-map-top-right { position: absolute; top: 58px; right: 60px; flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; max-width: 100%; }
+.excalidraw--mobile .tangent-map-verbs { order: 1; }
+.TangentAreaMap:has(.excalidraw--mobile) .tangent-map-save { bottom: 66px; right: 12px; }
+.TangentAreaMap:has(.excalidraw--mobile) .tangent-map-inbox { bottom: 114px; }
+.TangentAreaMap:has(.excalidraw--mobile) .tangent-map-outline.visible { top: 110px; max-height: calc(100% - 200px); }
 @media (prefers-reduced-motion: reduce) { .TangentAreaMap *, .TangentAreaMap *::before, .TangentAreaMap *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }

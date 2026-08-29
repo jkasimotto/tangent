@@ -1,6 +1,15 @@
 const TANGENT_SOURCE = "https://tangent.local/area-map";
 const BLOCK_WIDTH = 280;
 const BLOCK_HEIGHT = 132;
+// Colours are stored the way Excalidraw stores them: for its light theme. The
+// editor's dark theme inverts them on the canvas, so the scene never stores
+// dark-theme colours; a scene that did would render inverted, with white ink
+// on a white canvas.
+const INK = "#1e1e1e";
+const CANVAS = "#ffffff";
+const BLOCK_STROKE = "#1971c2";
+const BLOCK_FILL = "#a5d8ff";
+const LABEL_COLUMNS = 26;
 const ENTITY_KINDS = new Set(["goal", "document", "area", "link", "idea", "brain", "agent", "person", "request", "commit", "evidence"]);
 
 /** Returns a stable positive Excalidraw seed for one authored id. */
@@ -16,7 +25,7 @@ function elementBase(id, type, geometry = {}) {
     id, type,
     x: Number(geometry.x ?? 0), y: Number(geometry.y ?? 0),
     width: Math.max(1, Number(geometry.width ?? 1)), height: Math.max(1, Number(geometry.height ?? 1)),
-    angle: Number(geometry.angle ?? 0), strokeColor: geometry.strokeColor ?? "#e9ecef",
+    angle: Number(geometry.angle ?? 0), strokeColor: geometry.strokeColor ?? INK,
     backgroundColor: geometry.backgroundColor ?? "transparent", fillStyle: geometry.fillStyle ?? "solid",
     strokeWidth: Number(geometry.strokeWidth ?? 2), strokeStyle: geometry.strokeStyle ?? "solid",
     roughness: Number(geometry.roughness ?? 1), opacity: Number(geometry.opacity ?? 100),
@@ -32,7 +41,7 @@ function elementBase(id, type, geometry = {}) {
 function createTextElement({ id, text, x = 0, y = 0, width = 220, height = 48, containerId = null, frameId = null, boundElements = null, style = {} }) {
   const value = String(text ?? "");
   return {
-    ...elementBase(id, "text", { x, y, width, height, frameId, boundElements, strokeColor: style.strokeColor ?? "#e9ecef", roughness: 0, ...style }),
+    ...elementBase(id, "text", { x, y, width, height, frameId, boundElements, strokeColor: style.strokeColor ?? INK, roughness: 0, ...style }),
     fontSize: Number(style.fontSize ?? 20), fontFamily: Number(style.fontFamily ?? 5), text: value,
     textAlign: style.textAlign ?? (containerId ? "center" : "left"), verticalAlign: style.verticalAlign ?? (containerId ? "middle" : "top"),
     containerId, originalText: value, autoResize: style.autoResize ?? true, lineHeight: Number(style.lineHeight ?? 1.25),
@@ -44,8 +53,8 @@ function createShapeElement({ id, type = "rectangle", x = 0, y = 0, width = 200,
   const shape = {
     ...elementBase(id, type, {
       x, y, width, height, frameId,
-      backgroundColor: style.backgroundColor ?? (type === "frame" ? "transparent" : "#1e1e2e"),
-      strokeColor: style.strokeColor ?? "#a5d8ff", roundness: type === "rectangle" ? { type: 3 } : null,
+      backgroundColor: style.backgroundColor ?? (type === "frame" ? "transparent" : BLOCK_FILL),
+      strokeColor: style.strokeColor ?? BLOCK_STROKE, roundness: type === "rectangle" ? { type: 3 } : null,
       boundElements, ...style,
     }),
   };
@@ -56,7 +65,7 @@ function createShapeElement({ id, type = "rectangle", x = 0, y = 0, width = 200,
 
 /** Creates an empty scene with authored content but no persisted viewport. */
 function createEmptyScene() {
-  return { type: "excalidraw", version: 2, source: TANGENT_SOURCE, elements: [], appState: { theme: "dark", viewBackgroundColor: "#121216" }, files: {} };
+  return { type: "excalidraw", version: 2, source: TANGENT_SOURCE, elements: [], appState: { viewBackgroundColor: CANVAS }, files: {} };
 }
 
 /** Returns the normal Tangent metadata on one connectable block. */
@@ -84,10 +93,22 @@ function splitReference(ref) {
   return index < 0 ? { file: ref } : { file: ref.slice(0, index), subpath: ref.slice(index) };
 }
 
+/** Packs pieces into lines of at most `columns` characters so a block label fits its block instead of being clipped. */
+function wrapLabelLine(line, separator = " ", columns = LABEL_COLUMNS) {
+  const lines = [];
+  let current = "";
+  for (const piece of String(line).split(separator).map((part) => part.trim()).filter(Boolean)) {
+    if (current && `${current}${separator}${piece}`.length > columns) { lines.push(current); current = piece; }
+    else current = current ? `${current}${separator}${piece}` : piece;
+  }
+  if (current) lines.push(current);
+  return lines.join("\n");
+}
+
 /** Formats the visible, replaceable fact cache inside a Tangent block. */
 function blockLabel(fact) {
   const badge = `${String(fact.kind || "document").toUpperCase()}${fact.live ? "  ●" : ""}`;
-  return [badge, String(fact.title || "Untitled"), String(fact.status || "")].filter(Boolean).join("\n");
+  return [badge, wrapLabelLine(fact.title || "Untitled"), wrapLabelLine(fact.status || "", " · ")].filter(Boolean).join("\n");
 }
 
 /** Creates a connectable shape and its fact-cache text. */
@@ -96,7 +117,7 @@ function createBlockElements({ id, kind, ref, title = ref, status = "", x = 0, y
   const textId = `${blockId}-tangent-label`;
   const fact = { kind: ENTITY_KINDS.has(kind) ? kind : kindForReference(ref), title: String(title || ref), status: String(status || "") };
   const block = createShapeElement({ id: blockId, type: "rectangle", x, y, width, height, style, customData: { tangent: { kind: fact.kind, ref: String(ref) } }, boundElements: [{ id: textId, type: "text" }] });
-  const text = createTextElement({ id: textId, text: blockLabel(fact), x: x + 14, y: y + 16, width: Math.max(40, width - 28), height: Math.max(36, height - 32), containerId: blockId, style: { fontSize: 18, strokeColor: "#f1f3f5" } });
+  const text = createTextElement({ id: textId, text: blockLabel(fact), x: x + 14, y: y + 16, width: Math.max(40, width - 28), height: Math.max(36, height - 32), containerId: blockId, style: { fontSize: 18, strokeColor: INK } });
   return [block, text];
 }
 
@@ -202,13 +223,35 @@ function sceneForSave(elements, appState = {}) {
   return {
     type: "excalidraw", version: 2, source: TANGENT_SOURCE, elements: structuredClone(elements),
     appState: {
-      theme: "dark", viewBackgroundColor: appState.viewBackgroundColor || "#121216",
+      viewBackgroundColor: appState.viewBackgroundColor || CANVAS,
       ...(Number.isFinite(appState.gridSize) ? { gridSize: appState.gridSize } : {}),
       ...(Number.isFinite(appState.gridStep) ? { gridStep: appState.gridStep } : {}),
       ...(typeof appState.gridModeEnabled === "boolean" ? { gridModeEnabled: appState.gridModeEnabled } : {}),
       ...(typeof appState.objectsSnapModeEnabled === "boolean" ? { objectsSnapModeEnabled: appState.objectsSnapModeEnabled } : {}),
     }, files: {},
   };
+}
+
+/** Dark-theme colours that earlier Tangent builds stored, mapped to the light-theme colours Excalidraw expects. */
+const LEGACY_COLORS = new Map([["#121216", CANVAS], ["#e9ecef", INK], ["#f1f3f5", INK], ["#1e1e2e", BLOCK_FILL], ["#a5d8ff", BLOCK_STROKE]]);
+
+/**
+ * Rewrites a scene saved with dark-theme colours into Excalidraw's stored
+ * light-theme colours. Earlier builds stored the dark colours and also ran
+ * the dark theme, so Excalidraw inverted them: near-white canvas, and the
+ * default ink (#1e1e1e) drawn white on it. Runs once on load; a scene that
+ * already stores the light canvas is returned unchanged.
+ */
+function normalizeSceneColors(scene) {
+  if (!scene || scene.appState?.viewBackgroundColor !== "#121216") return { scene, changed: false };
+  const next = structuredClone(scene);
+  next.appState = { ...next.appState, viewBackgroundColor: CANVAS };
+  delete next.appState.theme;
+  for (const element of next.elements ?? []) {
+    element.strokeColor = LEGACY_COLORS.get(element.strokeColor) ?? element.strokeColor;
+    element.backgroundColor = LEGACY_COLORS.get(element.backgroundColor) ?? element.backgroundColor;
+  }
+  return { scene: next, changed: true };
 }
 
 /** Returns a stable content signal; view and selection changes do not affect it. */
@@ -300,11 +343,11 @@ function legacyCanvasToExcalidraw(canvas) {
   for (const node of nodes) {
     const frameId = containingFrame(node);
     if (node.type === "group") scene.elements.push(createShapeElement({ id: node.id, type: "frame", x: node.x, y: node.y, width: node.width, height: node.height, name: node.label || "Frame", style: { strokeColor: node.color || "#868e96" }, boundElements: arrowBindings.get(node.id) ?? null }));
-    else if (node.type === "text") scene.elements.push(createTextElement({ id: node.id, text: node.text, x: node.x, y: node.y, width: node.width, height: node.height, frameId, boundElements: arrowBindings.get(node.id) ?? null, style: { strokeColor: node.color || "#e9ecef" } }));
+    else if (node.type === "text") scene.elements.push(createTextElement({ id: node.id, text: node.text, x: node.x, y: node.y, width: node.width, height: node.height, frameId, boundElements: arrowBindings.get(node.id) ?? null, style: { strokeColor: node.color || INK } }));
     else if (node.type === "file" || node.type === "link") {
       const ref = node.type === "file" ? `${node.file}${node.subpath || ""}` : node.url;
       const kind = node.type === "link" ? "link" : kindForReference(ref);
-      const [block, text] = createBlockElements({ id: node.id, kind, ref, title: node.type === "file" ? node.file : node.url, x: node.x, y: node.y, width: node.width, height: node.height, style: { strokeColor: node.color || "#a5d8ff" } });
+      const [block, text] = createBlockElements({ id: node.id, kind, ref, title: node.type === "file" ? node.file : node.url, x: node.x, y: node.y, width: node.width, height: node.height, style: { strokeColor: node.color || BLOCK_STROKE } });
       block.frameId = frameId; text.frameId = frameId; block.boundElements.push(...(arrowBindings.get(node.id) ?? [])); scene.elements.push(block, text);
     }
   }
@@ -314,7 +357,7 @@ function legacyCanvasToExcalidraw(canvas) {
     if (!from || !to) continue;
     const start = { x: from.x + from.width / 2, y: from.y + from.height / 2 }; const end = { x: to.x + to.width / 2, y: to.y + to.height / 2 };
     const arrow = {
-      ...elementBase(edge.id, "arrow", { x: start.x, y: start.y, width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y), strokeColor: edge.color || "#e9ecef" }),
+      ...elementBase(edge.id, "arrow", { x: start.x, y: start.y, width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y), strokeColor: edge.color || INK }),
       points: [[0, 0], [end.x - start.x, end.y - start.y]], lastCommittedPoint: null,
       startBinding: { elementId: edge.fromNode, focus: 0, gap: 1, fixedPoint: null }, endBinding: { elementId: edge.toNode, focus: 0, gap: 1, fixedPoint: null },
       startArrowhead: edge.fromEnd === "arrow" ? "arrow" : null, endArrowhead: edge.toEnd === "none" ? null : "arrow", elbowed: false,
@@ -326,13 +369,13 @@ function legacyCanvasToExcalidraw(canvas) {
       scene.elements.push(arrow, createTextElement({
         id: labelId, text: edge.label, containerId: edge.id,
         x: start.x + (end.x - start.x) / 2 - 50, y: start.y + (end.y - start.y) / 2 - 16,
-        width: 100, height: 32, style: { fontSize: 16, strokeColor: edge.color || "#e9ecef" },
+        width: 100, height: 32, style: { fontSize: 16, strokeColor: edge.color || INK },
       }));
     } else scene.elements.push(arrow);
   }
   return scene;
 }
 
-const api = { addBlock, appStateWithView, authoredFingerprint, blockLabel, createBlockElements, createEmptyScene, createShapeElement, createTextElement, entityChoices, factForBlock, insertionPoint, kindForReference, legacyCanvasToExcalidraw, referenceFromText, refreshTangentFacts, sceneForSave, sceneOutline, setBlockHidden, splitReference, tangentOf, viewFromAppState };
-export { addBlock, appStateWithView, authoredFingerprint, blockLabel, createBlockElements, createEmptyScene, createShapeElement, createTextElement, entityChoices, factForBlock, insertionPoint, kindForReference, legacyCanvasToExcalidraw, referenceFromText, refreshTangentFacts, sceneForSave, sceneOutline, setBlockHidden, splitReference, tangentOf, viewFromAppState };
+const api = { addBlock, appStateWithView, authoredFingerprint, blockLabel, createBlockElements, createEmptyScene, createShapeElement, createTextElement, entityChoices, factForBlock, insertionPoint, kindForReference, legacyCanvasToExcalidraw, normalizeSceneColors, referenceFromText, refreshTangentFacts, sceneForSave, sceneOutline, setBlockHidden, splitReference, tangentOf, viewFromAppState };
+export { addBlock, appStateWithView, authoredFingerprint, blockLabel, createBlockElements, createEmptyScene, createShapeElement, createTextElement, entityChoices, factForBlock, insertionPoint, kindForReference, legacyCanvasToExcalidraw, normalizeSceneColors, referenceFromText, refreshTangentFacts, sceneForSave, sceneOutline, setBlockHidden, splitReference, tangentOf, viewFromAppState };
 export default api;

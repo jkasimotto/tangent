@@ -19,14 +19,14 @@ function sendJson(response, status, value) {
 
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/agent-shell-map.css"><style>html,body,#map{width:100%;height:100%;margin:0}</style></head><body><div id="map"></div><script type="module">
 import { mountAreaBoardEditor } from "/agent-shell-map.js";
-const scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: { theme: "dark", viewBackgroundColor: "#121216" }, files: {} };
+const scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: { viewBackgroundColor: "#ffffff" }, files: {} };
 const documents = [{ file: "otto/goal-map.md", kind: "goal", title: "Map quality", status: "active" }];
 window.editor = mountAreaBoardEditor(document.querySelector("#map"), { area: "otto", scene, view: null, proposals: [], getDocuments: () => documents, onSceneChange: (next) => { window.lastScene = next; }, onFactScene: () => {}, onEntityVerb: () => {}, onBack: () => {}, onSaveNow: () => {} });
 </script></body></html>`;
 
 const failureFixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/agent-shell-map.css"><style>html,body,#map{width:100%;height:100%;margin:0}</style></head><body><div id="map"></div><script type="module">
 import { mountAreaBoardEditor } from "/agent-shell-map.js";
-const scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: { theme: "dark", viewBackgroundColor: "#121216" }, files: {} };
+const scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: { viewBackgroundColor: "#ffffff" }, files: {} };
 let fail = true;
 mountAreaBoardEditor(document.querySelector("#map"), { area: "otto", scene, view: null, proposals: [], getDocuments: () => { if (fail) throw new Error("fixture render failed"); return []; }, onEditorError: () => { fail = false; }, onSceneChange: () => {}, onFactScene: () => {} });
 </script></body></html>`;
@@ -70,6 +70,21 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     await page.locator(".excalidraw canvas.interactive").waitFor();
     for (const name of ["Selection", "Rectangle", "Diamond", "Ellipse", "Arrow", "Draw", "Text"]) await page.getByRole("radio", { name: new RegExp(name, "i") }).first().waitFor();
     await page.getByRole("button", { name: "Block" }).waitFor();
+
+    // Visual structure: Tangent controls sit beside Excalidraw's own islands, never on top of them.
+    const structure = await page.evaluate(() => {
+      /** Returns one element's box as plain numbers. */
+      const box = (selector) => { const rect = document.querySelector(selector)?.getBoundingClientRect(); return rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null; };
+      return { toolbar: box(".App-toolbar"), controls: box(".tangent-map-top-right"), save: box(".tangent-map-save"), help: box(".help-icon"), library: box(".default-sidebar-trigger"), hint: box(".tangent-map-empty-hint"), theme: document.querySelector(".excalidraw").className, canvas: getComputedStyle(document.querySelector(".TangentAreaMap")).backgroundColor };
+    });
+    /** Reports whether two boxes overlap. */
+    const overlaps = (a, b) => a && b && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    assert.equal(overlaps(structure.toolbar, structure.controls), false, "Tangent controls do not cover the tool bar");
+    assert.equal(overlaps(structure.save, structure.help), false, "the save status does not cover Excalidraw's help button");
+    assert.equal(structure.library === null || structure.library.right === structure.library.left, true, "the unused library trigger is hidden");
+    assert.ok(structure.hint, "an empty map says how to start");
+    assert.match(structure.theme, /theme--dark/);
+    assert.equal(structure.canvas, "rgb(18, 18, 18)", "the map ground is dark behind a dark-theme editor");
 
     await page.keyboard.press("b");
     await page.getByRole("dialog", { name: "Place a Tangent block" }).getByRole("textbox").fill("map");
@@ -128,6 +143,9 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     assert.ok(summary.some((element) => element.tangent === "goal"));
     assert.ok(summary.some((element) => element.type === "arrow" && element.start && element.end), `the arrow binds to both connectable endpoints: ${JSON.stringify(summary)}`);
 
+    const inkColor = await page.evaluate(() => window.editor.current().elements.find((element) => element.type === "text" && element.text === "plain text")?.strokeColor);
+    assert.equal(inkColor, "#1e1e1e", "typed text uses Excalidraw's default ink, which the dark theme shows light on the dark canvas");
+
     await page.getByRole("button", { name: "Outline" }).click();
     const blockOutline = page.getByRole("button", { name: /goal: Map quality, active/ });
     await blockOutline.focus();
@@ -148,7 +166,7 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
 
 test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 90_000 }, async () => {
   const work = workTableFixture();
-  let scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: { theme: "dark", viewBackgroundColor: "#121216" }, files: {} };
+  let scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: { viewBackgroundColor: "#ffffff" }, files: {} };
   let savedHash = "scene-1";
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -209,6 +227,20 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await page.setViewportSize({ width: 520, height: 760 });
     await page.locator(".excalidraw canvas.interactive").waitFor();
     await page.getByRole("button", { name: "Block" }).waitFor();
+
+    // Visual structure: Tangent controls sit beside Excalidraw's own islands, never on top of them.
+    const structure = await page.evaluate(() => {
+      /** Returns one element's box as plain numbers. */
+      const box = (selector) => { const rect = document.querySelector(selector)?.getBoundingClientRect(); return rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null; };
+      return { toolbar: box(".App-toolbar"), controls: box(".tangent-map-top-right"), save: box(".tangent-map-save"), help: box(".help-icon"), library: box(".default-sidebar-trigger"), hint: box(".tangent-map-empty-hint"), theme: document.querySelector(".excalidraw").className, canvas: getComputedStyle(document.querySelector(".TangentAreaMap")).backgroundColor };
+    });
+    /** Reports whether two boxes overlap. */
+    const overlaps = (a, b) => a && b && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    assert.equal(overlaps(structure.toolbar, structure.controls), false, "Tangent controls do not cover the tool bar");
+    assert.equal(overlaps(structure.save, structure.help), false, "the save status does not cover Excalidraw's help button");
+    assert.equal(structure.library === null || structure.library.right === structure.library.left, true, "the unused library trigger is hidden");
+    assert.match(structure.theme, /theme--dark/);
+    assert.equal(structure.canvas, "rgb(18, 18, 18)", "the map ground is dark behind a dark-theme editor");
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

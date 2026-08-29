@@ -183,15 +183,19 @@ function TangentMap({ host, bridge, options }) {
     return typed && !matches.some((choice) => choice.ref === typed.ref) ? [typed, ...matches] : matches;
   })();
 
-  return <div className="TangentAreaMap" data-tangent-area-map={options.area}>
+  const theme = options.theme === "light" ? "light" : "dark";
+  return <div className={`TangentAreaMap theme--${theme}`} data-tangent-area-map={options.area}>
     <Excalidraw
-      initialData={{ elements: sceneRef.current.elements, appState: { ...sceneRef.current.appState, theme: "dark" }, files: {} }}
+      initialData={{ elements: sceneRef.current.elements, appState: sceneRef.current.appState, files: {} }}
       excalidrawAPI={setApi}
-      theme="dark"
+      theme={theme}
       name={`${options.area.split("/").pop()} map`}
       autoFocus
       handleKeyboardGlobally={false}
       UIOptions={{ tools: { image: false }, canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false } }}
+      renderTopRightUI={() => <div className="tangent-map-top-right"><div className="tangent-map-toolbar-extra"><button type="button" onClick={() => setPicker(true)} aria-keyshortcuts="b" title="Place a Tangent block (B)"><span aria-hidden="true">◈</span><span className="tangent-map-label">Block</span><kbd>B</kbd></button></div>{(currentBlock || currentText) && <div className="tangent-map-verbs" role="group" aria-label={currentBlock ? "Tangent block actions" : "Text actions"}>
+      {currentBlock ? <><button type="button" onClick={() => openBlock()}>Open <kbd>Enter</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "ask")}>Ask brain <kbd>A</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "correct")}>Correct <kbd>C</kbd></button><button type="button" onClick={() => hideBlock()}>Hide <kbd>X</kbd></button></> : <><button type="button" onClick={promoteIdea}>Send to brain as idea</button>{core.referenceFromText(currentText.text, choices) && <button type="button" onClick={makeSelectedTextBlock}>Make block</button>}</>}
+    </div>}<button type="button" onClick={() => setOutlineOpen(true)} aria-expanded={outlineOpen} title="Outline"><span aria-hidden="true" className="tangent-map-glyph">≣</span><span className="tangent-map-label">Outline</span></button><button type="button" onClick={() => setHelp(true)} aria-keyshortcuts="?" title="Map keys (?)"><span aria-hidden="true" className="tangent-map-glyph">?</span><span className="tangent-map-label">Keys</span><kbd>?</kbd></button></div>}
       onPointerUpdate={({ pointer }) => { pointerRef.current = pointer; }}
       onPaste={(data) => { if (data.files?.length) return true; const choice = core.referenceFromText(data.text, choices); if (!choice) return false; place(choice); return true; }}
       onChange={(elements, appState) => {
@@ -212,12 +216,7 @@ function TangentMap({ host, bridge, options }) {
       }}
     />
 
-    <div className="tangent-map-toolbar-extra"><button type="button" onClick={() => setPicker(true)} aria-keyshortcuts="b" title="Place a Tangent block (B)"><span aria-hidden="true">◈</span><small>B</small><span className="visually-hidden">Block</span></button></div>
-    <div className="tangent-map-top-right"><button type="button" onClick={() => setOutlineOpen(true)}>Outline</button><span>Go To <kbd>⌘K</kbd></span><button type="button" onClick={options.onBack}>Work <kbd>Esc</kbd></button></div>
 
-    {(currentBlock || currentText) && <div className="tangent-map-verbs" aria-label={currentBlock ? "Tangent block actions" : "Text actions"}>
-      {currentBlock ? <><button type="button" onClick={() => openBlock()}>Open <kbd>Enter</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "ask")}>Ask brain <kbd>A</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "correct")}>Correct <kbd>C</kbd></button><button type="button" onClick={() => hideBlock()}>Hide <kbd>X</kbd></button></> : <><button type="button" onClick={promoteIdea}>Send to brain as idea</button>{core.referenceFromText(currentText.text, choices) && <button type="button" onClick={makeSelectedTextBlock}>Make block</button>}</>}
-    </div>}
 
     <div className={`tangent-map-save ${saveState.state}`} role="status">
       <span>{saveState.state === "dirty" ? "Saving…" : saveState.state === "conflict" ? "Changed elsewhere" : saveState.state === "blocked" ? "Save stopped" : saveState.label || "Saved"}</span>
@@ -239,10 +238,13 @@ function TangentMap({ host, bridge, options }) {
       <p><kbd>Enter</kbd> place · <kbd>⇧Enter</kbd> place another · <kbd>Esc</kbd> close</p>
     </section></div>}
 
-    {help && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p>Space-drag pans. ⌘-wheel zooms. ⌘Z undoes. ⌘S saves now. With a block selected: Enter opens, A asks, C corrects, X hides.</p><button type="button" autoFocus onClick={() => setHelp(false)}>Close</button></section></div>}
+    {help && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p>Space-drag pans. ⌘-wheel zooms. ⌘Z undoes. ⌘S saves now. Esc with nothing selected returns to Work.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>A</kbd> asks the brain · <kbd>C</kbd> corrects · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelp(false)}>Close</button></section></div>}
 
-    <ol className={outlineOpen ? "tangent-map-outline visible" : "tangent-map-outline visually-hidden"} aria-label="Map outline">{outline.map((item) => <li key={item.id}><button type="button" onClick={() => selectOutline(item.id)}>{item.label}</button></li>)}</ol>
-    {outlineOpen && <button type="button" className="tangent-map-outline-close" onClick={() => setOutlineOpen(false)}>Close outline</button>}
+    <section className={outlineOpen ? "tangent-map-outline visible" : "tangent-map-outline visually-hidden"} aria-label="Map outline">
+      {outlineOpen && <header><strong>Outline</strong><button type="button" className="tangent-map-outline-close" onClick={() => setOutlineOpen(false)} aria-label="Close outline">✕</button></header>}
+      <ol>{outline.map((item) => <li key={item.id}><button type="button" onClick={() => selectOutline(item.id)}>{item.label}</button></li>)}</ol>
+      {outlineOpen && outline.length === 0 && <p>Nothing on the map yet.</p>}
+    </section>
     {sceneRef.current.elements.filter((element) => !element.isDeleted).length === 0 && <p className="tangent-map-empty-hint">B places a block · T writes · P draws</p>}
   </div>;
 }

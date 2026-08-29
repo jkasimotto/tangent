@@ -14,9 +14,10 @@ const EDGE_FIELDS = new Set(["id", "fromNode", "fromSide", "fromEnd", "toNode", 
 const SIDES = new Set(["top", "right", "bottom", "left"]);
 const ENDS = new Set(["none", "arrow"]);
 const BACKGROUND_STYLES = new Set(["cover", "ratio", "repeat"]);
-const MAX_BYTES = 5 * 1024 * 1024;
-const MAX_ITEMS = 10_000;
-const MAX_TEXT = 100_000;
+const MAX_BYTES = 2 * 1024 * 1024;
+const MAX_NODES = 500;
+const MAX_EDGES = 1_000;
+const MAX_TEXT = 50 * 1024;
 
 export const canvasHash = (text) => createHash("sha256").update(text).digest("hex");
 
@@ -39,7 +40,7 @@ export function safeCanvasPath(root, relative) {
 }
 
 function finite(value, name, errors) {
-  if (typeof value !== "number" || !Number.isFinite(value) || Math.abs(value) > 1_000_000) errors.push(`${name} must be a finite canvas coordinate`);
+  if (typeof value !== "number" || !Number.isFinite(value) || Math.abs(value) > 10_000_000) errors.push(`${name} must be a finite canvas coordinate`);
 }
 
 function shortString(value, name, errors, { required = false, max = MAX_TEXT } = {}) {
@@ -62,21 +63,23 @@ export function validateAreaCanvas(canvas) {
   if (!Array.isArray(nodes)) errors.push("nodes must be an array");
   if (!Array.isArray(edges)) errors.push("edges must be an array");
   if (!Array.isArray(nodes) || !Array.isArray(edges)) return { ok: false, errors, warnings };
-  if (nodes.length > MAX_ITEMS || edges.length > MAX_ITEMS) errors.push(`canvas must contain at most ${MAX_ITEMS} nodes and edges`);
+  if (nodes.length > MAX_NODES) errors.push(`canvas must contain at most ${MAX_NODES} nodes`);
+  if (edges.length > MAX_EDGES) errors.push(`canvas must contain at most ${MAX_EDGES} edges`);
   const ids = new Set();
   for (const [index, node] of nodes.entries()) {
     const at = `nodes[${index}]`;
     if (!node || typeof node !== "object" || Array.isArray(node) || !NODE_FIELDS[node.type]) { errors.push(`${at} has an unsupported node type`); continue; }
     const unknown = unknownFields(node, NODE_FIELDS[node.type]);
     if (unknown.length) errors.push(`${at} has unsupported fields: ${unknown.join(", ")}`);
-    shortString(node.id, `${at}.id`, errors, { required: true, max: 200 });
+    shortString(node.id, `${at}.id`, errors, { required: true, max: 128 });
     if (ids.has(node.id)) errors.push(`duplicate id: ${node.id}`); else ids.add(node.id);
     for (const field of ["x", "y", "width", "height"]) finite(node[field], `${at}.${field}`, errors);
-    if (typeof node.width === "number" && node.width <= 0 || typeof node.height === "number" && node.height <= 0) errors.push(`${at} dimensions must be positive`);
+    for (const field of ["x", "y", "width", "height"]) if (typeof node[field] === "number" && !Number.isInteger(node[field])) errors.push(`${at}.${field} must be an integer`);
+    if (typeof node.width === "number" && (node.width < 1 || node.width > 100_000) || typeof node.height === "number" && (node.height < 1 || node.height > 100_000)) errors.push(`${at} dimensions must be from 1 through 100000`);
     shortString(node.color, `${at}.color`, errors, { max: 100 });
     if (node.type === "text") shortString(node.text, `${at}.text`, errors, { required: true });
-    if (node.type === "file") { shortString(node.file, `${at}.file`, errors, { required: true, max: 2_000 }); shortString(node.subpath, `${at}.subpath`, errors, { max: 2_000 }); if (node.subpath !== undefined && !node.subpath.startsWith("#")) errors.push(`${at}.subpath must start with #`); }
-    if (node.type === "link") shortString(node.url, `${at}.url`, errors, { required: true, max: 8_000 });
+    if (node.type === "file") { shortString(node.file, `${at}.file`, errors, { required: true, max: 2_000 }); shortString(node.subpath, `${at}.subpath`, errors, { max: 2_000 }); if (node.subpath !== undefined && !node.subpath.startsWith("#")) errors.push(`${at}.subpath must start with #`); if (!safeCanvasPath("/vault", node.file.replace(/\.md$/, ".canvas")) || !node.file.endsWith(".md")) errors.push(`${at}.file must be a safe vault-relative Markdown path`); }
+    if (node.type === "link") { shortString(node.url, `${at}.url`, errors, { required: true, max: 8_000 }); if (typeof node.url === "string" && !/^(https?:|obsidian:)/.test(node.url)) errors.push(`${at}.url has an unsupported scheme`); }
     if (node.type === "group") { shortString(node.label, `${at}.label`, errors); shortString(node.background, `${at}.background`, errors, { max: 8_000 }); if (node.backgroundStyle !== undefined && !BACKGROUND_STYLES.has(node.backgroundStyle)) errors.push(`${at}.backgroundStyle is unsupported`); }
   }
   for (const [index, edge] of edges.entries()) {
@@ -84,12 +87,12 @@ export function validateAreaCanvas(canvas) {
     if (!edge || typeof edge !== "object" || Array.isArray(edge)) { errors.push(`${at} must be an object`); continue; }
     const unknown = unknownFields(edge, EDGE_FIELDS);
     if (unknown.length) errors.push(`${at} has unsupported fields: ${unknown.join(", ")}`);
-    shortString(edge.id, `${at}.id`, errors, { required: true, max: 200 });
+    shortString(edge.id, `${at}.id`, errors, { required: true, max: 128 });
     if (ids.has(edge.id)) errors.push(`duplicate id: ${edge.id}`); else ids.add(edge.id);
-    for (const endpoint of ["fromNode", "toNode"]) { shortString(edge[endpoint], `${at}.${endpoint}`, errors, { required: true, max: 200 }); if (!nodes.some((node) => node.id === edge[endpoint])) errors.push(`${at}.${endpoint} does not name a node`); }
+    for (const endpoint of ["fromNode", "toNode"]) { shortString(edge[endpoint], `${at}.${endpoint}`, errors, { required: true, max: 128 }); if (!nodes.some((node) => node.id === edge[endpoint])) errors.push(`${at}.${endpoint} does not name a node`); }
     for (const side of ["fromSide", "toSide"]) if (edge[side] !== undefined && !SIDES.has(edge[side])) errors.push(`${at}.${side} is unsupported`);
     for (const end of ["fromEnd", "toEnd"]) if (edge[end] !== undefined && !ENDS.has(edge[end])) errors.push(`${at}.${end} is unsupported`);
-    shortString(edge.color, `${at}.color`, errors, { max: 100 }); shortString(edge.label, `${at}.label`, errors);
+    shortString(edge.color, `${at}.color`, errors, { max: 100 }); shortString(edge.label, `${at}.label`, errors, { max: 500 });
   }
   return { ok: errors.length === 0, errors, warnings };
 }

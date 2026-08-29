@@ -30,3 +30,12 @@ test("rejects duplicate IDs, bad endpoints, unsafe values, limits, and unknown f
   assert.match(result.errors.join("\n"), /unsupported fields/);
   assert.match(result.errors.join("\n"), /does not name a node/);
 });
+
+test("enforces published geometry, identifier, and reference limits", () => {
+  const base = { id: "a", type: "text", text: "ok", x: 0, y: 0, width: 100, height: 100 };
+  assert.equal(validateAreaCanvas({ nodes: [{ ...base, x: 0.5 }], edges: [] }).ok, false);
+  assert.equal(validateAreaCanvas({ nodes: [{ ...base, width: 100_001 }], edges: [] }).ok, false);
+  assert.equal(validateAreaCanvas({ nodes: [{ ...base, id: "x".repeat(129) }], edges: [] }).ok, false);
+  assert.equal(validateAreaCanvas({ nodes: [{ ...base, type: "file", file: "../outside.md", text: undefined }], edges: [] }).ok, false);
+  assert.equal(validateAreaCanvas({ nodes: [{ ...base, type: "link", url: "javascript:alert(1)", text: undefined }], edges: [] }).ok, false);
+});

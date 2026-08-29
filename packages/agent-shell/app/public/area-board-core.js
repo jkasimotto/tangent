@@ -54,6 +54,16 @@
     return next;
   }
 
-const api = { addEdge, addNode, center, contains, directionalNode, groupsForNode, moveIntoInbox, removeItem, replaceNodeWithReference, spatialOrder, updateNode };
-export { addEdge, addNode, center, contains, directionalNode, groupsForNode, moveIntoInbox, removeItem, replaceNodeWithReference, spatialOrder, updateNode };
+  function ensureInbox(canvas) {
+    if (canvas.nodes.some((node) => node.id === "tangent-inbox-v1")) return clone(canvas);
+    return addNode(canvas, { id: "tangent-inbox-v1", type: "group", label: "Inbox", x: 1900, y: 40, width: 420, height: 900 });
+  }
+
+  function hiddenNodeIds(canvas) {
+    const inbox = canvas.nodes.find((node) => node.id === "tangent-inbox-v1" && node.type === "group");
+    return new Set(inbox ? canvas.nodes.filter((node) => contains(inbox, node)).map((node) => node.id) : []);
+  }
+
+const api = { addEdge, addNode, center, contains, directionalNode, ensureInbox, groupsForNode, hiddenNodeIds, moveIntoInbox, removeItem, replaceNodeWithReference, spatialOrder, updateNode };
+export { addEdge, addNode, center, contains, directionalNode, ensureInbox, groupsForNode, hiddenNodeIds, moveIntoInbox, removeItem, replaceNodeWithReference, spatialOrder, updateNode };
 export default api;

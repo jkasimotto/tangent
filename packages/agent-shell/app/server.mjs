@@ -58,6 +58,11 @@ import { observeTranscript } from "./transcript-tail.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
 import { createAreaCanvasRepository } from "./area-canvas-repository.mjs";
 import { createAreaCanvasRoutes } from "./area-canvas-routes.mjs";
+import { createAreaMapRoutes } from "./area-map-routes.mjs";
+import { createAreaMapRecordStore } from "./area-map-record-store.mjs";
+import { createAreaPictures } from "./area-pictures.mjs";
+import { createAreaMapProposals } from "./area-map-proposals.mjs";
+import { createAreaMapPromotions } from "./area-map-promotions.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
 import { createProcessRoutes } from "./process-routes.mjs";
@@ -183,7 +188,6 @@ const sessionOwnership = createSessionOwnership({
 const runRepositoryGit = (args) => execFileAsync("git", args);
 const vaultRepository = createVaultRepository({ root: TREES_ROOT, runGit: runRepositoryGit });
 const areaCanvasRepository = createAreaCanvasRepository({ root: TREES_ROOT, runGit: runRepositoryGit, commit: vaultRepository.commit });
-const areaCanvasRoutes = createAreaCanvasRoutes({ repository: areaCanvasRepository, areaExists: async (area) => Boolean(cleanAreaPath(area) && existsSync(areaDirectory(TREES_ROOT, area))) });
 const launchMemory = createLaunchMemory(process.env.TANGENT_LAUNCH_MEMORY ?? path.join(os.homedir(), ".tangent", "agent-shell", "launch-memory.json"));
 const launchCatalog = createLaunchCatalog({
   root: TREES_ROOT,
@@ -211,6 +215,11 @@ const MAP_STATE_ROOT = process.env.TANGENT_MAP_STATE_ROOT ?? path.join(os.homedi
 const PIPELINES_ROOT = process.env.TANGENT_PIPELINES_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "pipelines");
 const PRESENTATIONS_ROOT = process.env.TANGENT_PRESENTATIONS_ROOT
   ?? (process.env.TANGENT_PIPELINES_ROOT ? path.join(path.dirname(process.env.TANGENT_PIPELINES_ROOT), "presented") : path.join(os.homedir(), ".tangent", "agent-shell", "presented"));
+const areaMapRecordStore = createAreaMapRecordStore({ root: PRESENTATIONS_ROOT });
+const areaPictures = createAreaPictures({ store: areaMapRecordStore });
+const areaMapProposals = createAreaMapProposals({ store: areaMapRecordStore });
+const areaMapPromotions = createAreaMapPromotions({ store: areaMapRecordStore });
+const areaCanvasRoutes = createAreaCanvasRoutes({ repository: areaCanvasRepository, proposals: areaMapProposals, areaExists: async (area) => Boolean(cleanAreaPath(area) && existsSync(areaDirectory(TREES_ROOT, area))) });
 // One JSON record per Goal for a solo (non-pipeline) session's context
 // continuations: the same mechanism pipeline steps keep inline on the step
 // (design-worker-context-handover D6).
@@ -4449,6 +4458,7 @@ const WORKER_REFUSED_ROUTES = new Set([
   "/api/brains/start", "/api/brains/stop", "/api/brains/reply", "/api/brains/verdict", "/api/brains/verdict/undo",
   "/api/brains/requests", "/api/brains/requests/withdraw", "/api/brains/requests/answer", "/api/brains/requests/dismiss",
   "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control", "/api/processes/check",
+  "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions",
   "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
 
@@ -4463,6 +4473,7 @@ const REPAIR_REFUSED_ROUTES = new Set([
   "/api/brains/verdict", "/api/brains/verdict/undo", "/api/brains/requests", "/api/brains/requests/withdraw",
   "/api/brains/requests/answer", "/api/brains/requests/dismiss", "/api/operations/new", "/api/operations/control",
   "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control",
+  "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions",
   "/api/processes/check", "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
 
@@ -6733,6 +6744,20 @@ const documentRoutes = createDocumentRoutes({
   notifyComments: notifyBrainOfDocumentComments,
   resolve: resolveVaultDocumentComment,
 });
+const areaMapRoutes = createAreaMapRoutes({
+  pictures: areaPictures,
+  proposals: areaMapProposals,
+  promotions: areaMapPromotions,
+  areaExists: async (area) => Boolean(cleanAreaPath(area) && existsSync(areaDirectory(TREES_ROOT, area))),
+  async authorizeBrain(area, session) {
+    const requested = String(session ?? "").trim();
+    const [actor, brain] = await Promise.all([commandProvenance(requested), liveBrainForArea(area)]);
+    return actor.role === "brain" && actor.area === area && brain?.session === requested
+      && (!actor.generation || !brain.generation || actor.generation === brain.generation)
+      ? { session: requested, generation: brain.generation }
+      : null;
+  },
+});
 const goalPresentationRoutes = createGoalPresentationRoutes({
   /** Validates and records one or more Goal presentations. */
   async present(body) {
@@ -7731,6 +7756,7 @@ const server = http.createServer(async (req, res) => {
     if (await agentRoutes.handle(req, res, url)) return;
     if (await areaRoutes.handle(req, res, url)) return;
     if (await areaCanvasRoutes.handle(req, res, url)) return;
+    if (await areaMapRoutes.handle(req, res, url)) return;
     if (await programRoutes.handle(req, res, url)) return;
     if (await processRoutes.handle(req, res, url)) return;
     if (await goalPresentationRoutes.handle(req, res, url)) return;

@@ -1714,6 +1714,8 @@ body.work-search-open .screen { padding-bottom: 48px; }
 .area-board-node.text { font-family: Georgia, "Times New Roman", serif; }
 .area-board-node.ghost { border-style: dashed; color: var(--warning); }
 .area-board-node.selected, .area-board-node:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.area-board-proposals { display: flex; gap: 8px; overflow-x: auto; padding: 10px; border: 1px solid var(--line); border-top: 0; }
+.area-board-proposals div { display: flex; align-items: center; gap: 8px; min-width: 240px; padding: 8px; border: 1px dashed var(--line-strong); border-radius: 6px; }
 .area-map { display: grid; }
 .area-map-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 26px 14px; }
 .area-map-chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; }

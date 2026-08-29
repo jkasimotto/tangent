@@ -33,5 +33,12 @@ export function createAreaPictures({ store, now = () => new Date().toISOString()
     const picture = { ...content, version: (previous?.version ?? 0) + 1, presentedAt: now(), contentHash };
     await store.write(area, name, picture); return { status: 200, picture, idempotent: false };
   }
-  return { get, present };
+  async function withdraw(area, contentHash) {
+    const current = await get(area);
+    if (!current) return { status: 404, error: "picture was not found" };
+    if (contentHash && current.contentHash !== contentHash) return { status: 409, error: "picture changed", picture: current };
+    await store.write(area, name, null);
+    return { status: 200, withdrawn: true };
+  }
+  return { get, present, withdraw };
 }

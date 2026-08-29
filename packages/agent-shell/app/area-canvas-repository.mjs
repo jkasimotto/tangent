@@ -29,7 +29,7 @@ export function createAreaCanvasRepository({ root, runGit, commit, reportError =
     await writeFile(temporary, text, "utf8");
     await rename(temporary, safe.absolute);
     if (!current.exists) await runGit(["-C", root, "add", "--", current.file]);
-    const result = await commit([current.file], `update: ${area} living map`, area, session);
+    const result = await commit([current.file], `${current.exists ? "update" : "add"}: ${area} spatial map`, area, session);
     if (!result.committed) {
       reportError(`canvas saved without a vault commit: ${current.file}: ${result.error}`);
       return { status: 503, saved: true, committed: false, error: result.error, hash: desiredHash, operationId };

@@ -21,5 +21,11 @@ export function createAreaMapProposals({ store, now = () => new Date().toISOStri
     if (proposal.version !== version) return { status: 409, error: "proposal changed", proposal };
     proposal.state = state; proposal.version += 1; await store.write(area, name, current); return { status: 200, proposal };
   }
-  return { decide, list, propose, record };
+  async function withdraw(area, proposalId, version) {
+    const current = await record(area); const proposal = current.proposals.find((item) => item.id === proposalId);
+    if (!proposal) return { status: 404, error: "proposal was not found" };
+    if (proposal.version !== version) return { status: 409, error: "proposal changed", proposal };
+    proposal.state = "withdrawn"; proposal.version += 1; await store.write(area, name, current); return { status: 200, proposal };
+  }
+  return { decide, list, propose, record, withdraw };
 }

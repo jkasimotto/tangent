@@ -15,3 +15,9 @@ test("preserves IDs and z-order across edit operations", () => {
   const promoted = core.replaceNodeWithReference(moved, "a", { file: "otto/a.md" });
   assert.deepEqual(promoted.nodes[1], { id: "a", type: "file", file: "otto/a.md", x: 77, y: 20, width: 40, height: 40 });
 });
+test("uses the standards-only Inbox group for durable hidden membership", () => {
+  const withInbox = core.ensureInbox(canvas);
+  const hidden = core.moveIntoInbox(withInbox, "a");
+  assert.equal(core.hiddenNodeIds(hidden).has("a"), true);
+  assert.deepEqual(core.ensureInbox(withInbox), withInbox);
+});

@@ -6,3 +6,10 @@ test("validates closed vocabulary, limits, source snapshots, and atomic replacem
   assert.equal((await pictures.present("otto", input, { session: "brain", generation: 1 })).picture.version, 1);
   assert.equal((await pictures.present("otto", { ...input, outcomes: [{ ...input.outcomes[0], signal: { kind: "unknown" } }] }, {})).status, 422);
 });
+test("withdraw fences a stale picture hash", async () => {
+  const pictures = createAreaPictures({ store: memory(), now: () => "now" });
+  const saved = await pictures.present("otto", { area: "otto", outcomes: [], options: [] }, { session: "brain", generation: 1 });
+  assert.equal((await pictures.withdraw("otto", "stale")).status, 409);
+  assert.equal((await pictures.withdraw("otto", saved.picture.contentHash)).status, 200);
+  assert.equal(await pictures.get("otto"), null);
+});

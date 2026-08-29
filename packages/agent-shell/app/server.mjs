@@ -219,7 +219,10 @@ const areaMapRecordStore = createAreaMapRecordStore({ root: PRESENTATIONS_ROOT }
 const areaPictures = createAreaPictures({ store: areaMapRecordStore });
 const areaMapProposals = createAreaMapProposals({ store: areaMapRecordStore });
 const areaMapPromotions = createAreaMapPromotions({ store: areaMapRecordStore });
-const areaCanvasRoutes = createAreaCanvasRoutes({ repository: areaCanvasRepository, proposals: areaMapProposals, areaExists: async (area) => Boolean(cleanAreaPath(area) && existsSync(areaDirectory(TREES_ROOT, area))) });
+const areaCanvasRoutes = createAreaCanvasRoutes({ repository: areaCanvasRepository, proposals: areaMapProposals, view: readAreaBoardView,
+  /** Confirms that the route's derived Area has a vault directory. */
+  areaExists: async (area) => Boolean(cleanAreaPath(area) && existsSync(areaDirectory(TREES_ROOT, area))),
+});
 // One JSON record per Goal for a solo (non-pipeline) session's context
 // continuations: the same mechanism pipeline steps keep inline on the step
 // (design-worker-context-handover D6).
@@ -1266,8 +1269,8 @@ function validAreaPath(area) {
 }
 
 /** The JSON file that stores one Area's map state. */
-function mapStateFile(area) {
-  return path.join(MAP_STATE_ROOT, `${area.replaceAll("/", "__")}.json`);
+function mapStateFile(area, board = false) {
+  return path.join(MAP_STATE_ROOT, `${area.replaceAll("/", "__")}${board ? ".board-v1" : ""}.json`);
 }
 
 /** Reads one Area's stored map state, or an empty object. */
@@ -1280,10 +1283,19 @@ async function readMapState(area) {
   }
 }
 
+/** Reads only the JSON Canvas view state, never the retired force-graph state. */
+async function readAreaBoardView(area) {
+  if (!validAreaPath(area)) return null;
+  try {
+    const value = JSON.parse(await readFile(mapStateFile(area, true), "utf8"));
+    return value?.schema === "area-board-view.v1" ? value : null;
+  } catch { return null; }
+}
+
 /** Writes one Area's map state atomically. */
 async function writeMapState(area, mapState) {
   mkdirSync(MAP_STATE_ROOT, { recursive: true });
-  const file = mapStateFile(area);
+  const file = mapStateFile(area, mapState?.schema === "area-board-view.v1");
   await writeFile(`${file}.tmp`, JSON.stringify(mapState), "utf8");
   await rename(`${file}.tmp`, file);
 }
@@ -4458,7 +4470,7 @@ const WORKER_REFUSED_ROUTES = new Set([
   "/api/brains/start", "/api/brains/stop", "/api/brains/reply", "/api/brains/verdict", "/api/brains/verdict/undo",
   "/api/brains/requests", "/api/brains/requests/withdraw", "/api/brains/requests/answer", "/api/brains/requests/dismiss",
   "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control", "/api/processes/check",
-  "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions",
+  "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions", "/api/areas/map-promotions/complete",
   "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
 
@@ -4473,7 +4485,7 @@ const REPAIR_REFUSED_ROUTES = new Set([
   "/api/brains/verdict", "/api/brains/verdict/undo", "/api/brains/requests", "/api/brains/requests/withdraw",
   "/api/brains/requests/answer", "/api/brains/requests/dismiss", "/api/operations/new", "/api/operations/control",
   "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control",
-  "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions",
+  "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions", "/api/areas/map-promotions/complete",
   "/api/processes/check", "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
 
@@ -6470,6 +6482,8 @@ const areaRoutesOperations = {
     const text = await areaNote(area);
     const workFolder = await areaWorkFolder(area);
     const resolved = await describeAreaResources(TREES_ROOT, area);
+    const canvas = await areaCanvasRepository.read(area);
+    const openProposals = await areaMapProposals.list(area, { openOnly: true });
     return {
       area,
       status: parseFrontmatter(text).status ?? "",
@@ -6486,6 +6500,16 @@ const areaRoutesOperations = {
       goals: (await readAreaGoals(area)).map(goalSummary),
       ideas: await areaIdeas(area),
       processes: await processViews({ area, exact: true }),
+      map: canvas.ok ? {
+        exists: canvas.exists,
+        file: canvas.file,
+        hash: canvas.hash,
+        references: canvas.canvas.nodes.filter((node) => node.type === "file" || node.type === "link").map((node) => node.type === "file" ? { id: node.id, file: node.file, subpath: node.subpath ?? null } : { id: node.id, url: node.url }),
+        ink: canvas.canvas.nodes.filter((node) => node.type === "text").map((node) => ({ id: node.id, text: node.text })),
+        frames: canvas.canvas.nodes.filter((node) => node.type === "group").map((node) => ({ id: node.id, label: node.label ?? "" })),
+        arrows: canvas.canvas.edges.map((edge) => ({ id: edge.id, from: edge.fromNode, to: edge.toNode, label: edge.label ?? "" })),
+        proposals: openProposals.map((proposal) => ({ id: proposal.id, version: proposal.version, kind: proposal.kind, source: proposal.source, note: proposal.note })),
+      } : { exists: true, file: canvas.file, hash: canvas.hash, errors: canvas.errors },
     };
   },
   /** Returns archived and active Journal text in chronological file order. */
@@ -6748,7 +6772,9 @@ const areaMapRoutes = createAreaMapRoutes({
   pictures: areaPictures,
   proposals: areaMapProposals,
   promotions: areaMapPromotions,
+  /** Confirms that one runtime-record request names a current Area. */
   areaExists: async (area) => Boolean(cleanAreaPath(area) && existsSync(areaDirectory(TREES_ROOT, area))),
+  /** Resolves only the exact live Area brain and generation. */
   async authorizeBrain(area, session) {
     const requested = String(session ?? "").trim();
     const [actor, brain] = await Promise.all([commandProvenance(requested), liveBrainForArea(area)]);

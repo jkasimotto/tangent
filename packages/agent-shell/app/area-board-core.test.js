@@ -21,3 +21,9 @@ test("uses the standards-only Inbox group for durable hidden membership", () => 
   assert.equal(core.hiddenNodeIds(hidden).has("a"), true);
   assert.deepEqual(core.ensureInbox(withInbox), withInbox);
 });
+test("showing a hidden block preserves its size and moves it outside the Inbox", () => {
+  const hidden = core.moveIntoInbox(core.ensureInbox(canvas), "a");
+  const shown = core.moveOutOfInbox(hidden, "a");
+  assert.equal(core.hiddenNodeIds(shown).has("a"), false);
+  assert.equal(shown.nodes.find((node) => node.id === "a").width, 40);
+});

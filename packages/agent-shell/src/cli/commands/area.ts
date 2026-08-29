@@ -1,12 +1,13 @@
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, requiredString, stringArg, type Args } from "@tangent/core/cli";
+import { readFile } from "node:fs/promises";
 
 import { currentTmuxSession, listAreaNodes, postJson, requireArea, resolveServerUrl, vaultFetch } from "../client.js";
 import { areaCommandSpec } from "../spec.js";
 
 /** Dispatches `tangent area` subcommands. */
 export async function runAreaCli(argv = process.argv.slice(2)): Promise<void> {
-  const args = parseArgs(argv);
+  const args = parseArgs(argv, { boolean: argv[0] === "propose" ? [] : ["withdraw"] });
   const subcommand = args._[0];
   if (!subcommand || args.help) return help();
   if (subcommand === "list") return listCommand(args);
@@ -14,11 +15,64 @@ export async function runAreaCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "recent") return recentCommand(args);
   if (subcommand === "audit") return auditCommand(args);
   if (subcommand === "create") return createCommand(args);
+  if (subcommand === "picture") return pictureCommand(args);
+  if (subcommand === "propose") return proposeCommand(args);
+  if (subcommand === "promote") return promoteCommand(args);
   if (subcommand === "done") return statusCommand(args, "done");
   if (subcommand === "archive") return statusCommand(args, "archived");
   if (subcommand === "reopen") return statusCommand(args, "active");
   throw new Error(`Unknown area command: ${subcommand}. Try "tangent area list", "tangent area show <area>", "tangent area create <parent> <name>", "tangent area done <area>", "tangent area archive <area>", or "tangent area reopen <area>".`);
 }
+
+/** Presents or withdraws the exact Area brain's structured big picture. */
+async function pictureCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const area = await requireArea(server, requiredString(args._[1], "tangent area picture requires <area>."));
+  const session = stringArg(args.session) || (await currentTmuxSession()) || "";
+  if (booleanArg(args.withdraw)) {
+    await postJson(server, "/api/areas/picture/withdraw", { area, session, hash: stringArg(args.hash) });
+    console.log(`withdrew the picture for ${area}`);
+    return;
+  }
+  const file = requiredString(args.file, "tangent area picture requires --file <json>." );
+  const picture = JSON.parse(await readFile(file, "utf8"));
+  const result = await postJson(server, "/api/areas/picture", { area, session, picture: { ...picture, area } });
+  console.log(`${result.idempotent ? "kept" : "presented"} picture ${result.picture.version} for ${area}`);
+}
+
+/** Creates, updates, or withdraws a brain-owned block proposal. */
+async function proposeCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const area = await requireArea(server, requiredString(args._[1], "tangent area propose requires <area>."));
+  const session = stringArg(args.session) || (await currentTmuxSession()) || "";
+  const withdraw = stringArg(args.withdraw);
+  if (withdraw) {
+    const result = await postJson(server, "/api/areas/map-proposals/withdraw", { area, session, id: withdraw, version: Number(requiredString(args.version, "proposal withdrawal requires --version <number>.")) });
+    console.log(`withdrew proposal ${result.proposal.id}`);
+    return;
+  }
+  const source = stringArg(args.source); const link = stringArg(args.link);
+  if (Boolean(source) === Boolean(link)) throw new Error("tangent area propose needs exactly one of --source or --link.");
+  const split = source?.indexOf("#") ?? -1;
+  const proposal = source
+    ? { kind: "file", source: { file: split < 0 ? source : source.slice(0, split), ...(split < 0 ? {} : { subpath: source.slice(split) }) }, note: stringArg(args.note) ?? "" }
+    : { kind: "link", source: { kind: "link", url: link }, note: stringArg(args.note) ?? "" };
+  const result = await postJson(server, "/api/areas/map-proposals", { area, session, proposal });
+  console.log(`${result.idempotent ? "kept" : "proposed"} ${result.proposal.id}`);
+}
+
+/** Attaches the durable result that the exact Area brain created for an ink promotion. */
+async function promoteCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const area = await requireArea(server, requiredString(args._[1], "tangent area promote requires <area>."));
+  const id = requiredString(args.complete, "tangent area promote requires --complete <operation-id>." );
+  const source = requiredString(args.source, "promotion completion requires --source <vault-file[#subpath]>." );
+  const split = source.indexOf("#");
+  const durableRef = { file: split < 0 ? source : source.slice(0, split), ...(split < 0 ? {} : { subpath: source.slice(split) }) };
+  const result = await postJson(server, "/api/areas/map-promotions/complete", { area, id, durableRef, brainNoticeId: stringArg(args.notice), session: stringArg(args.session) || (await currentTmuxSession()) || "" });
+  console.log(`${result.idempotent ? "kept" : "attached"} durable result for ${result.promotion.id}`);
+}
+
 
 /** Exports legacy coordination records to a detached compressed audit file. */
 async function auditCommand(args: Args): Promise<void> {
@@ -102,6 +156,15 @@ async function showCommand(args: Args): Promise<void> {
   console.log(`Ideas (${detail.ideas.length}):`);
   if (!detail.ideas.length) console.log("  none");
   for (const idea of detail.ideas) console.log(`  - ${idea}`);
+  if (detail.map) {
+    console.log("");
+    console.log(`Map: ${detail.map.exists ? detail.map.file : "none"}`);
+    for (const reference of detail.map.references ?? []) console.log(`  reference: ${reference.file ?? reference.url}${reference.subpath ?? ""}`);
+    for (const ink of detail.map.ink ?? []) console.log(`  ink: ${ink.text}`);
+    for (const frame of detail.map.frames ?? []) console.log(`  frame: ${frame.label}`);
+    for (const arrow of detail.map.arrows ?? []) console.log(`  arrow: ${arrow.from} -> ${arrow.to}${arrow.label ? ` (${arrow.label})` : ""}`);
+    for (const proposal of detail.map.proposals ?? []) console.log(`  proposal: ${proposal.id} ${proposal.note}`);
+  }
 }
 
 /**

@@ -71,7 +71,8 @@ function rewriteIds(value, mapping) {
 
 /** Converts one source shard into namespaced world elements. */
 export function composeShard(owner, scene, offset = { x: 0, y: 0 }) {
-  const elements = (scene?.elements ?? []).filter((element) => !element.isDeleted && element?.customData?.tangent?.role !== "boundary");
+  const regionIds = new Set((scene?.elements ?? []).filter((element) => element?.customData?.tangent?.role === "region").map((element) => element.id));
+  const elements = (scene?.elements ?? []).filter((element) => !element.isDeleted && !["boundary", "region"].includes(element?.customData?.tangent?.role) && !regionIds.has(element.containerId));
   const mapping = new Map();
   for (const element of elements) mapping.set(element.id, runtimeId(owner, element.id));
   for (const element of elements) for (const id of element.groupIds ?? []) mapping.set(`group:${id}`, runtimeId(owner, `group:${id}`));
@@ -165,23 +166,46 @@ function overlaps(a, b) { return a.x < b.x + b.width && a.x + a.width > b.x && a
 /** Reports complete rectangle containment. */
 function contains(parent, child) { return child.x >= parent.x && child.y >= parent.y && child.x + child.width <= parent.x + parent.width && child.y + child.height <= parent.y + parent.height; }
 
+/** Returns the local hulls that affect one Area's structural and drawn rectangles. */
+export function shardHulls(scene) {
+  const blocks = [];
+  const ink = [];
+  const regionIds = new Set((scene?.elements ?? []).filter((element) => element?.customData?.tangent?.role === "region").map((element) => element.id));
+  for (const element of scene?.elements ?? []) {
+    if (element.isDeleted || ["boundary", "region", "area-region"].includes(element?.customData?.tangent?.role) || regionIds.has(element.containerId) || !finiteRect(element)) continue;
+    const target = element?.customData?.tangent?.ref ? blocks : ink;
+    target.push(rectangleOf(element));
+  }
+  return { blocks: unionRects(blocks), ink: unionRects(ink) };
+}
+
+/** Returns one element's axis-aligned rectangle. */
+function rectangleOf(element) {
+  return rect({ x: Number(element.x), y: Number(element.y), width: Math.abs(Number(element.width)), height: Math.abs(Number(element.height)) });
+}
+
 /** Solves one gesture from its immutable pointer-down world snapshot. */
 export function solveAreaMapGesture(baseline, intent) {
   const selected = new Set(intent.selectedAreas ?? []);
   const baseRegions = new Map([...baseline.regions].map(([key, value]) => [key, clone(value)]));
   const desired = { x: Number(intent.desiredWorldDelta?.x ?? 0), y: Number(intent.desiredWorldDelta?.y ?? 0) };
   const baselineGeometry = computeWorldGeometry({ ...baseline, regions: baseRegions });
-  /** Evaluates one fraction of the desired pointer delta. */
-  const evaluate = (factor) => {
+  const affected = new Set(selected);
+  for (const area of selected) {
+    let owner = baseRegions.get(area)?.owner;
+    while (owner && owner !== "@root") { affected.add(owner); owner = baseRegions.get(owner)?.owner; }
+  }
+  /** Evaluates one requested pointer delta. */
+  const evaluate = (delta) => {
     const regions = new Map([...baseRegions].map(([key, value]) => [key, clone(value)]));
     for (const area of selected) {
       const record = regions.get(area); if (!record) continue;
       if (intent.handle) {
-        if (intent.handle.includes("e")) record.storedRect.width = Math.max(MIN_WIDTH, record.storedRect.width + desired.x * factor);
-        if (intent.handle.includes("s")) record.storedRect.height = Math.max(MIN_HEIGHT, record.storedRect.height + desired.y * factor);
-        if (intent.handle.includes("w")) { const right = record.storedRect.x + record.storedRect.width; record.storedRect.x += desired.x * factor; record.storedRect.width = Math.max(MIN_WIDTH, right - record.storedRect.x); }
-        if (intent.handle.includes("n")) { const bottom = record.storedRect.y + record.storedRect.height; record.storedRect.y += desired.y * factor; record.storedRect.height = Math.max(MIN_HEIGHT, bottom - record.storedRect.y); }
-      } else { record.storedRect.x += desired.x * factor; record.storedRect.y += desired.y * factor; }
+        if (intent.handle.includes("e")) record.storedRect.width = Math.max(MIN_WIDTH, record.storedRect.width + delta.x);
+        if (intent.handle.includes("s")) record.storedRect.height = Math.max(MIN_HEIGHT, record.storedRect.height + delta.y);
+        if (intent.handle.includes("w")) { const right = record.storedRect.x + record.storedRect.width; record.storedRect.x += delta.x; record.storedRect.width = Math.max(MIN_WIDTH, right - record.storedRect.x); }
+        if (intent.handle.includes("n")) { const bottom = record.storedRect.y + record.storedRect.height; record.storedRect.y += delta.y; record.storedRect.height = Math.max(MIN_HEIGHT, bottom - record.storedRect.y); }
+      } else { record.storedRect.x += delta.x; record.storedRect.y += delta.y; }
       record.storedRect = rect(record.storedRect);
     }
     const geometry = computeWorldGeometry({ ...baseline, regions });
@@ -190,19 +214,32 @@ export function solveAreaMapGesture(baseline, intent) {
       const owner = regions.get(area)?.owner;
       for (const [other, otherValue] of geometry) {
         if (area === other || selected.has(other) || regions.get(other)?.owner !== owner) continue;
-        const swept = selected.has(area) ? unionRects([baselineGeometry.get(area)?.constraint, value.constraint]) : value.constraint;
+        if (!affected.has(area)) continue;
+        const swept = unionRects([baselineGeometry.get(area)?.constraint, value.constraint]);
         if (overlaps(swept, otherValue.constraint)) { wall = other; break; }
       }
       if (wall) break;
     }
     return { regions, geometry, wall };
   };
-  let accepted = evaluate(1);
-  if (accepted.wall) {
+  let applied = { x: 0, y: 0 };
+  let blockedBy = null;
+  const axes = Math.abs(desired.x) >= Math.abs(desired.y) ? ["x", "y"] : ["y", "x"];
+  for (const axis of axes) {
+    const target = { ...applied, [axis]: desired[axis] };
+    const full = evaluate(target);
+    if (!full.wall) { applied = target; continue; }
+    blockedBy ??= full.wall;
     let low = 0; let high = 1;
-    for (let index = 0; index < 48; index += 1) { const middle = (low + high) / 2; if (evaluate(middle).wall) high = middle; else low = middle; }
-    const blockedBy = accepted.wall; accepted = evaluate(low); accepted.wall = blockedBy;
+    for (let index = 0; index < 48; index += 1) {
+      const middle = (low + high) / 2;
+      const candidate = { ...applied, [axis]: desired[axis] * middle };
+      if (evaluate(candidate).wall) high = middle; else low = middle;
+    }
+    applied[axis] = desired[axis] * low;
   }
+  const accepted = evaluate(applied);
+  accepted.wall = blockedBy;
   const valid = [...accepted.geometry].every(([area, value]) => {
     const parent = accepted.regions.get(area)?.owner;
     return parent === "@root" || !accepted.geometry.has(parent) || contains(accepted.geometry.get(parent).constraint, value.constraint);
@@ -229,7 +266,14 @@ export function composeRegionElement(node, geometry, worldRect) {
 export function composeAreaMapWorld(world) {
   const areas = world.areas.map((node) => node.key);
   const regions = new Map(world.areas.map((node) => [node.key, clone(node.region)]));
-  const geometry = computeWorldGeometry({ areas, regions });
+  const blockHulls = new Map();
+  const inkHulls = new Map();
+  for (const node of world.areas) {
+    const hulls = shardHulls(node.shard.scene);
+    if (hulls.blocks) blockHulls.set(node.key, hulls.blocks);
+    if (hulls.ink) inkHulls.set(node.key, hulls.ink);
+  }
+  const geometry = computeWorldGeometry({ areas, regions, blockHulls, inkHulls });
   const nodes = new Map(world.areas.map((node) => [node.key, node]));
   const offsets = new Map();
   const regionRects = new Map();
@@ -262,4 +306,4 @@ export function composeAreaMapWorld(world) {
   return { scene: { type: "excalidraw", version: 2, source: "tangent", elements, appState: { viewBackgroundColor: "#121417" }, files }, origins, offsets, regions, geometry, regionRects };
 }
 
-export default { composeAreaMapWorld, composeRegionElement, composeShard, computeWorldGeometry, elementKey, inflateRect, provisionalRegions, regionId, regionKey, runtimeId, solveAreaMapGesture, splitComposed, unionRects };
+export default { composeAreaMapWorld, composeRegionElement, composeShard, computeWorldGeometry, elementKey, inflateRect, provisionalRegions, regionId, regionKey, runtimeId, shardHulls, solveAreaMapGesture, splitComposed, unionRects };

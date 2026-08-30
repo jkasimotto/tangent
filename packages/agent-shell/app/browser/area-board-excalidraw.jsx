@@ -51,6 +51,7 @@ function AreaMapWorld({ host, bridge, options }) {
   function publish(elements, appState) {
     const prior = compositionRef.current;
     const changedAreas = new Set();
+    const changedOwners = new Set();
     for (const element of elements) {
       const area = element.customData?.tangent?.role === "area-region" && element.customData?.tangent?.area;
       if (!area) continue;
@@ -60,16 +61,45 @@ function AreaMapWorld({ host, bridge, options }) {
       if ([element.x, element.y, element.width, element.height].some((value) => !Number.isFinite(value))) continue;
       if (Math.abs(element.x - old.x) < 0.01 && Math.abs(element.y - old.y) < 0.01 && Math.abs(element.width - old.width) < 0.01 && Math.abs(element.height - old.height) < 0.01) continue;
       const parentOffset = node.parent === "@root" ? { x: 0, y: 0 } : prior.offsets.get(node.parent);
-      node.region.storedRect = {
-        x: Math.round((element.x - parentOffset.x) * 100) / 100,
-        y: Math.round((element.y - parentOffset.y) * 100) / 100,
-        width: Math.max(300, Math.round(element.width * 100) / 100),
-        height: Math.max(220, Math.round(element.height * 100) / 100),
-      };
+      const local = { x: element.x - parentOffset.x, y: element.y - parentOffset.y };
+      let handle = null;
+      if (Math.abs(element.width - old.width) >= 0.01) handle = Math.abs(local.x - node.region.storedRect.x) >= 0.01 ? "w" : "e";
+      if (Math.abs(element.height - old.height) >= 0.01) handle = `${handle ?? ""}${Math.abs(local.y - node.region.storedRect.y) >= 0.01 ? "n" : "s"}`;
+      const regions = new Map(worldRef.current.areas.map((entry) => [entry.key, structuredClone(entry.region)]));
+      const blockHulls = new Map(); const inkHulls = new Map();
+      for (const entry of worldRef.current.areas) {
+        const hulls = worldCore.shardHulls(entry.shard.scene);
+        if (hulls.blocks) blockHulls.set(entry.key, hulls.blocks);
+        if (hulls.ink) inkHulls.set(entry.key, hulls.ink);
+      }
+      const preview = worldCore.solveAreaMapGesture({ areas: worldRef.current.areas.map((entry) => entry.key), regions, blockHulls, inkHulls }, {
+        selectedAreas: [area], handle,
+        desiredWorldDelta: handle ? { x: element.width - old.width + (handle.includes("w") ? local.x - node.region.storedRect.x : 0), y: element.height - old.height + (handle.includes("n") ? local.y - node.region.storedRect.y : 0) } : { x: local.x - node.region.storedRect.x, y: local.y - node.region.storedRect.y },
+      });
+      node.region.storedRect = preview.regions.get(area).storedRect;
       node.region.source = "stored";
       changedAreas.add(area);
+      if (preview.wall) setNotice(`stopped at ${preview.wall.split("/").at(-1)}`);
     }
-    if (!changedAreas.size) return;
+    const authoredRuntime = elements.filter((element) => element.customData?.tangent?.role !== "area-region").map((element) => {
+      if (prior.origins.has(element.id) || element.customData?.tangentWorld) return element;
+      const point = { x: Number(element.x ?? 0) + Number(element.width ?? 0) / 2, y: Number(element.y ?? 0) + Number(element.height ?? 0) / 2 };
+      const owner = [...prior.regionRects].filter(([, box]) => point.x >= box.x && point.y >= box.y && point.x <= box.x + box.width && point.y <= box.y + box.height).sort(([left], [right]) => right.split("/").length - left.split("/").length)[0]?.[0] ?? options.world.locatedArea;
+      prior.origins.set(element.id, { owner, sourceId: element.id });
+      return { ...element, customData: { ...(element.customData ?? {}), tangentWorld: { owner, sourceId: element.id } } };
+    });
+    const byOwner = worldCore.splitComposed(authoredRuntime, prior.origins, prior.offsets);
+    for (const [owner, authored] of byOwner) {
+      const node = worldRef.current.areas.find((entry) => entry.key === owner);
+      if (!node?.shard.scene) continue;
+      const regionIds = new Set(node.shard.scene.elements.filter((item) => core.isAreaRegion(item)).map((item) => item.id));
+      const structural = node.shard.scene.elements.filter((item) => core.isAreaRegion(item) || item.customData?.tangent?.role === "boundary" || regionIds.has(item.containerId));
+      const nextElements = [...structural, ...authored];
+      if (core.authoredFingerprint(nextElements) === core.authoredFingerprint(node.shard.scene.elements)) continue;
+      node.shard.scene = { ...node.shard.scene, elements: nextElements };
+      changedOwners.add(owner);
+    }
+    if (!changedAreas.size && !changedOwners.size) return;
     const next = worldCore.composeAreaMapWorld(worldRef.current);
     next.scene.appState = appState;
     compositionRef.current = next;
@@ -78,7 +108,7 @@ function AreaMapWorld({ host, bridge, options }) {
     applyingRef.current = true;
     api?.updateScene({ elements: next.scene.elements, captureUpdate: "NEVER" });
     requestAnimationFrame(() => { applyingRef.current = false; });
-    options.onWorldChange?.(worldRef.current, changedAreas);
+    options.onWorldChange?.(worldRef.current, changedAreas, changedOwners);
   }
 
   /** Fits the camera to one Area without changing map authority. */

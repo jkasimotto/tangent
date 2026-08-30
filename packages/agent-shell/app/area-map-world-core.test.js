@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { composeAreaMapWorld, computeWorldGeometry, provisionalRegions, solveAreaMapGesture } from "./public/area-map-world-core.js";
+import { composeAreaMapWorld, computeWorldGeometry, provisionalRegions, shardHulls, solveAreaMapGesture } from "./public/area-map-world-core.js";
 
 const areas = ["neara", "neara/delivery", "neara/delivery/standards"];
 
@@ -43,6 +43,34 @@ test("the solver uses the pointer baseline and prevents a large jump through a s
   assert.equal(preview.wall, "root/b");
   assert.ok(preview.regions.get("root/a").storedRect.x + 300 <= 500.01);
   assert.deepEqual(solveAreaMapGesture(baseline, { selectedAreas: ["root/a"], handle: null, desiredWorldDelta: { x: 900, y: 0 } }), preview);
+});
+
+test("an expanded ancestor stops at its sibling and preserves tangential motion", () => {
+  const tree = ["root", "root/a", "root/a/child", "root/b"];
+  const regions = provisionalRegions(tree, new Map([
+    ["@root>root", { x: 0, y: 0, width: 1800, height: 1200 }],
+    ["root>root/a", { x: 0, y: 0, width: 500, height: 500 }],
+    ["root/a>root/a/child", { x: 80, y: 80, width: 300, height: 220 }],
+    ["root>root/b", { x: 800, y: 0, width: 400, height: 500 }],
+  ]));
+  const preview = solveAreaMapGesture({ areas: tree, regions, blockHulls: new Map(), inkHulls: new Map() }, { selectedAreas: ["root/a/child"], handle: null, desiredWorldDelta: { x: 900, y: 150 } });
+  assert.equal(preview.wall, "root/b");
+  assert.ok(preview.geometry.get("root/a").constraint.x + preview.geometry.get("root/a").constraint.width <= 800.01);
+  assert.equal(preview.regions.get("root/a/child").storedRect.y, 230);
+});
+
+test("authored blocks expand containment while free ink expands only the drawn outline", () => {
+  const scene = { elements: [
+    { id: "block", x: 500, y: 300, width: 200, height: 100, customData: { tangent: { ref: "goal-x" } } },
+    { id: "ink", x: -200, y: -100, width: 20, height: 20, customData: {} },
+  ] };
+  const hulls = shardHulls(scene);
+  assert.deepEqual(hulls.blocks, { x: 500, y: 300, width: 200, height: 100 });
+  assert.deepEqual(hulls.ink, { x: -200, y: -100, width: 20, height: 20 });
+  const regions = provisionalRegions(["root"], new Map([["@root>root", { x: 0, y: 0, width: 300, height: 220 }]]));
+  const geometry = computeWorldGeometry({ areas: ["root"], regions, blockHulls: new Map([["root", hulls.blocks]]), inkHulls: new Map([["root", hulls.ink]]) }).get("root");
+  assert.ok(geometry.constraint.width >= 760);
+  assert.ok(geometry.drawn.x < geometry.constraint.x);
 });
 
 test("composes every ancestor and descendant as one unlocked interactive region", () => {

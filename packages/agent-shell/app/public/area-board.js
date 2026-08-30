@@ -32,7 +32,7 @@ function mountWorld(host, { world, getDocuments, api, onBack }) {
   let saveState = "saved";
   let chain = Promise.resolve();
   /** Saves direct region changes in their parent shards. */
-  const persist = (nextWorld, changedAreas) => {
+  const persist = (nextWorld, changedAreas, changedOwners = new Set()) => {
     const writes = [];
     for (const area of changedAreas) {
       const node = nextWorld.areas.find((entry) => entry.key === area);
@@ -45,6 +45,13 @@ function mountWorld(host, { world, getDocuments, api, onBack }) {
       const ids = new Set([region.id, label.id]);
       scene.elements = [...scene.elements.filter((element) => !ids.has(element.id)), region, label];
       writes.push({ area: node.parent, baseHash: parent.shard.hash ?? null, canvas: scene, reason: `${area.split("/").at(-1)} region` });
+    }
+    for (const owner of changedOwners) {
+      const node = nextWorld.areas.find((entry) => entry.key === owner);
+      if (!node || node.shard.state === "unreadable") continue;
+      const existing = writes.find((write) => write.area === owner);
+      if (existing) existing.canvas = structuredClone(node.shard.scene);
+      else writes.push({ area: owner, baseHash: node.shard.hash ?? null, canvas: structuredClone(node.shard.scene), reason: `${owner.split("/").at(-1)} map` });
     }
     if (!writes.length) return;
     saveState = "saving"; editor?.setSaveState({ state: saveState });

@@ -172,6 +172,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const [announcement, setAnnouncement] = useState({ id: 0, text: "" });
   const initializingRef = useRef(true);
   const pointerBaselineRef = useRef(null);
+  const pointerSolverBaselineRef = useRef(null);
   const pointerCompositionRef = useRef(null);
   const pointerStateRef = useRef(null);
   const pointerCurrentRef = useRef(null);
@@ -462,6 +463,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     claimedOriginsRef.current = new Map();
     wallAnnouncedRef.current = false; outlineProtectionAnnouncedRef.current = false;
     pointerBaselineRef.current = controller.beginGesture("pointer");
+    pointerSolverBaselineRef.current = solverBaseline(pointerBaselineRef.current);
     pointerCompositionRef.current = worldCore.composeAreaMapWorld(pointerBaselineRef.current);
     pointerStateRef.current = { ...pointerDownState, origin }; pointerCurrentRef.current = origin;
     const liveSelection = controller.snapshot().selection;
@@ -492,12 +494,13 @@ export function AreaMapWorld({ host, bridge, options }) {
   function previewPointerGesture(pointer) {
     pointerCurrentRef.current = pointer; lastPointerRef.current = pointer;
     const baselineWorld = pointerBaselineRef.current; const baselineComposition = pointerCompositionRef.current;
-    if (!baselineWorld || !baselineComposition || !pointerStateRef.current) return;
+    const solver = pointerSolverBaselineRef.current;
+    if (!baselineWorld || !baselineComposition || !solver || !pointerStateRef.current) return;
     const selected = new Set([...pointerSelectedRef.current].map((id) => baselineComposition.scene.elements.find((element) => element.id === id)?.customData?.tangent?.area).filter(Boolean));
     for (const area of [...selected]) for (const ancestor of selected) if (area !== ancestor && area.startsWith(`${ancestor}/`)) selected.delete(area);
     if (!selected.size) return;
     const solveStarted = performance.now();
-    const preview = worldCore.solveAreaMapGesture(solverBaseline(baselineWorld), {
+    const preview = worldCore.solveAreaMapGesture(solver, {
       selectedAreas: [...selected], handle: pointerHandleRef.current,
       desiredWorldDelta: { x: pointer.x - pointerStateRef.current.origin.x, y: pointer.y - pointerStateRef.current.origin.y },
     });
@@ -542,7 +545,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (!pointerBaselineRef.current) { pointerSettlingRef.current = false; resolvePointerSettleWaiters(); return; }
     publishCurrentPointerState();
     controller.endGesture("pointer");
-    pointerBaselineRef.current = null; pointerCompositionRef.current = null; pointerStateRef.current = null; pointerCurrentRef.current = null; pointerHandleRef.current = null;
+    pointerBaselineRef.current = null; pointerSolverBaselineRef.current = null; pointerCompositionRef.current = null; pointerStateRef.current = null; pointerCurrentRef.current = null; pointerHandleRef.current = null;
     pointerSelectedRef.current = new Set(); pointerSettlingRef.current = false;
     resolvePointerSettleWaiters();
   }
@@ -588,6 +591,9 @@ export function AreaMapWorld({ host, bridge, options }) {
     }
     const baselineWorld = pointerBaselineRef.current ?? controller.world();
     const baselineComposition = pointerCompositionRef.current ?? worldCore.composeAreaMapWorld(baselineWorld);
+    let preparedSolverBaseline = pointerSolverBaselineRef.current;
+    /** Returns one pointer-stable or command-local solver baseline. */
+    const getSolverBaseline = () => preparedSolverBaseline ??= solverBaseline(baselineWorld);
     const nextWorld = pointerBaselineRef.current ? controller.world() : clone(baselineWorld);
     const changedAreas = new Set(); const changedOwners = new Set();
     const incomingById = new Map(elements.map((element) => [element.id, element]));
@@ -616,7 +622,7 @@ export function AreaMapWorld({ host, bridge, options }) {
         y: handle.includes("n") ? first.y - old.y : handle.includes("s") ? first.height - old.height : 0,
       } : { x: first.x - old.x, y: first.y - old.y });
       const solveStarted = performance.now();
-      const preview = worldCore.solveAreaMapGesture(solverBaseline(baselineWorld), { selectedAreas: [...selected], handle: handle || null, desiredWorldDelta });
+      const preview = worldCore.solveAreaMapGesture(getSolverBaseline(), { selectedAreas: [...selected], handle: handle || null, desiredWorldDelta });
       controller.recordEvent("area_map_gesture_solved", { gestureKind: handle ? "region-resize" : "region-move", depth: Math.max(...[...selected].map((value) => value.split("/").length)), previewCount: selected.size, maximumTime: performance.now() - solveStarted, wallArea: preview.wall ?? null });
       if (!preview.valid) controller.recordEvent("area_map_invariant_failed", { gestureId: "pointer", invariantName: "finite-containment", affectedAreas: [...selected].sort() });
       for (const selectedArea of selected) {
@@ -783,7 +789,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       const remainingBlockHull = worldCore.shardHulls({ ...(sourceNode?.shard.scene ?? {}), elements: (sourceNode?.shard.scene?.elements ?? []).filter((element) => !selectedSourceIds.has(element.id)) }).blocks;
       const first = blocks[0]; const firstOriginal = baselineElements.get(first.id);
       const solveStarted = performance.now();
-      const solved = worldCore.solveOwnedElementGesture(solverBaseline(baselineWorld), {
+      const solved = worldCore.solveOwnedElementGesture(getSolverBaseline(), {
         owner, kind: "block", rect: group, remainingBlockHull,
         desiredWorldDelta: { x: first.x - firstOriginal.x - motion.x, y: first.y - firstOriginal.y - motion.y },
       });

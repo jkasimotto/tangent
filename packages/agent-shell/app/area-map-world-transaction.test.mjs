@@ -93,7 +93,7 @@ test("one gesture writes every source shard in one exact commit and preserves un
   assert.equal(reused.status, 409);
 });
 
-for (const phase of ["prepared", "ref-installed", "index-installed", "target-installed:0", "verified"]) {
+for (const phase of ["prepared", "ref-installed", "index-installed", "target-installed:0", "target-installed:1", "verified", "result-recorded"]) {
   test(`startup recovery completes the ${phase} crash phase before a read`, async () => {
     let crashed = false;
     const value = await fixture(phase.replaceAll(":", "-"), {

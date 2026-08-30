@@ -136,6 +136,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       await checkpoint("verified", { operationId: manifest.operationId });
       const committed = { ...manifest, state: "committed", committedAt: new Date().toISOString() };
       await writeManifest(manifestFile, committed);
+      await checkpoint("result-recorded", { operationId: manifest.operationId });
       return committed;
     } finally { unblockReaders(); }
   }

@@ -10,9 +10,16 @@ export function createAreaCanvasRepository({ root, runGit, commit, transactionRo
   ? path.join(process.env.TANGENT_MAP_STATE_ROOT, "transactions")
   : root.startsWith(path.join(os.homedir(), ".tangent", "trees"))
     ? path.join(os.homedir(), ".tangent", "agent-shell", "map-state", "transactions")
-    : path.join(root, ".tangent-map-transactions"), reportError = console.error }) {
+    : path.join(root, ".tangent-map-transactions"), reportError = console.error, parseCanvas = parseAreaCanvas }) {
   let saveQueue = Promise.resolve();
   let recovered = null;
+  const parsedScenes = new Map();
+  /** Keeps one bounded content-addressed parse cache. */
+  function cacheParsed(hash, parsed) {
+    parsedScenes.set(hash, parsed);
+    if (parsedScenes.size > 256) parsedScenes.delete(parsedScenes.keys().next().value);
+    return parsed;
+  }
   /** Returns the durable directory for one operation ID. */
   const operationPath = (operationId) => path.join(transactionRoot, createHash("sha256").update(String(operationId)).digest("hex"));
   /** Returns the identity digest for one source-space write request. */
@@ -61,8 +68,9 @@ export function createAreaCanvasRepository({ root, runGit, commit, transactionRo
     if (!safe) throw new Error(`unsafe Area path: ${area}`);
     try {
       const text = await readFile(safe.absolute, "utf8");
-      const parsed = parseAreaCanvas(text);
-      return { area, file, exists: true, hash: canvasHash(text), text, ...parsed };
+      const hash = canvasHash(text);
+      const parsed = parsedScenes.get(hash) ?? cacheParsed(hash, parseCanvas(text));
+      return { area, file, exists: true, hash, text, ...parsed };
     } catch (error) {
       if (error.code === "ENOENT") return null;
       throw error;

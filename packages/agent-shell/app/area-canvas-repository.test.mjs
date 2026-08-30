@@ -156,3 +156,25 @@ test("finishes every new shard when Git committed before result recording", asyn
   const manifest = JSON.parse(await readFile(path.join(operation, "manifest.json"), "utf8"));
   assert.equal(manifest.recoveryOutcome, "finished-new");
 });
+
+test("unchanged shard reads reuse the content-addressed scene parse", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-canvas-cache-"));
+  await mkdir(path.join(root, "neara"), { recursive: true });
+  const current = createEmptyScene(); current.elements.push(createTextElement({ id: "one", text: "One" }));
+  await writeFile(path.join(root, "neara", "neara.excalidraw"), `${JSON.stringify(current, null, 2)}\n`);
+  let parses = 0;
+  const repository = createAreaCanvasRepository({
+    root,
+    /** Avoids invoking Git for a read-only cache test. */
+    async runGit() {},
+    /** Supplies the unused repository commit contract. */
+    async commit() { return { committed: true }; },
+    /** Counts canonical parses while keeping the real parser contract. */
+    parseCanvas(text) { parses += 1; return JSON.parse(text) && { ok: true, errors: [], warnings: [], canvas: JSON.parse(text), scene: JSON.parse(text) }; },
+  });
+
+  await repository.read("neara");
+  await repository.read("neara");
+
+  assert.equal(parses, 1);
+});

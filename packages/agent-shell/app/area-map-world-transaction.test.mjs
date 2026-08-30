@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { createAreaCanvasRepository } from "./area-canvas-repository.mjs";
 import { createAreaMapTransactionRepository } from "./area-map-transaction-repository.mjs";
+import { serializeAreaCanvas } from "./area-canvas.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
 import { createEmptyScene, createTextElement } from "./public/area-board-core.js";
 
@@ -144,6 +145,69 @@ test("readers wait through the complete multi-shard install window", async () =>
   const [, loaded] = await Promise.all([saving, reading]);
   assert.equal(readable, true);
   assert.equal(loaded.scene.elements[0].text, "Neara");
+});
+
+test("a writer waits for a reader that started before the multi-shard install", async () => {
+  let refInstalled = false;
+  const value = await fixture("active-reader", {
+    /** Records the first externally visible commit phase. */
+    fault(phase) { if (phase === "ref-installed") refInstalled = true; },
+  });
+  const originalRead = value.repository.read;
+  let releaseRead;
+  const readPaused = new Promise((resolve) => { releaseRead = resolve; });
+  let readerEntered;
+  const readerStarted = new Promise((resolve) => { readerEntered = resolve; });
+  let pauseFirstRead = true;
+  value.repository.read = async (area) => {
+    const result = await originalRead(area);
+    if (pauseFirstRead) {
+      pauseFirstRead = false;
+      readerEntered();
+      await readPaused;
+    }
+    return result;
+  };
+
+  const reading = value.transactions.read("neara");
+  await readerStarted;
+  const saving = value.transactions.saveMany([
+    { area: "neara", baseHash: null, canvas: scene("Neara") },
+    { area: "neara/delivery", baseHash: null, canvas: scene("Delivery") },
+  ], { operationId: "active-reader", worldId: "otto" });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(refInstalled, false, "the branch ref stays old while a complete old-state read is active");
+
+  releaseRead();
+  const [oldRead, saved] = await Promise.all([reading, saving]);
+  assert.deepEqual(oldRead.scene.elements, []);
+  assert.equal(saved.committed, true);
+  assert.equal(refInstalled, true);
+});
+
+test("a target edit after prepare aborts before the branch ref or worktree is overwritten", async () => {
+  let value;
+  const external = scene("External edit", 70);
+  let changed = false;
+  value = await fixture("prepare-race", {
+    /** Simulates an editor changing one target after its optimistic read. */
+    async fault(phase) {
+      if (phase !== "prepared" || changed) return;
+      changed = true;
+      await writeFile(path.join(value.root, "neara", "neara.excalidraw"), serializeAreaCanvas(external));
+    },
+  });
+  const before = String((await runGit(["-C", value.root, "rev-parse", "HEAD"])).stdout).trim();
+
+  const saved = await value.transactions.saveMany([
+    { area: "neara", baseHash: null, canvas: scene("Gesture") },
+  ], { operationId: "prepare-race", worldId: "otto" });
+
+  assert.equal(saved.status, 409);
+  assert.equal(saved.conflict, true);
+  assert.deepEqual((await value.repository.read("neara")).scene, external);
+  assert.equal(String((await runGit(["-C", value.root, "rev-parse", "HEAD"])).stdout).trim(), before);
+  assert.equal((await manifest(value.transactionRoot)).state, "conflict");
 });
 
 test("recovery refuses to overwrite unrelated target bytes", async () => {

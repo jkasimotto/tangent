@@ -13,6 +13,8 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
   let recoveryRequired = null;
   let readerBarrier = Promise.resolve();
   let releaseReaders = null;
+  let activeReaders = 0;
+  const readerDrainWaiters = [];
 
   /** Writes bytes durably before exposing a same-directory rename. */
   async function writeDurable(file, content) {
@@ -67,14 +69,36 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     finally { await rm(lockDirectory, { recursive: true, force: true }); }
   }
 
-  /** Prevents Agent Shell world readers from observing the install window. */
-  function blockReaders() {
-    if (releaseReaders) return;
-    readerBarrier = new Promise((resolve) => { releaseReaders = resolve; });
+  /** Releases one read lease and wakes a writer after the last reader exits. */
+  function releaseReader() {
+    activeReaders -= 1;
+    if (activeReaders !== 0) return;
+    for (const resolve of readerDrainWaiters.splice(0)) resolve();
+  }
+
+  /** Acquires one read lease that cannot overlap a map install. */
+  async function acquireReader() {
+    while (true) {
+      await readerBarrier;
+      activeReaders += 1;
+      if (!releaseReaders) return releaseReader;
+      releaseReader();
+    }
+  }
+
+  /** Prevents new reads and waits for every active map reader to finish. */
+  async function blockReaders() {
+    if (!releaseReaders) readerBarrier = new Promise((resolve) => { releaseReaders = resolve; });
+    if (activeReaders) await new Promise((resolve) => readerDrainWaiters.push(resolve));
   }
 
   /** Releases readers after one complete old or new state exists. */
-  function unblockReaders() { releaseReaders?.(); releaseReaders = null; readerBarrier = Promise.resolve(); }
+  function unblockReaders() {
+    const release = releaseReaders;
+    releaseReaders = null;
+    readerBarrier = Promise.resolve();
+    release?.();
+  }
 
   /** Reads one target exactly as it exists in the shared worktree. */
   async function readTarget(file) {
@@ -113,11 +137,35 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     return true;
   }
 
+  /** Rejects an install when any worktree target changed after preparation. */
+  async function rejectChangedTargets(manifest, manifestFile) {
+    const changed = [];
+    for (const target of manifest.targets) {
+      const text = await readTarget(target.file);
+      const hash = text === null ? null : canvasHash(text);
+      if (hash !== target.oldHash) changed.push({ ...target, currentHash: hash });
+    }
+    if (!changed.length) return;
+    const currentHashes = {};
+    for (const target of changed) if (!(target.area in currentHashes)) currentHashes[target.area] = target.currentHash;
+    const conflict = {
+      status: 409,
+      conflict: true,
+      operationId: manifest.operationId,
+      currentHashes,
+      changedPaths: changed.map((target) => target.file),
+      error: "a map target changed while the gesture was preparing",
+    };
+    await writeManifest(manifestFile, { ...manifest, state: "conflict", conflict, failedAt: new Date().toISOString() });
+    throw Object.assign(new Error(conflict.error), conflict);
+  }
+
   /** Finishes index and worktree installation for one prepared commit. */
-  async function finishPrepared(manifest, manifestFile, { installRef }) {
-    blockReaders();
+  async function finishPrepared(manifest, manifestFile, { installRef, recheckTargets = false }) {
+    await blockReaders();
     try {
       if (installRef) {
+        if (recheckTargets) await rejectChangedTargets(manifest, manifestFile);
         await vault.installPreparedCommit(manifest.prepared);
         await checkpoint("ref-installed", { operationId: manifest.operationId });
       }
@@ -180,14 +228,19 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
 
   /** Waits until readers can observe a complete transaction boundary. */
   async function waitForReadable() {
-    await ensureRecovered(); await readerBarrier;
-    if (recoveryRequired) throw Object.assign(new Error("Area map recovery requires attention"), { status: 503, recoveryRequired });
+    await ensureRecovered();
+    const release = await acquireReader();
+    try {
+      if (recoveryRequired) throw Object.assign(new Error("Area map recovery requires attention"), { status: 503, recoveryRequired });
+    } finally { release(); }
   }
 
   /** Reads worktree authority or the last complete Git snapshot during recovery. */
   async function read(area) {
-    await ensureRecovered(); await readerBarrier;
-    return recoveryRequired ? repository.readCommitted(area) : repository.read(area);
+    await ensureRecovered();
+    const release = await acquireReader();
+    try { return await (recoveryRequired ? repository.readCommitted(area) : repository.read(area)); }
+    finally { release(); }
   }
 
   /** Saves every source shard of one world gesture as one exact Git commit. */
@@ -237,7 +290,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       const manifest = { schema: "area-map-transaction.v2", operationId, worldId, digest: requestDigest, state: "prepared", preparedAt: new Date().toISOString(), prepared, targets, result };
       await writeManifest(manifestFile, manifest);
       await checkpoint("prepared", { operationId });
-      const committed = await finishPrepared(manifest, manifestFile, { installRef: true });
+      const committed = await finishPrepared(manifest, manifestFile, { installRef: true, recheckTargets: true });
       const primary = changed.find((entry) => entry.write.area === area) ?? changed[0];
       const metadata = await stat(safeCanvasPath(root, primary.current.file).absolute);
       committed.result.bytes = metadata.size;
@@ -246,7 +299,10 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     }).catch((error) => {
       if (error?.simulatedCrash) throw error;
       reportError(`Area map transaction failed: ${error.message}`);
-      return { status: 503, committed: false, saved: false, operationId, error: error.message };
+      return {
+        status: Number(error?.status ?? 503), committed: false, saved: false, operationId, error: error.message,
+        ...(error?.conflict ? { conflict: true, currentHashes: error.currentHashes ?? {}, changedPaths: error.changedPaths ?? [] } : {}),
+      };
     });
   }
 

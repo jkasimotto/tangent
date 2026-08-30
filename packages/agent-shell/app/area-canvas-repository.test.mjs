@@ -45,3 +45,23 @@ test("first read converts a legacy canvas and removes it in the same scoped comm
   assert.deepEqual(git[0].slice(-4), ["add", "--", "tangent/tangent.excalidraw", "tangent/tangent.canvas"]);
   assert.deepEqual(commits[0][0], ["tangent/tangent.excalidraw", "tangent/tangent.canvas"]);
 });
+
+test("rolls a file back when its vault commit fails so Retry has a trustworthy hash", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-canvas-rollback-"));
+  let commits = 0;
+  const repository = createAreaCanvasRepository({ root,
+    /** Avoids invoking Git. */
+    async runGit() {},
+    /** Fails the update commit. */
+    async commit() { commits += 1; return { committed: commits === 1, error: commits === 1 ? null : "hook failed" }; },
+    /** Keeps the expected failure quiet. */
+    reportError() {},
+  });
+  const before = createEmptyScene(); before.elements.push(createTextElement({ id: "before", text: "Before" }));
+  const created = await repository.save("otto", before, { baseHash: null });
+  const after = createEmptyScene(); after.elements.push(createTextElement({ id: "after", text: "After" }));
+  const failed = await repository.save("otto", after, { baseHash: created.hash });
+  assert.equal(failed.status, 503);
+  assert.equal(failed.hash, created.hash);
+  assert.deepEqual(JSON.parse(await readFile(path.join(root, "otto/otto.excalidraw"), "utf8")), before);
+});

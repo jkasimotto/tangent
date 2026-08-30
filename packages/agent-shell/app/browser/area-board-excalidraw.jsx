@@ -57,6 +57,7 @@ function TangentMap({ host, bridge, options }) {
   const [proposals, setProposals] = useState(options.proposals ?? []);
   const [collapsedIds, setCollapsedIds] = useState(options.view?.foldedGroupIds ?? []);
   const [notice, setNotice] = useState("");
+  const [recoveredDraft, setRecoveredDraft] = useState(options.recoveredDraft ?? null);
   const [camera, setCamera] = useState({ scrollX: options.scene.appState?.scrollX ?? 0, scrollY: options.scene.appState?.scrollY ?? 0, zoom: options.scene.appState?.zoom?.value ?? 1 });
   const frames = options.frames ?? core.ancestryFrames(options.area, options.context, options.scene);
   const canonicalRef = useRef(core.refreshTangentFacts(options.scene, options.getDocuments()).scene);
@@ -85,6 +86,7 @@ function TangentMap({ host, bridge, options }) {
 
   /** Publishes an authored edit or a non-dirty fact repaint. */
   function publish(next, { authored = true } = {}) {
+    if (authored) setRecoveredDraft(null);
     const owned = authored ? core.stripSpatialProjections(next) : next;
     const restored = authored ? core.restoreFocusedElements(owned, canonicalRef.current, hiddenFocusIdsRef.current) : owned;
     const fenced = authored ? core.fenceRegionGeometry(restored, canonicalRef.current) : { scene: restored, refused: null };
@@ -124,7 +126,7 @@ function TangentMap({ host, bridge, options }) {
     const appState = api?.getAppState?.() ?? {};
     const point = core.placementPoint(appState, pointerRef.current, [], frames.find((frame) => frame.role === "scope"));
     setWide(false);
-    setPicker(core.areaAtPoint(frames, point, appState.zoom?.value ?? 1));
+    setPicker(core.areaAtPoint(frames, point, appState.zoom?.value ?? 1) ?? { area: options.area, label: { name: "Outside every Area" }, outside: true });
   }
 
   /** Sends a selected block verb to the Agent Shell. */
@@ -147,7 +149,9 @@ function TangentMap({ host, bridge, options }) {
     const nextIds = collapsedIds.includes(region.id) ? collapsedIds.filter((id) => id !== region.id) : [...collapsedIds, region.id];
     setCollapsedIds(nextIds);
     options.onViewChange?.(core.viewFromAppState(api?.getAppState?.(), { ...(options.view ?? {}), foldedGroupIds: nextIds }));
-    const children = core.projectSpatialChildren(canonicalRef.current, options.area, options.childScenes);
+    const withAncestry = structuredClone(canonicalRef.current);
+    withAncestry.elements.unshift(...core.ancestryProjection(frames));
+    const children = core.projectSpatialChildren(withAncestry, options.area, options.childScenes);
     const projection = core.focusProjection(core.collapseSpatialRegions(children.scene, nextIds), options.getDocuments(), options.focus, options.locatedArea);
     hiddenFocusIdsRef.current = projection.hiddenIds;
     sceneRef.current = projection.scene;
@@ -219,14 +223,22 @@ function TangentMap({ host, bridge, options }) {
   useEffect(() => {
     /** Applies map-local keyboard behavior before the shell sees a key. */
     const keydown = (event) => {
-      if (isTyping(event.target)) return;
       const key = event.key.toLowerCase();
+      if (event.key === "Escape") {
+        if (picker) { stop(event); setPicker(null); return; }
+        if (help) { stop(event); setHelp(false); return; }
+        if (outlineOpen) { stop(event); setOutlineOpen(false); return; }
+        if (isTyping(event.target)) return;
+        const selectedIds = api?.getAppState?.().selectedElementIds ?? {};
+        if (Object.keys(selectedIds).length) { stop(event); api?.updateScene({ appState: { selectedElementIds: {} } }); return; }
+        stop(event); options.onBack?.(); return;
+      }
+      if (isTyping(event.target)) return;
       const block = selectedBlock(api, sceneRef.current);
       if ((event.metaKey || event.ctrlKey) && key === "s") { stop(event); options.onSaveNow?.(); return; }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && key === "f") { stop(event); options.onToggleStarredOnly?.(); return; }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && key === "a") { stop(event); options.onToggleActiveOnly?.(); return; }
       if (event.key === "?" || event.key === "/" && event.shiftKey) { stop(event); setHelp(true); return; }
-      if (event.key === "Escape" && !picker && !help && !outlineOpen && api?.getAppState?.().activeTool?.type === "selection" && Object.keys(api.getAppState().selectedElementIds ?? {}).length === 0) { stop(event); options.onBack?.(); return; }
       if (block) {
         if (event.key === "Enter" || key === "o") { stop(event); openBlock(block, key === "o" ? "read" : "open"); return; }
         if (["a", "c", "b"].includes(key)) { stop(event); openBlock(block, key === "a" ? "ask" : key === "c" ? "correct" : "enter"); return; }
@@ -246,6 +258,17 @@ function TangentMap({ host, bridge, options }) {
     host.addEventListener("dblclick", doubleClick, true);
     return () => { host.removeEventListener("keydown", keydown, true); host.removeEventListener("dblclick", doubleClick, true); };
   }, [api, picker, help, outlineOpen, selectionTick]);
+
+  useEffect(() => {
+    if (!picker && !help && !outlineOpen) return undefined;
+    /** Closes every transient before the underlying canvas handles the gesture. */
+    const dismissOnCanvas = (event) => {
+      if (event.target.closest?.(".tangent-map-picker, .tangent-map-help, .tangent-map-outline, .tangent-map-top-right")) return;
+      setPicker(null); setHelp(false); setOutlineOpen(false);
+    };
+    host.addEventListener("pointerdown", dismissOnCanvas, true);
+    return () => host.removeEventListener("pointerdown", dismissOnCanvas, true);
+  }, [picker, help, outlineOpen]);
 
   const filtered = (() => {
     const lower = query.trim().toLowerCase();
@@ -287,13 +310,16 @@ function TangentMap({ host, bridge, options }) {
         const authored = fenced.scene;
         const corrected = core.authoredFingerprint(authored.elements) !== core.authoredFingerprint(authoredElements.elements);
         const regionFingerprint = JSON.stringify(authoredElements.elements.filter(core.isAreaRegion).map((element) => [element.id, Math.round(element.x * 100) / 100, Math.round(element.y * 100) / 100, Math.round(element.width * 100) / 100, Math.round(element.height * 100) / 100, Math.round(element.angle * 100) / 100]));
+        const withAncestry = structuredClone(authored);
+        withAncestry.elements.unshift(...core.ancestryProjection(frames));
+        const projected = core.projectSpatialChildren(withAncestry, options.area, options.childScenes);
+        const visible = projected.scene;
         if (corrected || regionFingerprint !== projectedRegionFingerprintRef.current) {
           projectedRegionFingerprintRef.current = regionFingerprint;
-          const projected = core.projectSpatialChildren(authored, options.area, options.childScenes);
-          api?.updateScene({ elements: projected.scene.elements, captureUpdate: "NEVER" });
+          api?.updateScene({ elements: visible.elements, captureUpdate: "NEVER" });
         }
         if (fenced.refused) setNotice(`${fenced.refused.region.split("/").at(-1)} stays in its parent Area · use Move Area for an ownership change`);
-        sceneRef.current = authored;
+        sceneRef.current = visible;
         setSceneTick((value) => value + 1);
         const canonical = core.restoreFocusedElements(authored, canonicalRef.current, hiddenFocusIdsRef.current);
         canonicalRef.current = canonical;
@@ -306,11 +332,11 @@ function TangentMap({ host, bridge, options }) {
     </div>
 
     <div className={`tangent-map-save ${saveState.state}`} role="status">
-      <span>{saveState.state === "dirty" ? "Saving…" : saveState.state === "conflict" ? "Changed elsewhere" : saveState.state === "blocked" ? "Save stopped" : saveState.label || "Saved"}</span>
+      <span>{saveState.state === "dirty" ? "• Saved" : saveState.state === "saving" ? "Saving…" : saveState.state === "conflict" ? "Not saved" : saveState.state === "blocked" ? "Not saved" : saveState.label || "Saved"}</span>
       {saveState.state === "conflict" && <><button type="button" onClick={options.onReload}>Reload</button><button type="button" onClick={() => options.onKeepMine?.(saveState.result)}>Keep mine</button></>}
       {saveState.state === "blocked" && <button type="button" onClick={options.onRetry}>Retry</button>}
-      <span className="tangent-map-brain">{options.brainLive ? "brain live" : "no brain"}</span>
     </div>
+    {recoveredDraft && <div className="tangent-map-location" role="status">Draft from {new Date(recoveredDraft.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} restored · <button type="button" onClick={() => { setRecoveredDraft(null); options.onDiscardDraft?.(); }}>Discard</button></div>}
     {notice && <div className="tangent-map-location" role="status">{notice} <button type="button" onClick={() => setNotice("")}>Dismiss</button></div>}
 
     {(outsideStars || !located && locatedChoice) && <div className="tangent-map-location" role="status">{outsideStars ? <>Outside your stars · <button type="button" onClick={options.onToggleStarredOnly}>F shows all</button></> : <>{options.locatedArea.split("/").at(-1)} is not on this map yet · <button type="button" onClick={() => place(locatedChoice)}>Place it ↵</button></>}</div>}
@@ -332,7 +358,7 @@ function TangentMap({ host, bridge, options }) {
 
     {help && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p>Space-drag pans. ⌘-wheel zooms. ⌘Z undoes. ⌘S saves now. Esc with nothing selected returns to Work.</p><p>Scope: <kbd>f</kbd> stars the selected Area. <kbd>⌘⇧F</kbd> shows starred Areas. <kbd>⌘⇧A</kbd> shows active work.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>A</kbd> asks the brain · <kbd>C</kbd> corrects · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelp(false)}>Close</button></section></div>}
 
-    <section className={outlineOpen ? "tangent-map-outline visible" : "tangent-map-outline visually-hidden"} aria-label="Map outline">
+    <section className={outlineOpen ? "tangent-map-outline visible" : "tangent-map-outline visually-hidden"} aria-label="Map outline" hidden={!outlineOpen}>
       {outlineOpen && <header><strong>Outline</strong><button type="button" className="tangent-map-outline-close" onClick={() => setOutlineOpen(false)} aria-label="Close outline">✕</button></header>}
       <ol>{outline.map((item) => <li key={item.id}><button type="button" onClick={() => selectOutline(item.id)}>{item.label}</button></li>)}</ol>
       {outlineOpen && outline.length === 0 && <p>Nothing on the map yet.</p>}

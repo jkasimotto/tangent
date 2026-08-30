@@ -1174,7 +1174,7 @@ function paint(force = false) {
 function editingSurfaceOnScreen() {
   const active = document.activeElement;
   if (active && (["work-search-input", "launch-command-input"].includes(active.id) || ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))) return true;
-  return Boolean(screen.querySelector("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-harness-form], [data-launch-popover], [data-comment-composer]"));
+  return Boolean(screen.querySelector("[data-tangent-area-map], [data-dedicated-area-map], [data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-harness-form], [data-launch-popover], [data-comment-composer]"));
 }
 
 /** Reports one connection transition with only local runtime identifiers. */

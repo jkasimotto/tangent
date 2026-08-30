@@ -72,7 +72,9 @@ export function createAreaCanvasRepository({ root, runGit, commit, reportError =
     const result = await commit([current.file], `${current.exists ? "update" : "add"}: ${area} spatial map${suffix}`, area, session);
     if (!result.committed) {
       reportError(`canvas saved without a vault commit: ${current.file}: ${result.error}`);
-      return { status: 503, saved: true, committed: false, error: result.error, hash: desiredHash, operationId };
+      if (current.exists) await writeFile(safe.absolute, current.text, "utf8");
+      else await unlink(safe.absolute).catch((error) => { if (error.code !== "ENOENT") throw error; });
+      return { status: 503, saved: false, committed: false, error: result.error, hash: current.hash, operationId };
     }
     const metadata = await stat(safe.absolute);
     return { area, file: current.file, exists: true, canvas, scene: canvas, hash: desiredHash, bytes: metadata.size, changedAt: metadata.mtimeMs, idempotent: false, committed: true, operationId };

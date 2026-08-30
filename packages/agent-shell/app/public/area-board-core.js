@@ -476,7 +476,6 @@ function projectSpatialChildren(scene, area, childScenes = new Map()) {
       clone.locked = true;
       clone.customData = { ...(clone.customData ?? {}), tangentProjection: { area: childArea, sourceId: originalId } };
       if (clone.containerId) clone.containerId = `projection:${childArea}:${clone.containerId}`;
-      if (clone.frameId) clone.frameId = `projection:${childArea}:${clone.frameId}`;
       if (clone.boundElements) clone.boundElements = clone.boundElements.map((binding) => ({ ...binding, id: `projection:${childArea}:${binding.id}` }));
       if (clone.startBinding?.elementId) clone.startBinding.elementId = `projection:${childArea}:${clone.startBinding.elementId}`;
       if (clone.endBinding?.elementId) clone.endBinding.elementId = `projection:${childArea}:${clone.endBinding.elementId}`;

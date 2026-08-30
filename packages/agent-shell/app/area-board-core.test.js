@@ -60,6 +60,7 @@ test("child maps project through regions as locked read-only content and never e
   assert.equal(core.isAreaRegion(nested), true);
   assert.equal(nested.locked, true);
   assert.equal(nested.opacity, 70);
+  assert.equal(nested.frameId, "projection:neara/pgande:window", "projected children stay clipped by their one window frame");
   assert.deepEqual(core.stripSpatialProjections(projection.scene).elements, parent.elements);
   const collapsed = core.collapseSpatialRegions(projection.scene, ["pgande"]);
   assert.equal(collapsed.elements.find((element) => element.id === nested.id).isDeleted, true);

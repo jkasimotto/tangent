@@ -29,10 +29,17 @@ function initialScene(area) {
 }
 
 /** Mounts the Excalidraw editor island and the existing durable save contract. */
-function mount(host, { area, payload, context = { ancestors: [] }, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, locatedArea = area, focus = null, onToggleAreaStar = null, onToggleStarredOnly = null, onToggleActiveOnly = null, brainLive = false, ignoreDraft = false }) {
+function mount(host, { area, payload: suppliedPayload, context = { ancestors: [] }, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, locatedArea = area, focus = null, onToggleAreaStar = null, onToggleStarredOnly = null, onToggleActiveOnly = null, brainLive = false, ignoreDraft = false }) {
   host.replaceChildren();
+  let payload = suppliedPayload;
   const drafts = draftStore.create(localStorage);
   const pendingDraft = !ignoreDraft ? drafts.load(area) : null;
+  const committedScene = payload.scene ?? payload.canvas ?? core.createEmptyScene();
+  const draftScene = pendingDraft?.scene ?? pendingDraft?.canvas;
+  const draftEqualsCommitted = draftScene && core.authoredFingerprint(draftScene.elements) === core.authoredFingerprint(committedScene.elements);
+  if (draftEqualsCommitted) drafts.clear(area);
+  const matchingDraft = !draftEqualsCommitted && draftScene && pendingDraft.baseHash === payload.hash;
+  if (matchingDraft) payload = { ...payload, exists: true, scene: draftScene, canvas: draftScene, restoreDraft: true, recoveredDraft: pendingDraft };
   let controller = {
     /** Returns the scene while the editor is starting. */
     current: () => payload.scene ?? payload.canvas,
@@ -42,7 +49,7 @@ function mount(host, { area, payload, context = { ancestors: [] }, documents, ge
     destroy() {},
   };
 
-  if (pendingDraft?.canvas || pendingDraft?.scene) {
+  if (draftScene && !draftEqualsCommitted && !matchingDraft) {
     const choice = document.createElement("section");
     choice.className = "area-board-draft-choice";
     const time = pendingDraft.savedAt ? new Date(pendingDraft.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "an earlier session";
@@ -178,6 +185,7 @@ function mount(host, { area, payload, context = { ancestors: [] }, documents, ge
     editor = module.mountAreaBoardEditor(host, {
       area, scene: current, context, frames: core.ancestryFrames(area, context, current), childScenes, view: payload.view, proposals: payload.proposals ?? [], inboxed: conversion.inboxed ?? [], getDocuments,
       initialSaveState: { state: "saved", label: payload.migrated ? "Converted from canvas" : undefined },
+      recoveredDraft: payload.recoveredDraft ?? null,
       brainLive, onBack, locatedArea, focus, onSelectArea, onPlaceInto: placeInto, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly,
       /** Queues a Julian-authored scene edit for durable save. */
       onSceneChange(next) { current = next; saver.edit(current); },
@@ -186,12 +194,12 @@ function mount(host, { area, payload, context = { ancestors: [] }, documents, ge
       onViewChange: viewChanged,
       /** Flushes the debounced scene save immediately. */
       onSaveNow: () => saver.flush(),
+      onDiscardDraft: reload,
       onReload: reload, onKeepMine: keepMine, onRetry: retry,
       onEntityVerb: entityVerb, onProposalPlaced: proposalPlaced,
       /** Promotes plain map text to an Area-brain idea. */
       onPromoteIdea: async (description) => api("/api/idea/new", { method: "POST", body: JSON.stringify({ area, description }) }),
     });
-    if (payload.restoreDraft) saver.edit(current);
     return editor;
   }).catch((error) => {
     host.innerHTML = `<section class="area-board-empty"><h2>The drawing tools did not load.</h2><p>${String(error?.message ?? error)}</p><button type="button">Retry</button></section>`;

@@ -1,10 +1,31 @@
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm, stat, unlink } from "node:fs/promises";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { mkdir, open, readFile, readdir, rename, rm, rmdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { canvasHash, safeCanvasPath, serializeAreaCanvas } from "./area-canvas.mjs";
 
 /** Returns one stable digest for an idempotent gesture request. */
 const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+/** Resolves one exact vault target without permitting traversal or Git internals. */
+function safeVaultTarget(root, file) {
+  if (typeof file !== "string" || !file || file.includes("\0") || file.includes("\\") || path.posix.isAbsolute(file)) return null;
+  const normalized = path.posix.normalize(file);
+  if (normalized !== file || normalized === "." || normalized === ".." || normalized.startsWith("../") || normalized.split("/").includes(".git")) return null;
+  const absolute = path.resolve(root, normalized);
+  return absolute.startsWith(`${path.resolve(root)}${path.sep}`) ? { relative: normalized, absolute } : null;
+}
+
+/** Returns one journal target side as exact bytes. */
+function targetBytes(target, side) {
+  const encoded = `${side}Base64`;
+  if (Object.hasOwn(target, encoded)) return target[encoded] === null ? null : Buffer.from(target[encoded], "base64");
+  const text = target[`${side}Text`];
+  return text === null || text === undefined ? null : Buffer.from(text);
+}
+
+/** Returns the stable content hash used by transaction preconditions. */
+const contentHash = (value) => value === null ? null : canvasHash(value);
 
 /** Creates the crash-recoverable multi-shard Area-map write authority. */
 export function createAreaMapTransactionRepository({ root, repository, vault, runGit, transactionRoot, reportError = console.error, fault = null }) {
@@ -15,6 +36,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
   let releaseReaders = null;
   let activeReaders = 0;
   const readerDrainWaiters = [];
+  const readLeaseContext = new AsyncLocalStorage();
 
   /** Writes bytes durably before exposing a same-directory rename. */
   async function writeDurable(file, content) {
@@ -102,18 +124,19 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
 
   /** Reads one target exactly as it exists in the shared worktree. */
   async function readTarget(file) {
-    const safe = safeCanvasPath(root, file);
-    if (!safe) throw new Error(`unsafe map target: ${file}`);
-    try { return await readFile(safe.absolute, "utf8"); }
+    const safe = safeVaultTarget(root, file);
+    if (!safe) throw new Error(`unsafe vault target: ${file}`);
+    try { return await readFile(safe.absolute); }
     catch (error) { if (error.code === "ENOENT") return null; throw error; }
   }
 
   /** Installs one target's prepared bytes in the shared worktree. */
   async function installTarget(target) {
-    const safe = safeCanvasPath(root, target.file);
-    if (!safe) throw new Error(`unsafe map target: ${target.file}`);
-    if (target.newText === null) await unlink(safe.absolute).catch((error) => { if (error.code !== "ENOENT") throw error; });
-    else await writeDurable(safe.absolute, target.newText);
+    const safe = safeVaultTarget(root, target.file);
+    if (!safe) throw new Error(`unsafe vault target: ${target.file}`);
+    const content = targetBytes(target, "new");
+    if (content === null) await unlink(safe.absolute).catch((error) => { if (error.code !== "ENOENT") throw error; });
+    else await writeDurable(safe.absolute, content);
   }
 
   /** Returns the current branch head. */
@@ -122,16 +145,16 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     return String(result?.stdout ?? result ?? "").trim();
   }
 
-  /** Reports whether the current Git tree contains all prepared target bytes. */
-  async function gitHasNewTargets(targets) {
-    for (const target of targets) {
-      if (target.newText === null) {
-        try { await runGit(["-C", root, "show", `HEAD:${target.file}`]); return false; }
+  /** Reports whether the current Git tree contains every prepared exact entry. */
+  async function gitHasPreparedFiles(prepared) {
+    for (const file of prepared.files) {
+      if (file.remove || file.content === null) {
+        try { await runGit(["-C", root, "rev-parse", `HEAD:${file.path}`]); return false; }
         catch { continue; }
       }
       try {
-        const result = await runGit(["-C", root, "show", `HEAD:${target.file}`]);
-        if (canvasHash(String(result?.stdout ?? result ?? "")) !== target.newHash) return false;
+        const result = await runGit(["-C", root, "rev-parse", `HEAD:${file.path}`]);
+        if (String(result?.stdout ?? result ?? "").trim() !== file.blob) return false;
       } catch { return false; }
     }
     return true;
@@ -142,7 +165,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     const changed = [];
     for (const target of manifest.targets) {
       const text = await readTarget(target.file);
-      const hash = text === null ? null : canvasHash(text);
+      const hash = contentHash(text);
       if (hash !== target.oldHash) changed.push({ ...target, currentHash: hash });
     }
     if (!changed.length) return;
@@ -160,12 +183,96 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     throw Object.assign(new Error(conflict.error), conflict);
   }
 
+  /** Returns one path's blob identity from a Git revision, or null when absent. */
+  async function revisionBlob(revision, file) {
+    try {
+      const result = await runGit(["-C", root, "rev-parse", `${revision}:${file}`]);
+      return String(result?.stdout ?? result ?? "").trim() || null;
+    } catch { return null; }
+  }
+
+  /** Returns one path's blob identity from the shared index, or null when absent. */
+  async function indexBlob(file) {
+    const result = await runGit(["-C", root, "ls-files", "--stage", "--", file]);
+    const lines = String(result?.stdout ?? result ?? "").trim().split("\n").filter(Boolean);
+    if (!lines.length) return null;
+    if (lines.length !== 1) return "unmerged";
+    return lines[0].match(/^\d+\s+([0-9a-f]+)\s+\d+\t/)?.[1] ?? "invalid";
+  }
+
+  /** Returns one worktree path's Git blob identity, or null when absent. */
+  async function worktreeBlob(file) {
+    if (await readTarget(file) === null) return null;
+    const result = await runGit(["-C", root, "hash-object", "--", file]);
+    return String(result?.stdout ?? result ?? "").trim() || null;
+  }
+
+  /** Rejects exact moves that would sweep or overwrite targeted user edits. */
+  async function rejectDirtyExactTargets(manifest, manifestFile) {
+    const changed = [];
+    for (const target of manifest.targets) {
+      const head = await revisionBlob(manifest.prepared.expectedHead, target.file);
+      const index = await indexBlob(target.file);
+      const worktree = await worktreeBlob(target.file);
+      if (head !== index || head !== worktree) changed.push(target.file);
+    }
+    if (!changed.length) return;
+    const conflict = { status: 409, conflict: true, operationId: manifest.operationId, changedPaths: changed, error: "an exact move target has pending vault edits" };
+    await writeManifest(manifestFile, { ...manifest, state: "conflict", conflict, failedAt: new Date().toISOString() });
+    throw Object.assign(new Error(conflict.error), conflict);
+  }
+
+  /** Lists the complete file and directory shape below one guarded directory. */
+  async function directoryEntries(directory) {
+    const safe = safeVaultTarget(root, directory);
+    if (!safe) throw new Error(`unsafe vault directory: ${directory}`);
+    const entries = [];
+    /** Walks one guarded directory without following symbolic links. */
+    async function walk(absolute, relative = "") {
+      let values;
+      try { values = await readdir(absolute, { withFileTypes: true }); }
+      catch (error) { if (error.code === "ENOENT") return null; throw error; }
+      for (const entry of values.sort((left, right) => left.name.localeCompare(right.name))) {
+        const child = relative ? `${relative}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          entries.push(`d:${child}`);
+          if (await walk(path.join(absolute, entry.name), child) === null) return null;
+        } else entries.push(`${entry.isSymbolicLink() ? "l" : "f"}:${child}`);
+      }
+      return entries;
+    }
+    return walk(safe.absolute);
+  }
+
+  /** Rejects a directory move whose source shape or destination changed. */
+  async function rejectChangedDirectoryGuards(manifest, manifestFile) {
+    for (const guard of manifest.directoryGuards ?? []) {
+      const source = await directoryEntries(guard.source);
+      const destination = await directoryEntries(guard.destination);
+      if (source && JSON.stringify(source) === JSON.stringify(guard.entries) && destination === null) continue;
+      const conflict = { status: 409, conflict: true, operationId: manifest.operationId, changedPaths: [guard.source, guard.destination], error: "the Area directory changed while its move was preparing" };
+      await writeManifest(manifestFile, { ...manifest, state: "conflict", conflict, failedAt: new Date().toISOString() });
+      throw Object.assign(new Error(conflict.error), conflict);
+    }
+  }
+
+  /** Removes one now-empty source directory without deleting new unrelated data. */
+  async function cleanupDirectory(directory) {
+    const safe = safeVaultTarget(root, directory);
+    if (!safe) throw new Error(`unsafe vault directory: ${directory}`);
+    await rmdir(safe.absolute).catch((error) => { if (error.code !== "ENOENT") throw error; });
+  }
+
   /** Finishes index and worktree installation for one prepared commit. */
   async function finishPrepared(manifest, manifestFile, { installRef, recheckTargets = false }) {
     await blockReaders();
     try {
       if (installRef) {
-        if (recheckTargets) await rejectChangedTargets(manifest, manifestFile);
+        if (recheckTargets) {
+          await rejectChangedTargets(manifest, manifestFile);
+          if (manifest.exactClean) await rejectDirtyExactTargets(manifest, manifestFile);
+          await rejectChangedDirectoryGuards(manifest, manifestFile);
+        }
         await vault.installPreparedCommit(manifest.prepared);
         await checkpoint("ref-installed", { operationId: manifest.operationId });
       }
@@ -175,10 +282,14 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         await installTarget(target);
         await checkpoint(`target-installed:${index}`, { operationId: manifest.operationId, target: target.file });
       }
-      if (!await gitHasNewTargets(manifest.targets)) throw new Error("prepared map commit does not contain every target");
+      for (const [index, directory] of (manifest.cleanupDirectories ?? []).entries()) {
+        await cleanupDirectory(directory);
+        await checkpoint(`directory-cleaned:${index}`, { operationId: manifest.operationId, directory });
+      }
+      if (!await gitHasPreparedFiles(manifest.prepared)) throw new Error("prepared map commit does not contain every target");
       for (const target of manifest.targets) {
         const text = await readTarget(target.file);
-        const hash = text === null ? null : canvasHash(text);
+        const hash = contentHash(text);
         if (hash !== target.newHash) throw new Error(`map worktree verification failed for ${target.file}`);
       }
       await checkpoint("verified", { operationId: manifest.operationId });
@@ -203,7 +314,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         try { manifest = JSON.parse(await readFile(manifestFile, "utf8")); } catch { continue; }
         if (manifest.state !== "prepared") continue;
         const hashes = await Promise.all(manifest.targets.map(async (target) => {
-          const text = await readTarget(target.file); return text === null ? null : canvasHash(text);
+          const text = await readTarget(target.file); return contentHash(text);
         }));
         const recognized = hashes.every((hash, index) => hash === manifest.targets[index].oldHash || hash === manifest.targets[index].newHash);
         if (!recognized) {
@@ -212,7 +323,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
           continue;
         }
         const head = await currentHead();
-        const committed = head === manifest.prepared.commit || await gitHasNewTargets(manifest.targets);
+        const committed = head === manifest.prepared.commit || await gitHasPreparedFiles(manifest.prepared);
         if (!committed && head !== manifest.prepared.expectedHead) {
           recoveryRequired = { operationId: manifest.operationId, reason: "the vault branch changed before map recovery" };
           await writeManifest(manifestFile, { ...manifest, state: "recovery-required", recoveryRequired, failedAt: new Date().toISOString() });
@@ -226,21 +337,26 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
   /** Ensures recovery runs once for this server instance. */
   async function ensureRecovered() { recoveryPromise ??= withLock(recoverUnlocked); await recoveryPromise; }
 
+  /** Runs one complete map read while no transaction can install a partial world. */
+  async function withRead(action) {
+    await ensureRecovered();
+    if (readLeaseContext.getStore()?.active) return action();
+    const release = await acquireReader();
+    const lease = { active: true };
+    try { return await readLeaseContext.run(lease, action); }
+    finally { lease.active = false; release(); }
+  }
+
   /** Waits until readers can observe a complete transaction boundary. */
   async function waitForReadable() {
-    await ensureRecovered();
-    const release = await acquireReader();
-    try {
+    await withRead(() => {
       if (recoveryRequired) throw Object.assign(new Error("Area map recovery requires attention"), { status: 503, recoveryRequired });
-    } finally { release(); }
+    });
   }
 
   /** Reads worktree authority or the last complete Git snapshot during recovery. */
   async function read(area) {
-    await ensureRecovered();
-    const release = await acquireReader();
-    try { return await (recoveryRequired ? repository.readCommitted(area) : repository.read(area)); }
-    finally { release(); }
+    return withRead(() => recoveryRequired ? repository.readCommitted(area) : repository.read(area));
   }
 
   /** Saves every source shard of one world gesture as one exact Git commit. */
@@ -306,7 +422,77 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     });
   }
 
-  return { read, recover: ensureRecovered, saveMany, waitForReadable };
+  /** Converts one in-memory exact target into a durable binary-safe journal record. */
+  function journalTarget(target, area) {
+    const oldContent = target.oldContent === null || target.oldContent === undefined ? null : Buffer.from(target.oldContent);
+    const newContent = target.newContent === null || target.newContent === undefined ? null : Buffer.from(target.newContent);
+    if (!safeVaultTarget(root, target.file)) throw new Error(`unsafe vault target: ${target.file}`);
+    return {
+      area: target.area ?? area,
+      file: target.file,
+      oldBase64: oldContent?.toString("base64") ?? null,
+      newBase64: newContent?.toString("base64") ?? null,
+      oldHash: contentHash(oldContent),
+      newHash: contentHash(newContent),
+      mode: target.mode ?? "100644",
+    };
+  }
+
+  /** Commits and installs one generalized exact-target operation under the map lock. */
+  async function saveExact(buildPlan, { operationId, worldId = "area-tree", area = "", session = null, intent = {} } = {}) {
+    if (!operationId || typeof buildPlan !== "function") throw new Error("exact vault transactions require an operation ID and plan builder");
+    await ensureRecovered();
+    if (recoveryRequired) return { status: 503, error: "Area map recovery requires attention", recoveryRequired };
+    const requestDigest = digest(intent);
+    const directory = operationDirectory(worldId, operationId);
+    const manifestFile = path.join(directory, "manifest.json");
+    return withLock(async () => {
+      await recoverUnlocked();
+      if (recoveryRequired) return { status: 503, error: "Area map recovery requires attention", recoveryRequired };
+      try {
+        const prior = JSON.parse(await readFile(manifestFile, "utf8"));
+        if (prior.digest !== requestDigest) return { status: 409, conflict: true, operationId, error: "operation ID was already used for a different exact vault change" };
+        if (prior.state === "committed") return { ...prior.result, idempotent: true };
+      } catch (error) { if (error.code !== "ENOENT") throw error; }
+      const plan = await buildPlan();
+      const unique = new Set();
+      const targets = (plan.targets ?? []).map((target) => journalTarget(target, area));
+      for (const target of targets) {
+        if (unique.has(target.file)) throw new Error(`exact vault target appears more than once: ${target.file}`);
+        unique.add(target.file);
+      }
+      targets.sort((left, right) => Number(targetBytes(left, "new") === null) - Number(targetBytes(right, "new") === null) || left.file.localeCompare(right.file));
+      if (!targets.length) return { ...(plan.result ?? {}), committed: true, idempotent: true, operationId };
+      const cleanupDirectories = [...new Set(plan.cleanupDirectories ?? [])].sort((left, right) => right.split("/").length - left.split("/").length || right.localeCompare(left));
+      for (const value of cleanupDirectories) if (!safeVaultTarget(root, value)) throw new Error(`unsafe cleanup directory: ${value}`);
+      const prepared = await vault.prepareExactCommit({
+        files: targets.map((target) => ({ path: target.file, content: targetBytes(target, "new"), mode: target.mode })),
+        message: plan.message,
+        area,
+        session,
+        operationId,
+      });
+      const result = { ...(plan.result ?? {}), committed: true, operationId, idempotent: false };
+      const manifest = {
+        schema: "area-map-transaction.v3", operationId, worldId, digest: requestDigest, state: "prepared", exactClean: true,
+        preparedAt: new Date().toISOString(), prepared, targets, cleanupDirectories,
+        directoryGuards: plan.directoryGuards ?? [], result,
+      };
+      await writeManifest(manifestFile, manifest);
+      await checkpoint("prepared", { operationId });
+      const committed = await finishPrepared(manifest, manifestFile, { installRef: true, recheckTargets: true });
+      return committed.result;
+    }).catch((error) => {
+      if (error?.simulatedCrash) throw error;
+      reportError(`Exact vault transaction failed: ${error.message}`);
+      return {
+        status: Number(error?.status ?? 503), committed: false, operationId, error: error.message,
+        ...(error?.conflict ? { conflict: true, changedPaths: error.changedPaths ?? [] } : {}),
+      };
+    });
+  }
+
+  return { read, recover: ensureRecovered, saveExact, saveMany, waitForReadable, withRead };
 }
 
 export default { createAreaMapTransactionRepository };

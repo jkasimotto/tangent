@@ -397,8 +397,8 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
   const revisionStates = new Map();
   const worldIdPromise = realpath(root).catch(() => path.resolve(root)).then((resolved) => digest(resolved));
 
-  /** Reads and summarizes the current complete tree. */
-  async function readState(locatedArea = null) {
+  /** Reads and summarizes the current complete tree under any outer read lease. */
+  async function readStateUnlocked(locatedArea = null) {
     const areaKeys = [...new Set(await listAreas())].filter((area) => area && area !== ROOT_OWNER).sort();
     if (locatedArea && !areaKeys.includes(locatedArea)) return null;
     const owners = [ROOT_OWNER, ...areaKeys];
@@ -469,6 +469,13 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
     revisionStates.set(worldRevision, state);
     if (revisionStates.size > 8) revisionStates.delete(revisionStates.keys().next().value);
     return state;
+  }
+
+  /** Holds one repository read lease across both the Area tree and every shard. */
+  async function readState(locatedArea = null) {
+    /** Reads the state inside the selected repository lease policy. */
+    const read = () => readStateUnlocked(locatedArea);
+    return typeof repository.withRead === "function" ? repository.withRead(read) : read();
   }
 
   /** Reads one complete structural world snapshot. */

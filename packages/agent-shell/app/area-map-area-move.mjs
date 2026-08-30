@@ -1,4 +1,4 @@
-import { readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { lstat, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseAreaCanvas, serializeAreaCanvas } from "./area-canvas.mjs";
 
@@ -47,6 +47,49 @@ function rewriteMetadata(value, changedPaths, key = "") {
   return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, rewriteMetadata(child, changedPaths, childKey)]));
 }
 
+/** Returns one moved file's destination, including canonical leaf-name changes. */
+function movedFilePath(file, preview) {
+  let moved = `${preview.destination}${file.slice(preview.source.length)}`;
+  for (const change of orderedChanges(preview.changedPaths)) {
+    const oldLeaf = path.posix.basename(change.from);
+    const newLeaf = path.posix.basename(change.to);
+    for (const extension of [".md", ".excalidraw"]) {
+      if (moved === `${change.to}/${oldLeaf}${extension}`) moved = `${change.to}/${newLeaf}${extension}`;
+    }
+  }
+  return moved;
+}
+
+/** Returns the Git file mode needed by one exact target. */
+async function fileMode(file) {
+  const metadata = await lstat(file);
+  if (!metadata.isFile()) throw new Error(`Area moves do not support symbolic or special files: ${file}`);
+  return metadata.mode & 0o111 ? "100755" : "100644";
+}
+
+/** Lists every exact source file and the directory shape guarded during prepare. */
+async function sourceTree(root, source) {
+  const files = [];
+  const directories = [source];
+  const entries = [];
+  /** Walks one Area subtree without following symbolic links. */
+  async function walk(directory, relative = "") {
+    const values = await readdir(path.join(root, directory), { withFileTypes: true });
+    for (const entry of values.sort((left, right) => left.name.localeCompare(right.name))) {
+      const child = relative ? `${relative}/${entry.name}` : entry.name;
+      const file = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        entries.push(`d:${child}`); directories.push(file); await walk(file, child);
+      } else {
+        if (!entry.isFile()) throw new Error(`Area moves do not support symbolic or special files: ${file}`);
+        entries.push(`f:${child}`); files.push(file);
+      }
+    }
+  }
+  await walk(source);
+  return { directories, entries, files };
+}
+
 /** Rewrites map references while preserving every source element ID and coordinate. */
 export function rewriteAreaMapSceneForMove(scene, changedPaths) {
   return {
@@ -56,6 +99,45 @@ export function rewriteAreaMapSceneForMove(scene, changedPaths) {
       if (element.customData) next.customData = rewriteMetadata(element.customData, changedPaths);
       return next;
     }),
+  };
+}
+
+/** Builds exact binary-safe targets for one journaled Area directory move. */
+export async function prepareAreaMoveTransaction({ treesRoot, preview }) {
+  const source = await sourceTree(treesRoot, preview.source);
+  const targets = [];
+  const mapChangedPaths = new Set();
+  for (const file of source.files) {
+    const absolute = path.join(treesRoot, file);
+    const oldContent = await readFile(absolute);
+    const destination = movedFilePath(file, preview);
+    let newContent = oldContent;
+    if (file.endsWith(".excalidraw")) {
+      const parsed = parseAreaCanvas(oldContent.toString("utf8"));
+      if (parsed.ok) newContent = Buffer.from(serializeAreaCanvas(rewriteAreaMapSceneForMove(parsed.scene, preview.changedPaths)));
+      mapChangedPaths.add(file); mapChangedPaths.add(destination);
+    }
+    const mode = await fileMode(absolute);
+    targets.push({ file, oldContent, newContent: null, mode });
+    targets.push({ file: destination, oldContent: null, newContent, mode });
+  }
+  for (const file of await areaMapFiles(treesRoot)) {
+    if (file === preview.source || file.startsWith(`${preview.source}/`)) continue;
+    const absolute = path.join(treesRoot, file);
+    const oldContent = await readFile(absolute);
+    const parsed = parseAreaCanvas(oldContent.toString("utf8"));
+    if (!parsed.ok) continue;
+    const newContent = Buffer.from(serializeAreaCanvas(rewriteAreaMapSceneForMove(parsed.scene, preview.changedPaths)));
+    if (oldContent.equals(newContent)) continue;
+    targets.push({ file, oldContent, newContent, mode: await fileMode(absolute) });
+    mapChangedPaths.add(file);
+  }
+  return {
+    targets,
+    cleanupDirectories: source.directories,
+    directoryGuards: [{ source: preview.source, destination: preview.destination, entries: source.entries }],
+    message: `update: ${preview.source} moves to ${preview.destination}`,
+    result: { ...preview, mapChangedPaths: [...mapChangedPaths].sort() },
   };
 }
 
@@ -110,4 +192,4 @@ export async function applyAreaMoveToMaps({ treesRoot, changedPaths, runGit }) {
   return [...new Set([...renamed, ...rewritten])].sort();
 }
 
-export default { applyAreaMoveToMaps, remapAreaPath, rewriteAreaMapSceneForMove };
+export default { applyAreaMoveToMaps, prepareAreaMoveTransaction, remapAreaPath, rewriteAreaMapSceneForMove };

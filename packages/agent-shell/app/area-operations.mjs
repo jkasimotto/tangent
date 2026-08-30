@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { applyAreaMoveToMaps } from "./area-map-area-move.mjs";
+import { applyAreaMoveToMaps, prepareAreaMoveTransaction } from "./area-map-area-move.mjs";
 import { areaNoteTemplate } from "./area-note-links.mjs";
 
 const RESERVED = new Set(["shared", ".git", ".obsidian", "node_modules"]);
@@ -94,7 +94,28 @@ export async function previewAreaMove({ treesRoot, area, parent, name }) {
 }
 
 /** Moves one area directory and keeps its canonical note name aligned. */
-export async function moveArea({ treesRoot, area, parent, name, runGit }) {
+export async function moveArea({ treesRoot, area, parent, name, runGit, runGitCapture = null, transaction = null, operationId = null }) {
+  if (transaction) {
+    const source = cleanAreaPath(area);
+    const destinationParent = cleanAreaPath(parent);
+    const slug = areaSlug(name || path.basename(source));
+    if (!slug || RESERVED.has(slug)) throw new Error("Use an Area name with letters or numbers.");
+    const destination = `${destinationParent}/${slug}`;
+    const id = String(operationId ?? `area-move:${source}:${destination}`);
+    const moved = await transaction.saveExact(async () => {
+      const preview = await previewAreaMove({ treesRoot, area, parent, name });
+      if (preview.source === preview.destination) return { result: preview };
+      if (runGitCapture && await areaHasGitChanges({ treesRoot, area: preview.source, runGitCapture })) {
+        throw Object.assign(new Error("Save or discard this area's pending vault edits before you move it."), { status: 409, conflict: true });
+      }
+      const plan = await prepareAreaMoveTransaction({ treesRoot, preview });
+      const current = await previewAreaMove({ treesRoot, area, parent, name });
+      if (JSON.stringify(current) !== JSON.stringify(preview)) throw Object.assign(new Error("The Area tree changed while the move was preparing."), { status: 409, conflict: true });
+      return plan;
+    }, { operationId: id, worldId: "area-tree", area: destination, intent: { source, destination } });
+    if (!moved?.committed) throw Object.assign(new Error(moved?.error ?? "The Area move was not committed."), moved);
+    return moved;
+  }
   const preview = await previewAreaMove({ treesRoot, area, parent, name });
   if (preview.source === preview.destination) return preview;
   const oldBase = path.basename(preview.source);

@@ -61,8 +61,8 @@ export function createVaultRepository({ root, runGit, reportError = console.erro
       for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
         if (!file.path || path.posix.isAbsolute(file.path) || path.posix.normalize(file.path) !== file.path || file.path.startsWith("../")) throw new Error(`unsafe vault commit path: ${file.path}`);
         if (file.content === null) {
-          await runGit(["-C", root, "update-index", "--remove", "--", file.path], { env });
-          preparedFiles.push({ path: file.path, content: null, blob: null, mode: file.mode ?? "100644" });
+          await runGit(["-C", root, "update-index", "--force-remove", "--", file.path], { env });
+          preparedFiles.push({ path: file.path, remove: true, blob: null, mode: file.mode ?? "100644" });
           continue;
         }
         const source = path.join(temporaryRoot, `blob-${preparedFiles.length}`);
@@ -70,7 +70,7 @@ export function createVaultRepository({ root, runGit, reportError = console.erro
         const blob = await gitText(["hash-object", "-w", source], { env });
         const mode = file.mode ?? "100644";
         await runGit(["-C", root, "update-index", "--add", "--cacheinfo", mode, blob, file.path], { env });
-        preparedFiles.push({ path: file.path, content: file.content, blob, mode });
+        preparedFiles.push({ path: file.path, remove: false, blob, mode });
       }
       const tree = await gitText(["write-tree"], { env });
       const trailers = [
@@ -93,7 +93,7 @@ export function createVaultRepository({ root, runGit, reportError = console.erro
   /** Updates only the prepared paths in the shared Git index. */
   async function updatePreparedIndex(prepared) {
     for (const file of prepared.files) {
-      if (file.content === null) await runGit(["-C", root, "update-index", "--remove", "--", file.path]);
+      if (file.remove || file.content === null) await runGit(["-C", root, "update-index", "--force-remove", "--", file.path]);
       else await runGit(["-C", root, "update-index", "--add", "--cacheinfo", file.mode, file.blob, file.path]);
     }
   }

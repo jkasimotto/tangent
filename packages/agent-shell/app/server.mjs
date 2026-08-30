@@ -109,6 +109,7 @@ import { createAreaMapContextRoutes } from "./area-map-context-routes.mjs";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createAreaMapWorldRoutes } from "./area-map-world-routes.mjs";
 import { createAreaMapTransactionRepository } from "./area-map-transaction-repository.mjs";
+import { createAreaMapWorldViewStore } from "./area-map-world-view-store.mjs";
 import { projectWork } from "./work-projection.mjs";
 import { acknowledgeWorkerQuestion, answerWorkerQuestion, latestWorkerQuestion, openWorkerQuestion, transferWorkerQuestions, workerQuestionDelivery, workerQuestionPrompt, workerQuestionTarget } from "./worker-questions.mjs";
 
@@ -202,6 +203,7 @@ const areaMapTransactions = createAreaMapTransactionRepository({
   root: TREES_ROOT, repository: areaCanvasRepository, vault: vaultRepository, runGit: runRepositoryGit,
   transactionRoot: path.join(MAP_STATE_ROOT, "transactions"),
 });
+const areaMapWorldViews = createAreaMapWorldViewStore({ root: MAP_STATE_ROOT });
 const launchMemory = createLaunchMemory(process.env.TANGENT_LAUNCH_MEMORY ?? path.join(os.homedir(), ".tangent", "agent-shell", "launch-memory.json"));
 const launchCatalog = createLaunchCatalog({
   root: TREES_ROOT,
@@ -257,6 +259,7 @@ const areaMapWorldIndex = createAreaMapWorldIndex({ root: TREES_ROOT, repository
 const areaMapWorldRoutes = createAreaMapWorldRoutes({ index: areaMapWorldIndex,
   /** Commits one validated source gesture through the durable transaction authority. */
   saveGesture: (writes, options) => areaMapTransactions.saveMany(writes, options),
+  viewStore: areaMapWorldViews,
 });
 // One JSON record per Goal for a solo (non-pipeline) session's context
 // continuations: the same mechanism pipeline steps keep inline on the step

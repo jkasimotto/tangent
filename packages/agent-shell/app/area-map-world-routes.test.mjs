@@ -56,6 +56,31 @@ test("returns the complete hierarchy from one world request", async () => {
   assert.deepEqual(JSON.parse(result.body), expected);
 });
 
+test("loads and saves private view state by world identity", async () => {
+  const expected = { schema: "area-map-world.v1", worldId: "world_123", areas: [] };
+  const view = { schema: "area-map-view.v2", worldId: "world_123", pan: { x: 4, y: 8 }, zoom: 0.75, foldedAreas: [], detailAreas: [] };
+  const writes = [];
+  const routes = createAreaMapWorldRoutes({
+    index: {
+      /** Returns one complete world fixture. */
+      async snapshot() { return { ...expected }; },
+    },
+    viewStore: {
+      /** Returns private state for the matching world. */
+      async read(worldId) { return worldId === "world_123" ? view : null; },
+      /** Records one private view write. */
+      async write(worldId, value) { writes.push({ worldId, value }); },
+    },
+  });
+  const worldResult = response();
+  await routes.handle({ method: "GET" }, worldResult, new URL("http://local/api/areas/map-world?located=otto"));
+  assert.deepEqual(JSON.parse(worldResult.body).view, view);
+  const saveResult = response();
+  await routes.handle(jsonRequest({ worldId: "world_123", view }), saveResult, new URL("http://local/api/areas/map-view"));
+  assert.equal(saveResult.status, 200);
+  assert.deepEqual(writes, [{ worldId: "world_123", value: view }]);
+});
+
 test("loads a deferred shard only against the matching world revision", async () => {
   /** Returns one revision-checked shard. */
   async function shard(_area, revision) { return revision === "current" ? { status: 200, scene: { elements: [] } } : { status: 409, error: "map world changed" }; }

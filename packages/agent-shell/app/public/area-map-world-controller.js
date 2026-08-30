@@ -3,7 +3,7 @@ import worldCore from "./area-map-world-core.js";
 import { createAreaMapWorldHistory } from "./area-map-world-history.js";
 import { rebaseAreaMapOwners } from "./area-map-world-conflict.js";
 import { createAreaMapWorldDraftStore } from "./area-map-world-draft-store.js";
-import { restrictionFoldRoots } from "./area-map-find-core.js";
+import { areaInRestriction } from "./area-map-find-core.js";
 
 const VIEW_SCHEMA = "area-map-view.v2";
 const DRAFT_SCHEMA = "area-map-draft.v1";
@@ -121,7 +121,7 @@ export function createAreaMapWorldController({
   let locatedArea = world.locatedArea;
   let cameraTarget = locatedArea;
   let cameraTrail = [];
-  let restrictionArea = null;
+  let restrictionArea = world.areas.some((node) => node.key === locatedArea) ? locatedArea : null;
   let selection = new Set();
   let findRevealId = null;
   let hiddenIds = new Set();
@@ -154,14 +154,19 @@ export function createAreaMapWorldController({
     return composition.scene.elements.find((element) => element.customData?.tangent?.role === "area-region" && element.customData?.tangent?.area === area) ?? null;
   }
 
-  /** Returns the temporary folds derived from one Only restriction. */
-  function restrictedFolds() {
-    return new Set(restrictionFoldRoots(world.areas.map((node) => ({ path: node.key, parent: node.parent })), restrictionArea));
+  /** Reports whether one Area belongs to the exact current structural scope. */
+  function areaInScope(area) {
+    return !restrictionArea || areaInRestriction(area, restrictionArea);
   }
 
-  /** Returns user-owned folds plus temporary Only folds. */
+  /** Returns the structural Area keys admitted by the current restriction. */
+  function scopedAreas() {
+    return new Set(world.areas.filter((node) => areaInScope(node.key)).map((node) => node.key));
+  }
+
+  /** Returns user-owned folds, except ancestors that would hide the target. */
   function effectiveFolds() {
-    return new Set([...folded, ...restrictedFolds()]);
+    return new Set([...folded].filter((root) => !restrictionArea || !restrictionArea.startsWith(`${root}/`)));
   }
 
   /** Reports whether fold hides one structural descendant. */
@@ -186,8 +191,7 @@ export function createAreaMapWorldController({
   /** Builds a disposable render mask. Source and composed elements stay unchanged. */
   function project() {
     const scene = boardCore.refreshTangentFacts(clone(composition.scene), getDocuments()).scene;
-    const onlyFolds = restrictedFolds();
-    const visibleFolds = new Set([...folded, ...onlyFolds]);
+    const visibleFolds = effectiveFolds();
     const hidden = new Set();
     const hiddenBlocks = new Set();
     for (const element of scene.elements) {
@@ -201,17 +205,21 @@ export function createAreaMapWorldController({
         // Resize still starts only on the discrete handles inferred by the island.
         element.backgroundColor = "#ffffff01";
         element.fillStyle = "solid";
+        if (!areaInScope(area)) { hidden.add(element.id); continue; }
         if (area === locatedArea) {
           element.strokeWidth = Math.max(3, Number(element.strokeWidth ?? 2));
           element.strokeColor = "#4c6ef5";
         }
-        if (visibleFolds.has(area)) element.opacity = Math.min(Number(element.opacity ?? 100), onlyFolds.has(area) ? 28 : 45);
+        if (visibleFolds.has(area)) element.opacity = Math.min(Number(element.opacity ?? 100), 45);
         if (foldedAncestor(area, false, visibleFolds)) hidden.add(element.id);
         continue;
       }
       const revealedByFind = element.id === findRevealId || element.containerId === findRevealId;
       const owner = element.customData?.tangentWorld?.owner;
-      if (!revealedByFind && owner && (foldedAncestor(owner, true, visibleFolds) || !detailAreas.has(owner))) {
+      if (owner && !areaInScope(owner)) {
+        hidden.add(element.id);
+        if (boardCore.tangentOf(element)) hiddenBlocks.add(element.id);
+      } else if (!revealedByFind && owner && (foldedAncestor(owner, true, visibleFolds) || !detailAreas.has(owner))) {
         hidden.add(element.id);
         if (boardCore.tangentOf(element)) hiddenBlocks.add(element.id);
       }
@@ -223,7 +231,9 @@ export function createAreaMapWorldController({
     for (const element of scene.elements) {
       if (element.type !== "arrow") continue;
       const endpointFolded = Object.values(element.customData?.tangentWorldEndpoints ?? {}).some((endpoint) => endpoint?.owner && foldedAncestor(endpoint.owner, true, visibleFolds));
-      if (endpointFolded || hiddenBlocks.has(element.startBinding?.elementId) || hiddenBlocks.has(element.endBinding?.elementId)) {
+      const endpointOutside = Object.values(element.customData?.tangentWorldEndpoints ?? {}).some((endpoint) => endpoint?.owner && !areaInScope(endpoint.owner));
+      const ownerOutside = element.customData?.tangentWorld?.owner && !areaInScope(element.customData.tangentWorld.owner);
+      if (ownerOutside || endpointOutside || endpointFolded || hiddenBlocks.has(element.startBinding?.elementId) || hiddenBlocks.has(element.endBinding?.elementId)) {
         hidden.add(element.id);
         for (const binding of element.boundElements ?? []) if (binding.type === "text") hidden.add(binding.id);
       }
@@ -277,7 +287,7 @@ export function createAreaMapWorldController({
     return {
       reason, revision, factsRevision,
       world, composition, scene: projectedScene, hiddenIds,
-      focus, folded: effectiveFolds(), manualFolded: folded, restrictionArea, restrictionFolded: restrictedFolds(), findRevealId, detailAreas, camera, locatedArea, cameraTarget, cameraTrail, viewRestored: Boolean(validView),
+      focus, folded: effectiveFolds(), manualFolded: folded, restrictionArea, scopedAreas: scopedAreas(), findRevealId, detailAreas, camera, locatedArea, cameraTarget, cameraTrail, viewRestored: Boolean(validView),
       selection, save, draft, dirtyOwners,
       nextEscape: selection.size ? "Esc clears selection" : restrictionArea ? "Esc → whole map" : cameraTrail.length ? `Esc → ${leaf(cameraTrail.at(-1))}` : "Esc → Work",
     };
@@ -452,7 +462,7 @@ export function createAreaMapWorldController({
     ]);
     updateSemanticDetail();
     recordEvent("area_map_tree_reconciled", { treeRevision: world.treeRevision, areaCount: world.areas.length, selectedCount: selection.size });
-    onNavigation?.({ area: locatedArea, trail: [...cameraTrail], nextEscape: cameraTrail.length ? `Esc → ${leaf(cameraTrail.at(-1))}` : "Esc → Work" });
+    onNavigation?.({ area: locatedArea, trail: [...cameraTrail], nextEscape: snapshot().nextEscape });
     notify("tree-reconciled");
   }
 
@@ -500,6 +510,7 @@ export function createAreaMapWorldController({
 
   /** Selects one Area without changing the camera. */
   function selectArea(area) {
+    if (!areaInScope(area)) return null;
     const element = regionElement(area);
     findRevealId = null;
     selection = new Set(element ? [element.id] : []);
@@ -510,7 +521,8 @@ export function createAreaMapWorldController({
 
   /** Synchronizes selection from Excalidraw without entering history. */
   function setSelection(ids = []) {
-    const next = new Set(ids);
+    const selectable = new Set(projectedScene.elements.filter((element) => !element.isDeleted).map((element) => element.id));
+    const next = new Set([...ids].filter((id) => selectable.has(id)));
     if (same([...selection].sort(), [...next].sort())) return;
     selection = next; notify("selection");
   }
@@ -524,13 +536,14 @@ export function createAreaMapWorldController({
 
   /** Fits a camera target and records only a session-local return step. */
   function fitArea(area, { push = true, select = true } = {}) {
+    if (!areaInScope(area)) return null;
     const element = regionElement(area);
     if (!element) return null;
     if (push && cameraTarget && cameraTarget !== area) cameraTrail = [...cameraTrail, cameraTarget];
     cameraTarget = area; locatedArea = area;
     if (select) selection = new Set([element.id]);
     saveView();
-    onNavigation?.({ area, trail: [...cameraTrail], nextEscape: cameraTrail.length ? `Esc → ${leaf(cameraTrail.at(-1))}` : "Esc → Work" });
+    onNavigation?.({ area, trail: [...cameraTrail], nextEscape: snapshot().nextEscape });
     notify("camera-target");
     void prioritizeLoads(area, { nearbyCount: 0 });
     return element;
@@ -538,20 +551,29 @@ export function createAreaMapWorldController({
 
   /** Turns the temporary ancestor-and-descendant restriction on or off. */
   function setRestriction(area = null) {
-    if (area && !regionElement(area)) return { active: Boolean(restrictionArea), area: restrictionArea, foldedCount: restrictedFolds().size };
+    if (area && !regionElement(area)) return { active: Boolean(restrictionArea), area: restrictionArea, excludedCount: world.areas.length - scopedAreas().size };
     restrictionArea = area || null;
-    selection = new Set();
+    selection = new Set(); findRevealId = null;
     if (restrictionArea) {
       const element = fitArea(restrictionArea, { push: false, select: false });
-      return { active: true, area: restrictionArea, foldedCount: restrictedFolds().size, element };
+      return { active: true, area: restrictionArea, excludedCount: world.areas.length - scopedAreas().size, element };
     }
     notify("restriction");
-    return { active: false, area: null, foldedCount: 0, element: null };
+    return { active: false, area: null, excludedCount: 0, element: null };
   }
 
   /** Toggles Only for an explicit selected or located Area. */
   function toggleRestriction(area = locatedArea) {
     return setRestriction(restrictionArea === area ? null : area);
+  }
+
+  /** Navigates within the persistent world and retargets an active restriction. */
+  function navigateArea(area, { push = true, select = false } = {}) {
+    if (!regionElement(area)) return null;
+    if (restrictionArea) restrictionArea = area;
+    if (!select) selection = new Set();
+    findRevealId = null;
+    return fitArea(area, { push, select });
   }
 
   /** Unwinds selection, restriction, camera history, then the Work parent. */
@@ -569,6 +591,7 @@ export function createAreaMapWorldController({
 
   /** Changes fold as private view state. */
   function toggleFold(area) {
+    if (restrictionArea && restrictionArea.startsWith(`${area}/`)) return null;
     const next = new Set(folded); if (next.has(area)) next.delete(area); else next.add(area);
     folded = next; saveView(); notify("fold"); return folded.has(area);
   }
@@ -679,7 +702,7 @@ export function createAreaMapWorldController({
     worldHistory.state.undo.length = 0; worldHistory.state.redo.length = 0; worldHistory.state.queue.length = 0; worldHistory.state.open = null;
     authorityGeneration += 1; gesture = null; failedSave = null; saveBarrier?.resolve?.(); saveBarrier = null; selection = new Set(); save = { state: "saved", result: null };
     recoveryQueue = []; clearDraft(); install(fresh, "reload");
-    onNavigation?.({ area: locatedArea, trail: [...cameraTrail], nextEscape: cameraTrail.length ? `Esc → ${leaf(cameraTrail.at(-1))}` : "Esc → Work" });
+    onNavigation?.({ area: locatedArea, trail: [...cameraTrail], nextEscape: snapshot().nextEscape });
     return clone(world);
   }
 
@@ -776,7 +799,7 @@ export function createAreaMapWorldController({
     undo: () => worldHistory.undo(),
     /** Redoes one map-owned command word. */
     redo: () => worldHistory.redo(),
-    selectArea, setSelection, setFindReveal, fitArea, setRestriction, toggleRestriction, escape, toggleFold, setFocus, setCamera,
+    selectArea, setSelection, setFindReveal, fitArea, navigateArea, setRestriction, toggleRestriction, escape, toggleFold, setFocus, setCamera,
     materialize, prioritizeLoads, refreshFacts,
     /** Waits for all queued map persistence. */
     flush: () => worldHistory.flush(),

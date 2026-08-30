@@ -122,7 +122,7 @@ class AreaMapErrorBoundary extends React.Component {
 /** Mounts the one complete-world React editor island. */
 export function mountAreaBoardEditor(host, options) {
   const bridge = {
-    fitArea: null, selectArea: null, escape: null, flush: null, refreshFacts: null, setFocus: null,
+    fitArea: null, navigateArea: null, selectArea: null, escape: null, flush: null, refreshFacts: null, setFocus: null,
     openFind: null, toggleRestriction: null,
     reload: null, keepMine: null, controller: null, setSaveState: null,
     /** Returns the supplied empty bootstrap until React installs the world bridge. */
@@ -139,6 +139,8 @@ export function mountAreaBoardEditor(host, options) {
     appState: () => bridge.appState(),
     /** Fits one Area without replacing the mounted world. */
     fitArea: (area, settings) => bridge.fitArea?.(area, settings),
+    /** Navigates to one Area and retargets an active restriction. */
+    navigateArea: (area, settings) => bridge.navigateArea?.(area, settings),
     /** Selects one Area without fitting it. */
     selectArea: (area) => bridge.selectArea?.(area),
     /** Opens the map-owned Area finder. */

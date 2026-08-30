@@ -33,7 +33,7 @@ function showWorldError(host, error, retry = null) {
 function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = null, onViewState = null, onEntityVerb = null, onEvent = null, focus = null }) {
   host.replaceChildren();
   const loader = document.createElement("div"); loader.className = "area-board-loading"; loader.innerHTML = "<p>Loading drawing tools…</p>"; host.append(loader);
-  let editor = null; let pendingFit = null; let pendingFind = false; let authority = null;
+  let editor = null; let pendingNavigation = null; let pendingFind = false; let authority = null;
   /** Returns the source shard for one explicit owner. */
   const shardFor = (value, owner) => owner === "@root" ? value.rootShard : value.areas.find((entry) => entry.key === owner)?.shard;
   /** Merges one full source element into its owner mutation. */
@@ -115,7 +115,7 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
   });
   const ready = editorLoader().then((module) => {
     loader.remove(); editor = module.mountAreaBoardEditor(host, { world, controller: authority, scene: { elements: [], appState: {}, files: {} }, getDocuments, onEntityVerb, onViewState });
-    if (pendingFit) editor.fitArea?.(pendingFit.area, pendingFit.settings);
+    if (pendingNavigation) editor.navigateArea?.(pendingNavigation.area, pendingNavigation.settings);
     if (pendingFind) editor.openFind?.();
     return editor;
   }).catch((error) => {
@@ -131,7 +131,12 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
       else await authority.flush();
     },
     /** Fits one Area now or after the editor finishes mounting. */
-    fitArea(area, settings) { if (!editor) { pendingFit = { area, settings }; return authority.selectArea(area); } return editor.fitArea?.(area, settings); },
+    navigateArea(area, settings) {
+      if (!editor) { pendingNavigation = { area, settings }; return authority.navigateArea(area, settings); }
+      return editor.navigateArea?.(area, settings);
+    },
+    /** Fits one Area without changing an active restriction target. */
+    fitArea(area, settings) { return editor?.fitArea?.(area, settings) ?? authority.fitArea(area, settings); },
     /** Runs the map-owned Escape order. */
     escape() { return editor?.escape?.() ?? authority.escape(); },
     /** Opens map find after the browser island is ready. */
@@ -222,6 +227,8 @@ function mountLegacy(host, { area, payload, api, onBack = null }) {
     async flush() { await ready.catch(() => null); await flushPending(); },
     /** A rollback shard has no composed Area camera target. */
     fitArea: () => null,
+    /** A rollback shard has no composed Area navigation target. */
+    navigateArea: () => null,
     /** A rollback shard has no complete-world Area finder. */
     openFind: () => false,
     /** A rollback shard has no complete-world restriction. */
@@ -249,6 +256,8 @@ function mount(host, options) {
     flush: async () => null,
     /** Cannot fit an Area without world authority. */
     fitArea: () => null,
+    /** Cannot navigate without world authority. */
+    navigateArea: () => null,
     /** Cannot find without world authority. */
     openFind: () => false,
     /** Cannot restrict without world authority. */

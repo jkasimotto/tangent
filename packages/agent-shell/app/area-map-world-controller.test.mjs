@@ -99,6 +99,7 @@ test("view masks and camera history never replace complete world authority", () 
     getDocuments: () => [{ file: "neara/delivery/goal-proof.md", area: "neara/delivery", kind: "goal", title: "Proof", status: "active" }],
   });
   const before = controller.world();
+  controller.setRestriction(null);
   controller.setFocus({ only: true, areas: ["neara/elsewhere"] });
   controller.toggleFold("neara");
   controller.setCamera({ scrollX: 30, scrollY: -20, zoom: 0.5 });
@@ -121,15 +122,64 @@ test("view masks and camera history never replace complete world authority", () 
   controller.destroy();
 });
 
-test("Only derives temporary folds and Escape restores the user's complete-map state", () => {
+test("Only deletes unrelated regions and owner content from the render projection", () => {
+  const world = fixtureWorld();
+  const delivery = world.areas.find((node) => node.key === "neara/delivery");
+  delivery.shard.scene.elements.push(core.createShapeElement({
+    id: "cross-scope-arrow", type: "arrow", x: 40, y: 40, width: 80, height: 40,
+    customData: { tangentWorldEndpoints: { start: { owner: "neara/delivery", sourceId: "proof" }, end: { owner: "neara/elsewhere", sourceId: "elsewhere-ink" } } },
+  }));
+  const elsewhere = core.createEmptyScene();
+  elsewhere.elements.push(core.createShapeElement({ id: "elsewhere-ink", x: 20, y: 20, width: 100, height: 70 }));
+  elsewhere.elements.push(...core.createBlockElements({ id: "elsewhere-block", kind: "document", ref: "neara/elsewhere/note.md", title: "Elsewhere", x: 150, y: 30 }));
+  world.areas.find((node) => node.key === "neara").children.push("neara/elsewhere");
+  world.areas.push({
+    key: "neara/elsewhere", parent: "neara", children: [], depth: 1,
+    region: { key: "neara>neara/elsewhere", owner: "neara", child: "neara/elsewhere", sourceId: "region-neara/elsewhere", labelSourceId: "region-neara/elsewhere-label", source: "stored", storedRect: { x: 700, y: 80, width: 300, height: 240 } },
+    shard: { owner: "neara/elsewhere", hash: "hash-neara/elsewhere", state: "ready", elementCount: elsewhere.elements.length, scene: elsewhere },
+  });
+  const controller = createAreaMapWorldController({ world, storage: memoryStorage() });
+  const authority = controller.world();
+  const projected = controller.snapshot().scene.elements;
+  const byArea = new Map(projected.filter((element) => element.customData?.tangent?.role === "area-region").map((element) => [element.customData.tangent.area, element]));
+  assert.equal(byArea.get("neara").isDeleted, false);
+  assert.equal(byArea.get("neara/delivery").isDeleted, false);
+  assert.equal(byArea.get("neara/elsewhere").isDeleted, true);
+  for (const sourceId of ["elsewhere-ink", "elsewhere-block", "elsewhere-block-tangent-label", "cross-scope-arrow"]) {
+    assert.equal(projected.find((element) => element.customData?.tangentWorld?.sourceId === sourceId)?.isDeleted, true, `${sourceId} is outside the exact projection`);
+  }
+  assert.deepEqual(controller.world(), authority, "the complete world stays authoritative");
+  controller.destroy();
+});
+
+test("stored ancestor folds cannot hide the restricted target", () => {
   const controller = createAreaMapWorldController({ world: fortyOneAreaWorld(), storage: memoryStorage() });
   const authority = controller.world();
+  controller.setRestriction(null);
+  controller.toggleFold("atlas");
+  controller.toggleFold("atlas/focus/item-00");
+  controller.setRestriction("atlas/focus");
+  const snapshot = controller.snapshot();
+  assert.equal(snapshot.manualFolded.has("atlas"), true);
+  assert.equal(snapshot.folded.has("atlas"), false, "the stored ancestor fold is ineffective under Only");
+  assert.equal(snapshot.folded.has("atlas/focus/item-00"), true, "a descendant fold remains effective");
+  assert.equal(snapshot.scene.elements.find((element) => element.customData?.tangent?.area === "atlas/focus").isDeleted, false);
+  assert.equal(controller.toggleFold("atlas"), null, "a new ancestor fold is rejected while Only is active");
+  controller.setRestriction(null);
+  assert.deepEqual([...controller.snapshot().folded].sort(), ["atlas", "atlas/focus/item-00"]);
+  assert.deepEqual(controller.world(), authority);
+  controller.destroy();
+});
+
+test("Only contains the target lineage and complete subtree until Escape", () => {
+  const controller = createAreaMapWorldController({ world: fortyOneAreaWorld(), storage: memoryStorage() });
+  const authority = controller.world();
+  assert.equal(controller.snapshot().restrictionArea, "atlas/focus", "a new visit starts restricted to its located Area");
   controller.toggleFold("atlas/near-a");
   const restricted = controller.setRestriction("atlas/focus");
-  assert.deepEqual({ active: restricted.active, area: restricted.area, foldedCount: restricted.foldedCount }, { active: true, area: "atlas/focus", foldedCount: 4 });
+  assert.deepEqual({ active: restricted.active, area: restricted.area, excludedCount: restricted.excludedCount }, { active: true, area: "atlas/focus", excludedCount: 4 });
   assert.ok(restricted.element);
-  assert.deepEqual([...controller.snapshot().restrictionFolded], ["atlas/far", "atlas/near-a", "atlas/near-b", "other"]);
-  assert.equal(controller.snapshot().folded.has("atlas/focus/item-00"), false, "the complete descendant subtree stays open");
+  assert.deepEqual([...controller.snapshot().scopedAreas], fortyOneAreaWorld().areas.map((node) => node.key).filter((area) => area === "atlas" || area === "atlas/focus" || area.startsWith("atlas/focus/")));
   assert.equal(controller.snapshot().nextEscape, "Esc → whole map");
   controller.selectArea("atlas/focus/item-00");
   assert.equal(controller.escape().kind, "selection", "selection unwinds before the restriction");
@@ -137,6 +187,23 @@ test("Only derives temporary folds and Escape restores the user's complete-map s
   assert.equal(controller.snapshot().restrictionArea, null);
   assert.deepEqual([...controller.snapshot().folded], ["atlas/near-a"], "only the user's own fold remains");
   assert.deepEqual(controller.world(), authority, "Only never changes the unified map authority");
+  controller.destroy();
+});
+
+test("Focus filters blocks without changing the isolated Area set", () => {
+  const world = fixtureWorld();
+  world.locatedArea = "neara";
+  const controller = createAreaMapWorldController({
+    world, storage: memoryStorage(),
+    /** Supplies one inactive document for Focus projection. */
+    getDocuments: () => [{ file: "neara/delivery/goal-proof.md", area: "neara/delivery", kind: "goal", title: "Proof", status: "active", live: false }],
+  });
+  const areasBefore = [...controller.snapshot().scopedAreas];
+  controller.setFocus({ only: true, areas: ["neara/elsewhere"], activeOnly: true });
+  assert.deepEqual([...controller.snapshot().scopedAreas], areasBefore);
+  const visibleRegions = controller.snapshot().scene.elements.filter((element) => element.customData?.tangent?.role === "area-region" && !element.isDeleted).map((element) => element.customData.tangent.area);
+  assert.deepEqual(visibleRegions, areasBefore);
+  assert.equal(controller.snapshot().scene.elements.find((element) => element.customData?.tangentWorld?.sourceId === "proof")?.isDeleted, true);
   controller.destroy();
 });
 
@@ -320,7 +387,7 @@ test("a structural fact poll reconciles a changed tree without replacing session
   controller.selectArea("neara/delivery");
   const selectedBefore = [...controller.snapshot().selection];
   controller.setCamera({ scrollX: 44, scrollY: -21, zoom: 0.65 });
-  controller.toggleFold("neara");
+  controller.toggleFold("neara/delivery");
 
   assert.equal(await controller.refreshFacts({ only: true, areas: ["neara"] }), true);
   const snapshot = controller.snapshot();
@@ -329,7 +396,7 @@ test("a structural fact poll reconciles a changed tree without replacing session
   assert.equal(snapshot.composition.scene.elements.filter((element) => element.customData?.tangent?.role === "area-region").length, 3);
   assert.deepEqual([...snapshot.selection], selectedBefore);
   assert.deepEqual(snapshot.camera, { scrollX: 44, scrollY: -21, zoom: 0.65 });
-  assert.equal(snapshot.folded.has("neara"), true);
+  assert.equal(snapshot.folded.has("neara/delivery"), true);
   assert.equal(controller.undo(), false, "a changed tree clears authored history against the old topology");
   assert.ok(events.some((event) => event.name === "area_map_tree_reconciled" && event.areaCount === 3));
   controller.destroy();

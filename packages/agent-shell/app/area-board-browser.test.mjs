@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { workTableFixture } from "./work-table-fixture.mjs";
+import worldCore from "./public/area-map-world-core.js";
 
 const enabled = process.env.TANGENT_BROWSER_TEST === "1";
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -14,6 +15,33 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 function sendJson(response, status, value) {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(value));
+}
+
+/** Requires one shell-map Area region center to equal the mounted map center. */
+async function assertShellAreaCentered(page, target, reference, composition) {
+  const targetRect = composition.regionRects.get(target);
+  const referenceRect = composition.regionRects.get(reference);
+  const result = await page.evaluate(({ targetArea, referenceArea, targetRect, referenceRect }) => {
+    /** Returns one Area label's projected viewport position. */
+    const position = (area) => {
+      const button = document.querySelector(`[data-area-map-label="${area}"]`);
+      return { left: Number.parseFloat(button.style.left), top: Number.parseFloat(button.style.top) };
+    };
+    const target = position(targetArea); const other = position(referenceArea);
+    const xDelta = referenceRect.x - targetRect.x; const yDelta = referenceRect.y - targetRect.y;
+    const zoom = Math.abs(xDelta) >= Math.abs(yDelta) ? (other.left - target.left) / xDelta : (other.top - target.top) / yDelta;
+    const host = document.querySelector(".TangentAreaMap").getBoundingClientRect();
+    return {
+      expected: { x: host.width / 2, y: host.height / 2 },
+      actual: { x: target.left - 12 + targetRect.width * zoom / 2, y: target.top - 10 + targetRect.height * zoom / 2 },
+      zoom,
+    };
+  }, {
+    targetArea: target,
+    referenceArea: reference,
+    targetRect, referenceRect,
+  });
+  assert.ok(Math.abs(result.actual.x - result.expected.x) < 3 && Math.abs(result.actual.y - result.expected.y) < 3, `${target} is centered: ${JSON.stringify(result)}`);
 }
 
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/agent-shell-map.css"><style>html,body,#map{width:100%;height:100%;margin:0}</style></head><body><div id="map"></div><script type="module">
@@ -70,6 +98,7 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
     await page.goto(`http://127.0.0.1:${server.address().port}/fixture`);
     await page.locator(".excalidraw canvas.interactive").waitFor();
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     for (const name of ["Selection", "Rectangle", "Diamond", "Ellipse", "Arrow", "Draw", "Text"]) await page.getByRole("radio", { name: new RegExp(name, "i") }).first().waitFor();
     await page.getByRole("button", { name: /^Block/ }).waitFor();
 
@@ -216,8 +245,12 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
   }
 });
 
-test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 90_000 }, async () => {
+test("m opens exact root, intermediate, and leaf Areas isolated and centered", { skip: !enabled, timeout: 90_000 }, async () => {
   const work = workTableFixture();
+  work.vault.areas.push(
+    { path: "otto", name: "otto", goals: [], documents: [] },
+    { path: "otto/tangent/desk", name: "desk", goals: [], documents: [] },
+  );
   /** Returns one source-compatible empty scene. */
   const empty = () => ({ type: "excalidraw", version: 2, source: "test", elements: [], appState: { viewBackgroundColor: "#ffffff" }, files: {} });
   const shellWorld = {
@@ -231,12 +264,13 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
       { key: "neara", parent: "@root", children: [], depth: 0, region: { key: "@root>neara", owner: "@root", child: "neara", sourceId: "root-neara", labelSourceId: "root-neara-label", source: "stored", storedRect: { x: 1300, y: 100, width: 420, height: 320 } }, shard: { owner: "neara", hash: "neara-1", state: "ready", elementCount: 0, scene: empty() } },
     ],
   };
+  const shellComposition = worldCore.composeAreaMapWorld(shellWorld);
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
     if (url.pathname === "/api/vault") return sendJson(response, 200, work.vault);
     if (url.pathname === "/api/sessions") return sendJson(response, 200, { boot: "test", pipelines: work.pipelines, sessions: work.sessions, brains: work.brains });
     if (url.pathname === "/api/operations") return sendJson(response, 200, { operations: [], processes: [], problems: [], areas: [], liveCount: 0 });
-    if (url.pathname === "/api/areas/map-world") return sendJson(response, 200, shellWorld);
+    if (url.pathname === "/api/areas/map-world") return sendJson(response, 200, { ...shellWorld, locatedArea: url.searchParams.get("located") || shellWorld.locatedArea });
     if (url.pathname === "/api/areas/map-view") return sendJson(response, 200, { ok: true });
     if (url.pathname.startsWith("/api/")) return sendJson(response, 200, { ok: true });
     await serveStaticAsset(url, response, here);
@@ -248,13 +282,22 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage({ viewport: { width: 1400, height: 760 } });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await page.evaluate(() => localStorage.setItem("tangent.area-map-view.v2:work-world", JSON.stringify({ schema: "area-map-view.v2", worldId: "work-world", pan: { x: -9000, y: 7000 }, zoom: 0.15, foldedAreas: [], detailAreas: [] })));
     const row = page.locator('[data-work-cursor="area:otto/tangent"]');
     await row.dispatchEvent("click");
     await row.locator("[data-work-cursor-control]").focus();
     await page.keyboard.press("m");
     await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
+    const only = page.locator("[data-map-only]");
+    await page.waitForFunction(() => document.querySelector("[data-map-only]")?.getAttribute("aria-pressed") === "true");
     await page.getByRole("button", { name: "Otto, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
     await page.getByRole("button", { name: "Tangent, child of Otto, depth 2, unfolded, ready, 0 blocks" }).waitFor();
+    await page.getByRole("button", { name: "Desk, child of Otto / Tangent, depth 3, unfolded, ready, 0 blocks" }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Other, child of Otto, depth 2, unfolded, ready, 0 blocks" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Neara, child of map root, depth 1, unfolded, ready, 0 blocks" }).count(), 0);
+    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 3);
+    assert.match(await page.locator("[data-map-back]").textContent(), /whole map/i, "the shell Back control prints the controller's opening Escape action");
+    await assertShellAreaCentered(page, "otto/tangent", "otto/tangent/desk", shellComposition);
     assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/);
     const tangentLabel = page.getByRole("button", { name: "Tangent, child of Otto, depth 2, unfolded, ready, 0 blocks" });
     const openingBox = await tangentLabel.boundingBox();
@@ -285,22 +328,25 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await page.keyboard.press("Escape");
     assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent \/ desk · Map$/, "the first Escape clears only the kept selection");
     await page.keyboard.press("Escape");
-    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/, "camera Escape returns to the find origin");
+    assert.equal(await only.getAttribute("aria-pressed"), "false", "the second Escape clears the retargeted restriction");
+    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent \/ desk · Map$/);
+    await page.keyboard.press("Escape");
+    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/, "camera Escape then returns to the find origin");
 
-    // Pointer Only keeps every label, dims only branch roots, and restores a
-    // fold that Julian made before entering the temporary restriction.
+    // Pointer Only removes every unrelated label and restores a manual fold
+    // after Julian returns to the whole map.
     await page.getByRole("button", { name: "Outline", exact: true }).click();
     const otherTreeItem = page.getByRole("treeitem", { name: "Other, child of Otto, depth 2, unfolded, ready, 0 blocks" });
     await otherTreeItem.focus();
     await page.keyboard.press(" ");
     await page.getByRole("button", { name: "Other, child of Otto, depth 2, folded, ready, 0 blocks" }).waitFor();
     await page.getByRole("button", { name: "Outline", exact: true }).click();
-    const only = page.locator("[data-map-only]");
     await only.click();
     assert.equal(await only.getAttribute("aria-pressed"), "true");
-    await page.getByRole("button", { name: "Neara, child of map root, depth 1, folded by Only, ready, 0 blocks" }).waitFor();
     await page.getByRole("button", { name: "Desk, child of Otto / Tangent, depth 3, unfolded, ready, 0 blocks" }).waitFor();
-    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 5, "Only keeps the complete map's Area labels");
+    assert.equal(await page.getByRole("button", { name: "Neara, child of map root, depth 1, unfolded, ready, 0 blocks" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Other, child of Otto, depth 2, folded, ready, 0 blocks" }).count(), 0);
+    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 3, "Only renders only the target lineage and subtree");
     assert.match(await page.locator(".tangent-map-escape").textContent(), /whole map/);
     await only.click();
     assert.equal(await only.getAttribute("aria-pressed"), "false");
@@ -312,17 +358,20 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await page.keyboard.press("Escape");
     assert.equal(await only.getAttribute("aria-pressed"), "false", "Escape leaves Only before it leaves the map");
 
-    // Pointer find can leave an incorrect restriction without losing the one
-    // unified map. Cancel restores the camera but deliberately not the scope.
+    // Find can preview outside Only without flashing the whole map. Cancel
+    // restores the exact prior scope, camera, and selection.
     await only.click();
     await page.locator("[data-map-find]").click();
     await findInput.fill("neara");
     await page.waitForTimeout(100);
     assert.match(await find.textContent(), /neara/i, "the pointer-opened finder lists the Area outside Only");
     await find.getByRole("option", { name: /neara/i }).click();
-    assert.equal(await only.getAttribute("aria-pressed"), "false", "finding outside Only returns the whole map");
+    assert.equal(await only.getAttribute("aria-pressed"), "true", "an outside preview retargets Only instead of showing the whole map");
+    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 1);
     await find.getByRole("button", { name: "Esc" }).click();
     await find.waitFor({ state: "detached" });
+    assert.equal(await only.getAttribute("aria-pressed"), "true");
+    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 3, "Cancel restores the prior Tangent scope");
 
     await page.locator(".excalidraw canvas.interactive").evaluate((canvas) => { canvas.dataset.companionIdentity = "original"; });
     await page.keyboard.press("b");
@@ -368,6 +417,43 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     assert.equal(structure.library === null || structure.library.right === structure.library.left, true, "the unused library trigger is hidden");
     assert.match(structure.theme, /theme--dark/);
     assert.equal(structure.canvas, "rgb(18, 18, 18)", "the map ground is dark behind a dark-theme editor");
+
+    // Every Work entry creates a fresh restricted visit. The exact target fit
+    // wins over the camera saved by the previous visit.
+    await page.setViewportSize({ width: 1400, height: 760 });
+    /** Clears opening Only, returns to Work, and waits for the exact row focus. */
+    const returnToWork = async (area) => {
+      await page.locator("[data-map-back]").click();
+      await page.waitForFunction(() => document.querySelector("[data-map-only]")?.getAttribute("aria-pressed") === "false");
+      await page.locator("[data-map-back]").click();
+      await page.waitForFunction(() => !document.querySelector(".map-screen"));
+      await page.waitForFunction((target) => document.activeElement === document.querySelector(`[data-work-cursor="area:${target}"] [data-open-area-map]`), area);
+    };
+    /** Opens one exact Work Area through the real m shortcut. */
+    const openFromWork = async (area) => {
+      const targetRow = page.locator(`[data-work-cursor="area:${area}"]`);
+      await targetRow.dispatchEvent("click");
+      await targetRow.locator("[data-work-cursor-control]").focus();
+      await page.keyboard.press("m");
+      await page.locator(`[data-tangent-area-map="${area}"] .excalidraw canvas.interactive`).waitFor();
+      await page.waitForFunction(() => document.querySelector("[data-map-only]")?.getAttribute("aria-pressed") === "true");
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    };
+
+    await returnToWork("otto/tangent");
+    await openFromWork("otto");
+    assert.deepEqual(await page.locator(".tangent-map-ancestry > button strong").allTextContents(), ["otto", "tangent", "desk", "other"]);
+    assert.equal(await page.getByText("Neara", { exact: true }).count(), 0);
+    await assertShellAreaCentered(page, "otto", "otto/tangent", shellComposition);
+    await returnToWork("otto");
+
+    await openFromWork("otto/tangent/desk");
+    assert.deepEqual(await page.locator(".tangent-map-ancestry > button strong").allTextContents(), ["otto", "tangent", "desk"]);
+    await assertShellAreaCentered(page, "otto/tangent/desk", "otto/tangent", shellComposition);
+    await returnToWork("otto/tangent/desk");
+    await openFromWork("otto/tangent/desk");
+    assert.deepEqual(await page.locator(".tangent-map-ancestry > button strong").allTextContents(), ["otto", "tangent", "desk"], "re-entry rebuilds the same exact leaf scope");
+    await assertShellAreaCentered(page, "otto/tangent/desk", "otto/tangent", shellComposition);
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

@@ -33,6 +33,7 @@ const params = new URLSearchParams(location.search);
 const wallFixture = params.get("wall") === "1";
 const crossingFixture = params.get("crossing") === "1";
 const focusedFixture = params.get("focus") === "1";
+const deferredTargetFixture = params.get("deferred-target") === "1";
 const scene = () => core.createEmptyScene();
 const scenes = new Map();
 
@@ -81,6 +82,9 @@ const completeRecords = [
   ["neara/essential", "neara", { x: 100, y: 1050, width: 400, height: 300 }, "deferred"],
   ["neara/portland", "neara", { x: 100, y: 1450, width: 400, height: 300 }, "unreadable"],
 ];
+if (deferredTargetFixture) for (const record of completeRecords) {
+  if (record[0] === "neara/delivery/standards" || record[0].startsWith("neara/delivery/standards/")) record[3] = "deferred";
+}
 const records = crossingFixture
   ? completeRecords.slice(0, 3)
   : wallFixture
@@ -135,6 +139,7 @@ documents.push(
 
 window.worldEvents = [];
 window.loadCalls = [];
+window.loadResolvers = new Map();
 window.mountCount = 1;
 window.nextWorld = null;
 window.fixtureFocus = focusedFixture ? { only: true, activeOnly: false, areas: ["neara/essential"] } : { only: false, activeOnly: false, areas: [] };
@@ -155,6 +160,7 @@ window.editor = mountAreaBoardEditor(document.querySelector("#map"), {
   },
   loadShard: async (area) => {
     window.loadCalls.push(area);
+    if (deferredTargetFixture) await new Promise((resolve) => window.loadResolvers.set(area, resolve));
     return {
       area,
       worldRevision: world.worldRevision,
@@ -233,7 +239,29 @@ async function openWorld(context, query = "", viewport = { width: 1440, height: 
     await document.fonts.ready;
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
+  if (!new URLSearchParams(query.replace(/^\?/, "")).has("opening")) {
+    await page.evaluate(() => window.editor.controller().setRestriction(null));
+    await page.waitForFunction(() => window.editor.controller().snapshot().restrictionArea === null);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))))));
+  }
   return page;
+}
+
+/** Requires one exact Area region center to equal the real canvas center. */
+async function assertAreaCentered(page, area) {
+  const result = await page.evaluate((target) => {
+    const box = document.querySelector(".excalidraw canvas.interactive").getBoundingClientRect();
+    const region = window.editor.controller().snapshot().composition.regionRects.get(target);
+    const app = window.editor.appState();
+    return {
+      expected: { x: box.left + box.width / 2, y: box.top + box.height / 2 },
+      actual: {
+        x: box.left + (region.x + region.width / 2 + app.scrollX) * app.zoom.value,
+        y: box.top + (region.y + region.height / 2 + app.scrollY) * app.zoom.value,
+      },
+    };
+  }, area);
+  assert.ok(Math.abs(result.actual.x - result.expected.x) < 2 && Math.abs(result.actual.y - result.expected.y) < 2, `${area} is exactly centered: ${JSON.stringify(result)}`);
 }
 
 /** Escapes one string for use inside a regular expression. */
@@ -312,6 +340,29 @@ async function viewportPoint(page, x, y) {
     y: box.y + (y + appState.scrollY) * appState.zoom.value,
   };
 }
+
+test("a deferred restricted Area centers before content loads", { timeout: 90_000 }, async (context) => {
+  const page = await openWorld(context, "?opening=1&deferred-target=1");
+  await page.waitForFunction(() => window.loadCalls.length === 3);
+  assert.equal(await page.evaluate(() => window.editor.controller().snapshot().restrictionArea), "neara/delivery/standards");
+  assert.deepEqual(await page.locator(".tangent-map-ancestry > button strong").allTextContents(), ["Neara", "Delivery", "Standards", "Clearance", "Rules"]);
+  await assertAreaCentered(page, "neara/delivery/standards");
+  assert.deepEqual(await page.evaluate(() => window.loadCalls), [
+    "neara/delivery/standards",
+    "neara/delivery/standards/clearance",
+    "neara/delivery/standards/clearance/rules",
+  ]);
+  assert.equal(await page.getByRole("button", { name: labelPattern("neara/hackathon") }).count(), 0, "an unrelated sibling has no HTML label");
+
+  await page.keyboard.press("Meta+Shift+o");
+  const outline = page.getByRole("region", { name: "Area hierarchy" });
+  assert.equal(await outline.getByRole("treeitem").count(), 5, "the accessible outline contains only the exact scope");
+  assert.equal(await outline.getByRole("treeitem", { name: labelPattern("neara/hackathon") }).count(), 0);
+  await page.keyboard.press("Meta+Shift+o");
+
+  await page.evaluate(() => { for (const resolve of window.loadResolvers.values()) resolve(); });
+  await page.waitForFunction(() => window.editor.controller().world().areas.filter((node) => node.key === "neara/delivery/standards" || node.key.startsWith("neara/delivery/standards/")).every((node) => node.shard.state === "ready"));
+});
 
 /** Drags one selected Area from visible parent-only interior by one world-space delta. */
 async function moveArea(page, area, delta) {

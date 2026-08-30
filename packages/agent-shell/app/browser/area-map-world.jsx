@@ -3,7 +3,7 @@ import { Excalidraw } from "@excalidraw/excalidraw";
 import boardCore from "../public/area-board-core.js";
 import worldCore from "../public/area-map-world-core.js";
 import pickerModel from "../public/area-board-picker.js";
-import { areaInRestriction, mapFindMatches } from "../public/area-map-find-core.js";
+import { mapFindMatches } from "../public/area-map-find-core.js";
 import { createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "../public/area-map-world-controller.js";
 
 const EXCALIDRAW_UI_OPTIONS = Object.freeze({
@@ -119,9 +119,9 @@ function restoreMaskedElements(elements, composition, hiddenIds) {
 }
 
 /** Returns the deepest structural Area containing one scene point. */
-function areaAtPoint(composition, point, fallback) {
+function areaAtPoint(composition, point, fallback, scopedAreas = null) {
   return [...composition.regionRects]
-    .filter(([, box]) => point.x >= box.x && point.y >= box.y && point.x <= box.x + box.width && point.y <= box.y + box.height)
+    .filter(([area, box]) => (!scopedAreas || scopedAreas.has(area)) && point.x >= box.x && point.y >= box.y && point.x <= box.x + box.width && point.y <= box.y + box.height)
     .sort(([left], [right]) => right.split("/").length - left.split("/").length)[0]?.[0] ?? fallback;
 }
 
@@ -207,6 +207,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const announcedReasonRef = useRef(0);
   const deferredCanvasUpdateTokenRef = useRef(0);
   const projectionTokenRef = useRef(0);
+  const projectionFenceRef = useRef(0);
   const expectedProjectionsRef = useRef([]);
   const findOriginRef = useRef(null);
   const findInputRef = useRef(null);
@@ -235,8 +236,12 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (token.includesElements) {
       appliedProjectionRef.current = token.fingerprint;
       fingerprintRef.current = token.fingerprint;
+      projectionFenceRef.current = token.id;
     }
     api.updateScene(update);
+    if (token.includesElements) setTimeout(() => {
+      if (projectionFenceRef.current === token.id) projectionFenceRef.current = 0;
+    }, 100);
     return token;
   }
 
@@ -264,6 +269,8 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Lets a new user command supersede a queued projection correction. */
   function cancelDeferredCanvasUpdate() {
     deferredCanvasUpdateTokenRef.current += 1;
+    projectionFenceRef.current = 0;
+    expectedProjectionsRef.current = [];
   }
 
   // Excalidraw calls onChange from its componentDidUpdate lifecycle. Keep the
@@ -272,6 +279,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   bridge.escape = escape;
   bridge.openFind = openFind;
   bridge.toggleRestriction = (area) => toggleRestriction(area);
+  bridge.navigateArea = (area, settings) => scrollToArea(area, settings);
 
   useEffect(() => {
     let active = true; let queued = false; let latest = controller.snapshot();
@@ -289,8 +297,8 @@ export function AreaMapWorld({ host, bridge, options }) {
 
   /** Keeps the shell header aligned without moving map state into the shell. */
   useEffect(() => {
-    options.onViewState?.({ locatedArea: state.locatedArea, restrictionArea: state.restrictionArea, findOpen });
-  }, [findOpen, state.locatedArea, state.restrictionArea]);
+    options.onViewState?.({ locatedArea: state.locatedArea, restrictionArea: state.restrictionArea, findOpen, nextEscape: state.nextEscape });
+  }, [findOpen, state.locatedArea, state.nextEscape, state.restrictionArea]);
 
   /** Prints one action result and gives assistive technology a fresh live node. */
   function announce(message, { visible = true } = {}) {
@@ -308,6 +316,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Changes one fold mask and announces the completed view action. */
   function changeFold(area) {
     const folded = controller.toggleFold(area);
+    if (folded === null) { announce(`${leaf(area)} must stay open to show ${leaf(state.restrictionArea)}`); return null; }
     announce(`${leaf(area)} ${folded ? "folded" : "unfolded"}`);
     return folded;
   }
@@ -372,7 +381,7 @@ export function AreaMapWorld({ host, bridge, options }) {
 
   /** Scrolls to one target chosen by camera history. */
   function scrollToArea(area, { push = true, select = true } = {}) {
-    const element = controller.fitArea(area, { push, select });
+    const element = controller.navigateArea(area, { push, select });
     if (!element || !api) return null;
     if (select) {
       programmaticSelectionRef.current = new Set([element.id]);
@@ -393,13 +402,13 @@ export function AreaMapWorld({ host, bridge, options }) {
   function toggleRestriction(area = restrictionTarget()) {
     const result = controller.toggleRestriction(area);
     if (result.active && result.element && api) api.scrollToContent([result.element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
-    announce(result.active ? `Only ${areaName(result.area)}, ${result.foldedCount} Areas folded` : "Whole map");
+    announce(result.active ? `Only ${areaName(result.area)}, ${result.excludedCount} Areas hidden` : "Whole map");
     return result;
   }
 
   /** Opens map find and records the camera and selection restored by Cancel. */
   function openFind() {
-    if (!findOpen) findOriginRef.current = { area: state.cameraTarget, selection: [...state.selection] };
+    if (!findOpen) findOriginRef.current = { area: state.cameraTarget, restrictionArea: state.restrictionArea, selection: [...state.selection] };
     setFindOpen(true); setFindKept(true);
     requestAnimationFrame(() => { findInputRef.current?.focus(); findInputRef.current?.select(); });
     return true;
@@ -422,9 +431,9 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Previews one find row without adding a camera-history step. */
   function previewFind(row, { say = true } = {}) {
     if (!row || !api) return false;
-    if (state.restrictionArea && !areaInRestriction(row.area, state.restrictionArea)) {
-      controller.setRestriction(null);
-      announce("Whole map");
+    if (state.restrictionArea && !state.scopedAreas.has(row.area)) {
+      controller.setRestriction(row.area);
+      announce(`Only ${areaName(row.area)}`);
     }
     const element = row.kind === "area"
       ? controller.selectArea(row.area)
@@ -460,7 +469,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   function confirmFind() {
     const rows = matchesFor(findQuery); const row = rows[findIndex];
     if (!row) return false;
-    const element = controller.fitArea(row.area, { push: true, select: row.kind === "area" });
+    const element = controller.navigateArea(row.area, { push: true, select: row.kind === "area" });
     if (row.kind === "area") controller.setFindReveal(null);
     else { controller.setFindReveal(row.elementId); controller.setSelection([row.elementId]); }
     const target = row.kind === "area" ? element : state.composition.scene.elements.find((candidate) => candidate.id === row.elementId);
@@ -475,6 +484,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     setFindOpen(false); setFindKept(false); findOriginRef.current = null;
     if (!origin) return;
     controller.setFindReveal(null);
+    controller.setRestriction(origin.restrictionArea);
     const element = controller.fitArea(origin.area, { push: false, select: false });
     controller.setSelection(origin.selection);
     if (element && api) api.scrollToContent([element], { fitToContent: true, animate: false });
@@ -488,7 +498,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Opens the contextual block picker for the deepest Area under the pointer. */
   function openPicker() {
     const point = placementPoint();
-    const area = areaAtPoint(state.composition, point, state.locatedArea);
+    const area = areaAtPoint(state.composition, point, state.locatedArea, state.scopedAreas);
     const center = boardCore.insertionPoint(api?.getAppState?.() ?? {}, null);
     setWidePicker(false); setPickerQuery("");
     setPicker({ area, point, outside: ![...state.composition.regionRects.values()].some((box) => point.x >= box.x && point.y >= box.y && point.x <= box.x + box.width && point.y <= box.y + box.height), dock: point.x < center.x ? "right" : "left" });
@@ -595,7 +605,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     }
     const selectedElements = pointerCompositionRef.current.scene.elements.filter((element) => stableSelectionRef.current.has(element.id));
     const hitBlock = selectedElements.some((element) => element.customData?.tangent?.role !== "area-region" && pointerHits(element, origin, zoom));
-    const deepest = areaAtPoint(pointerCompositionRef.current, origin, null);
+    const deepest = areaAtPoint(pointerCompositionRef.current, origin, null, state.scopedAreas);
     const hitRegion = selectedElements.some((element) => element.customData?.tangent?.role === "area-region" && element.customData.tangent.area === deepest && pointerHits(element, origin, zoom));
     pointerSelectedRef.current = hitBlock || hitRegion ? new Set(stableSelectionRef.current) : new Set();
     const selectedRegion = pointerCompositionRef.current.scene.elements.find((element) => pointerSelectedRef.current.has(element.id) && element.customData?.tangent?.role === "area-region");
@@ -819,7 +829,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       if (origins.has(element.id)) continue;
       const point = pointer ?? { x: Number(element.x ?? 0) + Number(element.width ?? 0) / 2, y: Number(element.y ?? 0) + Number(element.height ?? 0) / 2 };
       const copiedOwner = element.customData?.tangentWorld?.owner;
-      claim(element, ownerForNewAreaMapElement({ copiedOwner, pasteOwner: pastePlacement?.area, pointOwner: areaAtPoint(baselineComposition, point, state.locatedArea) }));
+      claim(element, ownerForNewAreaMapElement({ copiedOwner, pasteOwner: pastePlacement?.area, pointOwner: areaAtPoint(baselineComposition, point, state.locatedArea, state.scopedAreas) }));
     }
     const authoredElementById = new Map(authoredRuntime.map((element) => [element.id, element]));
     /** Resolves one binding through direct, claimed, and source-origin identities. */
@@ -863,7 +873,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       if (!origins.has(element.id)) {
         const copiedOwner = element.customData?.tangentWorld?.owner;
         const point = pointer ?? { x: Number(element.x ?? 0), y: Number(element.y ?? 0) };
-        claim(element, ownerForNewAreaMapElement({ copiedOwner, pasteOwner: pastePlacement?.area, startOwner: start?.owner, pointOwner: areaAtPoint(baselineComposition, point, state.locatedArea) }));
+        claim(element, ownerForNewAreaMapElement({ copiedOwner, pasteOwner: pastePlacement?.area, startOwner: start?.owner, pointOwner: areaAtPoint(baselineComposition, point, state.locatedArea, state.scopedAreas) }));
       }
       const endpoints = clone(element.customData?.tangentWorldEndpoints ?? {});
       for (const side of ["start", "end"]) {
@@ -1172,9 +1182,9 @@ export function AreaMapWorld({ host, bridge, options }) {
     bridge.keepMine = () => controller.keepMine();
     bridge.controller = controller;
     const initial = controller.snapshot();
-    if (api && !initial.viewRestored) {
+    if (api) {
       const element = controller.fitArea(initial.locatedArea, { push: false, select: false });
-      if (element) api.scrollToContent([element], { fitToContent: true, animate: false });
+      if (element) requestAnimationFrame(() => requestAnimationFrame(() => api.scrollToContent([element], { fitToContent: true, animate: false })));
     }
     return () => { bridge.controller = null; };
   }, [api]);
@@ -1186,7 +1196,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     controller.destroy();
   }, [controller]);
 
-  const visibleNodes = state.world.areas.filter((node) => ![...state.folded].some((root) => node.key.startsWith(`${root}/`)));
+  const visibleNodes = state.world.areas.filter((node) => state.scopedAreas.has(node.key) && ![...state.folded].some((root) => node.key.startsWith(`${root}/`)));
   const documents = options.getDocuments();
   const areaTitles = new Map(documents.filter((item) => item.kind === "area" && item.area).map((item) => [item.area, item.title]));
   /** Returns the document title or leaf fallback for one Area. */
@@ -1200,7 +1210,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const accessibleAreaName = (node) => {
     const count = Number(node.shard.blockCount ?? 0);
     const parent = node.parent === "@root" ? "map root" : areaPathName(node.parent);
-    const foldState = state.restrictionFolded.has(node.key) ? "folded by Only" : state.folded.has(node.key) ? "folded" : "unfolded";
+    const foldState = state.folded.has(node.key) ? "folded" : "unfolded";
     return `${areaName(node.key)}, child of ${parent}, depth ${node.depth + 1}, ${foldState}, ${node.shard.state}, ${count} ${count === 1 ? "block" : "blocks"}`;
   };
   const targetArea = picker?.area ?? state.locatedArea;
@@ -1219,7 +1229,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const nextEscape = findOpen ? "Esc closes find" : picker ? "Esc closes picker" : helpOpen ? "Esc closes key sheet" : outlineOpen ? "Esc closes outline" : state.nextEscape;
   const debug = typeof location !== "undefined" && new URLSearchParams(location.search).get("debug") === "area-map";
   const nodeByParent = new Map();
-  for (const node of state.world.areas) { const list = nodeByParent.get(node.parent) ?? []; list.push(node); nodeByParent.set(node.parent, list); }
+  for (const node of visibleNodes) { const list = nodeByParent.get(node.parent) ?? []; list.push(node); nodeByParent.set(node.parent, list); }
   for (const list of nodeByParent.values()) list.sort((left, right) => left.key.localeCompare(right.key));
   /** Renders a semantically nested accessible Area tree. */
   const outlineTree = (parent = "@root") => <ol role={parent === "@root" ? "tree" : "group"}>{(nodeByParent.get(parent) ?? []).map((node) => {
@@ -1249,7 +1259,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   function handleCanvasPaste(data) {
     if (data.files?.length) return true;
     actionKindRef.current = "paste";
-    const point = placementPoint(); const area = areaAtPoint(state.composition, point, state.locatedArea);
+    const point = placementPoint(); const area = areaAtPoint(state.composition, point, state.locatedArea, state.scopedAreas);
     pastePlacementRef.current = { area, point };
     if (pasteTimerRef.current !== null) clearTimeout(pasteTimerRef.current);
     pasteTimerRef.current = setTimeout(() => { pastePlacementRef.current = null; pasteTimerRef.current = null; }, 1_000);
@@ -1261,6 +1271,16 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Normalizes one Excalidraw callback into source-owned world authority. */
   function handleCanvasChange(elements, appState) {
     if (consumeExpectedProjection(elements, appState)) return;
+    const pendingProjection = expectedProjectionsRef.current.find((token) => token.includesElements);
+    const userCommand = pointerBaselineRef.current || nonPointerKindRef.current || textEditRef.current || actionKindRef.current;
+    if (!userCommand && (pendingProjection || projectionFenceRef.current)) {
+      const fingerprint = boardCore.authoredFingerprint(elements);
+      appliedProjectionRef.current = fingerprint;
+      fingerprintRef.current = fingerprint;
+      const fence = pendingProjection?.id ?? projectionFenceRef.current;
+      expectedProjectionsRef.current = expectedProjectionsRef.current.filter((token) => token.id > fence);
+      return;
+    }
     if (appState.editingTextElement) {
       cancelDeferredCanvasUpdate();
       textEditRef.current = { editingId: appState.editingTextElement.id, elements: clone(elements) };
@@ -1338,8 +1358,7 @@ export function AreaMapWorld({ host, bridge, options }) {
         const name = areaName(node.key);
         const summary = !state.detailAreas.has(node.key) ? `${Number(node.shard.blockCount ?? 0)} blocks` : "";
         const findCurrent = activeFindRow?.kind === "area" && activeFindRow.area === node.key;
-        const foldedByOnly = state.restrictionFolded.has(node.key);
-        return <button type="button" key={node.key} className={`${findCurrent ? "find-match-current " : ""}${foldedByOnly ? "only-folded" : ""}`} style={{ left: `${(box.x + state.camera.scrollX) * state.camera.zoom + 12}px`, top: `${(box.y + state.camera.scrollY) * state.camera.zoom + 10}px` }} onClick={() => selectArea(node.key)} onDoubleClick={() => scrollToArea(node.key)} aria-label={accessibleAreaName(node)}><strong>{name}</strong>{state.folded.has(node.key) && <span>{foldedByOnly ? "folded by Only" : "folded · Space"}</span>}{["loading", "deferred", "unreadable", "load-error"].includes(node.shard.state) && <span>{node.shard.state === "unreadable" ? "map file unreadable" : node.shard.state === "load-error" ? "load failed · click to retry" : node.shard.state}</span>}{summary && <span>{summary}</span>}</button>;
+        return <button type="button" key={node.key} data-area-map-label={node.key} className={findCurrent ? "find-match-current" : ""} style={{ left: `${(box.x + state.camera.scrollX) * state.camera.zoom + 12}px`, top: `${(box.y + state.camera.scrollY) * state.camera.zoom + 10}px` }} onClick={() => selectArea(node.key)} onDoubleClick={() => scrollToArea(node.key)} aria-label={accessibleAreaName(node)}><strong>{name}</strong>{state.folded.has(node.key) && <span>folded · Space</span>}{["loading", "deferred", "unreadable", "load-error"].includes(node.shard.state) && <span>{node.shard.state === "unreadable" ? "map file unreadable" : node.shard.state === "load-error" ? "load failed · click to retry" : node.shard.state}</span>}{summary && <span>{summary}</span>}</button>;
       })}
     </div>
     <button type="button" className="tangent-map-escape" onClick={escape}>{nextEscape}</button>

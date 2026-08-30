@@ -34,18 +34,4 @@ export function areaInRestriction(area, target) {
   return Boolean(area && target && (area === target || area.startsWith(`${target}/`) || target.startsWith(`${area}/`)));
 }
 
-/**
- * Returns the smallest roots that fold every branch outside one Area's
- * ancestor-and-descendant line. Folding these roots preserves every outline.
- */
-export function restrictionFoldRoots(areas = [], target = "") {
-  const known = new Set(areas.map((area) => area.path));
-  if (!known.has(target)) return [];
-  return areas
-    .filter((area) => !areaInRestriction(area.path, target))
-    .filter((area) => area.parent === "@root" || areaInRestriction(area.parent, target))
-    .map((area) => area.path)
-    .sort();
-}
-
-export default { areaInRestriction, mapFindMatches, mapFindTextMatches, restrictionFoldRoots };
+export default { areaInRestriction, mapFindMatches, mapFindTextMatches };

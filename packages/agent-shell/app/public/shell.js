@@ -1572,7 +1572,10 @@ function updateAreaMapChrome(navigation = null) {
   const breadcrumb = screen.querySelector(".map-breadcrumb");
   if (breadcrumb) breadcrumb.innerHTML = mapBreadcrumb();
   const back = screen.querySelector("[data-map-back]");
-  if (back) back.innerHTML = `${mapNavigation.trail?.length ? "Back" : "Work"} <kbd>Esc</kbd>`;
+  const backLabel = mapViewState.nextEscape === "Esc clears selection" ? "Clear selection"
+    : mapViewState.nextEscape?.startsWith("Esc → ") ? mapViewState.nextEscape.slice(6)
+      : mapNavigation.trail?.length ? "Back" : "Work";
+  if (back) back.innerHTML = `${escapeHtml(backLabel)} <kbd>Esc</kbd>`;
   const starred = screen.querySelector("[data-starred-only]");
   if (starred) { starred.setAttribute("aria-pressed", String(state.areaFocusOnly)); starred.innerHTML = `${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd>`; }
   const active = screen.querySelector("[data-active-only]");
@@ -1721,7 +1724,7 @@ function drillAreaMap(area) {
   if (!area) return;
   closeMapBrain();
   mapLocatedArea = area;
-  activeAreaBoard?.fitArea?.(area, { push: true, select: false });
+  activeAreaBoard?.navigateArea?.(area, { push: true, select: false });
   updateAreaMapChrome();
 }
 /** Leaves the world for the exact Work row after controller history is empty. */

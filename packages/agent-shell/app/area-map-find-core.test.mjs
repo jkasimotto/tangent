@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { areaInRestriction, mapFindMatches, mapFindTextMatches, restrictionFoldRoots } from "./public/area-map-find-core.js";
+import { areaInRestriction, mapFindMatches, mapFindTextMatches } from "./public/area-map-find-core.js";
 
 const areas = [
   { path: "neara", parent: "@root", name: "Neara", depth: 0 },
@@ -31,10 +31,11 @@ test("map find orders every Area before loaded blocks and returns no rows for a 
   assert.deepEqual(mapFindMatches({ areas, blocks }, ""), []);
 });
 
-test("Only keeps the target line and folds the smallest unrelated branch roots", () => {
+test("Only membership contains exactly the target line and subtree", () => {
   assert.equal(areaInRestriction("neara", "neara/delivery/standards"), true);
   assert.equal(areaInRestriction("neara/delivery/standards/child", "neara/delivery/standards"), true);
   assert.equal(areaInRestriction("neara/delivery/portland", "neara/delivery/standards"), false);
-  assert.deepEqual(restrictionFoldRoots(areas, "neara/delivery/standards"), ["neara/delivery/portland", "neara/hackathon", "otto"]);
-  assert.deepEqual(restrictionFoldRoots(areas, "missing"), []);
+  assert.deepEqual(areas.filter((area) => areaInRestriction(area.path, "neara/delivery/standards")).map((area) => area.path), [
+    "neara", "neara/delivery", "neara/delivery/standards",
+  ]);
 });

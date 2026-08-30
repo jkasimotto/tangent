@@ -39,7 +39,6 @@
 .tangent-map-ancestry { position: absolute; z-index: 3; inset: 0; pointer-events: none; overflow: hidden; }
 .tangent-map-ancestry button { position: absolute; padding: 2px 6px; border: 0; border-radius: 4px; background: color-mix(in srgb, var(--tangent-island) 82%, transparent); color: var(--tangent-text); font: 14px Excalifont, Virgil, sans-serif; white-space: nowrap; pointer-events: auto; }
 .tangent-map-ancestry button:focus-visible { outline: 2px solid var(--tangent-accent); outline-offset: 1px; }
-.tangent-map-ancestry button.only-folded { opacity: .48; }
 .tangent-map-ancestry button.find-match-current { outline: 3px solid var(--tangent-accent); outline-offset: 3px; animation: tangent-map-find-pulse 900ms ease-in-out infinite alternate; }
 @keyframes tangent-map-find-pulse { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tangent-accent) 55%, transparent); } to { box-shadow: 0 0 0 8px transparent; } }
 .tangent-map-ancestry button strong { font-weight: 600; }

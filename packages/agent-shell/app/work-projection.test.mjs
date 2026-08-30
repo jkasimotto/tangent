@@ -5,6 +5,7 @@ import { projectWork } from "./work-projection.mjs";
 test("Work projection excludes durable queue and brain history bodies", () => {
   const handover = "h".repeat(100_000);
   const report = { text: "r".repeat(100_000) };
+  const repairReport = "x".repeat(100_000);
   const projected = projectWork({
     vault: {
       areas: [{ path: "otto", goals: [{ file: "otto/goal.md", area: "otto", slug: "goal", title: "Goal", status: "open", storyText: "Story" }], documents: [] }],
@@ -14,7 +15,23 @@ test("Work projection excludes durable queue and brain history bodies", () => {
     session: {
       sessions: [],
       pipelines: [{ goal: "otto/goal.md", area: "otto", slug: "goal", revision: 3, status: "open", assignments: [{ id: "a1", index: 1, status: "running", instruction: "Do work", handover, reports: [report], attempts: [{ report }], handoverReceipts: [{ notice: { text: handover } }] }] }],
-      brains: [{ area: "otto", status: "active", session: "brain", generations: [{ handover, notices: [{ text: handover }] }], forJulian: [], requests: [] }],
+      brains: [{
+        area: "otto",
+        status: "active",
+        session: "brain",
+        generations: [{ handover, notices: [{ text: handover }] }],
+        repair: {
+          schema: "area-repair.v1",
+          area: "otto",
+          current: { session: "otto-repair", firstMessage: repairReport, audit: [{ report: repairReport }] },
+          history: [
+            { endedAt: "2026-08-29T00:00:00.000Z", result: "done", report: repairReport },
+            { endedAt: "2026-08-30T00:00:00.000Z", result: "blocked", report: repairReport },
+          ],
+        },
+        forJulian: [],
+        requests: [],
+      }],
     },
     programs: { operations: [] },
   });
@@ -25,6 +42,13 @@ test("Work projection excludes durable queue and brain history bodies", () => {
   assert.equal(projected.value.vault.areas[0].goals[0].run.steps[0].attemptCount, 1);
   assert.equal(projected.value.vault.areas[0].goals[0].run.assignments, undefined);
   assert.equal(projected.value.vault.areas[0].brain.generations, undefined);
+  assert.deepEqual(projected.value.vault.areas[0].brain.repair, {
+    schema: "area-repair.v1",
+    area: "otto",
+    current: { session: "otto-repair" },
+    history: [{ endedAt: "2026-08-30T00:00:00.000Z", result: "blocked", report: "x".repeat(240) }],
+  });
+  assert.doesNotMatch(projected.body, /xxx{1000}/);
   assert.equal(projected.value.session.pipelines, undefined);
   assert.equal(projected.value.session.brains, undefined);
 });

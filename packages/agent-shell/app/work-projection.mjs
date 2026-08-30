@@ -106,6 +106,22 @@ export function projectWorkQueue(record) {
   };
 }
 
+/** Keeps the repair state that the Work desk displays without durable crew history. */
+export function projectWorkRepair(repair) {
+  if (!repair) return null;
+  const recent = Array.isArray(repair.history) ? repair.history.at(-1) : null;
+  return {
+    schema: repair.schema,
+    area: repair.area,
+    current: repair.current ? { session: repair.current.session ?? null } : null,
+    history: recent ? [{
+      endedAt: recent.endedAt ?? null,
+      result: recent.result ?? null,
+      report: recent.report == null ? null : String(recent.report).slice(0, 240),
+    }] : [],
+  };
+}
+
 /** Removes durable generations and notice bodies from one live brain row. */
 export function projectWorkBrain(brain) {
   const fields = [
@@ -113,7 +129,9 @@ export function projectWorkBrain(brain) {
     "live", "state", "stateDetail", "stateQuestion", "idleSince", "waitingSince", "observation", "health", "recovery",
     "forJulian", "requests", "agentState", "lastAction", "repair",
   ];
-  return Object.fromEntries(fields.filter((field) => brain?.[field] !== undefined).map((field) => [field, brain[field]]));
+  const projected = Object.fromEntries(fields.filter((field) => brain?.[field] !== undefined).map((field) => [field, brain[field]]));
+  if (projected.repair !== undefined) projected.repair = projectWorkRepair(projected.repair);
+  return projected;
 }
 
 /** Creates one compact browser refresh response and its semantic content hash. */

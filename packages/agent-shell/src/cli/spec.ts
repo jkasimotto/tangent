@@ -5,24 +5,10 @@ const jsonOption = { name: "json", description: "Print machine-readable JSON" };
 
 export const sendCommandSpec: CliCommandSpec = {
   name: "send",
-  description: "Send a note to the brain that controls this worker's Goal, or to a live session or an Area brain",
-  args: "<brain|session|area> <note...>",
+  description: "Send a plain note to a live session or an Area brain's durable inbox",
+  args: "<session|area> <note...>",
   options: [
-    { name: "done", description: "The work is finished; the assignment is complete" },
-    { name: "blocked", description: "You cannot continue; the assignment waits for the brain" },
-    { name: "present", takesValue: true, description: "Present a Markdown file on this worker's Goal; repeatable" },
     { name: "session", takesValue: true, description: "Sender session name; defaults to the tmux session this command runs in" },
-    serverOption
-  ]
-};
-
-export const handoverCommandSpec: CliCommandSpec = {
-  name: "handover",
-  description: "Replaced by tangent send brain \"<note>\" [--done|--blocked]; kept as an alias",
-  args: "<facts...>",
-  options: [
-    { name: "session", takesValue: true, description: "Worker session name; defaults to the tmux session this command runs in" },
-    { name: "report", takesValue: true, description: "Tagged worker report as one JSON object" },
     serverOption
   ]
 };
@@ -293,17 +279,6 @@ export const goalCommandSpec: CliCommandSpec = {
         { name: "kind", takesValue: true, description: "implementation or review; repeatable, one per step. Defaults to implementation" },
         serverOption,
         jsonOption
-      ]
-    },
-    {
-      name: "handover",
-      hidden: true,
-      description: "Replaced by tangent send brain; kept as an alias",
-      args: "<facts...>",
-      options: [
-        { name: "session", takesValue: true, description: "The step's session name; defaults to the tmux session this command runs in" },
-        { name: "report", takesValue: true, description: "Tagged worker report as one JSON object" },
-        serverOption
       ]
     },
     {

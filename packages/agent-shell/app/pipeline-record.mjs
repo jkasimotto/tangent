@@ -73,7 +73,7 @@ export function normalizeQueueRecord(value) {
   const source = Array.isArray(value.assignments) ? value.assignments : Array.isArray(value.steps) ? value.steps : [];
   const { assignments, problem: assignmentProblem } = normalizeStoredAssignments(source);
   const revision = Math.max(1, Number(value.revision) || 1);
-  const controllerArea = value.controllerArea ?? value.area;
+  const organizerArea = value.organizerArea ?? value.controllerArea ?? value.area;
   let supersededLegacyWait = false;
   for (let position = 0; position < assignments.length; position += 1) {
     const assignment = assignments[position];
@@ -95,9 +95,7 @@ export function normalizeQueueRecord(value) {
   const running = assignments.filter((assignment) => ["running", "waiting"].includes(assignment.status));
   const generatedMultipleAttemptProblem = /^Queue has \d+ current attempts\.$/.test(String(value.migrationProblem ?? ""));
   const inheritedMigrationProblem = generatedMultipleAttemptProblem ? null : value.migrationProblem ?? null;
-  const migrationProblem = controllerArea !== value.area
-    ? `Queue controller ${controllerArea} does not match exact Area ${value.area}.`
-    : running.length > 1
+  const migrationProblem = running.length > 1
       ? `Queue has ${running.length} current attempts.`
       : assignmentProblem ?? inheritedMigrationProblem;
   const activeAssignment = assignments.find((item) => ["running", "waiting"].includes(item.status));
@@ -106,7 +104,7 @@ export function normalizeQueueRecord(value) {
   const normalized = {
     ...value,
     schema: PIPELINE_SCHEMA,
-    controllerArea,
+    organizerArea,
     goalRevision: String(value.goalRevision ?? ""),
     revision,
     status: migrationProblem ? "paused" : reopenSupersededPause ? "open" : ["open", "complete", "paused", "canceled", "parked"].includes(value.status) ? value.status : "open",
@@ -118,7 +116,7 @@ export function normalizeQueueRecord(value) {
   };
   const storedAssignments = Array.isArray(value.assignments) ? value.assignments : Array.isArray(value.steps) ? value.steps : [];
   const normalizationChanged = value.schema !== normalized.schema
-    || value.controllerArea !== normalized.controllerArea
+    || value.organizerArea !== normalized.organizerArea
     || String(value.goalRevision ?? "") !== normalized.goalRevision
     || Math.max(1, Number(value.revision) || 1) !== normalized.revision
     || value.status !== normalized.status
@@ -141,7 +139,7 @@ export async function deletePipeline(root, area, slug) {
  * Builds a fresh record with every step pending. Throws with the
  * validateSteps message when the steps are invalid.
  */
-export function newPipeline({ goal, goalRevision = "", area, slug, extraFiles = [], steps, now = new Date().toISOString() }) {
+export function newPipeline({ goal, goalRevision = "", area, organizerArea = area, slug, extraFiles = [], steps, now = new Date().toISOString() }) {
   const error = validateSteps(steps);
   if (error) throw new Error(error);
   const assignments = normalizeNewAssignments(steps);
@@ -150,7 +148,7 @@ export function newPipeline({ goal, goalRevision = "", area, slug, extraFiles = 
     goal,
     goalRevision,
     area,
-    controllerArea: area,
+    organizerArea,
     slug,
     revision: 1,
     status: "open",

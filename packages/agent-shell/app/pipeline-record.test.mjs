@@ -149,7 +149,7 @@ test("newPipeline normalizes steps into the pending shape", () => {
     now: "2026-08-15T10:00:00.000Z"
   });
   assert.equal(record.schema, PIPELINE_SCHEMA);
-  assert.equal(record.controllerArea, "otto/tangent");
+  assert.equal(record.organizerArea, "otto/tangent");
   assert.equal(record.revision, 1);
   assert.equal(record.status, "open");
   assert.equal(record.goal, "otto/tangent/goal-x.md");
@@ -205,7 +205,7 @@ test("newPipeline throws the validation message", () => {
   assert.throws(() => newPipeline({ goal: "g", area: "a", slug: "s", steps: [{ instruction: "" , launch: claude }] }), /step 1: instruction is empty/);
 });
 
-test("legacy queues gain open status and invalid authority pauses", async () => {
+test("legacy queues migrate their recorded controller to a durable organizer", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "pipelines-"));
   const legacy = newPipeline({ goal: "otto/tangent/goal-x.md", area: "otto/tangent", slug: "x", steps: sampleSteps() });
   delete legacy.status;
@@ -214,10 +214,17 @@ test("legacy queues gain open status and invalid authority pauses", async () => 
   assert.equal((await readPipeline(root, "otto/tangent", "x")).status, "open");
 
   legacy.controllerArea = "otto";
+  delete legacy.organizerArea;
   await writeFile(pipelinePath(root, "otto/tangent", "x"), `${JSON.stringify(legacy)}\n`);
-  const invalid = await readPipeline(root, "otto/tangent", "x");
-  assert.equal(invalid.status, "paused");
-  assert.match(invalid.migrationProblem, /does not match exact Area/);
+  const migrated = await readPipeline(root, "otto/tangent", "x");
+  assert.equal(migrated.status, "open");
+  assert.equal(migrated.organizerArea, "otto");
+  assert.equal(migrated.migrationProblem, null);
+});
+
+test("a queue keeps an organizer outside the Goal ancestry", () => {
+  const record = newPipeline({ goal: "otto/dnd/movement/terrain/goal-x.md", area: "otto/dnd/movement/terrain", organizerArea: "otto/tangent", slug: "x", steps: sampleSteps() });
+  assert.equal(record.organizerArea, "otto/tangent");
 });
 
 test("legacy worker questions normalize once without trapping an attempt", () => {

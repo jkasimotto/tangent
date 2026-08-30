@@ -3,7 +3,6 @@ import { booleanArg, parseArgs, requiredString, stringArg, type Args } from "@ta
 
 import { currentTmuxSession, postJson, resolveServerUrl, vaultFetch } from "../client.js";
 import { agentCommandSpec } from "../spec.js";
-import { SEND_ALIAS_HINT } from "../worker-report.js";
 
 type AgentSummary = {
   name: string;
@@ -69,7 +68,7 @@ async function contextCommand(args: Args): Promise<void> {
 
 /** Handles `tangent agent send <session-or-area> <text...>`, an alias of `tangent send` for one release. */
 async function sendCommand(args: Args): Promise<void> {
-  console.log(SEND_ALIAS_HINT);
+  console.log('tangent agent send is now tangent send <session|area> "<plain note>"');
   const server = resolveServerUrl(stringArg(args.server));
   const to = requiredString(args._[1], "tangent agent send requires a live session or Area path.");
   const text = args._.slice(2).join(" ").trim();

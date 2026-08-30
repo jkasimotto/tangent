@@ -19,13 +19,13 @@ Start with `tangent goal list <area>` and `tangent area show <area>`. Informatio
 
 ## Repair crew
 
-If your first message says so, you are the repair crew, not the brain. Finish the live work with the allowed Goal and message commands. Do not start Goals, edit notes, or restart the brain. Finish with `tangent send brain --done` or `tangent send brain --blocked`. If Tangent is restarting an attempt in place, wait 2 minutes and retry.
+If your first message says so, you are the repair crew, not the brain. Read the named organizer's inbox and use brain-side commands to settle its work. Do not infer an organizer from a Goal's Area or route work to an ancestor.
 - `tangent process list`, `tangent process show <slug>`: the Area's repeatable work and its next run.
 - `tangent vault commit <paths> -m "<update|add|note|remove>: <area> <summary>"`: commit your note edits.
 
 ## How work flows
 
-Workers have one command, `tangent send brain`. Their notes arrive here as messages: a plain note, `done`, or a real `blocked` dependency. Read the note, then decide: mark the Goal done, resolve the dependency, append a step, or start another worker. Messages from Julian arrive the same way. Only Julian's words change what a Goal is for or close an Area. Julian flags what he checks. Never ask him to test.
+A worker talks to its brain in plain words and runs no other Tangent command. It says "I am done", "I have a question", or "I cannot continue", with the facts: `tangent send <brain> "<note>"`. The brain does every Tangent action: it answers, advances, appends, presents, marks done, parks, or asks Julian. A worker's words never change Goal or assignment state. Messages from Julian arrive the same way. Only Julian's words change what a Goal is for or close an Area. Julian flags what he checks. Never ask him to test.
 
 Workers do not read this vault. Give a worker everything it needs in the instruction and name an Area skill's absolute path. Skills are `<area>/.agents/skills/<name>/SKILL.md`; Claude reads the same directory through `<area>/.claude/skills`. Existing `skill-<slug>.md` files remain compatible. Repeatable work is `process-<slug>.md` with `schedule:` (calendar words) or `when:` (a shell probe) with `every:`. Its `launch:` is a harness ref, `harness[/model[/effort]]`, not a command line. Write scheduled and probe process notes when Julian asks.
 

@@ -59,7 +59,7 @@ The live tmux ownership key is `@tangent_agent_shell_instance`. A foreign sessio
 
 - `tangent agent list` reads live agent sessions and queued message counts.
 - `tangent agent context [session] [--session <name>] [--json]` rebuilds the durable brain or Goal assignment for a tmux session. Without a name it uses the current tmux session.
-- `tangent send <brain|session|area> <note...> [--done | --blocked]` is the one worker command. `brain` resolves to the brain that controls the caller's Goal. A plain note changes no assignment status. `--done` completes the assignment, and `--blocked` sets it waiting for a real dependency. A session or Area target sends through a live-session queue or a logical Area inbox.
+- `tangent send <session|area> <note...>` sends one plain message. A worker may name only the organizing Area recorded on its assignment. The durable Area path survives brain restarts and can be outside the Goal's ancestry. No message words change Goal or assignment state.
 - `tangent agent send <session-or-area> <text...>` is an alias of `tangent send` for one release and prints a hint line.
 
 Agent Shell first resolves the target as a live session. It stores the normalized generic message before it wakes or writes to that pane. An exact Area path uses the durable Area brain inbox. A known stale brain session resolves to that same logical inbox. An unknown target returns not found. A missing or inactive brain does not block Area delivery. Queued messages survive controller restarts in first-in, first-out order. A presentation receipt is not proof that the model read the text.
@@ -89,8 +89,6 @@ Every active Goal execution uses one `area-goal-queue.v2` record under `~/.tange
 - `tangent goal create --area <a> --title "<t>" [--done-when "<d>"] --start --path <dir> [--launch <ref>] [--verify] [--instruction "<i>" | --instruction-file <file>]` is the brain's one command to create a Goal and start its worker. Only a live brain may pass `--start`; the server refuses others with 403 before it writes anything. The done condition defaults to the title.
 - `tangent goal done <slug> [--note "<text>"]` from a brain on a Goal flagged `verify: yes` sets `verify` (Check it) instead of `done` and keeps the note in `## State`. Julian's own Done closes it.
 - `tangent brain advance <goal> <step>` starts one pending assignment through the Goal queue. Any local caller can use the command.
-- `tangent handover <facts...> [--report '<json>']` and `tangent goal handover <facts...> [--report '<json>']` are aliases of `tangent send brain` for one release. They print a hint line and submit through the same route. Plain text is a note. A typed `--report` keeps its old shape.
-
 A normal start acts through the Goal queue and requires the live Area brain. A brain can lend its launch when the Goal's Area allows it. Other callers must name a launch. Agent Shell rejects each disallowed launch before it writes a new attempt. A guarded `--recovery` start records `julian-emergency` in the same queue. It requires a pending assignment, no current attempt, and exhausted brain recovery.
 
 Worker report types are `implementation-result`, `review-result`, `context-risk`, and `failed`. The server validates the report against the assignment kind and queue revision. A worker report never starts another assignment. Missing, malformed, truncated, shell-quoted, and non-object reports fail before queue mutation. A rejected typed report also records no queue result or notice.

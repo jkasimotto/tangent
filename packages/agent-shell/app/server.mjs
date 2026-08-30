@@ -321,15 +321,11 @@ const REPAIR_GRACE_MS = Math.max(0, Number(process.env.TANGENT_REPAIR_GRACE_MINU
  * worker has (D5). The same three lines close a review step; --done on a
  * review step means the review passed.
  */
-function workerSendSection() {
+function workerSendSection(organizerArea) {
   return (
     `## When you finish\n\n` +
-    `You have one Tangent command. Run it inside this session.\n\n` +
-    `    tangent send brain "<note>"            a note to the brain, no status change\n` +
-    `    tangent send brain --done "<note>" [--present <file>]  the work is finished; present each document Julian must read\n` +
-    `    tangent send brain --blocked "<note>"  you cannot continue; say why\n` +
-    `\n` +
-    `Do not run other tangent commands. Do not change the Goal file's frontmatter. The brain marks the Goal done.`
+    `Tell the brain what happened: \`tangent send ${organizerArea} "<note>"\`. Say what changed, how you proved it, and what you did not finish. Name each document Julian must read by its vault path. Then stop. The brain decides what happens next.\n\n` +
+    `Use the same command for a note on the way. Run no other \`tangent\` command.`
   );
 }
 // One JSON record per session with a prompt armed to type once its harness
@@ -1929,7 +1925,7 @@ async function promptWorkFolder(area, recorded = null) {
  * Markdown keeps the contract readable in both the shell and the agent
  * composer.
  */
-async function goalPrompt(area, o, extras = [], continuationEntries = [], trace = null, folder = null, { closing = true } = {}) {
+async function goalPrompt(area, o, extras = [], continuationEntries = [], trace = null, folder = null, { closing = true, organizerArea = area } = {}) {
   const context = await goalContext(area, o, trace);
   trace?.mark("goal context ready", { documents: context.documents.length });
   const sources = [
@@ -1948,9 +1944,9 @@ async function goalPrompt(area, o, extras = [], continuationEntries = [], trace 
     (openComments
       ? `Julian's comments in a Document look like \`{>>Julian: ...<<}\`, sometimes after \`{==the words they refer to==}\`. Carry them along unchanged when you edit the Document.\n\n`
       : "") +
-    `Design documents go in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md, in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${goalLink}]] link. Present each document with --present <file> when you send the brain your result.` +
+    `Design documents go in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md, in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${goalLink}]] link. Name each finished document by its vault path in your note to the brain.` +
     (continuationEntries.length ? `\n\n${continuationSection({ index: 1, total: 1, entries: continuationEntries, subject: "Goal" })}` : "") +
-    (closing ? `\n\n${workerSendSection()}` : "")
+    (closing ? `\n\n${workerSendSection(organizerArea)}` : "")
   );
 }
 
@@ -1960,7 +1956,7 @@ async function goalPrompt(area, o, extras = [], continuationEntries = [], trace 
  * and how to hand over when done. Guidance, not a schema.
  */
 async function pipelineStepPrompt(area, o, record, index, extras = [], sessionName = "", trace = null, folder = null) {
-  const assignment = await goalPrompt(area, o, extras, [], trace, folder, { closing: false });
+  const assignment = await goalPrompt(area, o, extras, [], trace, folder, { closing: false, organizerArea: record.organizerArea });
   trace?.mark("assignment rendered", { characters: assignment.length });
   const step = record.steps[index - 1];
   const total = record.steps.length;
@@ -1975,7 +1971,7 @@ async function pipelineStepPrompt(area, o, record, index, extras = [], sessionNa
     `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}${step.kind === "review" ? " This is the review step. --done means the review passed." : ""}\n\n` +
     (earlier.length ? `## Handovers so far\n\n${earlier.join("\n\n")}\n\n` : "") +
     (continuationEntries.length ? `${continuationSection({ index, total, entries: continuationEntries, subject: "step" })}\n\n` : "") +
-    workerSendSection()
+    workerSendSection(record.organizerArea)
   );
 }
 
@@ -2953,7 +2949,6 @@ async function startPipelineStep(record, index, trace = null) {
   const o = byFile.get(record.goal);
   if (!o) return { status: 404, error: `no goal file ${record.goal}` };
   if (!record.goalRevision) record.goalRevision = await goalContentRevision(record.goal);
-  record.controllerArea = record.area;
   if (record.status !== "open") record.status = "open";
   const sessions = await listSessions();
   trace?.mark("step sessions ready", { sessions: sessions.length });
@@ -3091,7 +3086,7 @@ async function startPipeline(file, { steps, extraFiles = [], start = true, attem
   const error = validateSteps(steps);
   if (error) return { status: 400, error };
   const sameArea = extraFiles.map(String).filter((extra) => byFile.get(extra)?.area === o.area);
-  const record = newPipeline({ goal: o.file, goalRevision: await goalContentRevision(o.file), area: o.area, slug: o.slug, extraFiles: sameArea, steps });
+  const record = newPipeline({ goal: o.file, goalRevision: await goalContentRevision(o.file), area: o.area, organizerArea: brain?.area ?? o.area, slug: o.slug, extraFiles: sameArea, steps });
   record.instanceId = INSTANCE_ID;
   record.steps[0].nextAttemptKind = attemptKind;
   const { warnings } = materialized;
@@ -4395,8 +4390,8 @@ async function liveRepairForArea(area, now = Date.now()) {
 
 /** The live addressee for one Area: its usable brain first, then its crew. */
 async function liveAddresseeForArea(area) {
-  const brain = await nearestLiveBrainRoute(area);
-  if (brain) return brain;
+  const brain = await exactLiveBrainForArea(area);
+  if (brain) return { role: "brain", sourceArea: area, brainArea: area, session: brain.session, generation: brain.generation, instanceId: brain.instanceId, target: brain.target, brain };
   const crew = await liveRepairForArea(area);
   return crew ? { role: "repair", sourceArea: area, brainArea: area, session: crew.repair.session, generation: null, instanceId: crew.repair.instanceId, target: crew.target, repair: crew.repair } : null;
 }
@@ -6571,11 +6566,16 @@ const agentRoutes = createAgentRoutes({
     const target = resolveSession(requested, sessions);
     const live = sessions.find((session) => session.name === target);
     const sender = commandActor(body.from, { sessions, brains });
-    // Workers have one command (D5): their notes go to their own brain.
-    if (sender.role === "worker") return { status: 403, error: WORKER_SEND_TARGET_REFUSAL };
+    // A worker can address only the durable organizer recorded on its own
+    // assignment. The caller cannot spoof a different Area or assignment.
+    if (sender.role === "worker") {
+      const record = (await readAllPipelines(PIPELINES_ROOT)).find((queue) => queue.steps.some((step) => step.session === sender.session || step.attempts?.some((attempt) => attempt.session === sender.session)));
+      if (!record || requested !== record.organizerArea) {
+        return { status: 403, error: `this worker reports only to ${record?.organizerArea ?? "its recorded organizer"}: tangent send ${record?.organizerArea ?? "<brain-area>"} \"<plain note>\"` };
+      }
+      if (target && target !== requested) return { status: 403, error: "a worker must name its organizer Area, not a session" };
+    }
     if (sender.role === "repair" && live?.kind === "goal" && live.area !== sender.area) return { status: 403, error: REPAIR_REFUSAL };
-    const answer = await maybeAnswerWorkerQuestion(sender, target ?? requested, text, body.operationId);
-    if (answer) return answer;
     const entry = { from: sender.session ?? "unknown sender", area: sender.area, text, durable: true, queuedAt: new Date().toISOString() };
     if (!live) {
       const inbox = areaInboxTarget(requested, { areas: [ROOT_AREA, ...flattenAreaPaths(tree)], brains });
@@ -6584,7 +6584,7 @@ const agentRoutes = createAgentRoutes({
         const reason = delivery.addressed
           ? "stored in the Area inbox and queued for its live brain"
           : "stored in the Area inbox; it will arrive when the brain starts";
-        return { status: 200, value: { status: "queued", to: inbox.area, target: "area", via: inbox.via, reason, receipt: delivery.notice.id } };
+        return { status: 200, value: { status: "queued", to: inbox.area, target: "area", live: delivery.addressed, via: inbox.via, reason, receipt: delivery.notice.id } };
       }
     }
     const result = await messages.dispatch(live ?? null, entry);

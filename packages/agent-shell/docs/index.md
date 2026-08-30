@@ -4,12 +4,12 @@ Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 
 - Vault CLI: `tangent area`, `tangent goal`, `tangent idea`, `tangent document`, `tangent vault commit`.
 - Agent CLI: `tangent agent list`, `tangent send`, and read-only `tangent agent context` recovery from durable brain and Goal records.
-- Worker CLI: `tangent send brain "<note>" [--done | --blocked] [--present <file>]` is the one worker command (ADR-0040). `tangent handover`, `tangent goal handover`, and `tangent agent send` are aliases for one release. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
+- Worker CLI: every assignment names its organizing brain's durable Area path. Its only command is `tangent send <brain-area> "<plain note>"`. A note never changes Goal or assignment state. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
 - Brain CLI: `tangent brain request` creates durable user requests, and `tangent brain advance` starts the next approved assignment.
 - Brain and server CLI: `tangent brain status|stop|request|withdraw` reads or stops a brain and files its questions through guarded Agent Shell routes. A brain runs until Julian restarts it; there is no handover (ADR-0041). `tangent goal create --start --path <dir>` is the brain's one command to create a Goal and start its worker. `tangent shell rebuild` rebuilds and restarts the server.
 - Study partner CLI: `tangent study` (spawns an interactive `claude-otto` session carrying the partner contract) and `tangent study contract` (prints that contract).
 
-The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321 and durable terminal transport. It supervises the controller in `server.mjs`. Both processes share one runtime identity. They can use only tmux sessions marked with that identity. The controller owns logical Area brains, Goal queues, worker handover notice receipts, Questions, Operation events, and session projection. See ADR-0032, ADR-0034, and ADR-0036.
+The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321 and durable terminal transport. It supervises the controller in `server.mjs`. Both processes share one runtime identity. They can use only tmux sessions marked with that identity. The controller owns logical Area brains, durable Area inboxes, Goal queues, Requests, Operation events, and session projection. See ADR-0032, ADR-0034, and ADR-0036.
 
 Any replacement harness can recover the current assignment from the tmux session name. The context projection does not claim or mutate the session. A live unbound session reports `unassigned`. A worker that exits to its still-live shell leaves its queue status and tmux session intact and creates one durable exact-Area brain notice.
 

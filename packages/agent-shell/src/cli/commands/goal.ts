@@ -8,7 +8,6 @@ import { booleanArg, parseArgs, requiredString, stringArg, stringsArg, type Args
 
 import { currentTmuxSession, goalQueueRevision, listGoalScope, postJson, requireArea, requireGoal, resolveServerUrl, vaultFetch } from "../client.js";
 import { goalCommandSpec } from "../spec.js";
-import { SEND_ALIAS_HINT, parseWorkerReportOption, workerHandoverResultLine } from "../worker-report.js";
 
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
@@ -29,7 +28,6 @@ export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "undepend") return dependencyCommand(args, true);
   if (subcommand === "start") return startCommand(args);
   if (subcommand === "append") return appendCommand(args);
-  if (subcommand === "handover") return handoverCommand(args);
   if (subcommand === "done") return doneCommand(args);
   if (subcommand === "wont-do") return wontDoCommand(args);
   if (subcommand === "park") return parkCommand(args);
@@ -332,25 +330,6 @@ function parseContinueFrom(value: string | undefined, stepIndex: number): number
     throw new Error(`--continue-from${Number.isFinite(stepIndex) ? ` for step ${stepIndex}` : ""} must be an earlier step number${range} or -, got "${value}".`);
   }
   return n;
-}
-
-/**
- * Handles `tangent goal handover <facts...>`, an alias of `tangent send brain`
- * for one release. A worker submits a note or a typed report; the queue
- * records it and notifies the Area.
- */
-async function handoverCommand(args: Args): Promise<void> {
-  console.log(SEND_ALIAS_HINT);
-  const server = resolveServerUrl(stringArg(args.server));
-  const session = await requireSession(args, "tangent send brain");
-  const text = args._.slice(1).map(String).join(" ").trim();
-  if (!text) throw new Error('tangent send brain needs the note as text: tangent send brain "<note>".');
-  if (booleanArg(args.continue)) throw new Error("--continue is retired. Submit a typed context-risk report; do not replace this worker from inside its own attempt.");
-  const body: Record<string, unknown> = { session, text };
-  const report = parseWorkerReportOption(args);
-  if (report) body.report = report;
-  const result = await postJson(server, "/api/goals/handover", body);
-  console.log(workerHandoverResultLine(result));
 }
 
 /** The session that owns the action: --session, or the tmux session this command runs in. */

@@ -258,14 +258,12 @@ test("brain show keeps durable prompt access when live tmux observation fails", 
   assert.equal(show.prompt, "Keep organizing this Area.", "with no generation yet, the first message is the founding message itself");
 });
 
-test("a worker prompt ends with the one send command and no typed report contract", async () => {
+test("a worker prompt names its organizing Area and exposes one plain send", async () => {
   const serverSource = await readFile(path.join(here, "server.mjs"), "utf8");
-  const closing = serverSource.match(/function workerSendSection\(\) \{[\s\S]*?\n\}/)?.[0] ?? "";
-  assert.match(closing, /tangent send brain "<note>"/);
-  assert.match(closing, /tangent send brain --done "<note>"/);
-  assert.match(closing, /tangent send brain --blocked "<note>"/);
-  assert.doesNotMatch(closing, /send brain --question/);
-  assert.match(closing, /Do not run other tangent commands\. Do not change the Goal file's frontmatter\. The brain marks the Goal done\./);
+  const closing = serverSource.match(/function workerSendSection\(organizerArea\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(closing, /tangent send \$\{organizerArea\} "<note>"/);
+  assert.doesNotMatch(closing, /send brain|--done|--blocked|--question|--present|handover|receipt/);
+  assert.match(closing, /Run no other/);
   const prompts = serverSource.slice(serverSource.indexOf("async function goalPrompt("), serverSource.indexOf("async function pipelineStepPrompt("));
   assert.doesNotMatch(prompts, /--report|implementation-result|review-result|## Brain/, "the worker prompt has no typed report contract");
   assert.doesNotMatch(serverSource, /tangent handover|tangent goal handover|tangent agent send/, "old worker verbs are gone from the server");

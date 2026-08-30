@@ -273,7 +273,7 @@ test("the live world saves one crossing gesture and survives reload and restart"
   assert.deepEqual(afterRestart, beforeRestart, "restart preserves the exact authoritative world");
 });
 
-test("the first world response recovers a crash after the first target rename", { skip: !enabled, timeout: 90_000 }, async (context) => {
+test("the first Area detail response recovers a crash after the first target rename", { skip: !enabled, timeout: 90_000 }, async (context) => {
   const fixture = await createMigrationVault("recovery");
   let server = null;
   context.after(async () => { await stopServer(server); await rm(fixture.root, { recursive: true, force: true }); });
@@ -308,8 +308,10 @@ test("the first world response recovers a crash after the first target rename", 
   assert.equal((await transactionManifest(transactionRoot)).state, "prepared", "the durable journal still owns recovery during target installation");
 
   server = await startServer(fixture, "recovery");
+  const detail = await json(server.base, "/api/areas/show?area=neara%2Fdelivery");
+  assert.equal(detail.map.exists, true, "Area detail includes its authoritative map shard");
+  assert.equal((await transactionManifest(transactionRoot)).state, "committed", "the first Area detail read waits for complete startup recovery");
   const recovered = await json(server.base, "/api/areas/map-world?located=neara%2Fdelivery%2Fstandards");
-  assert.equal((await transactionManifest(transactionRoot)).state, "committed", "the first world read waits for complete startup recovery");
   const composed = composeAreaMapWorld(recovered);
   const standardsRegion = composed.scene.elements.find((element) => element.customData?.tangent?.area === "neara/delivery/standards");
   assert.equal(standardsRegion.width, 760);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, readdir, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -162,6 +162,46 @@ test("readers wait through the complete multi-shard install window", async () =>
   assert.equal(loaded.scene.elements[0].text, "Neara");
 });
 
+test("an ordinary install error keeps waiting readers on complete Git authority and recovers in process", async () => {
+  let releaseFailure;
+  const failurePaused = new Promise((resolve) => { releaseFailure = resolve; });
+  let reachedFailure;
+  const failureReached = new Promise((resolve) => { reachedFailure = resolve; });
+  let failed = false;
+  const value = await fixture("same-process-recovery", {
+    /** Fails once after one target install without simulating process death. */
+    async fault(phase) {
+      if (failed || phase !== "target-installed:0") return;
+      failed = true;
+      reachedFailure();
+      await failurePaused;
+      throw new Error("ordinary target install failure");
+    },
+  });
+  const saving = value.transactions.saveMany([
+    { area: "neara", baseHash: null, canvas: scene("Neara") },
+    { area: "neara/delivery", baseHash: null, canvas: scene("Delivery") },
+  ], { operationId: "same-process-recovery", worldId: "otto" });
+  await failureReached;
+  let readDone = false;
+  const reading = value.transactions.withRead(async () => {
+    const result = await Promise.all([value.transactions.read("neara"), value.transactions.read("neara/delivery")]);
+    readDone = true;
+    return result;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(readDone, false, "the reader stays behind the active install barrier");
+
+  releaseFailure();
+  const [saveResult, [nearRead, deliveryRead]] = await Promise.all([saving, reading]);
+  assert.equal(saveResult.status, 503);
+  assert.deepEqual([nearRead.scene.elements[0].text, deliveryRead.scene.elements[0].text], ["Neara", "Delivery"], "the waiting reader uses one complete Git revision");
+
+  const recovered = await Promise.all([value.transactions.read("neara"), value.transactions.read("neara/delivery")]);
+  assert.deepEqual(recovered.map((entry) => entry.scene.elements[0].text), ["Neara", "Delivery"]);
+  assert.equal((await manifest(value.transactionRoot)).state, "committed", "the same process completes journal recovery before its next fresh read");
+});
+
 test("a writer waits for a reader that started before the multi-shard install", async () => {
   let refInstalled = false;
   const value = await fixture("active-reader", {
@@ -249,6 +289,31 @@ test("recovery refuses to overwrite unrelated target bytes", async () => {
   assert.deepEqual(lastComplete.scene.elements, [], "map reads use the last complete Git snapshot");
   assert.equal((await manifest(value.transactionRoot)).state, "recovery-required");
   assert.equal(JSON.parse(await readFile(path.join(value.root, "neara", "neara.excalidraw"), "utf8")).elements[0].text, "Unrelated");
+
+  const restartedAgain = createAreaMapTransactionRepository({
+    root: value.root, repository: value.repository, vault: value.vault, runGit,
+    transactionRoot: value.transactionRoot,
+    /** Keeps expected transaction failures quiet in tests. */
+    reportError() {},
+  });
+  await assert.rejects(restartedAgain.waitForReadable(), (error) => error.status === 503 && error.recoveryRequired?.reason.includes("unrelated bytes"));
+  assert.deepEqual((await restartedAgain.read("neara")).scene.elements, [], "a second restart still serves the last complete Git snapshot");
+  const blocked = await restartedAgain.saveMany([
+    { area: "neara", baseHash: null, canvas: scene("Later") },
+  ], { operationId: "blocked-after-second-restart", worldId: "otto" });
+  assert.equal(blocked.status, 503, "a second restart cannot resume map writes around durable recovery evidence");
+});
+
+test("startup removes a stale ownerless map lock", async () => {
+  const value = await fixture("ownerless-lock");
+  const lock = path.join(value.transactionRoot, ".vault-map.lock");
+  await mkdir(lock, { recursive: true });
+  const stale = new Date(Date.now() - 20_000);
+  await utimes(lock, stale, stale);
+
+  await value.transactions.recover();
+
+  await assert.rejects(access(lock), { code: "ENOENT" });
 });
 
 test("a writer recovers an earlier operation that failed after its startup recovery", async () => {

@@ -4,6 +4,9 @@ import { mkdir, open, readFile, readdir, rename, rm, rmdir, stat, unlink } from 
 import path from "node:path";
 import { canvasHash, safeCanvasPath, serializeAreaCanvas } from "./area-canvas.mjs";
 
+const LOCK_STALE_MS = 10_000;
+const LOCK_POLL_MS = 25;
+
 /** Returns one stable digest for an idempotent gesture request. */
 const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
@@ -31,6 +34,7 @@ const contentHash = (value) => value === null ? null : canvasHash(value);
 export function createAreaMapTransactionRepository({ root, repository, vault, runGit, transactionRoot, reportError = console.error, recordEvent = null, fault = null }) {
   const lockDirectory = path.join(transactionRoot, ".vault-map.lock");
   let recoveryPromise = null;
+  let recoveryPending = null;
   let recoveryRequired = null;
   let readerBarrier = Promise.resolve();
   let releaseReaders = null;
@@ -97,8 +101,12 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         let alive = false;
         if (Number.isInteger(owner?.pid)) try { process.kill(owner.pid, 0); alive = true; } catch { /* a dead process left the lock */ }
         if (!alive && owner) { await rm(lockDirectory, { recursive: true, force: true }); continue; }
-        if (Date.now() - started > 10_000) throw new Error("Area map transaction lock timed out");
-        await pause(25);
+        let lock = null;
+        if (!owner) try { lock = await stat(lockDirectory); }
+        catch (failure) { if (failure.code !== "ENOENT") throw failure; }
+        if (!owner && lock && Date.now() - lock.mtimeMs >= LOCK_STALE_MS) { await rm(lockDirectory, { recursive: true, force: true }); continue; }
+        if (Date.now() - started > LOCK_STALE_MS) throw new Error("Area map transaction lock timed out");
+        await pause(LOCK_POLL_MS);
       }
     }
   }
@@ -318,6 +326,10 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       await writeManifest(manifestFile, committed);
       await checkpoint("result-recorded", phase);
       return committed;
+    } catch (error) {
+      recoveryPending = { operationId: manifest.operationId, reason: "an interrupted map install needs recovery" };
+      recoveryPromise = null;
+      throw error;
     } finally { unblockReaders(); }
   }
 
@@ -333,7 +345,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         const manifestFile = path.join(worldDirectory, operation.name, "manifest.json");
         let manifest;
         try { manifest = JSON.parse(await readFile(manifestFile, "utf8")); } catch { continue; }
-        if (manifest.state !== "prepared") continue;
+        if (!["prepared", "recovery-required"].includes(manifest.state)) continue;
         const recovery = { operationId: manifest.operationId, priorPhase: manifest.state };
         emitEvent("area_map_recovery", { ...recovery, outcome: "started" });
         const hashes = await Promise.all(manifest.targets.map(async (target) => {
@@ -363,6 +375,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         }
       }
     }
+    recoveryPending = null;
   }
 
   /** Ensures recovery runs once for this server instance. */
@@ -370,8 +383,8 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
 
   /** Runs one complete map read while no transaction can install a partial world. */
   async function withRead(action) {
-    await ensureRecovered();
     if (readLeaseContext.getStore()?.active) return action();
+    await ensureRecovered();
     const release = await acquireReader();
     const lease = { active: true };
     try { return await readLeaseContext.run(lease, action); }
@@ -382,12 +395,13 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
   async function waitForReadable() {
     await withRead(() => {
       if (recoveryRequired) throw Object.assign(new Error("Area map recovery requires attention"), { status: 503, recoveryRequired });
+      if (recoveryPending) throw Object.assign(new Error("Area map recovery is pending"), { status: 503, recoveryPending });
     });
   }
 
   /** Reads worktree authority or the last complete Git snapshot during recovery. */
   async function read(area) {
-    return withRead(() => recoveryRequired ? repository.readCommitted(area) : repository.read(area));
+    return withRead(() => recoveryRequired || recoveryPending ? repository.readCommitted(area) : repository.read(area));
   }
 
   /** Saves every source shard of one world gesture as one exact Git commit. */

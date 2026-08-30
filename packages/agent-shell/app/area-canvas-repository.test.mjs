@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createAreaCanvasRepository } from "./area-canvas-repository.mjs";
+import { canvasHash } from "./area-canvas.mjs";
 import { createEmptyScene, createTextElement } from "./public/area-board-core.js";
 
 test("creates, stages, commits, and conflict-checks one canonical Excalidraw path", async () => {
@@ -133,4 +134,25 @@ test("restores every old shard before reads after an interrupted prepared transa
   assert.deepEqual((await repository.read("neara")).scene, oldScene);
   const manifest = JSON.parse(await readFile(path.join(operation, "manifest.json"), "utf8"));
   assert.equal(manifest.state, "recovered");
+});
+
+test("finishes every new shard when Git committed before result recording", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-canvas-finish-"));
+  const transactions = path.join(root, "state");
+  await mkdir(path.join(root, "neara"), { recursive: true });
+  const oldScene = createEmptyScene(); oldScene.elements.push(createTextElement({ id: "old", text: "Old" }));
+  const newScene = createEmptyScene(); newScene.elements.push(createTextElement({ id: "new", text: "New" }));
+  const oldText = JSON.stringify(oldScene); const newText = JSON.stringify(newScene);
+  const file = path.join(root, "neara/neara.excalidraw"); await writeFile(file, oldText);
+  const operation = path.join(transactions, "committed"); await mkdir(operation, { recursive: true });
+  await writeFile(path.join(operation, "manifest.json"), JSON.stringify({ schema: "area-map-transaction.v1", operationId: "crash", digest: "x", state: "prepared", targets: [{ area: "neara", file: "neara/neara.excalidraw", oldText, newText, newHash: canvasHash(newText) }] }));
+  const repository = createAreaCanvasRepository({ root, transactionRoot: transactions,
+    /** Returns the new blob as if the commit succeeded before the crash. */
+    async runGit() { return { stdout: newText }; },
+    /** Supplies the repository contract. */
+    async commit() { return { committed: true }; },
+  });
+  assert.deepEqual((await repository.read("neara")).scene, newScene);
+  const manifest = JSON.parse(await readFile(path.join(operation, "manifest.json"), "utf8"));
+  assert.equal(manifest.recoveryOutcome, "finished-new");
 });

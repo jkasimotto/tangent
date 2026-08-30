@@ -33,13 +33,22 @@ export function createAreaCanvasRepository({ root, runGit, commit, transactionRo
       let manifest;
       try { manifest = JSON.parse(await readFile(path.join(directory, "manifest.json"), "utf8")); } catch { continue; }
       if (manifest.state !== "prepared") continue;
+      let committed = Boolean(manifest.targets?.length);
+      for (const target of manifest.targets ?? []) {
+        try {
+          const result = await runGit(["-C", root, "show", `HEAD:${target.file}`]);
+          const text = String(result?.stdout ?? result ?? "");
+          if (canvasHash(text) !== target.newHash) committed = false;
+        } catch { committed = false; }
+      }
       for (const target of manifest.targets ?? []) {
         const safe = safeCanvasPath(root, target.file);
         if (!safe) continue;
-        if (target.oldText === null) await unlink(safe.absolute).catch((error) => { if (error.code !== "ENOENT") throw error; });
-        else { await mkdir(path.dirname(safe.absolute), { recursive: true }); await writeFile(safe.absolute, target.oldText, "utf8"); }
+        const selected = committed ? target.newText : target.oldText;
+        if (selected === null) await unlink(safe.absolute).catch((error) => { if (error.code !== "ENOENT") throw error; });
+        else { await mkdir(path.dirname(safe.absolute), { recursive: true }); await writeFile(safe.absolute, selected, "utf8"); }
       }
-      await writeRecord(path.join(directory, "manifest.json"), { ...manifest, state: "recovered", recoveredAt: new Date().toISOString() });
+      await writeRecord(path.join(directory, "manifest.json"), { ...manifest, state: committed ? "committed" : "recovered", recoveryOutcome: committed ? "finished-new" : "restored-old", recoveredAt: new Date().toISOString() });
     }
   }
   /** Runs crash recovery once for this repository instance. */
@@ -114,7 +123,7 @@ export function createAreaCanvasRepository({ root, runGit, commit, transactionRo
     try {
       if (operationDirectory) await writeRecord(path.join(operationDirectory, "manifest.json"), {
         schema: "area-map-transaction.v1", operationId, digest, state: "prepared", preparedAt: new Date().toISOString(),
-        targets: changed.map((entry) => ({ area: entry.area, file: entry.current.file, oldText: entry.canonicalExists ? entry.current.text : null, newHash: entry.desiredHash })),
+        targets: changed.map((entry) => ({ area: entry.area, file: entry.current.file, oldText: entry.canonicalExists ? entry.current.text : null, newText: entry.text, newHash: entry.desiredHash })),
       });
       for (const entry of changed) {
         await mkdir(path.dirname(entry.safe.absolute), { recursive: true });
@@ -128,7 +137,8 @@ export function createAreaCanvasRepository({ root, runGit, commit, transactionRo
       const paths = changed.flatMap((entry) => [entry.current.file, ...(entry.current.legacy ? [entry.current.legacy.file] : [])]);
       const descriptions = changed.map((entry) => entry.reason || `${entry.area.split("/").at(-1)} map`);
       const prefix = changed.some((entry) => entry.current.exists) ? "update" : "add";
-      const result = await commit(paths, `${prefix}: ${area} spatial map · ${descriptions.join(" · ")}`, area, session);
+      const trailer = operationId ? `\n\nTangent-Map-Operation: ${operationId}` : "";
+      const result = await commit(paths, `${prefix}: ${area} spatial map · ${descriptions.join(" · ")}${trailer}`, area, session);
       if (!result.committed) throw Object.assign(new Error(result.error || "canvas commit failed"), { commitFailure: true });
     } catch (error) {
       for (const entry of changed) {

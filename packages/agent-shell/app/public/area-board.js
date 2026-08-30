@@ -33,29 +33,38 @@ function mountWorld(host, { world, getDocuments, api, onBack, focus = null }) {
   let chain = Promise.resolve();
   /** Saves direct region changes in their parent shards. */
   const persist = (nextWorld, changedAreas, changedOwners = new Set()) => {
-    const writes = [];
-    for (const area of changedAreas) {
-      const node = nextWorld.areas.find((entry) => entry.key === area);
-      if (!node || node.parent === "@root") continue;
-      const parent = nextWorld.areas.find((entry) => entry.key === node.parent);
-      if (!parent || parent.shard.state === "unreadable") continue;
-      const scene = structuredClone(parent.shard.scene ?? core.createEmptyScene());
-      const ref = `${area}/${area.split("/").at(-1)}.md`;
-      const [region, label] = core.createRegionElements({ id: node.region.sourceId, ref, title: area.split("/").at(-1), ...node.region.storedRect });
-      const ids = new Set([region.id, label.id]);
-      scene.elements = [...scene.elements.filter((element) => !ids.has(element.id)), region, label];
-      writes.push({ area: node.parent, baseHash: parent.shard.hash ?? null, canvas: scene, reason: `${area.split("/").at(-1)} region` });
-    }
-    for (const owner of changedOwners) {
-      const node = nextWorld.areas.find((entry) => entry.key === owner);
-      if (!node || node.shard.state === "unreadable") continue;
-      const existing = writes.find((write) => write.area === owner);
-      if (existing) existing.canvas = structuredClone(node.shard.scene);
-      else writes.push({ area: owner, baseHash: node.shard.hash ?? null, canvas: structuredClone(node.shard.scene), reason: `${owner.split("/").at(-1)} map` });
-    }
-    if (!writes.length) return;
     saveState = "saving"; editor?.setSaveState({ state: saveState });
     chain = chain.then(async () => {
+      const writes = [];
+      /** Loads canonical source before a structural write can touch a deferred shard. */
+      const sourceScene = async (node) => {
+        if (node.shard.scene) return structuredClone(node.shard.scene);
+        const loaded = await api(`/api/areas/map-shard?area=${encodeURIComponent(node.key)}&worldRevision=${encodeURIComponent(nextWorld.worldRevision)}&located=${encodeURIComponent(nextWorld.locatedArea)}`);
+        if (loaded?.error || loaded?.state === "unreadable" || !loaded?.scene) throw new Error(`Cannot save ${node.key}: its map shard is unavailable`);
+        node.shard = { ...node.shard, ...loaded };
+        return structuredClone(loaded.scene);
+      };
+      for (const area of changedAreas) {
+        const node = nextWorld.areas.find((entry) => entry.key === area);
+        if (!node || node.parent === "@root") continue;
+        const parent = nextWorld.areas.find((entry) => entry.key === node.parent);
+        if (!parent || parent.shard.state === "unreadable") continue;
+        const scene = await sourceScene(parent);
+        const ref = `${area}/${area.split("/").at(-1)}.md`;
+        const [region, label] = core.createRegionElements({ id: node.region.sourceId, ref, title: area.split("/").at(-1), ...node.region.storedRect });
+        const ids = new Set([region.id, label.id]);
+        scene.elements = [...scene.elements.filter((element) => !ids.has(element.id)), region, label];
+        writes.push({ area: node.parent, baseHash: parent.shard.hash ?? null, canvas: scene, reason: `${area.split("/").at(-1)} region` });
+      }
+      for (const owner of changedOwners) {
+        const node = nextWorld.areas.find((entry) => entry.key === owner);
+        if (!node || node.shard.state === "unreadable") continue;
+        const scene = await sourceScene(node);
+        const existing = writes.find((write) => write.area === owner);
+        if (existing) existing.canvas = scene;
+        else writes.push({ area: owner, baseHash: node.shard.hash ?? null, canvas: scene, reason: `${owner.split("/").at(-1)} map` });
+      }
+      if (!writes.length) { saveState = "saved"; editor?.setSaveState({ state: saveState }); return; }
       const result = await api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area: writes[0].area, writes, operationId: crypto.randomUUID() }) });
       if (result?.error || result?.status === 409) throw Object.assign(new Error(result.error || "map changed elsewhere"), { result });
       for (const [area, hash] of Object.entries(result.hashes ?? {})) {

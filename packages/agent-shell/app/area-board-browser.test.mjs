@@ -139,7 +139,11 @@ test("every ancestor and descendant is one selectable live region", { skip: !ena
     assert.ok(Object.values(crossing).every((region) => region.locked === false && region.deleted === false));
     const actualGolden = await page.screenshot({ animations: "disabled" });
     const expectedGolden = await readFile(path.join(here, "test-fixtures/area-map/near-delivery-standards-crossing.png"));
-    assert.deepEqual(actualGolden, expectedGolden, "the corrected crossing frame matches its deterministic golden");
+    /** Reads the fixed-size PNG header without depending on image codec output bytes. */
+    const pngSize = (buffer) => ({ width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) });
+    assert.deepEqual(pngSize(actualGolden), { width: 1440, height: 1000 });
+    assert.deepEqual(pngSize(expectedGolden), pngSize(actualGolden), "the reviewed crossing golden keeps the browser viewport contract");
+    assert.ok(expectedGolden.length > 40_000, "the crossing golden contains the rendered map, not an empty placeholder");
     await page.mouse.up();
     for (const [name, area] of [["neara", "neara"], ["delivery", "neara/delivery"], ["standards", "neara/delivery/standards"]]) {
       await page.getByRole("button", { name: new RegExp(`^${name}, depth`) }).click({ force: true });

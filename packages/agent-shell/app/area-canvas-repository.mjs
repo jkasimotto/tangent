@@ -6,7 +6,11 @@ import { areaCanvasPath, canvasHash, legacyAreaCanvasPath, parseAreaCanvas, pars
 import { createEmptyScene } from "./public/area-board-core.js";
 
 /** Creates the vault-backed repository for canonical Area-map scenes. */
-export function createAreaCanvasRepository({ root, runGit, commit, transactionRoot = path.join(process.env.TANGENT_MAP_STATE_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "map-state"), "transactions"), reportError = console.error }) {
+export function createAreaCanvasRepository({ root, runGit, commit, transactionRoot = process.env.TANGENT_MAP_STATE_ROOT
+  ? path.join(process.env.TANGENT_MAP_STATE_ROOT, "transactions")
+  : root.startsWith(path.join(os.homedir(), ".tangent", "trees"))
+    ? path.join(os.homedir(), ".tangent", "agent-shell", "map-state", "transactions")
+    : path.join(root, ".tangent-map-transactions"), reportError = console.error }) {
   let saveQueue = Promise.resolve();
   let recovered = null;
   /** Returns the durable directory for one operation ID. */

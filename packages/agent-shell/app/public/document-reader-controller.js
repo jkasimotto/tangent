@@ -3,7 +3,7 @@ import { markdownHeadingAnchor } from "./markdown-structure.js";
 /** Creates the Document controller from shell, rendering, Work, and navigation ports. */
 export function createDocumentReaderController({ shell, rendering, work, navigation }) {
   const { state, api, post, paint, showToast, screen, paintPeek, documentPeekLayer } = shell;
-  const { documentComments, markdownHeadings, documentOutlineItems, documentGoal, renderDocumentArticle } = rendering;
+  const { documentComments, markdownHeadings, documentOutlineItems, documentGoal, renderDocumentArticle, documentCopyPayload, markdownToHtml } = rendering;
   const { goalByFile, currentGoal, sessionsForGoal, humanName, areaLabel, agentReference } = work;
   const {
     decodeLink, vaultLinkRecord, revealArea, captureReturnPoint, restoreReturnPoint, selectGoal, showWorkAt,
@@ -461,6 +461,17 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     prefix.setEnd(range.startContainer, range.startOffset);
     const offset = prefix.toString().replace(/\s+/g, " ").trimStart().length;
     return { quote, line: Number(startBlock.dataset.line), offset, crossed, rect: range.getBoundingClientRect() };
+  }
+
+  /** Prepares clean Markdown and HTML for the exact visible reader surface. */
+  function readerCopyPayload({ quick = false, whole = false, selection = window.getSelection?.() } = {}) {
+    const source = quick ? state.documentPeek?.document : state.document;
+    const surface = quick ? documentPeekLayer?.querySelector(".document-peek-scroll") : screen.querySelector(".document-reader-scroll");
+    const root = surface?.querySelector(".document-content") ?? null;
+    if (!source || !root) return null;
+    /** Resolves the same visible title that the reader uses for one wiki link. */
+    const resolveWikiTitle = (target) => vaultLinkRecord(target, source.file)?.title ?? "";
+    return documentCopyPayload({ source, root, selection, markdownToHtml, resolveWikiTitle, whole });
   }
 
   /**
@@ -930,5 +941,5 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** Opens the explicit next-step decision page. */
 
-  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, openDocumentPeek, leaveQuickPath, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, cacheSelectionCommentAnchor, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentScope, existingCommentAnchor, replyInsertionAnchor, editComment, replyComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, commentIdentity, commentIndexInDocument, syncCommentCursor, activeCommentRecord, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea, notifyDocumentComments };
+  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, openDocumentPeek, leaveQuickPath, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, readerCopyPayload, cacheSelectionCommentAnchor, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentScope, existingCommentAnchor, replyInsertionAnchor, editComment, replyComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, commentIdentity, commentIndexInDocument, syncCommentCursor, activeCommentRecord, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea, notifyDocumentComments };
 }

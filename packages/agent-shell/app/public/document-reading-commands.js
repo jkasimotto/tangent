@@ -18,6 +18,7 @@ export const documentReadingCommands = Object.freeze({
   replyComment: "reply-comment",
   resolveComment: "resolve-comment",
   resumeAttempt: "resume-attempt",
+  copy: "copy",
   help: "help",
   clearSelection: "clear-selection",
   clearComment: "clear-comment",
@@ -84,6 +85,7 @@ export function matchDocumentReadingCommand(event, {
   // A staged chord takes its second key. A wrong second key aborts the chord
   // and does nothing, as in Vim.
   if (pendingChord) return null;
+  if (code === "KeyY") return documentReadingCommands.copy;
   if (commentCreation && code === "KeyC") return documentReadingCommands.createComment;
   if (commentLifecycle && activeComment && code === "KeyE") return documentReadingCommands.editComment;
   if (commentLifecycle && activeComment && code === "KeyR") return documentReadingCommands.replyComment;

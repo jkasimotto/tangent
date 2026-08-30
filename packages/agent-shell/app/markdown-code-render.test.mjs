@@ -61,13 +61,13 @@ const DOCUMENT = [
 test("inline code renders as <code>, unchanged by the fenced-block work", async () => {
   const window = await loadShell();
   const out = window.markdownToHtml(DOCUMENT);
-  assert.match(out, /<p data-line="2">Use <code>inline code<\/code> in a sentence\.<\/p>/);
+  assert.match(out, /<p data-line="2" data-copy-block="1">Use <code>inline code<\/code> in a sentence\.<\/p>/);
 });
 
 test("a fenced block with a known language renders highlighted, escaped code and keeps later line numbers correct", async () => {
   const window = await loadShell();
   const out = window.markdownToHtml(DOCUMENT);
-  assert.match(out, /<div class="markdown-code-wrap" data-line="4">/);
+  assert.match(out, /<div class="markdown-code-wrap" data-line="4" data-copy-block="2">/);
   assert.match(out, /<div class="markdown-code-lang">js<\/div>/);
   assert.match(out, /<pre><code class="language-javascript">/);
   assert.match(out, /<span class="tok-keyword">const<\/span>/);
@@ -76,16 +76,26 @@ test("a fenced block with a known language renders highlighted, escaped code and
   assert.doesNotMatch(out, /<p data-line="5">/);
   // The line count the fence's three lines occupy is preserved, so the next
   // paragraph keeps its real file line.
-  assert.match(out, /<p data-line="9">After the block\.<\/p>/);
+  assert.match(out, /<p data-line="9" data-copy-block="3">After the block\.<\/p>/);
 });
 
 test("an unlabeled fence renders as a plain escaped code block with no language label or spans", async () => {
   const window = await loadShell();
   const out = window.markdownToHtml(DOCUMENT);
-  const start = out.indexOf('<div class="markdown-code-wrap" data-line="11">');
+  const start = out.indexOf('<div class="markdown-code-wrap" data-line="11" data-copy-block="4">');
   assert.ok(start >= 0);
   const block = out.slice(start, out.indexOf("</div>", start) + "</div>".length);
-  assert.equal(block, '<div class="markdown-code-wrap" data-line="11"><pre><code>plain, unlabeled fence</code></pre></div>');
+  assert.equal(block, '<div class="markdown-code-wrap" data-line="11" data-copy-block="4"><pre><code>plain, unlabeled fence</code></pre></div>');
+});
+
+test("export mode emits semantic safe HTML without reader artifacts", async () => {
+  const window = await loadShell();
+  const out = window.markdownToHtml(`# Title\n\n[Safe](https://example.com) [Bad](javascript:alert(1))\n\n\`\`\`js\nconst x = 1;\n\`\`\`\n\n| A | B |\n| --- | --- |\n| one | two |`, { mode: "export" });
+  assert.match(out, /<h1>Title<\/h1>/);
+  assert.match(out, /<a href="https:\/\/example.com">Safe<\/a>/);
+  assert.doesNotMatch(out, /javascript:|class=|data-|<button| id=|tok-/);
+  assert.match(out, /<pre style="white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace"><code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace">const x = 1;<\/code><\/pre>/);
+  assert.match(out, /<table style="border-collapse:collapse">/);
 });
 
 test("a fenced block never becomes a CriticMarkup comment, and content around it still can", async () => {

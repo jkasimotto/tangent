@@ -9,7 +9,8 @@ import { createApiClient } from "./api-client.js";
 import { createShellState } from "./shell-state.js";
 import { shellDom } from "./shell-dom.js";
 import { createRefreshCoordinator, readProjection, startRebuildRefresh, startRefreshLifecycle } from "./refresh-lifecycle.js";
-import { FENCE_OPEN, fenceCloser, frontmatterLineCount, markdownHeadingAnchor, markdownHeadings, markdownTableAlignments, markdownTableCells, visibleMarkdown } from "./markdown-structure.js";
+import { FENCE_OPEN, fenceCloser, frontmatterLineCount, markdownHeadingAnchor, markdownHeadings, markdownTableAlignments, markdownTableCells, scanMarkdownBlocks, visibleMarkdown } from "./markdown-structure.js";
+import { documentCopyPayload } from "./document-copy.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { rebuildCommitRows } from "./rebuild-commit-list.js";
 import { buildGoToRows } from "./go-to-rows.js";
@@ -126,7 +127,7 @@ function vaultLinkRecord(target, baseFile = state.document?.file ?? "") {
  * in document-comments.js mirrors these rules to map a selection back to the
  * source; change both together.
  */
-function inlineMarkdown(value, baseFile = state.document?.file ?? "") {
+function inlineMarkdown(value, baseFile = state.document?.file ?? "", { mode = "reader" } = {}) {
   const links = [];
   const source = String(value ?? "")
     .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, target, alias) => {
@@ -139,13 +140,22 @@ function inlineMarkdown(value, baseFile = state.document?.file ?? "") {
     });
   let html = escapeHtml(source)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
   for (const [index, link] of links.entries()) {
     if (/^(?:https?:|mailto:)/i.test(link.target)) {
       html = html.replace(
         `\u0001${index}\u0002`,
-        `<a class="markdown-link external" href="${escapeHtml(link.target)}" target="_blank" rel="noreferrer">${escapeHtml(link.label || link.target)}</a>`
+        mode === "export"
+          ? `<a href="${escapeHtml(link.target)}">${escapeHtml(link.label || link.target)}</a>`
+          : `<a class="markdown-link external" href="${escapeHtml(link.target)}" target="_blank" rel="noreferrer">${escapeHtml(link.label || link.target)}</a>`
       );
+      continue;
+    }
+    if (mode === "export") {
+      const record = vaultLinkRecord(link.target, baseFile);
+      const fallback = humanName(link.target.split("#")[0].split("/").at(-1)?.replace(/\.md$/i, "") || link.target);
+      html = html.replace(`\u0001${index}\u0002`, escapeHtml(link.label || record?.title || fallback));
       continue;
     }
     if (link.target.startsWith("#")) {
@@ -184,13 +194,20 @@ function markdownToHtml(text, options = {}) {
   const lines = source.split("\n");
   const html = [];
   const headingIds = new Map();
-  const comments = options.comments ?? [];
-  const composer = options.composer ?? null;
+  const exportMode = options.mode === "export";
+  const comments = exportMode ? [] : options.comments ?? [];
+  const composer = exportMode ? null : options.composer ?? null;
   // The quick Document layer reads a file the screen is not showing, and it
   // owns no write controls (design-quick-returnable-document-search D5).
   const baseFile = options.baseFile ?? state.document?.file ?? "";
   const readOnly = Boolean(options.readOnly);
   const lineOffset = frontmatterLineCount(text);
+  const copyBlocks = scanMarkdownBlocks(text);
+  const copyByLine = new Map(copyBlocks.map((block) => [block.firstLine, block]));
+  /** Adds source identity only to reader output. */
+  const copyAttrs = (fileLine) => exportMode ? "" : copyByLine.has(fileLine) ? ` data-copy-block="${copyByLine.get(fileLine).id}"` : "";
+  /** Renders inline content for the selected output mode. */
+  const inline = (value) => inlineMarkdown(value, baseFile, { mode: exportMode ? "export" : "reader" });
   /** Comment blocks (and the composer) that belong under one file line. */
   const tailFor = (fileLine) => {
     const parts = comments.filter((comment) => comment.line === fileLine)
@@ -244,7 +261,13 @@ function markdownToHtml(text, options = {}) {
       }
       if (lang.toLowerCase() === "mermaid") {
         const source = escapeHtml(body.join("\n"));
-        html.push(`<div class="markdown-diagram" data-mermaid-diagram data-line="${fileLine}"><pre><code>${source}</code></pre></div>${tail}`);
+        html.push(exportMode
+          ? `<pre style="white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace"><code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace">${source}</code></pre>`
+          : `<div class="markdown-diagram" data-mermaid-diagram data-line="${fileLine}"${copyAttrs(fileLine)}><pre><code>${source}</code></pre></div>${tail}`);
+        continue;
+      }
+      if (exportMode) {
+        html.push(`<pre style="white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace"><code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace">${escapeHtml(body.join("\n"))}</code></pre>`);
         continue;
       }
       const highlighter = codeHighlight;
@@ -252,7 +275,7 @@ function markdownToHtml(text, options = {}) {
       const code = highlighter ? highlighter.highlightHtml(body.join("\n"), lang) : escapeHtml(body.join("\n"));
       const label = lang ? `<div class="markdown-code-lang">${escapeHtml(lang)}</div>` : "";
       html.push(
-        `<div class="markdown-code-wrap" data-line="${fileLine}">${label}<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${code}</code></pre></div>${tail}`
+        `<div class="markdown-code-wrap" data-line="${fileLine}"${copyAttrs(fileLine)}>${label}<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${code}</code></pre></div>${tail}`
       );
     } else if (alignments && headers.length === alignments.length) {
       closeList();
@@ -268,17 +291,20 @@ function markdownToHtml(text, options = {}) {
         index += 1;
       }
       index -= 1;
-      /** Returns the alignment class for one table column. */
-      const cellClass = (column) => ` class="align-${alignments[column]}"`;
-      html.push(
-        `<div class="markdown-table-wrap" data-line="${tableLine}"><table><thead><tr>${headers.map((cell, column) => `<th${cellClass(column)}>${inlineMarkdown(cell, baseFile)}</th>`).join("")}</tr></thead>` +
-        `<tbody>${rows.map((row) => `<tr>${row.map((cell, column) => `<td${cellClass(column)}>${inlineMarkdown(cell, baseFile)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>${tableTail}`
-      );
+      if (exportMode) html.push(`<table style="border-collapse:collapse"><thead><tr>${headers.map((cell) => `<th>${inline(cell)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${inline(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      else {
+        /** Returns the alignment class for one table column. */
+        const cellClass = (column) => ` class="align-${alignments[column]}"`;
+        html.push(
+          `<div class="markdown-table-wrap" data-line="${tableLine}"${copyAttrs(tableLine)}><table><thead><tr data-copy-row="0">${headers.map((cell, column) => `<th${cellClass(column)} data-copy-row="0" data-copy-cell="${column}">${inline(cell)}</th>`).join("")}</tr></thead>` +
+          `<tbody>${rows.map((row, rowIndex) => `<tr data-copy-row="${rowIndex + 1}">${row.map((cell, column) => `<td${cellClass(column)} data-copy-row="${rowIndex + 1}" data-copy-cell="${column}">${inline(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>${tableTail}`
+        );
+      }
     } else if (heading) {
       closeList();
       const level = Math.min(4, heading[1].length);
       const id = markdownHeadingAnchor(heading[2], headingIds);
-      html.push(`<h${level} id="${escapeHtml(id)}" data-line="${fileLine}">${inlineMarkdown(heading[2], baseFile)}</h${level}>${tail}`);
+      html.push(exportMode ? `<h${level}>${inline(heading[2])}</h${level}>` : `<h${level} id="${escapeHtml(id)}" data-line="${fileLine}"${copyAttrs(fileLine)}>${inline(heading[2])}</h${level}>${tail}`);
     } else if (bullet || ordered) {
       const nextList = ordered ? "ol" : "ul";
       if (list !== nextList) {
@@ -286,13 +312,17 @@ function markdownToHtml(text, options = {}) {
         list = nextList;
         html.push(`<${list}>`);
       }
-      html.push(`<li data-line="${fileLine}">${inlineMarkdown((bullet || ordered)[1], baseFile)}${tail}</li>`);
+      html.push(`<li${exportMode ? "" : ` data-line="${fileLine}"${copyAttrs(fileLine)}`}>${inline((bullet || ordered)[1])}${exportMode ? "" : tail}</li>`);
     } else if (!line.trim()) {
       closeList();
       if (tail) html.push(tail);
+    } else if (/^\s*>\s*/.test(line)) {
+      closeList();
+      const value = line.replace(/^\s*(?:>\s*)+/, "");
+      html.push(exportMode ? `<blockquote><p>${inline(value)}</p></blockquote>` : `<blockquote data-line="${fileLine}"${copyAttrs(fileLine)}><p>${inline(value)}</p></blockquote>${tail}`);
     } else {
       closeList();
-      html.push(`<p data-line="${fileLine}">${inlineMarkdown(line, baseFile)}</p>${tail}`);
+      html.push(exportMode ? `<p>${inline(line)}</p>` : `<p data-line="${fileLine}"${copyAttrs(fileLine)}>${inline(line)}</p>${tail}`);
     }
   }
   closeList();
@@ -501,7 +531,7 @@ const {
 
 const documentReaderController = createDocumentReaderController({
   shell: { state, api, post, paint, showToast, screen, paintPeek: forward(() => renderDocumentPeekLayer), documentPeekLayer },
-  rendering: { documentComments, markdownHeadings, documentOutlineItems, documentGoal, renderDocumentArticle },
+  rendering: { documentComments, markdownHeadings, documentOutlineItems, documentGoal, renderDocumentArticle, documentCopyPayload, markdownToHtml },
   work: { goalByFile, currentGoal, sessionsForGoal, humanName, areaLabel, agentReference },
   navigation: {
     decodeLink, vaultLinkRecord, revealArea, captureReturnPoint, restoreReturnPoint,
@@ -514,7 +544,7 @@ const {
   openDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading,
   leaveQuickPath,
   openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf,
-  readerSelection, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine,
+  readerSelection, readerCopyPayload, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine,
   openCommentComposer, setCommentScope, syncCommentDraft, cancelCommentComposer, noteInComposer,
   composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer,
   commentIdentity, syncCommentCursor, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment,
@@ -1645,7 +1675,7 @@ shellBindings = bindShellEvents({
     openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
     cancelCommentComposer, submitCommentComposer, commentIdentity, syncCommentCursor,
     activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea,
-    notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
+    notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, readerCopyPayload, openReaderAgent,
     closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading,
     leaveQuickPath, openDocumentPeek,
   },

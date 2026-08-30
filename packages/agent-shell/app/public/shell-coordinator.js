@@ -547,6 +547,8 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     modalField.hidden = !field;
     modalField.innerHTML = field?.kind === "actions"
       ? `<div class="modal-action-list" role="menu" aria-label="${escapeHtml(field.label || title)}">${field.options.map((option) => `<button type="button" role="menuitem" data-modal-action="${escapeHtml(option.value)}" data-modal-key="${escapeHtml(option.key || "")}"${option.enabled === false ? ` aria-disabled="true" data-disabled-reason="${escapeHtml(option.reason || "This action is not available.")}"` : ""}><span><kbd>${escapeHtml(option.key || "")}</kbd><strong>${escapeHtml(option.label)}</strong></span><small>${escapeHtml(option.enabled === false ? option.reason || option.help : option.help || "")}</small></button>`).join("")}</div>`
+      : field?.kind === "copy-fallback"
+      ? `<label><span>${escapeHtml(field.label || "Copy Markdown")}</span><textarea data-modal-input readonly rows="12">${escapeHtml(field.value || "")}</textarea></label>`
       : field?.kind === "select"
       ? `<label><span>${escapeHtml(field.label)}</span><select data-modal-select>${field.options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></label>`
       : field?.kind === "request"
@@ -554,14 +556,20 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
         : field
           ? `<label><span>${escapeHtml(field.label)}</span><textarea data-modal-input${field.required === false ? "" : " required"} placeholder="${escapeHtml(field.placeholder)}"></textarea></label>`
           : "";
-    modalActions.innerHTML = field?.kind === "actions"
+    modalActions.innerHTML = field?.kind === "copy-fallback"
+      ? `<button class="primary-button" type="button" data-modal-cancel>Close <kbd>esc</kbd></button>`
+      : field?.kind === "actions"
       ? `<button class="quiet-button" type="button" data-modal-cancel>Cancel <kbd>esc</kbd></button>`
       : `<button class="quiet-button" type="button" data-modal-cancel>Cancel</button>
       <button class="${danger ? "danger-button" : "primary-button"}" type="button" data-modal-confirm>${escapeHtml(confirmLabel)} <kbd>${field ? "⌘↵" : "↵"}</kbd></button>`;
     modalConfirm = onConfirm;
     modalLayer.hidden = false;
     syncLayerInertness();
-    window.setTimeout(() => (modalField.querySelector("[data-modal-action]:not([aria-disabled='true'])") || modalField.querySelector("[data-modal-action]") || modalField.querySelector("[data-modal-select]") || modalField.querySelector("[data-modal-input]") || (rows.length ? modalCopy : null) || modalActions.querySelector("[data-modal-confirm]"))?.focus(), 0);
+    window.setTimeout(() => {
+      const target = modalField.querySelector("[data-modal-action]:not([aria-disabled='true'])") || modalField.querySelector("[data-modal-action]") || modalField.querySelector("[data-modal-select]") || modalField.querySelector("[data-modal-input]") || (rows.length ? modalCopy : null) || modalActions.querySelector("[data-modal-confirm]");
+      target?.focus();
+      if (field?.kind === "copy-fallback") target?.select?.();
+    }, 0);
   }
 
   /** Closes the confirmation modal without acting. */

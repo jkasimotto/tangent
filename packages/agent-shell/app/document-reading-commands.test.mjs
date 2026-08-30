@@ -47,6 +47,7 @@ test("normal reading keys match exact Vim and Vimium commands", () => {
   assert.equal(matchDocumentReadingCommand(key("KeyE"), { activeComment: true }), command.editComment);
   assert.equal(matchDocumentReadingCommand(key("KeyR"), { activeComment: true }), command.replyComment);
   assert.equal(matchDocumentReadingCommand(key("KeyX"), { activeComment: true }), command.resolveComment);
+  assert.equal(matchDocumentReadingCommand(key("KeyY")), command.copy);
   assert.equal(matchDocumentReadingCommand(key("Slash", { shiftKey: true })), command.help);
 });
 
@@ -80,6 +81,7 @@ test("wrong modifiers, IME input, and an earlier owner never reach reading mode"
   assert.equal(matchDocumentReadingCommand(key("BracketLeft")), command.stageChord, "[ opens the [c chord");
   assert.equal(matchDocumentReadingCommand(key("Slash")), null);
   assert.equal(matchDocumentReadingCommand(key("KeyC", { metaKey: true })), null);
+  assert.equal(matchDocumentReadingCommand(key("KeyY", { metaKey: true })), null);
   assert.equal(matchDocumentReadingCommand(key("KeyE", { shiftKey: true }), { activeComment: true }), null);
   assert.equal(matchDocumentReadingCommand(key("KeyJ", { isComposing: true })), null);
   assert.equal(matchDocumentReadingCommand(key("KeyJ", { keyCode: 229 })), null);

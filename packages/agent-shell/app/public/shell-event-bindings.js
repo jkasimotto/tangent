@@ -46,7 +46,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
     cancelCommentComposer, submitCommentComposer, commentIdentity, syncCommentCursor, activeCommentIdentity, focusCommentIdentity,
     editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea,
-    notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
+    notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, readerCopyPayload, openReaderAgent,
     closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading, openDocumentPeek,
     leaveQuickPath,
   } = documents;
@@ -58,6 +58,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   let launchParentSurface = null;
   let harnessReturnPoint = null;
   let areaProcessesReturnPoint = null;
+  const copyOperations = { full: { serial: 0, timer: null, cached: null }, quick: { serial: 0, timer: null, cached: null } };
 
   /** Returns from one worker agent to its exact Work or Document context. */
   function leaveGoalAgent() {
@@ -1091,6 +1092,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       { key: "{ / }", label: "Move by heading", help: "Move to the previous or next heading." },
       { key: "H / L", label: "Document history", help: "Open the previous or next Document in your reading history." },
       { key: "]c / [c", label: "Move by comment", help: "Move to the next or previous comment." },
+      { key: "y", label: "Copy", help: "Copy the selection, or the whole Document." },
       { key: "c", label: "Write a comment", help: quick ? "Open the full reader to write a comment." : "Write a comment at the current text or Document." },
       ...(!quick ? [
         { key: "e", label: "Edit active comment", help: "Edit the active Julian comment." },
@@ -1160,6 +1162,107 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const anchor = selection.anchorNode?.nodeType === 1 ? selection.anchorNode : selection.anchorNode?.parentElement;
     const focus = selection.focusNode?.nodeType === 1 ? selection.focusNode : selection.focusNode?.parentElement;
     return Boolean((anchor && surface.contains(anchor)) || (focus && surface.contains(focus)));
+  }
+
+  /** The visible reader owns clean copy; a selection must start in its source column. */
+  function visibleCopySurface() {
+    if (state.documentPeek?.document && !documentPeekLayer.hidden) return { quick: true, name: "quick" };
+    if (state.view === "document" && state.document) return { quick: false, name: "full" };
+    return null;
+  }
+
+  /** True when the Selection gesture began in source-backed reading content. */
+  function selectionStartsInCopyRoot(quick) {
+    const selection = window.getSelection?.();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
+    const root = documentReadingSurface(quick)?.querySelector(".document-content");
+    const anchor = selection.anchorNode?.nodeType === 1 ? selection.anchorNode : selection.anchorNode?.parentElement;
+    return Boolean(root && anchor && root.contains(anchor) && anchor.closest?.("[data-copy-block]"));
+  }
+
+  /** The requested scope: eligible selection first, whole Document otherwise. */
+  function prepareReaderCopy(quick) {
+    const selectionStarted = selectionStartsInCopyRoot(quick);
+    const selected = readerCopyPayload({ quick, whole: false });
+    if (selected || selectionStarted) return selected;
+    return readerCopyPayload({ quick, whole: true });
+  }
+
+  /** Mutates only the existing control, preserving reader DOM and Selection. */
+  function setCopyFeedback(name, label, { announce = false } = {}) {
+    const button = document.querySelector(`[data-document-copy="${name}"]`);
+    if (!button) return;
+    const text = button.querySelector("[data-copy-label]");
+    const status = button.querySelector("[data-copy-status]");
+    if (text) text.textContent = label;
+    if (announce && status) {
+      status.textContent = "";
+      /** Repeats identical status text after clearing the live region. */
+      const repeat = () => { if (status.isConnected) status.textContent = label; };
+      if (window.requestAnimationFrame) window.requestAnimationFrame(repeat);
+      else window.setTimeout(repeat, 0);
+    }
+  }
+
+  /** Restores the live scope label after feedback expires. */
+  function resetCopyLabel(name) {
+    const quick = name === "quick";
+    setCopyFeedback(name, readerCopyPayload({ quick, whole: false }) ? "Copy selection" : "Copy");
+  }
+
+  /** Gives one visible copy operation serial, non-repainting feedback. */
+  function showCopyFeedback(name, label, expectedButton = document.querySelector(`[data-document-copy="${name}"]`)) {
+    const operation = copyOperations[name];
+    const serial = ++operation.serial;
+    if (operation.timer) window.clearTimeout(operation.timer);
+    if (!expectedButton?.isConnected || document.querySelector(`[data-document-copy="${name}"]`) !== expectedButton) return serial;
+    setCopyFeedback(name, label, { announce: true });
+    operation.timer = window.setTimeout(() => {
+      if (operation.serial !== serial) return;
+      operation.timer = null;
+      if (!expectedButton.isConnected || document.querySelector(`[data-document-copy="${name}"]`) !== expectedButton) return;
+      resetCopyLabel(name);
+    }, 2000);
+    return serial;
+  }
+
+  /** Opens the permission-free native selection fallback for a requested payload. */
+  function openCopyFallback(payload) {
+    openModal({
+      kicker: "Copy failed", title: "Copy Markdown", copy: "Select and copy this Markdown with Cmd+C.",
+      field: { kind: "copy-fallback", label: "Copy Markdown", value: payload.markdown },
+      confirmLabel: "Close",
+      /** The fallback has no mutation to confirm. */
+      onConfirm: () => true,
+    });
+  }
+
+  /** Writes both clipboard forms as one operation from the current gesture. */
+  function writeReaderCopy(payload, name) {
+    if (!payload) return false;
+    const operation = copyOperations[name];
+    const serial = ++operation.serial;
+    const button = document.querySelector(`[data-document-copy="${name}"]`);
+    let writing;
+    try {
+      if (!window.ClipboardItem || !navigator.clipboard?.write || !window.Blob) throw new Error("Rich clipboard unavailable");
+      const item = new window.ClipboardItem({
+        "text/html": Promise.resolve(new window.Blob([payload.html], { type: "text/html" })),
+        "text/plain": Promise.resolve(new window.Blob([payload.markdown], { type: "text/plain" })),
+      });
+      writing = navigator.clipboard.write([item]);
+    } catch (error) {
+      writing = Promise.reject(error);
+    }
+    Promise.resolve(writing).then(() => {
+      if (operation.serial !== serial || !button?.isConnected || document.querySelector(`[data-document-copy="${name}"]`) !== button) return;
+      showCopyFeedback(name, payload.scope === "selection" ? "Copied selection" : "Copied", button);
+    }, () => {
+      if (operation.serial !== serial || !button?.isConnected || document.querySelector(`[data-document-copy="${name}"]`) !== button) return;
+      showCopyFeedback(name, "Copy failed", button);
+      openCopyFallback(payload);
+    });
+    return true;
   }
 
   /** Clears a staged chord key on one reading surface. */
@@ -1383,6 +1486,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       readerResumeAttemptButton(quick)?.click();
       return true;
     }
+    if (command === documentReadingCommands.copy) {
+      writeReaderCopy(prepareReaderCopy(quick), quick ? "quick" : "full");
+      return true;
+    }
     if (command === documentReadingCommands.help) {
       openDocumentKeySheet({ quick });
       return true;
@@ -1445,6 +1552,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    */
   function handleDocumentPeekClick(event) {
     const target = event.target;
+    const copy = target.closest?.("[data-document-copy='quick']");
+    if (copy) {
+      const payload = copyOperations.quick.cached?.button === copy ? copyOperations.quick.cached.payload : prepareReaderCopy(true);
+      copyOperations.quick.cached = null;
+      return writeReaderCopy(payload, "quick");
+    }
     if (target === documentPeekLayer) return closeDocumentPeek();
     if (target.closest?.("[data-close-document-peek]")) return closeDocumentPeek();
     if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: true });
@@ -1476,6 +1589,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const processControl = target.closest?.("[data-control-process]");
     if (processControl) return controlProcess(processControl);
     if (state.view === "document") syncPointerComment(target, false);
+    const copy = target.closest?.("[data-document-copy='full']");
+    if (copy) {
+      const payload = copyOperations.full.cached?.button === copy ? copyOperations.full.cached.payload : prepareReaderCopy(false);
+      copyOperations.full.cached = null;
+      return writeReaderCopy(payload, "full");
+    }
     const cursor = target.closest?.("[data-work-cursor]");
     const areaJump = target.closest?.("[data-move-work-area]");
     if (areaJump && state.view === "work") return moveAreaCursor(Number(areaJump.dataset.moveWorkArea), cursor ?? cursorRow());
@@ -2973,8 +3092,32 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     try { terminalFit(); } catch {}
   });
 
+  document.addEventListener("pointerdown", (event) => {
+    const button = event.target.closest?.("[data-document-copy]");
+    if (!button) return;
+    const name = button.dataset.documentCopy;
+    copyOperations[name].cached = { button, payload: prepareReaderCopy(name === "quick") };
+  }, { capture: true });
+
+  // The native copy event is the synchronous, permission-free clean-copy path.
+  document.addEventListener("copy", (event) => {
+    const surface = visibleCopySurface();
+    if (!surface || !event.clipboardData) return;
+    const payload = readerCopyPayload({ quick: surface.quick, whole: false });
+    if (!payload) return;
+    try {
+      event.clipboardData.setData("text/html", payload.html);
+      event.clipboardData.setData("text/plain", payload.markdown);
+    } catch {
+      return;
+    }
+    event.preventDefault();
+    showCopyFeedback(surface.name, "Copied selection");
+  }, { capture: true });
+
   document.addEventListener("selectionchange", () => {
     if (state.view === "document") updateSelectionCommentButton();
+    for (const name of ["full", "quick"]) if (!copyOperations[name].timer) resetCopyLabel(name);
   });
 
   return { paintWorkSearch: searchBar.paintBar };

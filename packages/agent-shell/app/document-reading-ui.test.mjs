@@ -5,13 +5,22 @@ import {
 } from "./focus-shell-ui-fixture.mjs";
 
 /** Boots two linked Documents with headings and comments for both reader surfaces. */
-async function bootReadingShell() {
+async function bootReadingShell({ clipboardWrite = async () => {} } = {}) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
   window.setInterval = () => 0;
   window.HTMLCanvasElement.prototype.getContext = () => null;
+  window.Range.prototype.getBoundingClientRect = () => ({ top: 0, left: 0, width: 20, height: 10 });
   window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() { this.dataset.scrolledTo = "1"; };
+  const clipboardWrites = [];
+  window.ClipboardItem = class ClipboardItem {
+    constructor(data) { this.data = data; }
+  };
+  Object.defineProperty(window.navigator, "clipboard", { configurable: true, value: {
+    /** Records one rich clipboard write for assertions. */
+    async write(items) { clipboardWrites.push(items); return clipboardWrite(items); },
+  } });
   const first = { file: "otto/reader/design-first.md", area: "otto/reader", kind: "document", docKind: "page", title: "First reader", searchText: "first reader", goalHistory: [] };
   const second = { file: "otto/reader/design-second.md", area: "otto/reader", kind: "document", docKind: "page", title: "Second reader", searchText: "second reader", goalHistory: [] };
   const texts = {
@@ -59,7 +68,7 @@ async function bootReadingShell() {
   };
   window.eval(shellBundle);
   await settle(window);
-  return { window, first, second, resolveRequests, documentWrites, resolveControl, texts };
+  return { window, first, second, resolveRequests, documentWrites, resolveControl, texts, clipboardWrites };
 }
 
 /** Dispatches one exact cancellable keyboard event from the current owner. */
@@ -68,6 +77,16 @@ function press(window, key, code, options = {}) {
   const event = new window.KeyboardEvent("keydown", { key, code, bubbles: true, cancelable: true, ...init });
   target.dispatchEvent(event);
   return event;
+}
+
+/** Reads one jsdom Blob without relying on the host Blob implementation. */
+function blobText(window, blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new window.FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
 }
 
 /** Gives a jsdom scroll owner real metrics and two stable heading offsets. */
@@ -295,4 +314,75 @@ test("the full reader moves semantically from pointer comments and lets c write"
   await settle(window);
   assert.equal(window.document.querySelector(".document-reader"), null, "the final Escape leaves the reader");
   window.close();
+});
+
+test("clean copy writes both forms, keeps native fallback honest, and exposes Markdown on failure", async () => {
+  const { window, first, clipboardWrites } = await bootReadingShell();
+  await openDocumentViaGoTo(window, first.title);
+  await settle(window);
+  const surface = window.document.querySelector(".document-reader-scroll");
+  const selection = selectWords(window, surface);
+  const stored = new Map();
+  const copyEvent = new window.Event("copy", { bubbles: true, cancelable: true });
+  Object.defineProperty(copyEvent, "clipboardData", { value: {
+    /** Records one synchronous clipboard form. */
+    setData(type, value) { stored.set(type, value); },
+  } });
+  window.document.dispatchEvent(copyEvent);
+  assert.equal(copyEvent.defaultPrevented, true);
+  assert.equal(stored.get("text/plain"), "Open");
+  assert.equal(stored.get("text/html"), "<p>Open</p>");
+  assert.equal(window.document.querySelector("[data-document-copy='full'] [data-copy-label]").textContent, "Copied selection");
+  assert.equal(selection.toString(), "Open ", "feedback leaves the source Selection intact");
+
+  const failedNative = new window.Event("copy", { bubbles: true, cancelable: true });
+  Object.defineProperty(failedNative, "clipboardData", { value: {
+    /** Models failure after the first synchronous form. */
+    setData(type) { if (type === "text/plain") throw new Error("native write failed"); },
+  } });
+  window.document.dispatchEvent(failedNative);
+  assert.equal(failedNative.defaultPrevented, false, "a ClipboardEvent failure leaves native copy in charge");
+
+  const copyButton = window.document.querySelector("[data-document-copy='full']");
+  copyButton.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+  selection.removeAllRanges();
+  copyButton.click();
+  await settle(window);
+  assert.equal(await blobText(window, await clipboardWrites[0][0].data["text/plain"]), "Open", "pointerdown preserves the selected payload before focus can collapse it");
+  const emptyCopy = new window.Event("copy", { bubbles: true, cancelable: true });
+  Object.defineProperty(emptyCopy, "clipboardData", { value: {
+    /** Fails if the no-selection path touches clipboard data. */
+    setData() { throw new Error("must not write"); },
+  } });
+  window.document.dispatchEvent(emptyCopy);
+  assert.equal(emptyCopy.defaultPrevented, false, "Cmd+C without an eligible selection stays native");
+  press(window, "y", "KeyY", { target: surface });
+  await settle(window);
+  assert.equal(clipboardWrites.length, 2);
+  const forms = clipboardWrites[1][0].data;
+  assert.deepEqual(Object.keys(forms).sort(), ["text/html", "text/plain"]);
+  assert.equal((await forms["text/plain"]).type, "text/plain");
+  assert.equal(window.document.querySelector("[data-document-copy='full'] [data-copy-label]").textContent, "Copied");
+  window.close();
+
+  /** Models a denied asynchronous clipboard write. */
+  const clipboardWrite = async () => { throw new Error("denied"); };
+  const failed = await bootReadingShell({ clipboardWrite });
+  await openDocumentViaGoTo(failed.window, failed.first.title);
+  await settle(failed.window);
+  const failedSurface = failed.window.document.querySelector(".document-reader-scroll");
+  failedSurface.focus();
+  press(failed.window, "y", "KeyY", { target: failedSurface });
+  await settle(failed.window);
+  await settle(failed.window);
+  const textarea = failed.window.document.querySelector("#modal-layer textarea[readonly]");
+  assert.ok(textarea, "failure uses the existing modal boundary");
+  assert.match(textarea.value, /^# First reader/);
+  assert.equal(failed.window.document.activeElement, textarea);
+  assert.equal(textarea.selectionStart, 0);
+  assert.equal(textarea.selectionEnd, textarea.value.length);
+  press(failed.window, "Escape", "Escape", { target: textarea });
+  assert.equal(failed.window.document.querySelector("#modal-layer").hidden, true);
+  assert.ok(failed.window.document.activeElement.classList.contains("document-reader-scroll"), "Escape restores the originating reading surface");
+  failed.window.close();
 });

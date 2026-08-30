@@ -92,11 +92,10 @@
    * again on this form. The rules mirror `inlineMarkdown` in shell.js; change
    * both together.
    *
-   * Known limit: a wiki link without an alias shows the linked record's title,
-   * which this helper cannot know, so it keeps the raw target. A selection
-   * across such a link can fail to match.
+   * `resolveWikiTitle` is the same reader resolver used by inlineMarkdown, so
+   * an unaliased wiki link projects the words that are actually visible.
    */
-  function visibleLine(lineText, tokens) {
+  function visibleLine(lineText, tokens, resolveWikiTitle = null) {
     const source = String(lineText ?? "");
     const tokenAt = new Map();
     for (const token of tokens ?? []) tokenAt.set(token.from, Math.max(tokenAt.get(token.from) ?? 0, token.to));
@@ -148,23 +147,24 @@
       }
       const wiki = source.slice(i).match(/^\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/);
       if (wiki) {
-        const label = wiki[2] ?? wiki[1];
+        const label = wiki[2] ?? resolveWikiTitle?.(wiki[1].trim()) ?? wiki[1];
+        const visibleFrom = out.length;
         emitLabel(label, wiki[2] === undefined ? i + 2 : i + 2 + wiki[1].length + 1);
-        spans.push({ from: i, to: i + wiki[0].length });
+        spans.push({ from: i, to: i + wiki[0].length, sourceFrom: i, sourceTo: i + wiki[0].length, visibleFrom, visibleTo: out.length, kind: "wiki" });
         i += wiki[0].length;
         continue;
       }
       const link = source[i - 1] === "!" ? null : source.slice(i).match(/^\[([^\]]+)\]\(([^)]+)\)/);
       if (link) {
         emitLabel(link[1], i + 1);
-        spans.push({ from: i, to: i + link[0].length });
+        spans.push({ from: i, to: i + link[0].length, sourceFrom: i, sourceTo: i + link[0].length, visibleFrom: out.length - link[1].trim().length, visibleTo: out.length, kind: "link" });
         i += link[0].length;
         continue;
       }
       if (source[i] === "`" && codeEnd < 0) {
         const close = source.indexOf("`", i + 1);
         if (close > i + 1) {
-          spans.push({ from: i, to: close + 1 });
+          spans.push({ from: i, to: close + 1, sourceFrom: i, sourceTo: close + 1, visibleFrom: out.length, visibleTo: out.length + close - i - 1, kind: "code" });
           codeEnd = close;
           i += 1;
           continue;
@@ -173,7 +173,7 @@
       if (source.startsWith("**", i) && boldEnd < 0) {
         const close = source.indexOf("*", i + 2);
         if (close > i + 2 && source[close + 1] === "*") {
-          spans.push({ from: i, to: close + 2 });
+          spans.push({ from: i, to: close + 2, sourceFrom: i, sourceTo: close + 2, visibleFrom: out.length, visibleTo: out.length + close - i - 2, kind: "strong" });
           boldEnd = close;
           i += 2;
           continue;

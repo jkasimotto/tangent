@@ -4,6 +4,10 @@ import { activeBrainForArea } from "./brain-ownership.js";
 
 /** Creates the document reader view product boundary. */
 export function createDocumentReaderView({ state, markdownToHtml, currentGoal, goalByFile, sessionsForGoal, areaLabel, areaPath, humanName }) {
+  /** One non-repainting copy control; event bindings update its two text nodes. */
+  function documentCopyButton(surface) {
+    return `<button class="quiet-button document-copy-action" type="button" data-document-copy="${surface}" aria-keyshortcuts="y" title="Copy the selection, or the whole Document (y)"><span data-copy-label>Copy</span> <kbd>y</kbd><span class="visually-hidden" data-copy-status aria-live="polite" aria-atomic="true"></span></button>`;
+  }
   /** The exact Document Area brain with a currently live session. */
   function activeDocumentBrain() {
     return activeBrainForArea(state.brains, state.document?.area);
@@ -140,6 +144,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         </div>
         <div class="document-reader-actions">
           ${documentOutlineMenu()}
+          ${documentCopyButton("full")}
           ${repositoryFile ? "" : documentCommentControls()}
           ${state.goalDetail?.goal ? "" : `<button class="document-keys-action" type="button" data-document-keys aria-keyshortcuts="Shift+/" title="Document reading keys (?)">Keys <kbd>?</kbd></button>`}
           ${repositoryFile ? "" : brain ? `<details class="reader-brain-actions">
@@ -275,6 +280,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
             <strong class="document-peek-title">${escapeHtml(title)}</strong>
           </div>
           <div class="document-peek-actions">
+            ${loaded ? documentCopyButton("quick") : ""}
             ${peekCommentControls(loaded)}
             <button class="quiet-button document-keys-action" type="button" data-document-keys aria-keyshortcuts="Shift+/" title="Document reading keys (?)">Keys <kbd>?</kbd></button>
             <button class="quiet-button" type="button" data-promote-document-peek data-peek-key="promote">Open full reader</button>

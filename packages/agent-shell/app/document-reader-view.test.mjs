@@ -43,3 +43,15 @@ test("brain navigation remains available without comments", () => {
   assert.match(html, /data-notify-document-comments[^>]*disabled/);
   assert.match(html, /data-open-brain="tangent-brain"/);
 });
+
+test("both reader toolbars expose the accessible copy action", () => {
+  const html = toolbar([]);
+  assert.match(html, /data-document-copy="full"/);
+  assert.match(html, /aria-keyshortcuts="y"/);
+  assert.match(html, /data-copy-status aria-live="polite"/);
+  const state = { documentPeek: {}, vault: { documents: [] } };
+  const view = createDocumentReaderView({ state, markdownToHtml: emptyHtml, currentGoal: noGoal, goalByFile: noGoal, sessionsForGoal: noItems, areaLabel: identity, areaPath: noAreaPath, humanName: identity });
+  const peek = view.renderDocumentPeek({ document: { title: "Quick", file: "quick.md", text: "Body", comments: [], area: "otto/tangent" }, trail: [], trailIndex: -1 });
+  assert.match(peek, /data-document-copy="quick"/);
+  assert.match(peek, /data-copy-status aria-live="polite"/);
+});

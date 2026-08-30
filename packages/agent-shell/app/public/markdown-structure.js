@@ -75,3 +75,58 @@ export function markdownTableAlignments(value) {
   if (cells.length < 2 || cells.some((cell) => !/^:?-{3,}:?$/.test(cell))) return null;
   return cells.map((cell) => cell.startsWith(":") && cell.endsWith(":") ? "center" : cell.endsWith(":") ? "right" : "left");
 }
+
+/**
+ * Scans the reader's small Markdown block set and keeps exact source bounds.
+ * Rendering and clean-copy mapping use these identities; `data-line` remains
+ * the separate comment-anchor contract.
+ */
+export function scanMarkdownBlocks(text) {
+  const source = visibleMarkdown(text);
+  const lineOffset = frontmatterLineCount(text);
+  const lines = source.split("\n");
+  const starts = [];
+  let cursor = 0;
+  for (const line of lines) { starts.push(cursor); cursor += line.length + 1; }
+  const blocks = [];
+  /** Adds one exact structural block to the ordered scan. */
+  const add = (type, first, last, detail = {}) => blocks.push({
+    id: String(blocks.length), type, firstLine: first + lineOffset, lastLine: last + lineOffset,
+    sourceStart: starts[first], sourceEnd: starts[last] + lines[last].length,
+    raw: lines.slice(first, last + 1).join("\n"), detail,
+  });
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trimEnd();
+    if (!line.trim()) continue;
+    const fence = line.match(FENCE_OPEN);
+    if (fence) {
+      const closer = fenceCloser(fence[1]);
+      let last = index + 1;
+      while (last < lines.length && !closer.test(lines[last].trimEnd())) last += 1;
+      if (last >= lines.length) last = lines.length - 1;
+      add("code", index, last, { fence: fence[1], language: fence[2] || "", bodyStart: index + 1, bodyEnd: closer.test(lines[last]?.trimEnd() ?? "") ? last - 1 : last });
+      index = last;
+      continue;
+    }
+    const alignments = line.includes("|") ? markdownTableAlignments(lines[index + 1] ?? "") : null;
+    const headers = alignments ? markdownTableCells(line) : [];
+    if (alignments && headers.length === alignments.length) {
+      let last = index + 1;
+      while (last + 1 < lines.length && lines[last + 1].includes("|") && lines[last + 1].trim()) {
+        if (markdownTableCells(lines[last + 1]).length !== headers.length) break;
+        last += 1;
+      }
+      add("table", index, last, { headers, alignments, rows: [headers, ...lines.slice(index + 2, last + 1).map(markdownTableCells)] });
+      index = last;
+      continue;
+    }
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    const list = line.match(/^(\s*)([-*]|\d+[.)])\s+(.+)$/);
+    const quote = line.match(/^(\s*(?:>\s*)+)(.*)$/);
+    if (heading) add("heading", index, index, { level: heading[1].length, content: heading[2] });
+    else if (list) add("list", index, index, { indent: list[1].length, marker: list[2], content: list[3] });
+    else if (quote) add("quote", index, index, { prefix: quote[1], content: quote[2] });
+    else add("paragraph", index, index, { content: line });
+  }
+  return blocks;
+}

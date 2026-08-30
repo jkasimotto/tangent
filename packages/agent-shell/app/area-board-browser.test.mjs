@@ -289,6 +289,11 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await page.keyboard.press("m");
     await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
     const only = page.locator("[data-map-only]");
+    /** Waits until the shell reflects the controller's Only state. */
+    const waitForOnly = (pressed) => page.waitForFunction(
+      (expected) => document.querySelector("[data-map-only]")?.getAttribute("aria-pressed") === String(expected),
+      pressed,
+    );
     await page.waitForFunction(() => document.querySelector("[data-map-only]")?.getAttribute("aria-pressed") === "true");
     await page.getByRole("button", { name: "Otto, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
     await page.getByRole("button", { name: "Tangent, child of Otto, depth 2, unfolded, ready, 0 blocks" }).waitFor();
@@ -296,9 +301,11 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     assert.equal(await page.getByRole("button", { name: "Other, child of Otto, depth 2, unfolded, ready, 0 blocks" }).count(), 0);
     assert.equal(await page.getByRole("button", { name: "Neara, child of map root, depth 1, unfolded, ready, 0 blocks" }).count(), 0);
     assert.equal(await page.locator(".tangent-map-ancestry button").count(), 3);
-    assert.match(await page.locator("[data-map-back]").textContent(), /whole map/i, "the shell Back control prints the controller's opening Escape action");
+    assert.match(await page.locator("#back-button").textContent(), /^Work esc$/i, "the primary shell Back control owns the one map exit");
+    assert.equal(await page.locator(".map-screen > header").count(), 0, "the map has no redundant sub-header");
+    assert.equal(await page.locator(".tangent-map-escape").count(), 0, "the canvas has no second Escape ladder");
     await assertShellAreaCentered(page, "otto/tangent", "otto/tangent/desk", shellComposition);
-    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/);
+    assert.match(await page.locator("#bar-context").textContent(), /otto \/ tangentMap/i);
     const tangentLabel = page.getByRole("button", { name: "Tangent, child of Otto, depth 2, unfolded, ready, 0 blocks" });
     const openingBox = await tangentLabel.boundingBox();
     assert.ok(openingBox);
@@ -315,26 +322,24 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await findInput.fill("desk");
     assert.equal(await find.getByRole("option").count(), 1);
     assert.match(await find.textContent(), /1 of 1/);
-    await page.keyboard.press("Escape");
+    await find.getByRole("button", { name: "Cancel" }).click();
     await find.waitFor({ state: "detached" });
     const restoredBox = await tangentLabel.boundingBox();
-    assert.ok(Math.abs(restoredBox.x - openingBox.x) < 1 && Math.abs(restoredBox.y - openingBox.y) < 1, "Escape restores the camera from before find");
+    assert.ok(Math.abs(restoredBox.x - openingBox.x) < 1 && Math.abs(restoredBox.y - openingBox.y) < 1, "Cancel restores the camera from before find");
     await page.keyboard.press("Control+f");
     await findInput.fill("desk");
     await page.keyboard.press("Enter");
     await find.waitFor({ state: "detached" });
-    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent \/ desk · Map$/, "Enter keeps the Area match as one camera step");
-    assert.match(await page.locator(".tangent-map-escape").textContent(), /clears selection/, "the kept Area remains selected");
-    await page.keyboard.press("Escape");
-    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent \/ desk · Map$/, "the first Escape clears only the kept selection");
-    await page.keyboard.press("Escape");
-    assert.equal(await only.getAttribute("aria-pressed"), "false", "the second Escape clears the retargeted restriction");
-    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent \/ desk · Map$/);
-    await page.keyboard.press("Escape");
-    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/, "camera Escape then returns to the find origin");
+    assert.match(await page.locator("#bar-context").textContent(), /otto \/ tangent \/ deskMap/i, "Enter selects and centers the visible Area");
+    assert.equal(await only.getAttribute("aria-pressed"), "true", "Find never changes the active Only scope");
+    assert.match(await only.textContent(), /Only tangent/i, "Find leaves the scope target unchanged");
+    await page.locator('[data-map-breadcrumb="otto/tangent"]').click();
 
-    // Pointer Only removes every unrelated label and restores a manual fold
+    // Only changes only through its visible chip and restores a manual fold
     // after Julian returns to the whole map.
+    await only.click();
+    await waitForOnly(false);
+    await page.getByRole("button", { name: "Neara, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
     await page.getByRole("button", { name: "Outline", exact: true }).click();
     const otherTreeItem = page.getByRole("treeitem", { name: "Other, child of Otto, depth 2, unfolded, ready, 0 blocks" });
     await otherTreeItem.focus();
@@ -342,36 +347,33 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await page.getByRole("button", { name: "Other, child of Otto, depth 2, folded, ready, 0 blocks" }).waitFor();
     await page.getByRole("button", { name: "Outline", exact: true }).click();
     await only.click();
-    assert.equal(await only.getAttribute("aria-pressed"), "true");
+    await waitForOnly(true);
     await page.getByRole("button", { name: "Desk, child of Otto / Tangent, depth 3, unfolded, ready, 0 blocks" }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Neara, child of map root, depth 1, unfolded, ready, 0 blocks" }).count(), 0);
     assert.equal(await page.getByRole("button", { name: "Other, child of Otto, depth 2, folded, ready, 0 blocks" }).count(), 0);
     assert.equal(await page.locator(".tangent-map-ancestry button").count(), 3, "Only renders only the target lineage and subtree");
-    assert.match(await page.locator(".tangent-map-escape").textContent(), /whole map/);
     await only.click();
-    assert.equal(await only.getAttribute("aria-pressed"), "false");
+    await waitForOnly(false);
     await page.getByRole("button", { name: "Neara, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
     await page.getByRole("button", { name: "Other, child of Otto, depth 2, folded, ready, 0 blocks" }).waitFor();
     await page.locator("[data-map-column]").focus();
     await page.keyboard.press("Shift+o");
-    assert.equal(await only.getAttribute("aria-pressed"), "true", "Shift-O enters Only without taking Excalidraw's bare O ellipse key");
-    await page.keyboard.press("Escape");
-    assert.equal(await only.getAttribute("aria-pressed"), "false", "Escape leaves Only before it leaves the map");
+    await waitForOnly(true);
 
-    // Find can preview outside Only without flashing the whole map. Cancel
-    // restores the exact prior scope, camera, and selection.
-    await only.click();
+    // Find searches only the current projection. An outside Area is a miss
+    // that leaves the exact scope and camera unchanged.
+    const scopedBox = await tangentLabel.boundingBox();
     await page.locator("[data-map-find]").click();
     await findInput.fill("neara");
-    await page.waitForTimeout(100);
-    assert.match(await find.textContent(), /neara/i, "the pointer-opened finder lists the Area outside Only");
-    await find.getByRole("option", { name: /neara/i }).click();
-    assert.equal(await only.getAttribute("aria-pressed"), "true", "an outside preview retargets Only instead of showing the whole map");
-    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 1);
-    await find.getByRole("button", { name: "Esc" }).click();
+    await find.getByText("No match", { exact: true }).waitFor();
+    assert.equal(await find.getByRole("option").count(), 0, "an Area outside Only is not a result");
+    assert.equal(await only.getAttribute("aria-pressed"), "true");
+    const afterOutsideMiss = await tangentLabel.boundingBox();
+    assert.ok(Math.abs(afterOutsideMiss.x - scopedBox.x) < 1 && Math.abs(afterOutsideMiss.y - scopedBox.y) < 1, "an outside miss leaves the camera unchanged");
+    await find.getByRole("button", { name: "Cancel" }).click();
     await find.waitFor({ state: "detached" });
     assert.equal(await only.getAttribute("aria-pressed"), "true");
-    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 3, "Cancel restores the prior Tangent scope");
+    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 3, "the Tangent scope never changed");
 
     await page.locator(".excalidraw canvas.interactive").evaluate((canvas) => { canvas.dataset.companionIdentity = "original"; });
     await page.keyboard.press("b");
@@ -421,11 +423,9 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     // Every Work entry creates a fresh restricted visit. The exact target fit
     // wins over the camera saved by the previous visit.
     await page.setViewportSize({ width: 1400, height: 760 });
-    /** Clears opening Only, returns to Work, and waits for the exact row focus. */
+    /** Returns to Work once and waits for the exact row focus. */
     const returnToWork = async (area) => {
-      await page.locator("[data-map-back]").click();
-      await page.waitForFunction(() => document.querySelector("[data-map-only]")?.getAttribute("aria-pressed") === "false");
-      await page.locator("[data-map-back]").click();
+      await page.locator("#back-button").click();
       await page.waitForFunction(() => !document.querySelector(".map-screen"));
       await page.waitForFunction((target) => document.activeElement === document.querySelector(`[data-work-cursor="area:${target}"] [data-open-area-map]`), area);
     };
@@ -440,7 +440,11 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     };
 
-    await returnToWork("otto/tangent");
+    assert.equal(await only.getAttribute("aria-pressed"), "true", "Only remains active until the map exits");
+    await page.locator("[data-map-column]").focus();
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector(".map-screen"));
+    await page.waitForFunction(() => document.activeElement === document.querySelector('[data-work-cursor="area:otto/tangent"] [data-open-area-map]'));
     await openFromWork("otto");
     assert.deepEqual(await page.locator(".tangent-map-ancestry > button strong").allTextContents(), ["otto", "tangent", "desk", "other"]);
     assert.equal(await page.getByText("Neara", { exact: true }).count(), 0);

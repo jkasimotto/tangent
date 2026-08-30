@@ -91,10 +91,10 @@ test("Area Map controls and m open the broad root map, then drill and return wit
   assert.ok(rootMap, "the top-level Area has its visible Map control");
   rootMap.click();
   await settle(window);
-  assert.match(document.querySelector(".map-screen h1").textContent, /^otto · Map$/);
-  assert.ok(gets.some((url) => new URL(url).searchParams.get("area") === "otto"), "the opened screen requests the parent Area canvas");
+  assert.match(document.querySelector("#bar-context").textContent, /ottoMap/);
+  assert.ok(gets.some((url) => new URL(url).pathname === "/api/areas/map-world" && new URL(url).searchParams.get("located") === "otto"), "the opened screen requests the unified world at the selected Area");
 
-  document.querySelector("[data-map-back]").click();
+  document.querySelector("#back-button").click();
   await settle(window);
   assert.equal(document.activeElement, document.querySelector('[data-work-cursor="area:otto"] [data-open-area-map]'), "Back restores focus to the opening Map control");
 
@@ -104,21 +104,20 @@ test("Area Map controls and m open the broad root map, then drill and return wit
   childRow.querySelector("[data-work-cursor-control]").focus();
   press(window, "m");
   await settle(window);
-  assert.match(document.querySelector(".map-screen h1").textContent, /^otto \/ tangent · Map$/);
-  assert.equal(new URL(gets.at(-1)).searchParams.get("area"), "otto", "m requests the top-level root canvas");
+  assert.match(document.querySelector("#bar-context").textContent, /otto \/ tangentMap/);
+  assert.equal(new URL(gets.at(-1)).searchParams.get("located"), "otto/tangent", "m requests the unified world at the selected child");
   assert.match(document.querySelector(".map-focus-controls").textContent, /Starred.*Active/, "the map prints the shared Focus switches");
+  assert.equal(document.querySelector(".map-screen > header"), null, "the map uses the primary shell header");
+  assert.match(document.querySelector("#back-button").textContent, /^Work esc$/i);
 
+  const requestsBeforeDrill = gets.length;
   document.querySelector('[data-map-breadcrumb="otto/tangent"]').click();
   await settle(window);
-  assert.equal(new URL(gets.at(-1)).searchParams.get("area"), "otto/tangent", "a breadcrumb segment drills into its Area-owned file");
+  assert.equal(gets.length, requestsBeforeDrill, "a breadcrumb fits inside the authoritative world without loading another shard root");
 
   press(window, "Escape");
   await settle(window);
-  assert.equal(new URL(gets.at(-1)).searchParams.get("area"), "otto", "Escape widens one map layer before leaving the map");
-
-  press(window, "Escape");
-  await settle(window);
-  assert.equal(document.activeElement, document.querySelector('[data-work-cursor="area:otto/tangent"] [data-open-area-map]'), "Escape restores focus to the child row's Map control");
+  assert.equal(document.activeElement, document.querySelector('[data-work-cursor="area:otto/tangent"] [data-open-area-map]'), "one Escape restores focus to the child row's Map control");
 });
 
 test("presented Documents are capped child rows whose visible dismiss control uses Julian's fenced route", async () => {

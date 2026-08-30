@@ -2797,6 +2797,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    */
   function leaveCurrentSurface() {
     if (closeNearestOpenDetails()) return true;
+    if (state.view === "map") {
+      closeAreaMap();
+      return true;
+    }
     if (state.view === "work") {
       unwindWork();
       return true;
@@ -3026,10 +3030,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       event.preventDefault(); event.stopPropagation(); toggleMapBrain(); return;
     }
     if (state.view === "map" && event.key === "Escape") {
-      // Excalidraw owns Escape while its surface has a tool or selection. The
-      // editor island calls closeAreaMap only after both are clear.
-      if (event.target.closest?.("[data-tangent-area-map]")) return;
-      event.preventDefault();
+      event.preventDefault(); event.stopPropagation();
       return closeAreaMap();
     }
     if (context === "work" && event.key === "Escape") {

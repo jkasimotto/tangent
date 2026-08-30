@@ -90,7 +90,6 @@ function LegacyAreaCanvas({ host, bridge, options }) {
         publish(settled, appState);
       }}
     />
-    <button type="button" className="tangent-map-escape" onClick={() => options.onBack?.()}>Esc → Work</button>
     <div className={`tangent-map-save ${save.state}`} role="status">
       {save.state === "saving" ? "Saving…" : save.state === "blocked" || save.state === "conflict" ? <>Not saved <button type="button" onClick={() => options.onRetry?.()}>Retry</button></> : "Saved"}
     </div>

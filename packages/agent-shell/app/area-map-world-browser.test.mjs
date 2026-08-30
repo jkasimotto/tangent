@@ -406,6 +406,23 @@ async function moveArea(page, area, delta) {
   };
 }
 
+/** Drags an already selected Area without changing the current Only scope. */
+async function moveAreaInPlace(page, area, delta) {
+  await selectArea(page, area);
+  const before = (await regions(page))[area];
+  const grip = { x: before.x + before.width - 45, y: before.y + before.height * 0.3 };
+  const start = await viewportPoint(page, grip.x, grip.y);
+  const end = await viewportPoint(page, grip.x + delta.x, grip.y + delta.y);
+  const priorEvents = await page.evaluate(() => window.worldEvents.length);
+  await page.mouse.move(start.x, start.y);
+  await page.waitForTimeout(80);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForFunction((count) => window.worldEvents.length > count, priorEvents);
+  return { before, after: (await regions(page))[area] };
+}
+
 /** Starts a right-middle resize and leaves the pointer down for same-frame assertions. */
 async function beginRightResize(page, area, delta, steps = 4) {
   await selectArea(page, area);
@@ -464,6 +481,55 @@ function digest(buffer) {
 function pngSize(buffer) {
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 }
+
+test("visible descendants move and resize without changing the opening Only scope", { timeout: 90_000 }, async (context) => {
+  const page = await openWorld(context, "?opening=1");
+  const restriction = "neara/delivery/standards";
+  assert.equal(await page.evaluate(() => window.editor.controller().snapshot().restrictionArea), restriction);
+
+  const labelBeforeMove = await page.locator('[data-area-map-label="neara/delivery/standards/clearance"]').evaluate((label) => ({ left: label.style.left, top: label.style.top }));
+  const moved = await moveAreaInPlace(page, "neara/delivery/standards/clearance", { x: 35, y: 25 });
+  assert.ok(moved.after.x > moved.before.x + 25 && moved.after.y > moved.before.y + 15);
+  const labelAfterMove = await page.locator('[data-area-map-label="neara/delivery/standards/clearance"]').evaluate((label) => ({ left: label.style.left, top: label.style.top }));
+  assert.notDeepEqual(labelAfterMove, labelBeforeMove, "the structural label follows its moved region");
+  assert.equal(await page.evaluate(() => window.editor.controller().snapshot().restrictionArea), restriction, "direct manipulation does not retarget Only");
+
+  const beforeResize = await regions(page);
+  const priorEvents = await page.evaluate(() => window.worldEvents.length);
+  await beginRightResize(page, "neara/delivery/standards/clearance", 180, 4);
+  const preview = await regions(page);
+  assert.ok(preview["neara/delivery/standards/clearance"].width > beforeResize["neara/delivery/standards/clearance"].width + 140);
+  assert.ok(preview["neara/delivery/standards"].width > beforeResize["neara/delivery/standards"].width, "the first preview frame expands the direct ancestor");
+  assert.ok(preview["neara/delivery"].width > beforeResize["neara/delivery"].width, "the first preview frame expands every ancestor");
+  await page.mouse.up();
+  await page.waitForFunction((count) => window.worldEvents.length > count, priorEvents);
+  assert.equal(await page.evaluate(() => window.editor.controller().snapshot().restrictionArea), restriction);
+
+  const beforeParentResize = await regions(page);
+  const childSourceBefore = await page.evaluate(() => structuredClone(window.editor.controller().world().areas.find((node) => node.key === "neara/delivery/standards/clearance").region.storedRect));
+  const parentEvent = await page.evaluate(() => window.worldEvents.length);
+  await beginRightResize(page, "neara/delivery/standards", 100, 4);
+  const parentPreview = await regions(page);
+  assert.ok(parentPreview["neara/delivery/standards"].width > beforeParentResize["neara/delivery/standards"].width + 90, "the expanded parent starts at its visible handle");
+  assert.ok(parentPreview["neara/delivery/standards"].x + parentPreview["neara/delivery/standards"].width + 60 <= parentPreview["neara/delivery"].x + parentPreview["neara/delivery"].width + 0.01);
+  assert.ok(parentPreview["neara/delivery"].x + parentPreview["neara/delivery"].width + 60 <= parentPreview.neara.x + parentPreview.neara.width + 0.01);
+  await page.mouse.up();
+  await page.waitForFunction((count) => window.worldEvents.length > count, parentEvent);
+  assert.deepEqual(await page.evaluate(() => window.editor.controller().world().areas.find((node) => node.key === "neara/delivery/standards/clearance").region.storedRect), childSourceBefore, "parent resize leaves descendant source geometry unchanged");
+
+  const durable = await regions(page);
+  await page.evaluate(async () => {
+    window.nextWorld = structuredClone(window.worldEvents.at(-1).world);
+    await window.editor.controller().reload();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const reloaded = await regions(page);
+  for (const area of ["neara/delivery/standards", "neara/delivery/standards/clearance"]) assert.deepEqual(reloaded[area], durable[area], `${area} survives authoritative reload`);
+  await page.evaluate(() => window.editor.controller().setRestriction(null));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const unscoped = await regions(page);
+  for (const area of ["neara/delivery/standards", "neara/delivery/standards/clearance"]) assert.deepEqual(unscoped[area], durable[area], `${area} keeps the same authoritative geometry after clearing Only`);
+});
 
 test("every ancestor and descendant is one selectable live region", { timeout: 90_000 }, async (context) => {
   const page = await openWorld(context);

@@ -35,7 +35,6 @@
 .tangent-map-save.conflict { color: #e8a317; }
 .tangent-map-save.blocked { color: #e03131; }
 .tangent-map-save button { min-height: 28px; }
-.tangent-map-escape { position: absolute; z-index: 4; left: 12px; bottom: 16px; min-height: 32px; padding: 0 10px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-muted); box-shadow: var(--tangent-shadow); cursor: pointer; }
 .tangent-map-ancestry { position: absolute; z-index: 3; inset: 0; pointer-events: none; overflow: hidden; }
 .tangent-map-ancestry button { position: absolute; padding: 2px 6px; border: 0; border-radius: 4px; background: color-mix(in srgb, var(--tangent-island) 82%, transparent); color: var(--tangent-text); font: 14px Excalifont, Virgil, sans-serif; white-space: nowrap; pointer-events: auto; }
 .tangent-map-ancestry button:focus-visible { outline: 2px solid var(--tangent-accent); outline-offset: 1px; }

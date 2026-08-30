@@ -171,7 +171,7 @@ test("stored ancestor folds cannot hide the restricted target", () => {
   controller.destroy();
 });
 
-test("Only contains the target lineage and complete subtree until Escape", () => {
+test("Only contains the target lineage and complete subtree until its explicit control clears it", () => {
   const controller = createAreaMapWorldController({ world: fortyOneAreaWorld(), storage: memoryStorage() });
   const authority = controller.world();
   assert.equal(controller.snapshot().restrictionArea, "atlas/focus", "a new visit starts restricted to its located Area");
@@ -180,10 +180,14 @@ test("Only contains the target lineage and complete subtree until Escape", () =>
   assert.deepEqual({ active: restricted.active, area: restricted.area, excludedCount: restricted.excludedCount }, { active: true, area: "atlas/focus", excludedCount: 4 });
   assert.ok(restricted.element);
   assert.deepEqual([...controller.snapshot().scopedAreas], fortyOneAreaWorld().areas.map((node) => node.key).filter((area) => area === "atlas" || area === "atlas/focus" || area.startsWith("atlas/focus/")));
-  assert.equal(controller.snapshot().nextEscape, "Esc → whole map");
+  assert.equal(controller.snapshot().nextEscape, "Esc → Work", "Only is not an Escape stage");
   controller.selectArea("atlas/focus/item-00");
-  assert.equal(controller.escape().kind, "selection", "selection unwinds before the restriction");
-  assert.equal(controller.escape().kind, "restriction");
+  assert.equal(controller.escape().kind, "selection", "controller selection can unwind without changing Only");
+  controller.navigateArea("atlas", { select: false });
+  assert.equal(controller.snapshot().restrictionArea, "atlas/focus", "navigation inside the projection does not retarget Only");
+  controller.escape();
+  assert.equal(controller.snapshot().restrictionArea, "atlas/focus", "Escape cannot clear Only");
+  controller.setRestriction(null);
   assert.equal(controller.snapshot().restrictionArea, null);
   assert.deepEqual([...controller.snapshot().folded], ["atlas/near-a"], "only the user's own fold remains");
   assert.deepEqual(controller.world(), authority, "Only never changes the unified map authority");

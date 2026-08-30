@@ -745,6 +745,7 @@ function updateHeader() {
   const isProgramCreate = state.view === "program-create";
   const isProgramSession = state.view === "program-session";
   const isHarnesses = state.view === "harnesses";
+  const isMap = state.view === "map";
   const program = currentProgram();
   const isTopLevel = isWork || isAreas || isPrompts;
   backButton.classList.toggle("has-back", !isTopLevel);
@@ -760,6 +761,8 @@ function updateHeader() {
       ? "Program"
     : isHarnesses
       ? state.harnessReturnView === "areas" ? "Areas" : "Work"
+    : isMap
+      ? "Work"
     : state.view === "agent"
         ? state.agentReturnView === "document" && state.document ? "Document" : "Work"
         : state.view === "document"
@@ -770,8 +773,8 @@ function updateHeader() {
     ? `<span>Agent Shell</span><small>[${escapeHtml(deployedRevision)}]</small>`
     : escapeHtml(backLabel);
   // Browser-managed child screens share one visible Escape/Back operation.
-  if (state.view === "document" || isHarnesses) backButton.innerHTML = `${escapeHtml(backButton.textContent)} <kbd>esc</kbd>`;
-  barContext.textContent = isDescribe
+  if (state.view === "document" || isHarnesses || isMap) backButton.innerHTML = `${escapeHtml(backButton.textContent)} <kbd>esc</kbd>`;
+  const contextText = isDescribe
       ? "Message the brain"
       : isDescribeAgent && describeSession
         ? `${areaLabel(describeSession.area)} · Defining work · ${describeWorkStateLabel(describeSession)}`
@@ -792,6 +795,8 @@ function updateHeader() {
             : goal
               ? `${areaLabel(goal.area)} · ${goal.title}${goalSession ? ` · ${stateLabel(goal, goalSession)}` : ""}`
               : "";
+  if (isMap) barContext.innerHTML = `<span class="map-breadcrumb">${mapBreadcrumb()}</span><span class="map-context-kind">Map</span><span class="map-focus-controls">${mapFindControls()}<button type="button" data-map-brain>Brain <kbd>b</kbd></button><button type="button" data-starred-only aria-pressed="${state.areaFocusOnly}">${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd></button><button type="button" data-active-only aria-pressed="${state.activeOnly}">${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd></button></span>`;
+  else barContext.textContent = contextText;
 
   const topLevel = isWork || isAreas || isAreaEdit || isProgramDetail || isProgramCreate || isProgramSession
     ? "work"
@@ -901,7 +906,7 @@ function renderScreen() {
   else if (state.view === "harnesses") screen.innerHTML = renderHarnessEditor();
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument() + launchPopover();
-  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header map-screen-header"><button type="button" data-map-back>Work <kbd>Esc</kbd></button><h1><span class="map-breadcrumb">${mapBreadcrumb()}</span><span> · Map</span></h1><div class="map-focus-controls">${mapFindControls()}<button type="button" data-map-brain>Brain <kbd>b</kbd></button><button type="button" data-starred-only aria-pressed="${state.areaFocusOnly}">${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd></button><button type="button" data-active-only aria-pressed="${state.activeOnly}">${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd></button></div></header><div class="map-companion"><div class="map-column focused" data-map-column tabindex="-1"><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the complete Area map…</p></div></div><div class="map-brain-divider" data-map-brain-divider hidden></div><aside class="map-brain-pane" data-map-brain-pane hidden></aside></div></section>`;
+  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><div class="map-companion"><div class="map-column focused" data-map-column tabindex="-1"><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the complete Area map…</p></div></div><div class="map-brain-divider" data-map-brain-divider hidden></div><aside class="map-brain-pane" data-map-brain-pane hidden></aside></div></section>`;
   else {
     state.view = "work";
     screen.innerHTML = renderWork();
@@ -1528,7 +1533,6 @@ let mapBrainOpen = false;
 let mapBrainFocus = "map";
 let mapBrainSession = "";
 let mapViewState = { restrictionArea: "", findOpen: false };
-let mapNavigation = { trail: [] };
 let mapBrainWidth = clampMapBrainWidth(localStorage.getItem("agent-shell.map-brain-width"), window.innerWidth);
 /** Prints the full launch path while keeping each Area segment actionable. */
 function mapBreadcrumb() {
@@ -1567,21 +1571,15 @@ function disposeAreaMap() {
   activeAreaBoard = null;
 }
 /** Updates map navigation and Focus chrome without replacing the editor island. */
-function updateAreaMapChrome(navigation = null) {
-  if (navigation) mapNavigation = navigation;
-  const breadcrumb = screen.querySelector(".map-breadcrumb");
+function updateAreaMapChrome() {
+  const breadcrumb = barContext.querySelector(".map-breadcrumb");
   if (breadcrumb) breadcrumb.innerHTML = mapBreadcrumb();
-  const back = screen.querySelector("[data-map-back]");
-  const backLabel = mapViewState.nextEscape === "Esc clears selection" ? "Clear selection"
-    : mapViewState.nextEscape?.startsWith("Esc → ") ? mapViewState.nextEscape.slice(6)
-      : mapNavigation.trail?.length ? "Back" : "Work";
-  if (back) back.innerHTML = `${escapeHtml(backLabel)} <kbd>Esc</kbd>`;
-  const starred = screen.querySelector("[data-starred-only]");
+  const starred = barContext.querySelector("[data-starred-only]");
   if (starred) { starred.setAttribute("aria-pressed", String(state.areaFocusOnly)); starred.innerHTML = `${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd>`; }
-  const active = screen.querySelector("[data-active-only]");
+  const active = barContext.querySelector("[data-active-only]");
   if (active) { active.setAttribute("aria-pressed", String(state.activeOnly)); active.innerHTML = `${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd>`; }
-  const find = screen.querySelector("[data-map-find]");
-  const only = screen.querySelector("[data-map-only]");
+  const find = barContext.querySelector("[data-map-find]");
+  const only = barContext.querySelector("[data-map-only]");
   const area = mapViewState.restrictionArea || mapLocatedArea || state.mapArea || "Area";
   const name = area.split("/").at(-1) || "Area";
   if (find) { find.setAttribute("aria-expanded", String(mapViewState.findOpen)); find.innerHTML = "Find <kbd>/</kbd>"; }
@@ -1710,7 +1708,6 @@ function openAreaMap(area, trigger) {
   if (row?.dataset.workCursor) mapReturnCursor = row.dataset.workCursor;
   mapLocatedArea = area;
   mapViewState = { restrictionArea: "", findOpen: false };
-  mapNavigation = { trail: [] };
   state.mapArea = area;
   state.view = "map";
   paint(true);
@@ -1739,9 +1736,8 @@ function leaveAreaMap() {
     row?.querySelector("[data-open-area-map]")?.focus?.({ preventScroll: true });
   }, 0);
 }
-/** Runs the same selection, camera, then Work Escape order for pointer Back. */
+/** Leaves the map through the same Work return point as the primary Back control. */
 function closeAreaMap() {
-  if (activeAreaBoard) return activeAreaBoard.escape?.();
   return leaveAreaMap();
 }
 /** Mounts the rollout-selected map authority on the dedicated map screen. */
@@ -1760,7 +1756,7 @@ function mountDedicatedAreaMap() {
       onEntityVerb: areaMapEntityVerb,
       onBack: leaveAreaMap,
       /** Keeps shell chrome aligned with the session-only located marker. */
-      onNavigation(navigation) { mapLocatedArea = navigation.area; updateAreaMapChrome(navigation); },
+      onNavigation(navigation) { mapLocatedArea = navigation.area; updateAreaMapChrome(); },
       /** Reflects transient map-owned find and Only state in the shell header. */
       onViewState(viewState) { mapViewState = { ...mapViewState, ...viewState }; updateAreaMapChrome(); },
       locatedArea: mapLocatedArea,

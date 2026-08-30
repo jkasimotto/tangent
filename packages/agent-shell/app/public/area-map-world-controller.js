@@ -289,7 +289,7 @@ export function createAreaMapWorldController({
       world, composition, scene: projectedScene, hiddenIds,
       focus, folded: effectiveFolds(), manualFolded: folded, restrictionArea, scopedAreas: scopedAreas(), findRevealId, detailAreas, camera, locatedArea, cameraTarget, cameraTrail, viewRestored: Boolean(validView),
       selection, save, draft, dirtyOwners,
-      nextEscape: selection.size ? "Esc clears selection" : restrictionArea ? "Esc → whole map" : cameraTrail.length ? `Esc → ${leaf(cameraTrail.at(-1))}` : "Esc → Work",
+      nextEscape: selection.size ? "Esc clears selection" : cameraTrail.length ? `Esc → ${leaf(cameraTrail.at(-1))}` : "Esc → Work",
     };
   }
 
@@ -567,19 +567,16 @@ export function createAreaMapWorldController({
     return setRestriction(restrictionArea === area ? null : area);
   }
 
-  /** Navigates within the persistent world and retargets an active restriction. */
+  /** Navigates inside the current projection without changing its restriction. */
   function navigateArea(area, { push = true, select = false } = {}) {
-    if (!regionElement(area)) return null;
-    if (restrictionArea) restrictionArea = area;
     if (!select) selection = new Set();
     findRevealId = null;
     return fitArea(area, { push, select });
   }
 
-  /** Unwinds selection, restriction, camera history, then the Work parent. */
+  /** Unwinds selection and camera history without changing Only. */
   function escape() {
     if (selection.size) { selection = new Set(); findRevealId = null; notify("selection"); return { kind: "selection" }; }
-    if (restrictionArea) { setRestriction(null); return { kind: "restriction" }; }
     if (cameraTrail.length) {
       const area = cameraTrail.at(-1); cameraTrail = cameraTrail.slice(0, -1);
       const element = fitArea(area, { push: false, select: false });

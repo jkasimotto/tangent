@@ -338,19 +338,20 @@ export function solveAreaMapGesture(baseline, intent) {
     for (const area of selected) {
       const originalRecord = baseRegions.get(area); if (!originalRecord) continue;
       const original = originalRecord.storedRect;
+      const visible = baselineGeometry.get(area)?.constraint ?? original;
       const storedRect = { ...original };
       if (intent.handle) {
         const floor = storedSizeFloor(baselineGeometry.get(area)?.required);
-        if (intent.handle.includes("e")) storedRect.width = Math.max(floor.width, original.width + delta.x);
-        if (intent.handle.includes("s")) storedRect.height = Math.max(floor.height, original.height + delta.y);
+        if (intent.handle.includes("e")) storedRect.width = Math.max(floor.width, visible.x + visible.width + delta.x - original.x);
+        if (intent.handle.includes("s")) storedRect.height = Math.max(floor.height, visible.y + visible.height + delta.y - original.y);
         if (intent.handle.includes("w")) {
-          const right = original.x + original.width;
-          storedRect.width = Math.max(floor.width, original.width - delta.x);
+          const right = visible.x + visible.width;
+          storedRect.width = Math.max(floor.width, visible.width - delta.x);
           storedRect.x = right - storedRect.width;
         }
         if (intent.handle.includes("n")) {
-          const bottom = original.y + original.height;
-          storedRect.height = Math.max(floor.height, original.height - delta.y);
+          const bottom = visible.y + visible.height;
+          storedRect.height = Math.max(floor.height, visible.height - delta.y);
           storedRect.y = bottom - storedRect.height;
         }
       } else {

@@ -416,14 +416,19 @@ export function AreaMapWorld({ host, bridge, options }) {
 
   /** Returns fresh Area and loaded-block matches for one query. */
   function matchesFor(query) {
+    const visibleAreas = new Set(state.scene.elements
+      .filter((element) => !element.isDeleted && element.customData?.tangent?.role === "area-region")
+      .map((element) => element.customData.tangent.area));
     return mapFindMatches({
-      areas: state.world.areas.map((node) => ({ path: node.key, name: areaName(node.key), depth: node.depth })),
-      blocks: state.composition.scene.elements.flatMap((element) => {
+      areas: state.world.areas.filter((node) => visibleAreas.has(node.key)).map((node) => ({ path: node.key, name: areaName(node.key), depth: node.depth })),
+      blocks: state.scene.elements.flatMap((element) => {
+        if (element.isDeleted) return [];
         const tangent = boardCore.tangentOf(element);
         if (!tangent || tangent.role === "area-region" || tangent.role === "boundary") return [];
         const fact = boardCore.factForBlock(element, documents);
         if (!fact) return [];
-        return [{ kind: fact.kind, elementId: element.id, name: fact.title, area: element.customData?.tangentWorld?.owner || boardCore.areaForBlock(element, documents), hidden: state.hiddenIds.has(element.id) }];
+        const area = element.customData?.tangentWorld?.owner || boardCore.areaForBlock(element, documents);
+        return visibleAreas.has(area) ? [{ kind: fact.kind, elementId: element.id, name: fact.title, area, hidden: false }] : [];
       }),
     }, query);
   }
@@ -431,10 +436,6 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Previews one find row without adding a camera-history step. */
   function previewFind(row, { say = true } = {}) {
     if (!row || !api) return false;
-    if (state.restrictionArea && !state.scopedAreas.has(row.area)) {
-      controller.setRestriction(row.area);
-      announce(`Only ${areaName(row.area)}`);
-    }
     const element = row.kind === "area"
       ? controller.selectArea(row.area)
       : state.composition.scene.elements.find((candidate) => candidate.id === row.elementId);
@@ -469,7 +470,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   function confirmFind() {
     const rows = matchesFor(findQuery); const row = rows[findIndex];
     if (!row) return false;
-    const element = controller.navigateArea(row.area, { push: true, select: row.kind === "area" });
+    const element = controller.fitArea(row.area, { push: true, select: row.kind === "area" });
     if (row.kind === "area") controller.setFindReveal(null);
     else { controller.setFindReveal(row.elementId); controller.setSelection([row.elementId]); }
     const target = row.kind === "area" ? element : state.composition.scene.elements.find((candidate) => candidate.id === row.elementId);
@@ -981,20 +982,10 @@ export function AreaMapWorld({ host, bridge, options }) {
     }
   }
 
-  /** Runs the map-owned Escape order and applies a returned camera target. */
+  /** Leaves the map through the shell-owned Work return point. */
   function escape() {
-    if (findOpen) { cancelFind(); return { kind: "find" }; }
-    if (picker) { setPicker(null); setPickerQuery(""); return { kind: "picker" }; }
-    if (helpOpen) { setHelpOpen(false); return { kind: "help" }; }
-    if (outlineOpen) { setOutlineOpen(false); return { kind: "outline" }; }
-    const result = controller.escape();
-    if (result.kind === "selection") stableSelectionRef.current = new Set();
-    programmaticSelectionRef.current = result.kind === "selection" ? null : programmaticSelectionRef.current;
-    if (result.kind === "camera" && result.element && api) {
-      api.scrollToContent([result.element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
-      announce(`${leaf(result.area)} in view`);
-    }
-    return result;
+    options.onBack?.();
+    return { kind: "back" };
   }
 
   /** Handles the map keys before Excalidraw or the shell can reinterpret them. */
@@ -1226,7 +1217,6 @@ export function AreaMapWorld({ host, bridge, options }) {
   const findWindowStart = Math.min(Math.max(0, activeFindIndex - 7), Math.max(0, findRows.length - 8));
   const visibleFindRows = findRows.slice(findWindowStart, findWindowStart + 8);
   const currentBlock = state.composition.scene.elements.find((element) => state.selection.has(element.id) && boardCore.tangentOf(element));
-  const nextEscape = findOpen ? "Esc closes find" : picker ? "Esc closes picker" : helpOpen ? "Esc closes key sheet" : outlineOpen ? "Esc closes outline" : state.nextEscape;
   const debug = typeof location !== "undefined" && new URLSearchParams(location.search).get("debug") === "area-map";
   const nodeByParent = new Map();
   for (const node of visibleNodes) { const list = nodeByParent.get(node.parent) ?? []; list.push(node); nodeByParent.set(node.parent, list); }
@@ -1361,33 +1351,32 @@ export function AreaMapWorld({ host, bridge, options }) {
         return <button type="button" key={node.key} data-area-map-label={node.key} className={findCurrent ? "find-match-current" : ""} style={{ left: `${(box.x + state.camera.scrollX) * state.camera.zoom + 12}px`, top: `${(box.y + state.camera.scrollY) * state.camera.zoom + 10}px` }} onClick={() => selectArea(node.key)} onDoubleClick={() => scrollToArea(node.key)} aria-label={accessibleAreaName(node)}><strong>{name}</strong>{state.folded.has(node.key) && <span>folded · Space</span>}{["loading", "deferred", "unreadable", "load-error"].includes(node.shard.state) && <span>{node.shard.state === "unreadable" ? "map file unreadable" : node.shard.state === "load-error" ? "load failed · click to retry" : node.shard.state}</span>}{summary && <span>{summary}</span>}</button>;
       })}
     </div>
-    <button type="button" className="tangent-map-escape" onClick={escape}>{nextEscape}</button>
     <div className={`tangent-map-save ${state.save.state}`}>{state.save.state === "saving" ? "Saving…" : state.save.state === "dirty" ? "Saved ·" : state.save.state === "conflict" ? <>Not saved <button type="button" onClick={() => controller.reload().catch((error) => announce(String(error?.message ?? error)))}>Reload</button><button type="button" onClick={() => controller.keepMine()}>Keep mine</button></> : state.save.state === "blocked" ? <>Not saved <button type="button" onClick={() => controller.retry()}>Retry</button></> : "Saved"}</div>
     {notice && <div className="tangent-map-location" aria-hidden="true">{notice}</div>}
     {announcement.text && <div key={announcement.id} className="tangent-map-live" role="status" aria-live="polite" aria-atomic="true">{announcement.text}</div>}
     {findOpen && <section className="tangent-map-find" role="search" aria-label="Find on the map">
       <div className="tangent-map-find-line"><input ref={findInputRef} aria-label="Find on the map" value={findQuery} onChange={(event) => applyFindQuery(event.target.value)} onKeyDown={(event) => {
-        if (event.key === "Escape") { stop(event); cancelFind(); }
+        if (event.key === "Escape") { stop(event); escape(); }
         else if (event.key === "Enter") { stop(event); confirmFind(); }
         else if (["ArrowDown", "ArrowUp"].includes(event.key)) { stop(event); stepFind(event.key === "ArrowDown" ? 1 : -1); }
       }} placeholder="Area name or path" aria-controls="tangent-map-find-results" aria-activedescendant={activeFindRow ? `tangent-map-find-${activeFindIndex}` : undefined} />
       <strong className={findQuery.trim() && !findRows.length ? "miss" : ""}>{!findQuery.trim() ? "" : !findRows.length ? "No match" : `${activeFindIndex + 1} of ${findRows.length}`}</strong>
-      <button type="button" onClick={() => stepFind(-1)} aria-label="Previous match">↑</button><button type="button" onClick={() => stepFind(1)} aria-label="Next match">↓</button><button type="button" onClick={cancelFind}>Esc</button></div>
+      <button type="button" onClick={() => stepFind(-1)} aria-label="Previous match">↑</button><button type="button" onClick={() => stepFind(1)} aria-label="Next match">↓</button><button type="button" onClick={cancelFind}>Cancel</button></div>
       <ul id="tangent-map-find-results" role="listbox">{visibleFindRows.map((row, offset) => { const index = findWindowStart + offset; return <li key={row.key}><button id={`tangent-map-find-${index}`} type="button" role="option" aria-selected={index === activeFindIndex} onClick={() => { setFindIndex(index); previewFind(row); }}><small>{row.kind}</small><span><strong>{row.name}</strong><em>{areaPathName(row.area)}</em></span>{row.hidden && <i>hidden</i>}</button></li>; })}</ul>
-      <p><kbd>↓</kbd> next · <kbd>↑</kbd> previous · <kbd>↵</kbd> keep · <kbd>Esc</kbd> back</p>
+      <p><kbd>↓</kbd> next · <kbd>↑</kbd> previous · <kbd>↵</kbd> keep · <kbd>Esc</kbd> Work</p>
     </section>}
     {outlineOpen && <section className="tangent-map-outline visible" aria-label="Area hierarchy">{outlineTree()}</section>}
     {picker && <div className={`tangent-map-dialog-backdrop dock-${picker.dock}`}><section className="tangent-map-picker" role="dialog" aria-modal="true" aria-label="Place a Tangent block">
       <h2>{widePicker ? "Place from the whole vault" : picker.outside ? "Outside every Area" : `Place in ${leaf(picker.area)}`}</h2>
       <input autoFocus value={pickerQuery} onChange={(event) => setPickerQuery(event.target.value)} onKeyDown={(event) => {
         if (event.key === "Tab") { stop(event); setWidePicker((value) => !value); }
-        else if (event.key === "Escape") { stop(event); setPicker(null); }
+        else if (event.key === "Escape") { stop(event); escape(); }
         else if (event.key === "Enter" && pickerChoices[0]) { stop(event); placeBlock(pickerChoices[0], event.shiftKey); }
       }} placeholder="Goal, Document, Area, idea, or URL" />
       <ul role="listbox">{pickerChoices.slice(0, 30).map((choice) => <li key={`${choice.kind}:${choice.ref}`}><button type="button" onClick={() => placeBlock(choice)}><small>{choice.kind}</small><span>{choice.title}</span><em>{choice.status}</em></button></li>)}</ul>
-      <p><kbd>Tab</kbd> {widePicker ? "return here" : "whole vault"} · <kbd>Enter</kbd> place · <kbd>⇧Enter</kbd> place another · <kbd>Esc</kbd> close</p>
+      <p><kbd>Tab</kbd> {widePicker ? "return here" : "whole vault"} · <kbd>Enter</kbd> place · <kbd>⇧Enter</kbd> place another · <kbd>Esc</kbd> Work</p>
     </section></div>}
-    {helpOpen && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p><kbd>/</kbd> or <kbd>Ctrl-F</kbd> finds Areas. <kbd>⇧O</kbd> shows only the selected Area, its ancestors, and descendants.</p><p>Space-drag pans. Command-wheel zooms. Command-Z undoes. Escape prints and runs its next effect.</p><p><kbd>b</kbd> brain beside · <kbd>Ctrl-L</kbd> / <kbd>Ctrl-H</kbd> switch columns.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelpOpen(false)}>Close</button></section></div>}
+    {helpOpen && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p><kbd>/</kbd> or <kbd>Ctrl-F</kbd> finds visible Areas. <kbd>⇧O</kbd> changes Only for the selected Area.</p><p>Space-drag pans. Command-wheel zooms. Command-Z undoes. Escape returns to Work.</p><p><kbd>b</kbd> brain beside · <kbd>Ctrl-L</kbd> / <kbd>Ctrl-H</kbd> switch columns.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelpOpen(false)}>Close</button></section></div>}
     {debug && <aside className="tangent-map-debug" aria-label="Area map diagnostics"><h2>Area map diagnostics</h2><p>dirty owners: {[...state.dirtyOwners].join(", ") || "none"}</p><table><thead><tr><th>owner</th><th>source</th><th>runtime</th><th>stored</th><th>constraint</th><th>load</th></tr></thead><tbody>{state.world.areas.map((node) => <tr key={node.key}><td>{node.parent}</td><td>{node.region.sourceId}</td><td>{worldCore.runtimeId(node.parent, node.region.sourceId)}</td><td>{rectWords(node.region.storedRect)}</td><td>{rectWords(state.composition.geometry.get(node.key)?.constraint)}</td><td>{node.shard.state}</td></tr>)}</tbody></table><details><summary>Authored identities</summary><ul>{[...state.composition.origins].filter(([, origin]) => !origin.regionKey).map(([runtime, origin]) => <li key={runtime}>{origin.owner} · {origin.sourceId} · {runtime}</li>)}</ul></details></aside>}
     {state.draft && !state.draft.restored && <section className="tangent-map-draft-choice"><strong>Draft from {new Date(state.draft.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong><button type="button" onClick={() => controller.restoreDraft()}>Restore</button><button type="button" onClick={() => controller.discardDraft()}>Discard</button></section>}
   </div>;

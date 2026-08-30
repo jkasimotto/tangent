@@ -85,6 +85,19 @@ test("clamps direct shrink to blocks, children, the label band, and the minimum 
   assert.deepEqual(preview.geometry.get("root").stored, preview.geometry.get("root").constraint, "a direct resize stores the rectangle under its handles");
 });
 
+test("direct resize starts at the descendant-expanded visible handles", () => {
+  const source = baseline(["root", "root/child"], [
+    ["@root>root", { x: 0, y: 0, width: 300, height: 220 }],
+    ["root>root/child", { x: 60, y: 60, width: 300, height: 220 }],
+  ]);
+  const before = computeWorldGeometry(source).get("root").constraint;
+  assert.deepEqual(before, { x: 0, y: 0, width: 420, height: 380 });
+  const preview = solveAreaMapGesture(source, { selectedAreas: ["root"], handle: "e", desiredWorldDelta: { x: 40, y: 0 } });
+  assert.equal(preview.regions.get("root").storedRect.width, 460);
+  assert.equal(preview.geometry.get("root").constraint.width, before.width + 40, "the visible edge follows the complete pointer delta");
+  assert.deepEqual(preview.regions.get("root/child").storedRect, source.regions.get("root/child").storedRect, "the descendant keeps its own geometry");
+});
+
 test("left and top resize moves the subtree anchor without scaling descendants", () => {
   const source = baseline(["root", "root/child"], [
     ["@root>root", { x: 100, y: 120, width: 900, height: 700 }],

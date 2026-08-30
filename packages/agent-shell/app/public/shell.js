@@ -456,7 +456,7 @@ const {
 } = programView;
 
 const areaDirectoryView = createAreaDirectoryView({
-  shell: { state, api, post, paint, showToast, screen },
+  shell: { state, api, post, paint, refresh, showToast, screen },
   documents: { openDocument: forward(() => openDocument) },
   work: {
     selectGoal: forward(() => selectGoal), allGoals, goalTrees, goalTreeState, goalTreeIsActive, goalByFile,
@@ -469,7 +469,7 @@ const areaDirectoryView = createAreaDirectoryView({
   },
 });
 const {
-  areas, allAreas, areaIsFolded, setAreaStatus, selectedArea, areaParent, areaTreeRows, areaProgramMark,
+  areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, processControl, selectedArea, areaParent, areaTreeRows, areaProgramMark,
   areaGoalRow, goalAttention, orderedGoalTrees, loadMapState, loadAreaJournal, mountAreaMap, areaContents, renderAreas,
   areaParentOptions, renderAreaEditor,
 } = areaDirectoryView;
@@ -1605,7 +1605,7 @@ shellBindings = bindShellEvents({
   },
   areas: {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelDescribe, areaIsFolded,
-    saveExpandedAreas, revealArea, setAreaStatus, preferredArea, areaLabel, loadAreaJournal,
+    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, preferredArea, areaLabel, loadAreaJournal,
   },
   programs: {
     showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, currentProgram,

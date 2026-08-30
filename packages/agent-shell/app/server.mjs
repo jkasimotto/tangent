@@ -17,7 +17,7 @@ import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createLaunchMemory } from "./launch-memory.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
-import { discoverProcesses, evaluateProcess, goalNamesProcess, processFileExists, processView, readAreaProcesses, readProcessState, removeProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
+import { discoverProcesses, evaluateProcess, goalNamesProcess, processFileExists, processView, readAreaProcesses, readProcessState, removeProcessState, sweepProcesses, withProcessLock, withProcessStatus } from "./process-scheduler.mjs";
 import { formatLoopNote, parseProcessNote, validateProcessSlug } from "./process-note.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, safePresentedMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import documentComments from "./public/document-comments.js";
@@ -6832,15 +6832,32 @@ const processRoutes = createProcessRoutes({
   async control(body) {
     const action = String(body.action ?? "");
     if (!["pause", "resume"].includes(action)) throw new Error("Choose pause or resume.");
-    const note = await resolveProcessNote(String(body.slug ?? "").trim(), String(body.area ?? "").trim());
-    if (!processFileExists(TREES_ROOT, note.file)) throw new Error(`${note.file} no longer exists.`);
-    const status = action === "pause" ? "paused" : "active";
-    const text = await readFile(path.join(TREES_ROOT, note.file), "utf8");
-    await vaultRepository.writeMarkdown(note.file, withProcessStatus(text, status));
-    await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", note.file]).catch(() => {});
-    await vaultCommit([note.file], `update: ${note.area} process ${note.slug} ${status}`, note.area, String(body.caller ?? "").trim() || null);
-    const view = (await processViews({ area: note.area, exact: true })).find((item) => item.slug === note.slug);
-    return { ok: true, file: note.file, status, process: view };
+    const requestedArea = String(body.area ?? "").trim();
+    const requestedSlug = String(body.slug ?? "").trim();
+    const expectedFile = String(body.file ?? "").trim();
+    const resolved = expectedFile
+      ? (await readAreaProcesses(TREES_ROOT, cleanAreaPath(requestedArea))).find((item) => item.slug === validateProcessSlug(requestedSlug))
+      : await resolveProcessNote(requestedSlug, requestedArea);
+    if (!resolved || (expectedFile && resolved.file !== expectedFile)) throw new Error(`${expectedFile || requestedSlug} changed or no longer exists.`);
+    const { area, slug } = resolved;
+    return withProcessLock(area, slug, async () => {
+      const note = (await readAreaProcesses(TREES_ROOT, area)).find((item) => item.slug === slug);
+      if (!note || (expectedFile && note.file !== expectedFile)) throw new Error(`${expectedFile || requestedSlug} changed or no longer exists.`);
+      const status = action === "pause" ? "paused" : "active";
+      if (note.status !== status) {
+        const text = await readFile(path.join(TREES_ROOT, note.file), "utf8");
+        await vaultRepository.writeMarkdown(note.file, withProcessStatus(text, status));
+        await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", note.file]).catch(() => {});
+        const committed = await vaultCommit([note.file], `update: ${note.area} process ${note.slug} ${status}`, note.area, String(body.caller ?? "").trim() || null);
+        if (!committed.committed) {
+          await vaultRepository.writeMarkdown(note.file, text);
+          await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", note.file]).catch(() => {});
+          throw new Error(`the process did not change because its commit failed: ${committed.error}`);
+        }
+      }
+      const view = (await processViews({ area: note.area, exact: true })).find((item) => item.slug === note.slug);
+      return { ok: true, file: note.file, status, process: view, unchanged: note.status === status };
+    });
   },
   /** Evaluates one process now and says why it is or is not due. Writes nothing. */
   async check(body) {

@@ -632,6 +632,10 @@ button.work-agent-ref:hover, button.work-agent-ref:focus-visible { color: #fff; 
 .process-open { display: grid; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .process-open strong { font-weight: 620; }
 .process-open small { color: var(--quiet); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.process-control, .work-loop-control { cursor: pointer; }
+.process-control:disabled, .work-loop-control:disabled { cursor: wait; opacity: .65; }
+.work-group-loop-controls { display: inline-flex; align-items: center; gap: 4px; }
+.work-loop-control { border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--danger); padding: 2px 7px; font-size: 11px; }
 .process-state.due { color: var(--amber); font-weight: 620; }
 .process-state.paused { color: var(--quiet); }
 .process-state.loop { color: #9ebbe0; }

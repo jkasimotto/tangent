@@ -1656,7 +1656,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const runtime = loops[0].brainLive ? "on" : "waiting";
     const noun = count === 1 ? "loop" : "loops";
     const label = `${areaLabel(areaPath)} has ${count} active ${noun}, ${runtime}. Open Processes.`;
-    return `<button class="work-group-loop" type="button" data-open-area-processes="${escapeHtml(areaPath)}" data-focus-key="loops:${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(label)}">↻ ${count} ${noun} · ${runtime}</button>`;
+    const controls = loops.map((item) => `<button class="work-loop-control" type="button" data-control-process data-process-action="pause" data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" aria-label="Stop loop ${escapeHtml(item.slug)} in ${escapeHtml(areaLabel(item.area))}">Stop</button>`).join("");
+    return `<span class="work-group-loop-controls"><button class="work-group-loop" type="button" data-open-area-processes="${escapeHtml(areaPath)}" data-focus-key="loops:${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(label)}">↻ ${count} ${noun} · ${runtime}</button>${controls}</span>`;
   }
 
   /**

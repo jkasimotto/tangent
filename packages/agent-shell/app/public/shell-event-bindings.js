@@ -30,7 +30,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   } = work;
   const {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelDescribe, areaIsFolded,
-    saveExpandedAreas, revealArea, setAreaStatus, preferredArea, areaLabel, loadAreaJournal,
+    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, preferredArea, areaLabel, loadAreaJournal,
   } = areas;
   const {
     showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, currentProgram,
@@ -1473,6 +1473,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   document.addEventListener("click", async (event) => {
     const target = event.target;
     if (state.documentPeek && documentPeekLayer.contains(target)) return handleDocumentPeekClick(event);
+    const processControl = target.closest?.("[data-control-process]");
+    if (processControl) return controlProcess(processControl);
     if (state.view === "document") syncPointerComment(target, false);
     const cursor = target.closest?.("[data-work-cursor]");
     const areaJump = target.closest?.("[data-move-work-area]");

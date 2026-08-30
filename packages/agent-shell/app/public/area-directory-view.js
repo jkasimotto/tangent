@@ -7,7 +7,7 @@ import { clip, escapeHtml } from "./text-format.js";
 
 /** Creates the Area directory from owned shell, Work, Document, and Program ports. */
 export function createAreaDirectoryView({ shell, documents, work, programs }) {
-  const { state, api, post, paint, showToast, screen } = shell;
+  const { state, api, post, paint, refresh, showToast, screen } = shell;
   const { openDocument } = documents;
   const {
     selectGoal, allGoals, goalTrees, goalTreeState, goalTreeIsActive, goalByFile, goalNeedsYou, goalWorkFinished,
@@ -183,11 +183,13 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     const view = areaMapView;
     const area = host.dataset.areaMap;
     if (!view || !area || !state.vault) return;
+    /** Opens an Area selected from the board canvas. */
+    const onSelectBoardArea = (path) => { state.areaSelection = path; localStorage.setItem("agent-shell.last-area", path); revealArea(path); paint(true); };
     if (!host.dataset.boardChecked) {
       host.dataset.boardChecked = "loading";
       api(`/api/areas/canvas?area=${encodeURIComponent(area)}`).then((payload) => {
         host.dataset.boardChecked = "board";
-        areaBoardView.mount(host, { area, payload, documents: state.vault.documents ?? [], api, onOpenDocument: openDocument, onSelectArea: (path) => { state.areaSelection = path; localStorage.setItem("agent-shell.last-area", path); revealArea(path); paint(true); }, narrow: host.clientWidth > 0 && host.clientWidth < 640 });
+        areaBoardView.mount(host, { area, payload, documents: state.vault.documents ?? [], api, onOpenDocument: openDocument, onSelectArea: onSelectBoardArea, narrow: host.clientWidth > 0 && host.clientWidth < 640 });
       }).catch(() => { host.dataset.boardChecked = "legacy"; mountAreaMap(host); });
       return;
     }
@@ -207,6 +209,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     /** Opens a Goal. */
     const onSelectGoal = (file) => selectGoal(file);
     /** Moves the map to another Area. */
+    /** Opens one Area selected from the map. */
     const onSelectArea = (path) => { state.areaSelection = path; localStorage.setItem("agent-shell.last-area", path); revealArea(path); paint(true); };
     /** Stores positions and filters for this Area outside the vault. */
     const onSaveState = (mapState) => {
@@ -234,6 +237,43 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
   }
 
+  /** Durably stops or resumes one exact process, then reconciles with server truth. */
+  async function controlProcess(control) {
+    if (control.disabled) return;
+    const { processArea: area, processSlug: slug, processFile: file, processAction: action } = control.dataset;
+    if (!area || !slug || !file || !["pause", "resume"].includes(action)) return showToast("This process control is stale.");
+    control.disabled = true;
+    control.setAttribute("aria-busy", "true");
+    const oldText = control.textContent;
+    control.textContent = action === "pause" ? "Stopping…" : "Resuming…";
+    try {
+      const result = await post("/api/processes/control", { area, slug, file, action });
+      const index = (state.programs.processes ?? []).findIndex((item) => item.area === area && item.slug === slug && item.file === file);
+      if (index >= 0 && result.process) state.programs.processes[index] = result.process;
+      paint(true);
+      await refresh();
+      paint(true);
+      window.setTimeout(() => [...document.querySelectorAll("[data-control-process]")]
+        .find((item) => item.dataset.processArea === area && item.dataset.processSlug === slug)?.focus(), 0);
+      showToast(action === "pause" ? "The loop stopped. Its process definition stays here." : "The loop resumed.");
+    } catch (error) {
+      control.disabled = false;
+      control.removeAttribute("aria-busy");
+      control.textContent = oldText;
+      await refresh().catch(() => {});
+      paint(true);
+      showToast(`The loop did not change: ${error.message}`);
+    }
+  }
+
+  /** One accessible Stop or Resume button, fenced to the row's full identity. */
+  function processControl(item, compact = false) {
+    if (!item.loop || item.error) return "";
+    const action = item.status === "paused" ? "resume" : "pause";
+    const word = action === "pause" ? "Stop" : "Resume";
+    return `<button class="${compact ? "work-loop-control" : "process-control"}" type="button" data-control-process data-process-action="${action}" data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" aria-label="${word} loop ${escapeHtml(item.slug)} in ${escapeHtml(areaLabel(item.area))}">${word}</button>`;
+  }
+
   /**
    * The Area's processes, read-only, at the top of the page (D19): name,
    * schedule or probe, next run, last run, and state. A due process whose
@@ -249,11 +289,12 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
         <td>${escapeHtml(item.status === "paused" ? "–" : processMoment(item.nextRunAt))}</td>
         <td>${escapeHtml(processMoment(item.lastRunAt))}</td>
         <td><span class="process-state ${escapeHtml(item.due ? "due" : item.loop && item.status === "active" ? "loop" : item.status)}">${escapeHtml(item.error ? `Broken note: ${item.error}` : item.state)}</span></td>
+        <td>${processControl(item)}</td>
       </tr>`).join("");
     return `
       <section class="area-workspace-section area-processes" aria-labelledby="area-processes-heading">
-        <div class="area-section-heading"><div><p class="kicker">Processes</p><h3 id="area-processes-heading" tabindex="-1">${processes.length === 1 ? "One process" : `${processes.length} processes`}</h3></div><small>Pause or resume with <code>tangent process pause|resume &lt;slug&gt;</code></small></div>
-        <div class="table-scroll"><table class="process-table"><thead><tr><th>Process</th><th>When</th><th>Next run</th><th>Last run</th><th>State</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <div class="area-section-heading"><div><p class="kicker">Processes</p><h3 id="area-processes-heading" tabindex="-1">${processes.length === 1 ? "One process" : `${processes.length} processes`}</h3></div><small>Stop pauses the loop. Resume starts it again.</small></div>
+        <div class="table-scroll"><table class="process-table"><thead><tr><th>Process</th><th>When</th><th>Next run</th><th>Last run</th><th>State</th><th>Control</th></tr></thead><tbody>${rows}</tbody></table></div>
       </section>`;
   }
 
@@ -490,5 +531,5 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
 
   /** Returns one program by its stable UI identity. */
 
-  return { areas, allAreas, areaIsFolded, setAreaStatus, selectedArea, areaParent, areaTreeRows, areaProgramMark, areaGoalRow, goalAttention, orderedGoalTrees, loadMapState, loadAreaJournal, mountAreaMap, areaContents, renderAreas, areaParentOptions, renderAreaEditor };
+  return { areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, processControl, selectedArea, areaParent, areaTreeRows, areaProgramMark, areaGoalRow, goalAttention, orderedGoalTrees, loadMapState, loadAreaJournal, mountAreaMap, areaContents, renderAreas, areaParentOptions, renderAreaEditor };
 }

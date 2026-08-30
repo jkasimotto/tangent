@@ -12,6 +12,22 @@ import { describeWhen, latestSlotAtOrBefore, nextSlotAfter, parseProcessNote, pr
 
 const TREE_SKIP = new Set([".git", ".obsidian", "shared", "node_modules"]);
 const OPEN_STATUSES = new Set(["open", "active", "verify"]);
+const processLocks = new Map();
+
+/** Serializes scheduler and control work for one exact Area/process identity. */
+export async function withProcessLock(area, slug, operation) {
+  const key = `${area}\0${slug}`;
+  const previous = processLocks.get(key) ?? Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => { release = resolve; });
+  processLocks.set(key, current);
+  await previous.catch(() => {});
+  try { return await operation(); }
+  finally {
+    release();
+    if (processLocks.get(key) === current) processLocks.delete(key);
+  }
+}
 
 /** The machine-local state file of one process. */
 export function processStatePath(stateRoot, area, slug) {
@@ -195,7 +211,10 @@ export async function evaluateProcess({ note, state, now = new Date(), runProbe,
  */
 export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), runProbe, openGoalFor, notify, hiddenAreaStatus = async () => "", brainLive = async () => true }) {
   const results = [];
-  for (const note of await discoverProcesses(treesRoot)) {
+  for (const discovered of await discoverProcesses(treesRoot)) {
+    await withProcessLock(discovered.area, discovered.slug, async () => {
+    const note = (await readAreaProcesses(treesRoot, discovered.area)).find((item) => item.slug === discovered.slug);
+    if (!note) return;
     const state = await readProcessState(stateRoot, note.area, note.slug);
     const next = { ...state };
     if (!next.firstSeenAt) next.firstSeenAt = now.toISOString();
@@ -224,6 +243,7 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
     next.lastReason = outcome.reason;
     if (JSON.stringify(next) !== JSON.stringify(state)) await writeProcessState(stateRoot, note.area, note.slug, next);
     results.push({ note, due: outcome.due, reason: outcome.reason, state: next });
+    });
   }
   return results;
 }

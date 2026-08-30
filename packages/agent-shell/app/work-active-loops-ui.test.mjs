@@ -77,3 +77,50 @@ test("Active-only keeps an Area whose active loop waits for its brain", async ()
   assert.ok(document.querySelector("[data-work-group='otto/onboarding']"));
   assert.equal(document.querySelector("[data-open-area-processes='otto/onboarding']").textContent, "↻ 1 loop · waiting");
 });
+
+test("Work Stop pauses the exact loop once and removes it from the active summary", async () => {
+  const fixture = withProcesses([process("otto/tangent", "review"), process("otto/standards", "review")]);
+  const { window, document, posts } = await bootWorkTable(fixture, {
+    /** Applies the server's exact-process mutation to the projected fixture. */
+    postHandler: ({ path, body }) => {
+      if (path !== "/api/processes/control") return { ok: true };
+      const item = fixture.programs.processes.find((candidate) => candidate.area === body.area && candidate.slug === body.slug && candidate.file === body.file);
+      item.status = "paused";
+      item.state = "Paused";
+      return { ok: true, process: structuredClone(item) };
+    },
+  });
+  const stop = document.querySelector("[data-process-area='otto/tangent'][data-process-slug='review']");
+  assert.equal(stop.textContent, "Stop");
+  assert.equal(stop.getAttribute("aria-label"), "Stop loop review in Otto / Tangent");
+  click(window, stop);
+  click(window, stop);
+  await settle(window, 6);
+
+  assert.deepEqual(posts.filter((entry) => entry.path === "/api/processes/control").map((entry) => entry.body), [
+    { area: "otto/tangent", slug: "review", file: "otto/tangent/process-review.md", action: "pause" },
+  ]);
+  assert.equal(document.querySelector("[data-open-area-processes='otto/tangent']"), null);
+  assert.ok(document.querySelector("[data-open-area-processes='otto/standards']"));
+});
+
+test("Area Processes shows Stop and Resume and restores focus after control", async () => {
+  const fixture = withProcesses([process("otto/tangent", "review")]);
+  const { window, document } = await bootWorkTable(fixture, {
+    /** Applies Stop or Resume to the process returned by the fake server. */
+    postHandler: ({ path, body }) => {
+      if (path !== "/api/processes/control") return { ok: true };
+      const item = fixture.programs.processes[0];
+      item.status = body.action === "pause" ? "paused" : "active";
+      item.state = item.status === "paused" ? "Paused" : "Loop";
+      return { ok: true, process: structuredClone(item) };
+    },
+  });
+  click(window, document.querySelector("[data-open-area-processes='otto/tangent']"));
+  await settle(window);
+  click(window, document.querySelector(".area-processes [data-control-process]"));
+  await settle(window, 6);
+  const resume = document.querySelector(".area-processes [data-control-process]");
+  assert.equal(resume.textContent, "Resume");
+  assert.equal(document.activeElement, resume);
+});

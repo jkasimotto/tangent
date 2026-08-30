@@ -117,7 +117,8 @@ test("process notes reach the Area page, the CLI routes, the Goal, and the brain
   });
 
   await context.test("pause rewrites status: and commits the note; resume puts it back", async () => {
-    const paused = await post(base, "/api/processes/control", { slug: "red-build", action: "pause" });
+    const identity = { area: "otto/dnd", slug: "red-build", file: "otto/dnd/process-red-build.md" };
+    const paused = await post(base, "/api/processes/control", { ...identity, action: "pause" });
     assert.equal(paused.status, 200, JSON.stringify(paused.body));
     assert.equal(paused.body.status, "paused");
     assert.match(await readFile(path.join(area, "process-red-build.md"), "utf8"), /^status: paused$/m);
@@ -125,9 +126,15 @@ test("process notes reach the Area page, the CLI routes, the Goal, and the brain
     assert.equal(stdout.trim(), "update: otto/dnd process red-build paused");
     assert.equal(paused.body.process.state, "Paused");
     assert.equal(paused.body.process.nextRunAt, null);
-    const resumed = await post(base, "/api/processes/control", { slug: "red-build", action: "resume" });
+    const pausedAgain = await post(base, "/api/processes/control", { ...identity, action: "pause" });
+    assert.equal(pausedAgain.body.unchanged, true);
+    const stale = await post(base, "/api/processes/control", { ...identity, file: "otto/dnd/process-other.md", action: "resume" });
+    assert.equal(stale.status, 409);
+    const resumed = await post(base, "/api/processes/control", { ...identity, action: "resume" });
     assert.equal(resumed.body.status, "active");
     assert.match(await readFile(path.join(area, "process-red-build.md"), "utf8"), /^status: active$/m);
+    const resumedAgain = await post(base, "/api/processes/control", { ...identity, action: "resume" });
+    assert.equal(resumedAgain.body.unchanged, true);
     const refused = await post(base, "/api/processes/control", { slug: "red-build", action: "delete" });
     assert.equal(refused.status, 409);
   });

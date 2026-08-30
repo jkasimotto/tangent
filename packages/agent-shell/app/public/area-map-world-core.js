@@ -100,7 +100,7 @@ export function composeShard(owner, scene, offset = { x: 0, y: 0 }) {
     runtime.x = Number(runtime.x ?? 0) + Number(offset.x ?? 0);
     runtime.y = Number(runtime.y ?? 0) + Number(offset.y ?? 0);
     runtime.customData = { ...(runtime.customData ?? {}), tangentWorld: { owner, sourceId: source.id } };
-    origins.set(runtime.id, { owner, sourceId: source.id, identity: inverse });
+    origins.set(runtime.id, { owner, sourceId: source.id, identity: inverse, source: clone(source) });
     return runtime;
   });
   const files = Object.fromEntries(Object.entries(scene?.files ?? {}).map(([id, file]) => {
@@ -124,7 +124,26 @@ export function splitComposed(elements, origins, offsets = new Map()) {
     source.id = origin.sourceId;
     source.x = Number(source.x ?? 0) - Number(offset.x ?? 0);
     source.y = Number(source.y ?? 0) - Number(offset.y ?? 0);
-    if (source.customData) { delete source.customData.tangentWorld; if (!Object.keys(source.customData).length) delete source.customData; }
+    const endpoints = runtime.customData?.tangentWorldEndpoints;
+    for (const side of ["start", "end"]) {
+      const endpoint = endpoints?.[side];
+      if (!endpoint) continue;
+      const key = `${side}Binding`;
+      if (endpoint.owner !== origin.owner) source[key] = null;
+      else source[key] = { ...(source[key] ?? {}), elementId: endpoint.sourceId };
+    }
+    if (runtime.customData?.tangentWorldDeferredEndpoint && origin.source) {
+      for (const key of ["x", "y", "points", "startBinding", "endBinding"]) {
+        if (Object.hasOwn(origin.source, key)) source[key] = clone(origin.source[key]);
+        else delete source[key];
+      }
+    }
+    if (source.customData) {
+      delete source.customData.tangentWorld;
+      delete source.customData.tangentWorldDeferredEndpoint;
+      delete source.customData.tangentWorldEphemeral;
+      if (!Object.keys(source.customData).length) delete source.customData;
+    }
     const list = byOwner.get(origin.owner) ?? [];
     list.push(source); byOwner.set(origin.owner, list);
   }
@@ -375,6 +394,74 @@ export function composeRegionElement(node, geometry, worldRect) {
   };
 }
 
+/** Returns one arrow endpoint in composed world coordinates. */
+function arrowEndpoint(element, side) {
+  const points = element.points ?? [[0, 0], [Number(element.width ?? 0), Number(element.height ?? 0)]];
+  const point = side === "start" ? points[0] : points.at(-1);
+  return { x: Number(element.x ?? 0) + Number(point?.[0] ?? 0), y: Number(element.y ?? 0) + Number(point?.[1] ?? 0) };
+}
+
+/** Returns the nearest stable point on a region edge. */
+function nearestRegionEdge(box, from) {
+  const right = box.x + box.width; const bottom = box.y + box.height;
+  const point = { x: Math.max(box.x, Math.min(right, from.x)), y: Math.max(box.y, Math.min(bottom, from.y)) };
+  if (from.x >= box.x && from.x <= right && from.y >= box.y && from.y <= bottom) {
+    const edges = [[Math.abs(from.x - box.x), "left"], [Math.abs(right - from.x), "right"], [Math.abs(from.y - box.y), "top"], [Math.abs(bottom - from.y), "bottom"]].sort((left, rightValue) => left[0] - rightValue[0]);
+    if (edges[0][1] === "left") point.x = box.x;
+    if (edges[0][1] === "right") point.x = right;
+    if (edges[0][1] === "top") point.y = box.y;
+    if (edges[0][1] === "bottom") point.y = bottom;
+  }
+  return point;
+}
+
+/** Creates one disposable dot for an endpoint whose target shard is deferred. */
+function deferredEndpointDot(arrow, side, endpoint, point) {
+  return {
+    id: runtimeId(arrow.customData.tangentWorld.owner, `endpoint:${arrow.customData.tangentWorld.sourceId}:${side}:${endpoint.owner}:${endpoint.sourceId}`),
+    type: "ellipse", x: point.x - 5, y: point.y - 5, width: 10, height: 10, angle: 0,
+    strokeColor: "#8b95a3", backgroundColor: "#8b95a3", fillStyle: "solid", strokeWidth: 1,
+    strokeStyle: "solid", roughness: 0, opacity: 100, groupIds: [], frameId: null,
+    roundness: null, seed: 1, version: 1, versionNonce: 1, isDeleted: false,
+    boundElements: [], updated: 1, link: null, locked: false,
+    customData: { tangent: { role: "endpoint-dot" }, tangentWorldEphemeral: true },
+  };
+}
+
+/** Resolves cross-owner endpoint metadata after every materialized shard has composed. */
+function resolveWorldEndpoints(elements, origins, regionRects) {
+  const dots = [];
+  for (const element of elements) {
+    if (element.type !== "arrow" || !element.customData?.tangentWorldEndpoints) continue;
+    for (const side of ["start", "end"]) {
+      const endpoint = element.customData.tangentWorldEndpoints[side];
+      if (!endpoint?.owner || !endpoint.sourceId) continue;
+      const target = runtimeId(endpoint.owner, endpoint.sourceId);
+      if (origins.has(target)) {
+        element[`${side}Binding`] = { ...(element[`${side}Binding`] ?? {}), elementId: target };
+        continue;
+      }
+      element[`${side}Binding`] = null;
+      const box = regionRects.get(endpoint.owner);
+      if (!box) continue;
+      const other = arrowEndpoint(element, side === "start" ? "end" : "start");
+      const point = nearestRegionEdge(box, other);
+      if (side === "end") {
+        const points = clone(element.points ?? [[0, 0], [Number(element.width ?? 0), Number(element.height ?? 0)]]);
+        points[points.length - 1] = [quantize(point.x - element.x), quantize(point.y - element.y)];
+        element.points = points;
+      } else {
+        const end = arrowEndpoint(element, "end");
+        element.x = point.x; element.y = point.y;
+        element.points = [[0, 0], [quantize(end.x - point.x), quantize(end.y - point.y)]];
+      }
+      element.customData.tangentWorldDeferredEndpoint = true;
+      dots.push(deferredEndpointDot(element, side, endpoint, point));
+    }
+  }
+  elements.push(...dots);
+}
+
 /** Composes one complete structural world and all supplied shard content. */
 export function composeAreaMapWorld(world) {
   const areas = world.areas.map((node) => node.key);
@@ -419,6 +506,7 @@ export function composeAreaMapWorld(world) {
     Object.assign(files, composed.files);
     for (const entry of composed.origins) origins.set(...entry);
   }
+  resolveWorldEndpoints(elements, origins, regionRects);
   return { scene: { type: "excalidraw", version: 2, source: "tangent", elements, appState: { theme: "dark", viewBackgroundColor: "#121417" }, files }, origins, offsets, regions, geometry, regionRects, storedRegionRects };
 }
 

@@ -136,6 +136,23 @@ test("agent lint rejects tmux termination outside the Agent Shell ownership capa
   }
 });
 
+test("agent lint rejects locked projections in composed Area-map modules", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeMinimalRootAgentDocs(root);
+    const browser = path.join(root, "packages", "agent-shell", "app", "browser");
+    await mkdir(browser, { recursive: true });
+    await writeFile(path.join(browser, "area-map-world.jsx"), 'const region = { locked: true, customData: { tangentProjection: {} } };\n', "utf8");
+
+    const result = await lintGovernance({ root, groups: ["docs"] });
+    const findings = result.findings.filter((candidate) => candidate.rule === "agent-shell/area-map-world-authority");
+    assert.equal(findings.length, 2);
+    assert.ok(findings.every((finding) => finding.file === "packages/agent-shell/app/browser/area-map-world.jsx"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("dependency lint flags disallowed vertical package dependencies", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
   try {

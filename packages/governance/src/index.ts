@@ -109,6 +109,38 @@ type LintContext = {
 /** Prevents the retired Area-brain authority and writer contracts from returning. */
 async function lintAgentShellWorkflowContracts(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
+  const areaMapTargets = [
+    "packages/agent-shell/app/public/area-map-world-core.js",
+    "packages/agent-shell/app/public/area-map-world-controller.js",
+    "packages/agent-shell/app/browser/area-map-world.jsx",
+    "packages/agent-shell/app/browser/area-board-excalidraw.jsx",
+    "packages/agent-shell/app/area-map-world-index.mjs",
+    "packages/agent-shell/app/area-map-world-routes.mjs",
+  ];
+  const areaMapRules = [
+    { pattern: /tangentProjection/, message: "uses a retired Area projection in the composed world." },
+    { pattern: /locked\s*:\s*true/, message: "creates a locked element in a composed Area-map module." },
+    { pattern: /\b(?:scopeScene|ancestryProjection|projectSpatialChildren|stripSpatialProjections|scopeExtentGesture)\b/, message: "uses the retired single-scope map authority." },
+  ];
+  for (const rel of areaMapTargets) {
+    const file = path.join(ctx.root, rel);
+    if (!await pathExists(file)) continue;
+    const text = await readFile(file, "utf8");
+    for (const rule of areaMapRules) {
+      if (!rule.pattern.test(text)) continue;
+      findings.push({
+        rule: "agent-shell/area-map-world-authority",
+        severity: "error",
+        file: rel,
+        message: rule.message,
+        fix: [
+          "Derive every Area region from the complete Area tree.",
+          "Keep every region unlocked and interactive.",
+          "Use camera, Focus, fold, and semantic zoom only as render masks.",
+        ],
+      });
+    }
+  }
   const targets = [
     "packages/agent-shell/app/server.mjs",
     "packages/agent-shell/app/brain-record.mjs",

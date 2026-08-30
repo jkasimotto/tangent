@@ -166,7 +166,10 @@ test("process notes reach the Area page, the CLI routes, the Goal, and the brain
     const resumed = await post(base, "/api/processes/control", { slug: "otto/dnd/review-work", action: "resume" });
     assert.equal(resumed.body.status, "active");
 
-    const removed = await post(base, "/api/processes/remove", { slug: "review-work", area: "otto/dnd" });
+    const staleRemove = await post(base, "/api/processes/remove", { slug: "review-work", area: "otto/dnd", file: "otto/dnd/process-other.md" });
+    assert.equal(staleRemove.status, 409);
+    assert.match(staleRemove.body.error, /changed or no longer exists/);
+    const removed = await post(base, "/api/processes/remove", { slug: "review-work", area: "otto/dnd", file: "otto/dnd/process-review-work.md" });
     assert.equal(removed.status, 200, JSON.stringify(removed.body));
     log = await execFileAsync("git", ["-C", trees, "log", "-1", "--format=%s"]);
     assert.equal(log.stdout.trim(), "remove: otto/dnd loop review-work");

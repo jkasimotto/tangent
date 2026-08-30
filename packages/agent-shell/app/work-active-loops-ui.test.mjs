@@ -27,7 +27,7 @@ function click(window, element) {
   element.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
 }
 
-test("Work shows exact-Area active loop counts and runtime state", async () => {
+test("Work shows active and paused Processes at their exact Areas with state and controls", async () => {
   const fixture = withProcesses([
     process("otto/tangent", "review"),
     process("otto/tangent", "triage"),
@@ -44,7 +44,18 @@ test("Work shows exact-Area active loop counts and runtime state", async () => {
   assert.equal(on.textContent, "↻ 2 loops · on");
   assert.equal(on.getAttribute("aria-label"), "Otto / Tangent has 2 active loops, on. Open Processes.");
   assert.equal(waiting.textContent, "↻ 1 loop · waiting");
-  assert.equal(document.querySelector("[data-open-area-processes='otto/onboarding']"), null);
+  assert.equal(document.querySelector("[data-open-area-processes='otto/onboarding']"), null, "the active-loop summary stays limited to active loops");
+
+  const tangentRows = [...document.querySelectorAll("[data-work-group='otto/tangent'] .work-process-row")];
+  assert.deepEqual(tangentRows.map((row) => row.querySelector(".work-row-title").textContent), ["review", "triage"]);
+  const paused = document.querySelector("[data-work-group='otto/onboarding'] .work-process-row.paused");
+  assert.equal(paused.querySelector(".desk-state").textContent, "Paused");
+  assert.equal(paused.querySelector("[data-control-process]").textContent, "Resume");
+  assert.equal(paused.querySelector("[data-open-document]").getAttribute("aria-label"), "Inspect process paused");
+  assert.equal(paused.querySelector("[data-remove-process]").textContent, "Remove");
+  const scheduled = [...document.querySelectorAll("[data-work-group='otto/onboarding'] .work-process-row")]
+    .find((row) => row.querySelector(".work-row-title").textContent === "scheduled");
+  assert.equal(scheduled.querySelector("[data-remove-process]"), null);
 });
 
 test("the loop control opens Processes and Escape restores its Work focus and scroll", async () => {
@@ -78,7 +89,7 @@ test("Active-only keeps an Area whose active loop waits for its brain", async ()
   assert.equal(document.querySelector("[data-open-area-processes='otto/onboarding']").textContent, "↻ 1 loop · waiting");
 });
 
-test("Work Stop pauses the exact loop once and removes it from the active summary", async () => {
+test("Work Pause changes the exact Process once and restores focus", async () => {
   const fixture = withProcesses([process("otto/tangent", "review"), process("otto/standards", "review")]);
   const { window, document, posts } = await bootWorkTable(fixture, {
     /** Applies the server's exact-process mutation to the projected fixture. */
@@ -90,11 +101,13 @@ test("Work Stop pauses the exact loop once and removes it from the active summar
       return { ok: true, process: structuredClone(item) };
     },
   });
-  const stop = document.querySelector("[data-process-area='otto/tangent'][data-process-slug='review']");
-  assert.equal(stop.textContent, "Stop");
-  assert.equal(stop.getAttribute("aria-label"), "Stop loop review in Otto / Tangent");
-  click(window, stop);
-  click(window, stop);
+  const pause = document.querySelector(".work-process-row [data-process-area='otto/tangent'][data-process-slug='review'][data-control-process]");
+  assert.equal(pause.textContent, "Pause");
+  assert.equal(pause.getAttribute("aria-label"), "Pause process review in Otto / Tangent");
+  click(window, pause);
+  assert.equal(pause.textContent, "Pausing…");
+  assert.equal(pause.getAttribute("aria-busy"), "true");
+  click(window, pause);
   await settle(window, 6);
 
   assert.deepEqual(posts.filter((entry) => entry.path === "/api/processes/control").map((entry) => entry.body), [
@@ -102,9 +115,10 @@ test("Work Stop pauses the exact loop once and removes it from the active summar
   ]);
   assert.equal(document.querySelector("[data-open-area-processes='otto/tangent']"), null);
   assert.ok(document.querySelector("[data-open-area-processes='otto/standards']"));
+  assert.equal(document.activeElement.dataset.processSlug, "review");
 });
 
-test("Area Processes shows Stop and Resume and restores focus after control", async () => {
+test("Area Processes shows Pause and Resume and restores focus after control", async () => {
   const fixture = withProcesses([process("otto/tangent", "review")]);
   const { window, document } = await bootWorkTable(fixture, {
     /** Applies Stop or Resume to the process returned by the fake server. */
@@ -118,9 +132,58 @@ test("Area Processes shows Stop and Resume and restores focus after control", as
   });
   click(window, document.querySelector("[data-open-area-processes='otto/tangent']"));
   await settle(window);
-  click(window, document.querySelector(".area-processes [data-control-process]"));
+  const pause = document.querySelector(".area-processes [data-control-process]");
+  assert.equal(pause.textContent, "Pause");
+  click(window, pause);
   await settle(window, 6);
   const resume = document.querySelector(".area-processes [data-control-process]");
   assert.equal(resume.textContent, "Resume");
   assert.equal(document.activeElement, resume);
+});
+
+test("a failed Work Process control restores its action, focus, and honest state", async () => {
+  const fixture = withProcesses([process("otto/tangent", "review")]);
+  const { window, document } = await bootWorkTable(fixture, {
+    /** Returns a server-shaped commit failure for the Process mutation. */
+    postHandler: ({ path }) => path === "/api/processes/control"
+      ? {
+          ok: false,
+          status: 409,
+          /** Reads the fixture error body. */
+          async json() { return { error: "vault commit failed" }; },
+        }
+      : { ok: true },
+  });
+  const pause = document.querySelector(".work-process-row [data-control-process]");
+  click(window, pause);
+  await settle(window, 6);
+
+  const restored = document.querySelector(".work-process-row [data-control-process]");
+  assert.equal(restored.textContent, "Pause");
+  assert.equal(restored.disabled, false);
+  assert.equal(document.activeElement, restored);
+  assert.equal(document.querySelector(".work-process-row .desk-state").textContent, "Loop");
+  assert.match(document.querySelector("#toast").textContent, /process did not change: vault commit failed/i);
+});
+
+test("Work Remove confirms and removes the exact loop while keeping its Area focusable", async () => {
+  const fixture = withProcesses([process("otto/tangent", "review"), process("otto/standards", "review")]);
+  const { window, document, posts } = await bootWorkTable(fixture, {
+    /** Applies the exact-file removal to the refreshed projection. */
+    postHandler: ({ path, body }) => {
+      if (path !== "/api/processes/remove") return { ok: true };
+      fixture.programs.processes = fixture.programs.processes.filter((item) => item.file !== body.file);
+      return { ok: true, file: body.file, area: body.area, slug: body.slug };
+    },
+  });
+  window.confirm = () => true;
+  click(window, document.querySelector(".work-process-row [data-remove-process][data-process-area='otto/tangent']"));
+  await settle(window, 6);
+
+  assert.deepEqual(posts.find((entry) => entry.path === "/api/processes/remove").body, {
+    area: "otto/tangent", slug: "review", file: "otto/tangent/process-review.md",
+  });
+  assert.equal(document.querySelector(".work-process-row [data-process-area='otto/tangent']"), null);
+  assert.equal(document.activeElement.dataset.focusKey, "area:otto/tangent");
+  assert.ok(document.querySelector(".work-process-row [data-process-area='otto/standards']"));
 });

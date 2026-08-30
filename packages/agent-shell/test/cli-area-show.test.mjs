@@ -4,7 +4,7 @@ import test from "node:test";
 import { runAreaCli } from "../dist/cli/index.js";
 
 /** Runs `tangent area show` against a fetch stub and returns the printed text. */
-async function runShow(detail) {
+async function runShow(detail, options = []) {
   const printed = [];
   const previousFetch = globalThis.fetch;
   const previousLog = console.log;
@@ -16,7 +16,7 @@ async function runShow(detail) {
     return Response.json({ error: `unexpected ${url.pathname}` }, { status: 404 });
   };
   try {
-    await runAreaCli(["show", "otto/dnd"]);
+    await runAreaCli(["show", "otto/dnd", ...options]);
   } finally {
     globalThis.fetch = previousFetch;
     console.log = previousLog;
@@ -40,4 +40,18 @@ test("tangent area show prints route skills and project skills as name, descript
 test("tangent area show prints no Skills section when there are none", async () => {
   const text = await runShow({ area: "otto/dnd", purpose: "", goals: [], ideas: [], processes: [], skills: [], projectSkills: [] });
   assert.doesNotMatch(text, /Skills:/);
+});
+
+test("tangent area show omits Goals even when the server projection includes them", async () => {
+  const text = await runShow({
+    area: "otto/dnd", purpose: "Play.", ideas: [], processes: [], skills: [], projectSkills: [],
+    goals: [{ slug: "hidden-work", status: "active", title: "Do not print this" }],
+  });
+  assert.doesNotMatch(text, /Goals \(|hidden-work|Do not print this/);
+  assert.match(text, /Purpose:\nPlay\./);
+});
+
+test("tangent area show --json also omits the Goal collection", async () => {
+  const text = await runShow({ area: "otto/dnd", purpose: "Play.", goals: [{ slug: "hidden-work" }], ideas: [] }, ["--json"]);
+  assert.deepEqual(JSON.parse(text), { area: "otto/dnd", purpose: "Play.", ideas: [] });
 });

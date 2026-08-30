@@ -6845,7 +6845,13 @@ const processRoutes = createProcessRoutes({
   },
   /** Removes and commits one resolved loop process note. */
   async remove(body) {
-    const note = await resolveProcessNote(String(body.slug ?? "").trim(), String(body.area ?? "").trim());
+    const requestedArea = String(body.area ?? "").trim();
+    const requestedSlug = String(body.slug ?? "").trim();
+    const expectedFile = String(body.file ?? "").trim();
+    const note = expectedFile
+      ? (await readAreaProcesses(TREES_ROOT, cleanAreaPath(requestedArea))).find((item) => item.slug === validateProcessSlug(requestedSlug))
+      : await resolveProcessNote(requestedSlug, requestedArea);
+    if (!note || (expectedFile && note.file !== expectedFile)) throw new Error(`${expectedFile || requestedSlug} changed or no longer exists.`);
     if (!note.loop) throw new Error(`${note.file} is not a loop`);
     if (!processFileExists(TREES_ROOT, note.file)) throw new Error(`${note.file} no longer exists.`);
     await unlink(path.join(TREES_ROOT, note.file));

@@ -500,7 +500,7 @@ const areaDirectoryView = createAreaDirectoryView({
   },
 });
 const {
-  areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, processControl, selectedArea, areaParent, areaTreeRows, areaProgramMark,
+  areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, removeProcess, selectedArea, areaParent, areaTreeRows, areaProgramMark,
   areaGoalRow, goalAttention, orderedGoalTrees, loadAreaJournal, mountAreaMap, refreshAreaMap: refreshInlineAreaMap, disposeAreaMap: disposeInlineAreaMap, areaContents, renderAreas,
   areaParentOptions, renderAreaEditor,
 } = areaDirectoryView;
@@ -1789,7 +1789,7 @@ shellBindings = bindShellEvents({
   },
   areas: {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelDescribe, areaIsFolded,
-    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, preferredArea, areaLabel, loadAreaJournal,
+    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, removeProcess, preferredArea, areaLabel, loadAreaJournal,
   },
   programs: {
     showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, currentProgram,

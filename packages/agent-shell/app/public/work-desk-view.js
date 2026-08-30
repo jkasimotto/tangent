@@ -252,6 +252,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return (state.programs.processes ?? []).filter((item) => item.area === areaPath && item.loop === true && item.status === "active" && !item.error);
   }
 
+  /** Active and paused process notes owned by one exact Area. */
+  function areaProcessesForArea(areaPath) {
+    return (state.programs.processes ?? []).filter((item) => item.area === areaPath && ["active", "paused"].includes(item.status));
+  }
+
   /** The Area that owns the current cursor row, read from the painted desk. */
   function commandAreaOfCursor() {
     const row = document.querySelector("[data-work-cursor].cursor");
@@ -1139,7 +1144,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       // A live brain counts as work, the way a Describe session does: its
       // Area earns a header at the top level and a sub-header below one
       // (work-view-sub-areas Decision 1), never a peer panel of its parent.
-      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, liveBrainAreas.includes(area.path) ? 1 : 0, activeLoopsForArea(area.path).length ? 1 : 0, panelRoots.length ? areaPrograms.length : 0));
+      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, liveBrainAreas.includes(area.path) ? 1 : 0, areaProcessesForArea(area.path).length ? 1 : 0, panelRoots.length ? areaPrograms.length : 0));
     }
     // Every not-done Area earns a row. A done Area keeps its row only while
     // it has open work under the current filter. Active-only keeps only the
@@ -1650,8 +1655,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /**
    * The one small mark that says this Area's brain has a loop: an active
    * `every:`-only process note (design agent-shell-brain-loop, Decision 5).
-   * Hover names the interval and the first words of the message. Nothing
-   * else on Work says a loop exists; the Area page has the full row.
+   * Hover names the interval and the first words of the message. The full
+   * Process row sits below the exact Area header with its lifecycle controls.
    */
   function brainLoopMark(areaPath) {
     const loops = activeLoopsForArea(areaPath);
@@ -1661,8 +1666,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const runtime = loops[0].brainLive ? "on" : "waiting";
     const noun = count === 1 ? "loop" : "loops";
     const label = `${areaLabel(areaPath)} has ${count} active ${noun}, ${runtime}. Open Processes.`;
-    const controls = loops.map((item) => `<button class="work-loop-control" type="button" data-control-process data-process-action="pause" data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" aria-label="Stop loop ${escapeHtml(item.slug)} in ${escapeHtml(areaLabel(item.area))}">Stop</button>`).join("");
-    return `<span class="work-group-loop-controls"><button class="work-group-loop" type="button" data-open-area-processes="${escapeHtml(areaPath)}" data-focus-key="loops:${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(label)}">↻ ${count} ${noun} · ${runtime}</button>${controls}</span>`;
+    return `<span class="work-group-loop-controls"><button class="work-group-loop" type="button" data-open-area-processes="${escapeHtml(areaPath)}" data-focus-key="loops:${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(label)}">↻ ${count} ${noun} · ${runtime}</button></span>`;
   }
 
   /**
@@ -1905,6 +1909,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       return brain?.repair?.current || brain?.agentState?.owner === "you";
     })) return true;
     return [record, ...record.sections].some((part) => part.descriptions.length
+      || areaProcessesForArea(part.area.path).length
       || (part.area.presentations ?? []).length
       || part.trees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status))));
   }
@@ -1917,6 +1922,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // row needs a path tag (work-view-sub-areas Decision 1).
     const own = [
       ...areaPresentationRows(area),
+      ...areaProcessesForArea(area.path).map((item) => workProcessRow(item)),
       ...descriptions.map((session) => workDefinitionRow(session)),
       ...orderedGoalTrees(trees).map((tree) => workTreeRows(tree, area.path, null, facts)),
     ].join("");
@@ -1962,10 +1968,31 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     if (folded) return header;
     const rows = [
       ...areaPresentationRows(section.area),
+      ...areaProcessesForArea(section.area.path).map((item) => workProcessRow(item)),
       ...section.descriptions.map((session) => workDefinitionRow(session)),
       ...orderedGoalTrees(section.trees).map((tree) => workTreeRows(tree, section.area.path, null, facts, { subArea: true })),
     ].join("");
     return header + rows;
+  }
+
+  /** One exact-Area Process row with inspect and authorized lifecycle controls. */
+  function workProcessRow(item) {
+    const stateText = item.error ? `Broken note: ${item.error}` : item.state || (item.status === "paused" ? "Paused" : "Active");
+    const stateKind = item.error ? "waiting" : item.status === "paused" ? "complete" : item.due ? "waiting" : "working";
+    const action = item.status === "paused" ? "resume" : "pause";
+    const actionWord = action === "pause" ? "Pause" : "Resume";
+    const identity = `data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}"`;
+    const lifecycle = item.error ? "" : `<button class="work-process-control" type="button" data-control-process data-process-action="${action}" ${identity} aria-label="${actionWord} process ${escapeHtml(item.slug)} in ${escapeHtml(areaLabel(item.area))}">${actionWord}</button>`;
+    const remove = item.loop ? `<button class="work-process-control danger" type="button" data-remove-process ${identity} aria-label="Remove loop ${escapeHtml(item.slug)} from ${escapeHtml(areaLabel(item.area))}">Remove</button>` : "";
+    return `<tr class="work-process-row work-row ${item.status === "paused" ? "paused" : ""}" data-search-text="${escapeHtml(`${item.title} ${item.slug} ${item.when} ${stateText}`)}" data-work-area="${escapeHtml(item.area)}">
+      <th class="work-cell-work" scope="row">
+        <span class="work-cell-title">${WORK_FOLD_SPACE}<button class="work-row-title" type="button" data-open-document="${escapeHtml(item.file)}" data-focus-key="process:${escapeHtml(item.file)}" aria-label="Inspect process ${escapeHtml(item.title)}">${escapeHtml(item.title)}</button><small class="work-row-path">Process</small></span>
+        <small class="work-cell-facts">${escapeHtml(item.when)}</small>
+      </th>
+      <td class="work-cell-agent"><span class="work-process-when" title="${escapeHtml(item.when)}">${escapeHtml(item.when)}</span></td>
+      <td class="work-cell-status"><span class="desk-state ${stateKind}" title="${escapeHtml(stateText)}">${escapeHtml(stateText)}</span></td>
+      <td class="work-cell-controls"><span class="work-process-controls"><button class="work-process-control" type="button" data-open-document="${escapeHtml(item.file)}" aria-label="Inspect process ${escapeHtml(item.title)}">Inspect</button>${lifecycle}${remove}</span></td>
+    </tr>`;
   }
 
   /**

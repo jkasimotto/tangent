@@ -152,7 +152,9 @@ async function showCommand(args: Args): Promise<void> {
   const area = await requireArea(server, requiredString(args._[1], "tangent area show requires <area>."));
   const detail = await vaultFetch(server, `/api/areas/show?area=${encodeURIComponent(area)}`);
   if (booleanArg(args.json)) {
-    console.log(JSON.stringify(detail, null, 2));
+    const concise = { ...detail };
+    delete concise.goals;
+    console.log(JSON.stringify(concise, null, 2));
     return;
   }
   console.log(detail.area);
@@ -165,10 +167,6 @@ async function showCommand(args: Args): Promise<void> {
   printResources(detail);
   printSkills(detail);
   printProcesses(detail);
-  console.log("");
-  console.log(`Goals (${detail.goals.length}):`);
-  if (!detail.goals.length) console.log("  none");
-  for (const goal of detail.goals) console.log(`  ${goal.slug}  [${goal.status}]  ${goal.title}`);
   console.log("");
   console.log(`Ideas (${detail.ideas.length}):`);
   if (!detail.ideas.length) console.log("  none");

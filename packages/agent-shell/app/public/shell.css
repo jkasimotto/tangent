@@ -632,10 +632,17 @@ button.work-agent-ref:hover, button.work-agent-ref:focus-visible { color: #fff; 
 .process-open { display: grid; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .process-open strong { font-weight: 620; }
 .process-open small { color: var(--quiet); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.process-control, .work-loop-control { cursor: pointer; }
-.process-control:disabled, .work-loop-control:disabled { cursor: wait; opacity: .65; }
+.process-control, .work-loop-control, .work-process-control { cursor: pointer; }
+.process-control:disabled, .work-loop-control:disabled, .work-process-control:disabled { cursor: wait; opacity: .65; }
 .work-group-loop-controls { display: inline-flex; align-items: center; gap: 4px; }
 .work-loop-control { border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--danger); padding: 2px 7px; font-size: 11px; }
+.process-controls, .work-process-controls { display: inline-flex; align-items: center; gap: 5px; }
+.work-process-controls { justify-content: flex-end; }
+.work-process-control { border: 1px solid var(--line); border-radius: 4px; background: transparent; color: #aeb7c1; padding: 2px 7px; font-size: 11px; }
+.work-process-control:hover, .work-process-control:focus-visible { border-color: #718096; color: #fff; }
+.work-process-control.danger { color: #d99898; }
+.work-process-row.paused > * { color: var(--quiet); }
+.work-process-when { display: inline-block; max-width: 100%; overflow: hidden; color: #8f99a5; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .process-state.due { color: var(--amber); font-weight: 620; }
 .process-state.paused { color: var(--quiet); }
 .process-state.loop { color: #9ebbe0; }

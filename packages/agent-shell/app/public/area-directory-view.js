@@ -226,33 +226,80 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     control.disabled = true;
     control.setAttribute("aria-busy", "true");
     const oldText = control.textContent;
-    control.textContent = action === "pause" ? "Stopping…" : "Resuming…";
+    control.textContent = action === "pause" ? "Pausing…" : "Resuming…";
     try {
       const result = await post("/api/processes/control", { area, slug, file, action });
       const index = (state.programs.processes ?? []).findIndex((item) => item.area === area && item.slug === slug && item.file === file);
       if (index >= 0 && result.process) state.programs.processes[index] = result.process;
       paint(true);
-      await refresh();
+      await refresh().catch(() => {});
       paint(true);
-      window.setTimeout(() => [...document.querySelectorAll("[data-control-process]")]
-        .find((item) => item.dataset.processArea === area && item.dataset.processSlug === slug)?.focus(), 0);
-      showToast(action === "pause" ? "The loop stopped. Its process definition stays here." : "The loop resumed.");
+      focusProcessControl(area, slug);
+      showToast(action === "pause" ? "The process paused." : "The process resumed.");
     } catch (error) {
       control.disabled = false;
       control.removeAttribute("aria-busy");
       control.textContent = oldText;
       await refresh().catch(() => {});
       paint(true);
-      showToast(`The loop did not change: ${error.message}`);
+      focusProcessControl(area, slug);
+      showToast(`The process did not change: ${error.message}`);
     }
   }
 
-  /** One accessible Stop or Resume button, fenced to the row's full identity. */
+  /** Restores focus to one process after a repaint caused by its mutation. */
+  function focusProcessControl(area, slug) {
+    window.setTimeout(() => [...document.querySelectorAll("[data-control-process]")]
+      .find((item) => item.dataset.processArea === area && item.dataset.processSlug === slug)?.focus(), 0);
+  }
+
+  /** Removes one exact loop after confirmation and leaves focus on its Area. */
+  async function removeProcess(control) {
+    if (control.disabled) return;
+    const { processArea: area, processSlug: slug, processFile: file } = control.dataset;
+    if (!area || !slug || !file) return showToast("This process control is stale.");
+    if (!window.confirm(`Remove loop ${slug} from ${area}?`)) return;
+    control.disabled = true;
+    control.setAttribute("aria-busy", "true");
+    const oldText = control.textContent;
+    control.textContent = "Removing…";
+    try {
+      await post("/api/processes/remove", { area, slug, file });
+      state.programs.processes = (state.programs.processes ?? []).filter((item) => !(item.area === area && item.slug === slug && item.file === file));
+      paint(true);
+      await refresh().catch(() => {});
+      paint(true);
+      window.setTimeout(() => {
+        const target = [...document.querySelectorAll("[data-focus-key]")]
+          .find((item) => item.dataset.focusKey === `area:${area}`)
+          ?? document.querySelector("[data-work-cursor] [data-focus-key], #work-heading, #area-heading");
+        target?.focus();
+      }, 0);
+      showToast(`The loop ${slug} was removed.`);
+    } catch (error) {
+      control.disabled = false;
+      control.removeAttribute("aria-busy");
+      control.textContent = oldText;
+      await refresh().catch(() => {});
+      paint(true);
+      window.setTimeout(() => [...document.querySelectorAll("[data-remove-process]")]
+        .find((item) => item.dataset.processArea === area && item.dataset.processSlug === slug)?.focus(), 0);
+      showToast(`The loop was not removed: ${error.message}`);
+    }
+  }
+
+  /** One accessible Pause or Resume button, fenced to the row's full identity. */
   function processControl(item, compact = false) {
-    if (!item.loop || item.error) return "";
+    if (item.error) return "";
     const action = item.status === "paused" ? "resume" : "pause";
-    const word = action === "pause" ? "Stop" : "Resume";
-    return `<button class="${compact ? "work-loop-control" : "process-control"}" type="button" data-control-process data-process-action="${action}" data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" aria-label="${word} loop ${escapeHtml(item.slug)} in ${escapeHtml(areaLabel(item.area))}">${word}</button>`;
+    const word = action === "pause" ? "Pause" : "Resume";
+    return `<button class="${compact ? "work-process-control" : "process-control"}" type="button" data-control-process data-process-action="${action}" data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" aria-label="${word} process ${escapeHtml(item.slug)} in ${escapeHtml(areaLabel(item.area))}">${word}</button>`;
+  }
+
+  /** Remove exists only for loop notes, which is the server's current authority. */
+  function processRemoveControl(item, compact = false) {
+    if (!item.loop) return "";
+    return `<button class="${compact ? "work-process-control danger" : "process-control danger"}" type="button" data-remove-process data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" aria-label="Remove loop ${escapeHtml(item.slug)} from ${escapeHtml(areaLabel(item.area))}">Remove</button>`;
   }
 
   /**
@@ -270,11 +317,11 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
         <td>${escapeHtml(item.status === "paused" ? "–" : processMoment(item.nextRunAt))}</td>
         <td>${escapeHtml(processMoment(item.lastRunAt))}</td>
         <td><span class="process-state ${escapeHtml(item.due ? "due" : item.loop && item.status === "active" ? "loop" : item.status)}">${escapeHtml(item.error ? `Broken note: ${item.error}` : item.state)}</span></td>
-        <td>${processControl(item)}</td>
+        <td><span class="process-controls">${processControl(item)}${processRemoveControl(item)}</span></td>
       </tr>`).join("");
     return `
       <section class="area-workspace-section area-processes" aria-labelledby="area-processes-heading">
-        <div class="area-section-heading"><div><p class="kicker">Processes</p><h3 id="area-processes-heading" tabindex="-1">${processes.length === 1 ? "One process" : `${processes.length} processes`}</h3></div><small>Stop pauses the loop. Resume starts it again.</small></div>
+        <div class="area-section-heading"><div><p class="kicker">Processes</p><h3 id="area-processes-heading" tabindex="-1">${processes.length === 1 ? "One process" : `${processes.length} processes`}</h3></div><small>Pause stops scheduling. Resume starts it again.</small></div>
         <div class="table-scroll"><table class="process-table"><thead><tr><th>Process</th><th>When</th><th>Next run</th><th>Last run</th><th>State</th><th>Control</th></tr></thead><tbody>${rows}</tbody></table></div>
       </section>`;
   }
@@ -512,5 +559,5 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
 
   /** Returns one program by its stable UI identity. */
 
-  return { areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, processControl, selectedArea, areaParent, areaTreeRows, areaProgramMark, areaGoalRow, goalAttention, orderedGoalTrees, loadAreaJournal, mountAreaMap, refreshAreaMap, disposeAreaMap, areaContents, renderAreas, areaParentOptions, renderAreaEditor };
+  return { areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, removeProcess, selectedArea, areaParent, areaTreeRows, areaProgramMark, areaGoalRow, goalAttention, orderedGoalTrees, loadAreaJournal, mountAreaMap, refreshAreaMap, disposeAreaMap, areaContents, renderAreas, areaParentOptions, renderAreaEditor };
 }

@@ -31,7 +31,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   } = work;
   const {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelDescribe, areaIsFolded,
-    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, preferredArea, areaLabel, loadAreaJournal,
+    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, removeProcess, preferredArea, areaLabel, loadAreaJournal,
   } = areas;
   const {
     showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, currentProgram,
@@ -1599,6 +1599,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (state.documentPeek && documentPeekLayer.contains(target)) return handleDocumentPeekClick(event);
     const processControl = target.closest?.("[data-control-process]");
     if (processControl) return controlProcess(processControl);
+    const processRemove = target.closest?.("[data-remove-process]");
+    if (processRemove) return removeProcess(processRemove);
     if (state.view === "document") syncPointerComment(target, false);
     const copy = target.closest?.("[data-document-copy='full']");
     if (copy) {

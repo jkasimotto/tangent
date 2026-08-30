@@ -398,8 +398,18 @@ async function listCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const areaArg = stringArg(args._[1]);
   const area = areaArg ? await requireArea(server, areaArg) : undefined;
+  const requestedStatuses = stringsArg(args.status);
+  if (booleanArg(args.done) && booleanArg(args.all)) throw new Error("tangent goal list accepts either --done or --all, not both.");
+  if (requestedStatuses.length && (booleanArg(args.done) || booleanArg(args.all))) throw new Error("tangent goal list accepts --status or --done/--all, not both.");
+  const statuses = requestedStatuses.length
+    ? requestedStatuses
+    : booleanArg(args.all)
+      ? []
+      : booleanArg(args.done)
+        ? ["done"]
+        : ["open", "active", "verify"];
   const scope = await listGoalScope(server, area, booleanArg(args.subtree), {
-    status: stringsArg(args.status),
+    status: statuses,
     changedSince: stringArg(args["changed-since"]) ?? "",
     query: stringArg(args.query) ?? "",
   });

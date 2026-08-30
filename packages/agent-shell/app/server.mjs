@@ -36,7 +36,7 @@ import { beginGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, b
 import { resolveBrainAttemptLaunch } from "./brain-launch.mjs";
 import { refreshBrainObservation } from "./brain-lifecycle.mjs";
 import { brainAttemptAuthority, inactiveBrainAuthorityState } from "./brain-authority.mjs";
-import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, unreadNotices, writeInbox } from "./brain-inbox.mjs";
+import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, rewriteNotice, unreadNotices, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
 import { promptArrived, readyForText, splitPrompt, squash, typeChunks } from "./prompt-delivery.mjs";
@@ -114,7 +114,6 @@ import { createAreaMapTransactionRepository } from "./area-map-transaction-repos
 import { createAreaMapWorldViewStore } from "./area-map-world-view-store.mjs";
 import { workerWallNotice } from "./worker-wall-notice.mjs";
 import { projectWork } from "./work-projection.mjs";
-import { acknowledgeWorkerQuestion, answerWorkerQuestion, latestWorkerQuestion, openWorkerQuestion, transferWorkerQuestions, workerQuestionDelivery, workerQuestionPrompt, workerQuestionTarget } from "./worker-questions.mjs";
 
 const rawExecFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = Number(process.env.TANGENT_TMUX_COMMAND_TIMEOUT_MS ?? 10_000);
@@ -309,7 +308,7 @@ const REPAIR_CREW_LIMIT = Math.max(1, Number(process.env.TANGENT_REPAIR_CREW_LIM
 const REPAIR_GRACE_MS = Math.max(0, Number(process.env.TANGENT_REPAIR_GRACE_MINUTES ?? 3) * 60_000);
 /**
  * The closing section of every worker prompt: the one Tangent command a
- * worker has (D5). The same four lines close a review step; --done on a
+ * worker has (D5). The same three lines close a review step; --done on a
  * review step means the review passed.
  */
 function workerSendSection() {
@@ -319,7 +318,7 @@ function workerSendSection() {
     `    tangent send brain "<note>"            a note to the brain, no status change\n` +
     `    tangent send brain --done "<note>" [--present <file>]  the work is finished; present each document Julian must read\n` +
     `    tangent send brain --blocked "<note>"  you cannot continue; say why\n` +
-    `    tangent send brain --question "<note>" you need a decision; ask it\n\n` +
+    `\n` +
     `Do not run other tangent commands. Do not change the Goal file's frontmatter. The brain marks the Goal done.`
   );
 }
@@ -1960,13 +1959,11 @@ async function pipelineStepPrompt(area, o, record, index, extras = [], sessionNa
     .map((item) => `### Handover from step ${item.index} (${item.label || "agent"}, ${item.status})\n\n${item.handover}`);
   trace?.mark("step controller resolved");
   const continuationEntries = step.continuations ?? [];
-  const questions = workerQuestionPrompt(step);
   return (
     `${assignment}\n\n` +
     `## Your step\n\n` +
     `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}${step.kind === "review" ? " This is the review step. --done means the review passed." : ""}\n\n` +
     (earlier.length ? `## Handovers so far\n\n${earlier.join("\n\n")}\n\n` : "") +
-    (questions ? `${questions}\n\n` : "") +
     (continuationEntries.length ? `${continuationSection({ index, total, entries: continuationEntries, subject: "step" })}\n\n` : "") +
     workerSendSection()
   );
@@ -2266,6 +2263,8 @@ async function rearmPersistedPrompts() {
   // keep every record; the next boot that sees a real world sweeps them.
   if (!snapshotCanJudgeAbsence(sessions)) return;
   const live = new Map(sessions.map((session) => [session.name, session]));
+  let persistedPipelines = null;
+  let persistedGoals = null;
   for (const record of records) {
     const observed = live.get(record.session);
     if (observed && !observed.owned) continue;
@@ -2274,7 +2273,20 @@ async function rearmPersistedPrompts() {
       await clearArmedPrompt(ARMED_ROOT, record.session).catch(() => {});
       continue;
     }
-    await armSession(record.session, { submit: record.submit, prompt: record.prompt, extraFiles: record.extraFiles });
+    let prompt = record.prompt;
+    if (prompt.includes("send brain --question")) {
+      persistedPipelines ??= await readAllPipelines(PIPELINES_ROOT);
+      persistedGoals ??= await goalsByFile();
+      const queue = persistedPipelines.find((item) => item.steps.some((step) => step.session === record.session || step.attempts?.some((attempt) => attempt.session === record.session)));
+      const step = queue?.steps.find((item) => item.session === record.session || item.attempts?.some((attempt) => attempt.session === record.session));
+      const goal = queue ? persistedGoals.get(queue.goal) : null;
+      if (!queue || !step || !goal) {
+        await clearArmedPrompt(ARMED_ROOT, record.session).catch(() => {});
+        continue;
+      }
+      prompt = await pipelineStepPrompt(queue.area, goal, queue, step.index, [], record.session);
+    }
+    await armSession(record.session, { submit: record.submit, prompt, extraFiles: record.extraFiles });
   }
 }
 
@@ -3023,7 +3035,6 @@ async function startPipelineStep(record, index, trace = null) {
     endedAt: null,
     report: null,
   }];
-  transferWorkerQuestions(step, step.attempts.at(-1), step.startedAt);
   delete step.nextAttemptKind;
   record.currentAssignmentId = step.id;
   record.revision = Math.max(1, Number(record.revision) || 1) + 1;
@@ -3173,7 +3184,7 @@ function workerHandoverOperationId(sessionName, text, report, idempotencyKey, ki
 }
 
 /** The send flags a worker has (D5), each with the queue effect it stands for. */
-const WORKER_SEND_KINDS = new Set(["note", "done", "blocked", "question"]);
+const WORKER_SEND_KINDS = new Set(["note", "done", "blocked"]);
 
 /**
  * Builds the stored report for one `tangent send brain` flag. Existing readers
@@ -3182,7 +3193,6 @@ const WORKER_SEND_KINDS = new Set(["note", "done", "blocked", "question"]);
  */
 function reportFromSendKind(record, step, kind, text) {
   if (kind === "blocked") return { type: "failed", summary: text };
-  if (kind === "question") return { type: "question-needed", summary: text, question: text };
   if (kind !== "done") return null;
   if (step.kind === "review") {
     return { type: "review-result", verdict: "passed", goalRevision: record.goalRevision, summary: text, criteria: [{ id: "done", passed: true, evidenceRefs: [text] }] };
@@ -3341,20 +3351,6 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
   if (found.record.migrationProblem || found.record.status === "paused" || found.record.controllerArea !== found.record.area) {
     return { status: 409, error: `The authoritative Goal queue is paused: ${found.record.migrationProblem ?? "it needs repair"}. Keep this worker session open and repair the queue for ${found.record.area}. Nothing was recorded.` };
   }
-  // A replacement prompt carries the exact open question and tells the new
-  // attempt to run the same worker command. Attach that command to the
-  // existing question instead of creating a second report or brain notice.
-  // This also makes a retry after answer delivery or acknowledgement idempotent.
-  const waitingQuestion = kind === "question" ? latestWorkerQuestion(found.step) : null;
-  if (waitingQuestion
-    && normalizeMessage(waitingQuestion.report.question ?? waitingQuestion.report.summary) === normalizeMessage(text)) {
-    const attempt = found.step.attempts?.at(-1) ?? null;
-    if (attempt?.session === sessionName) {
-      transferWorkerQuestions(found.step, attempt);
-      await writePipeline(PIPELINES_ROOT, found.record);
-      return { status: 200, state: "question-waiting", next: null, pipeline: found.record, receipt: null, repeated: true };
-    }
-  }
   const effectiveReport = report ?? reportFromSendKind(found.record, found.step, kind, text);
   const effectiveKind = report ? null : kind ?? "note";
   return completePipelineStep(found.record, found.step, text, "agent", effectiveReport, operationId, sessionName, effectiveKind);
@@ -3408,9 +3404,6 @@ async function completePipelineStep(record, step, text, source, report = null, i
   }
   if (report) {
     try {
-      if (report.type === "question-needed") {
-        report = openWorkerQuestion({ ...report, idempotencyKey }, { attempt: step.attempts?.at(-1) ?? null, session: workerSession, now: endedAt });
-      }
       typed = recordTypedReport(record, step, report, idempotencyKey, endedAt);
     } catch (error) {
       return { status: 409, error: source === "agent" ? workerReportRejection(error) : String(error.message ?? error) };
@@ -3453,7 +3446,7 @@ async function completePipelineStep(record, step, text, source, report = null, i
   if (source === "agent" && step.status === "waiting") {
     return workerResponse("reported");
   }
-  if (source !== "agent" && (report?.type === "question-needed" || report?.status === "blocked" || report?.verdict === "blocked")) {
+  if (source !== "agent" && (report?.status === "blocked" || report?.verdict === "blocked")) {
     await notifyBrain(record.area, `Goal ${record.slug}: assignment ${step.index} reported a typed block. ${brainMessageExcerpt(report.summary || text)}`);
     return { status: 200, state: "reported", next: null, pipeline: record };
   }
@@ -4132,6 +4125,16 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
   let goalIndex = null;
   for (const record of await readAllPipelines(PIPELINES_ROOT)) {
     let changed = queueNormalizationChanged(record) || reclaimLiveSteps(record, byName);
+    if (queueNormalizationChanged(record)) {
+      const inbox = await readInbox(BRAINS_ROOT, record.area);
+      let inboxChanged = false;
+      for (const step of record.steps) {
+        for (const receipt of step.handoverReceipts ?? []) {
+          inboxChanged = rewriteNotice(inbox, { id: receipt.notice?.id, sourceId: receipt.notice?.sourceId, text: receipt.notice?.text }) || inboxChanged;
+        }
+      }
+      if (inboxChanged) await writeInbox(BRAINS_ROOT, inbox);
+    }
     if (!record.goalRevision) {
       goalIndex ??= await goalsByFile();
       const goal = goalIndex.get(record.goal);
@@ -4296,7 +4299,7 @@ async function runAttemptRecovery(record, assignment, session, action) {
   let terminal = false;
   try {
     if (action.kind === "nudge") {
-      const text = `You stopped 3 minutes ago and sent no note. If the work is done: tangent send brain --done "<what changed, how you proved it>". If you cannot continue: tangent send brain --blocked "<why>". If you need a decision: tangent send brain --question "<ask>". Otherwise continue.`;
+      const text = `You stopped 3 minutes ago and sent no note. If the work is done: tangent send brain --done "<what changed, how you proved it>". If a real dependency prevents progress: tangent send brain --blocked "<dependency and what cannot continue>". Otherwise send an ordinary note and continue.`;
       const delivered = await messages.dispatch(session, { from: "tangent", area: record.area, text, durable: true, queuedAt: new Date().toISOString() });
       if (delivered.status !== 200) throw new Error(delivered.error);
     } else if (action.kind === "resume-in-place") {
@@ -4594,79 +4597,6 @@ async function commandProvenance(session) {
 async function workerGoalForSession(session) {
   const pipeline = (await readAllPipelines(PIPELINES_ROOT)).find((record) => record.steps.some((step) => step.session === session || step.attempts?.some((attempt) => attempt.session === session)));
   return pipeline ? (await goalsByFile()).get(pipeline.goal) ?? null : null;
-}
-
-/** Finds one queue whose question is addressed through a current or historical worker session. */
-async function queueForWorkerQuestion(targetSession) {
-  return (await readAllPipelines(PIPELINES_ROOT)).find((record) => workerQuestionTarget(record, targetSession)) ?? null;
-}
-
-/**
- * Converts an exact live brain message into a durable queue answer. Null
- * means that the caller must keep the ordinary agent-message semantics.
- */
-async function maybeAnswerWorkerQuestion(sender, targetSession, text, operationId) {
-  const candidate = await queueForWorkerQuestion(targetSession);
-  if (!candidate) return null;
-  const brain = await exactLiveBrainForArea(candidate.area);
-  if (!brain || sender.role !== "brain" || sender.session !== brain.session || sender.area !== candidate.area) return null;
-  return withGoalQueueMutation(candidate.goal, async () => {
-    const record = await readPipeline(PIPELINES_ROOT, candidate.area, candidate.slug);
-    if (!record) return { status: 404, error: "the worker question queue no longer exists", code: "question-queue-missing" };
-    try {
-      const answered = answerWorkerQuestion(record, {
-        targetSession,
-        text,
-        brainSession: sender.session,
-        operationId: String(operationId ?? "").trim() || randomUUID(),
-      });
-      if (answered.state === "not-question") return null;
-      if (!answered.repeated) await writePipeline(PIPELINES_ROOT, record);
-      stateEvents.changed("worker question answered");
-      return {
-        status: 200,
-        value: {
-          status: answered.repeated ? "repeated" : "answered",
-          to: answered.question.recipient?.session ?? record.area,
-          target: "worker-question",
-          question: answered.question,
-          queueRevision: record.revision,
-        },
-      };
-    } catch (error) {
-      return { status: 409, error: String(error.message ?? error), code: error.code ?? "question-answer-conflict" };
-    }
-  });
-}
-
-/** Reads one durable answer for the exact attempt wait channel. */
-async function readWorkerQuestion(body) {
-  for (const record of await readAllPipelines(PIPELINES_ROOT)) {
-    const delivery = workerQuestionDelivery(record, body);
-    if (delivery) return { status: 200, value: { ...delivery, goal: record.goal, assignmentId: workerQuestionTarget(record, delivery.question.askedSession)?.assignment?.id ?? null } };
-  }
-  return { status: 404, error: `no worker question ${String(body.questionId ?? "").trim()}`, code: "question-not-found" };
-}
-
-/** Records exact-attempt acknowledgement under the queue's existing mutation lock. */
-async function acknowledgeWorkerQuestionDelivery(body) {
-  const records = await readAllPipelines(PIPELINES_ROOT);
-  const candidate = records.find((record) => workerQuestionDelivery(record, body)) ?? null;
-  if (!candidate) return { status: 404, error: `no worker question ${String(body.questionId ?? "").trim()}`, code: "question-not-found" };
-  return withGoalQueueMutation(candidate.goal, async () => {
-    const record = await readPipeline(PIPELINES_ROOT, candidate.area, candidate.slug);
-    try {
-      const acknowledged = acknowledgeWorkerQuestion(record, {
-        ...body,
-        operationId: String(body.operationId ?? "").trim() || randomUUID(),
-      });
-      if (!acknowledged.repeated) await writePipeline(PIPELINES_ROOT, record);
-      stateEvents.changed("worker question acknowledged");
-      return { status: 200, value: { status: acknowledged.repeated ? "repeated" : "acknowledged", question: acknowledged.question, queueRevision: record.revision } };
-    } catch (error) {
-      return { status: error.code === "question-transferred" ? 409 : 400, error: String(error.message ?? error), code: error.code ?? "question-acknowledgement-failed" };
-    }
-  });
 }
 
 /**
@@ -5109,7 +5039,7 @@ function repairWaitingWork(area, pipelines, sessions, brain, repair, now = Date.
       const report = latestAttemptReport(assignment);
       const live = assignment.session ? byName.get(assignment.session) : null;
       const state = deriveAttemptState({ assignment, observation: live?.observation ?? live, recovery: assignment.attempts?.at(-1)?.recovery ?? [], brain, repair, now });
-      if (!["Reported done", "Reported blocked", "Asked the brain", "Stuck", "Hit a wall", "Stopped"].some((word) => state.word.startsWith(word))) continue;
+      if (!["Reported done", "Reported blocked", "Stuck", "Hit a wall", "Stopped"].some((word) => state.word.startsWith(word))) continue;
       waiting.push({
         goal: queue.goal,
         slug: queue.slug,
@@ -6580,10 +6510,6 @@ const agentRoutes = createAgentRoutes({
     }
     return { ...projected, ...await rebuiltAgentPrompt(async () => goalPrompt(goal.area, goal, recoveredExtraGoals(projected, goalIndex), [], null, await promptWorkFolder(goal.area, projected.attempt))) };
   },
-  /** Reads one question through its control channel, never through a pane. */
-  question: readWorkerQuestion,
-  /** Records command-output delivery to the exact current attempt. */
-  acknowledgeQuestion: acknowledgeWorkerQuestionDelivery,
   /**
    * A worker's `tangent send brain`: the note lands on the worker's own
    * assignment and in the inbox of the brain that controls it. Only a worker

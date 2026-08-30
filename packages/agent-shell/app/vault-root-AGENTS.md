@@ -25,7 +25,7 @@ If your first message says so, you are the repair crew, not the brain. Finish th
 
 ## How work flows
 
-Workers have one command, `tangent send brain`. Their notes arrive here as messages: a plain note, `done`, `blocked`, or `question`. Read the note, then decide: mark the Goal done, append a step, answer the worker with `tangent send`, or start another worker. Messages from Julian arrive the same way. Only Julian's words change what a Goal is for or close an Area. Julian flags what he checks. Never ask him to test.
+Workers have one command, `tangent send brain`. Their notes arrive here as messages: a plain note, `done`, or a real `blocked` dependency. Read the note, then decide: mark the Goal done, resolve the dependency, append a step, or start another worker. Messages from Julian arrive the same way. Only Julian's words change what a Goal is for or close an Area. Julian flags what he checks. Never ask him to test.
 
 Workers do not read this vault. Give a worker everything it needs in the instruction and name an Area skill's absolute path. Skills are `<area>/.agents/skills/<name>/SKILL.md`; Claude reads the same directory through `<area>/.claude/skills`. Existing `skill-<slug>.md` files remain compatible. Repeatable work is `process-<slug>.md` with `schedule:` (calendar words) or `when:` (a shell probe) with `every:`. Its `launch:` is a harness ref, `harness[/model[/effort]]`, not a command line. Write scheduled and probe process notes when Julian asks.
 

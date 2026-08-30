@@ -61,7 +61,7 @@ async function readQueue(root, worker) {
   return JSON.parse(await readFile(path.join(root, "pipelines", area, `${worker.slug}.json`), "utf8"));
 }
 
-test("a worker sends notes, questions, and done to its brain, and nothing else", async (context) => {
+test("a worker sends notes, blocked reports, and done to its brain, and nothing else", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "worker-send-"));
   const { trees, workspace } = await buildVault(root);
   const openedSessions = [];
@@ -80,7 +80,7 @@ test("a worker sends notes, questions, and done to its brain, and nothing else",
   const before = await readQueue(root, worker);
   const note = await post(base, "/api/agents/send", { to: "brain", from: worker.session, text: "Parser wired. Next: the route." });
   assert.equal(note.status, 200, JSON.stringify(note.body));
-  assert.equal(note.body.status, "sent");
+  assert.equal(note.body.status, "queued");
   assert.equal(note.body.kind, "note");
   assert.equal(note.body.to, brain.body.session, "the note names the brain that controls the worker's Goal");
   const afterNote = await readQueue(root, worker);
@@ -98,60 +98,21 @@ test("a worker sends notes, questions, and done to its brain, and nothing else",
   assert.equal(again.body.state, "repeated");
   assert.equal((await readQueue(root, worker)).steps[0].handoverReceipts.length, 1);
 
-  // A question: the assignment waits for the brain.
-  const question = await post(base, "/api/agents/send", { to: "brain", from: worker.session, text: "Keep the old field name?", kind: "question" });
-  assert.equal(question.status, 200, JSON.stringify(question.body));
-  assert.equal(question.body.kind, "question");
-  const afterQuestion = await readQueue(root, worker);
-  assert.equal(afterQuestion.steps[0].status, "waiting");
-  assert.equal(afterQuestion.steps[0].reports.at(-1).type, "question-needed");
-  assert.equal(afterQuestion.steps[0].reports.at(-1).questionState.status, "open");
-  const inboxAfterQuestion = await readInbox(path.join(root, "brains"), area);
-  assert.match(inboxAfterQuestion.notices.find((entry) => entry.id === question.body.receipt.notice.id).text, /^question: Keep the old field name\?/);
+  const revisionBeforeRemovedKind = afterNote.revision;
+  const removedKind = await post(base, "/api/agents/send", { to: "brain", from: worker.session, text: "Keep the old field name?", kind: "question" });
+  assert.equal(removedKind.status, 400);
+  assert.equal((await readQueue(root, worker)).revision, revisionBeforeRemovedKind);
 
-  // A previous generation of the correct Area brain has no answer authority.
   const stoppedBrain = await post(base, "/api/brains/stop", { area, expectedAttemptId: brain.body.session, operationId: "stale-answer-stop" });
   assert.equal(stoppedBrain.status, 200, JSON.stringify(stoppedBrain.body));
-  const currentBrain = await post(base, "/api/brains/start", { area, resume: true, instruction: "Answer the waiting worker." });
+  const currentBrain = await post(base, "/api/brains/start", { area, resume: true, instruction: "Continue coordinating the Area." });
   assert.equal(currentBrain.status, 200, JSON.stringify(currentBrain.body));
   openedSessions.push(currentBrain.body.session);
   const staleAnswer = await post(base, "/api/agents/send", { to: worker.session, from: brain.body.session, text: "Use neither." }, brain.body.session);
-  assert.notEqual(staleAnswer.body.target, "worker-question");
-  assert.equal((await readQueue(root, worker)).steps[0].reports.at(-1).questionState.status, "open");
+  assert.notEqual(staleAnswer.body.status, "answered");
 
-  // A non-brain message keeps ordinary semantics and cannot resolve the
-  // durable question, even when it names the waiting worker.
   const ordinary = await post(base, "/api/agents/send", { to: worker.session, from: otherBrain.body.session, text: "Use neither." }, otherBrain.body.session);
   assert.equal(ordinary.status, 409, "ordinary messaging keeps its shell-safety refusal");
-  assert.equal((await readQueue(root, worker)).steps[0].reports.at(-1).questionState.status, "open");
-
-  // The exact Area brain answer is a queue transition, not a composer
-  // message. It reaches the worker through the question control channel.
-  const answer = await post(base, "/api/agents/send", { to: worker.session, from: currentBrain.body.session, text: "Keep the old field name." }, currentBrain.body.session);
-  assert.equal(answer.status, 200, JSON.stringify(answer.body));
-  assert.equal(answer.body.status, "answered");
-  assert.equal(answer.body.target, "worker-question");
-  const answeredQueue = await readQueue(root, worker);
-  assert.equal(answeredQueue.steps[0].status, "running");
-  assert.equal(answeredQueue.steps[0].reports.at(-1).questionState.answer.text, "Keep the old field name.");
-  const questionId = answer.body.question.id;
-  const attemptId = answer.body.question.recipient.attemptId;
-  const waited = await fetch(`${base}/api/agents/questions?question=${encodeURIComponent(questionId)}&attempt=${encodeURIComponent(attemptId)}&session=${encodeURIComponent(worker.session)}`);
-  assert.equal(waited.status, 200);
-  assert.equal((await waited.json()).answer.text, "Keep the old field name.");
-  const acknowledged = await post(base, "/api/agents/questions/ack", { questionId, attemptId, session: worker.session }, worker.session);
-  assert.equal(acknowledged.status, 200, JSON.stringify(acknowledged.body));
-  assert.equal(acknowledged.body.status, "acknowledged");
-  assert.equal((await readQueue(root, worker)).steps[0].reports.at(-1).questionState.status, "acknowledged");
-
-  // Retrying the same command after acknowledgement returns the durable
-  // answer. It does not add another question report or brain notice.
-  const retriedQuestion = await post(base, "/api/agents/send", { to: "brain", from: worker.session, text: "Keep the old field name?", kind: "question" });
-  assert.equal(retriedQuestion.status, 200, JSON.stringify(retriedQuestion.body));
-  assert.equal(retriedQuestion.body.kind, "question");
-  assert.equal(retriedQuestion.body.question.id, questionId);
-  assert.equal((await readQueue(root, worker)).steps[0].reports.length, 1);
-  assert.equal((await readInbox(path.join(root, "brains"), area)).notices.filter((entry) => entry.text.includes("Keep the old field name?")).length, 1);
 
   // Done: the assignment is complete, stored as the typed result readers know.
   const second = await startWorker(base, currentBrain.body.session, openedSessions, "Second probe");

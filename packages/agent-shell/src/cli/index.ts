@@ -10,7 +10,7 @@ export { runHarnessCli } from "./commands/harness.js";
 export { runHandoverCli } from "./commands/handover.js";
 export { runIdeaCli } from "./commands/idea.js";
 export { runProcessCli } from "./commands/process.js";
-export { runSendCli, waitForBrainAnswer } from "./commands/send.js";
+export { runSendCli } from "./commands/send.js";
 export { runShellCli } from "./commands/shell.js";
 export { runStudyCli, studyLaunchCommand } from "./commands/study.js";
 export { STUDY_CONTRACT, STUDY_CONTRACT_VERSION } from "./commands/study-contract.js";

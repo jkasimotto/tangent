@@ -183,12 +183,11 @@ export function submitWorkerReport(queue, assignmentId, report, { expectedRevisi
   if (duplicate) return { report: duplicate, duplicate: true };
   if (queue.revision !== expectedRevision) throw new Error(`stale-revision:${queue.revision}`);
   const type = String(report?.type ?? "");
-  const allowed = new Set(["implementation-result", "review-result", "question-needed", "context-risk", "failed"]);
+  const allowed = new Set(["implementation-result", "review-result", "context-risk", "failed"]);
   if (!allowed.has(type)) throw new Error("report-type-not-allowed");
   if (type === "review-result" && !["passed", "changes-required", "blocked"].includes(report.verdict)) throw new Error("invalid-review-verdict");
   if (!String(report?.summary ?? "").trim()) throw new Error("report-summary-required");
   if (type === "implementation-result" && !["done", "complete", "blocked", "failed"].includes(report.status)) throw new Error("invalid-implementation-status");
-  if (type === "question-needed" && !String(report.question ?? "").trim()) throw new Error("report-question-required");
   const criteria = Array.isArray(report.criteria) ? report.criteria : [];
   if (type === "review-result") {
     if (!String(report.goalRevision ?? "").trim()) throw new Error("review-goal-revision-required");
@@ -208,7 +207,7 @@ export function submitWorkerReport(queue, assignmentId, report, { expectedRevisi
     attempt.report = stored;
     attempt.endedAt = now;
   }
-  assignment.status = ["question-needed", "context-risk", "failed"].includes(type) || report.status === "blocked" || report.status === "failed" || report.verdict === "blocked" ? "waiting" : "complete";
+  assignment.status = ["context-risk", "failed"].includes(type) || report.status === "blocked" || report.status === "failed" || report.verdict === "blocked" ? "waiting" : "complete";
   queue.currentAssignmentId = null;
   queue.idempotencyKeys = [...(queue.idempotencyKeys ?? []), idempotencyKey];
   queue.revision += 1;

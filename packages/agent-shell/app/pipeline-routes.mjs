@@ -38,7 +38,7 @@ export function createPipelineRoutes(operations) {
     }
     const kind = body.kind == null ? null : String(body.kind);
     if (kind !== null && !operations.isWorkerSendKind(kind)) {
-      sendJson(response, 400, { error: `Unknown send kind "${kind}". Use --done, --blocked, --question, or no flag.` });
+      sendJson(response, 400, { error: `Unknown send kind "${kind}". Use --done, --blocked, or no flag.` });
       return;
     }
     const result = await operations.handoverStep(String(body.session ?? ""), text, hasReport ? body.report : null, String(body.idempotencyKey ?? ""), kind);

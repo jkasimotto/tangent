@@ -1,23 +1,24 @@
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, requiredString, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
-import { currentSessionIsWorker, currentTmuxSession, postJson, resolveServerUrl, vaultFetch } from "../client.js";
+import { currentSessionIsWorker, currentTmuxSession, postJson, resolveServerUrl } from "../client.js";
 import { sendCommandSpec } from "../spec.js";
 
 /** The one flag word of a send, or "note" when no flag is given. */
-export type SendKind = "note" | "done" | "blocked" | "question";
+export type SendKind = "note" | "done" | "blocked";
 
-const FLAG_KINDS: SendKind[] = ["done", "blocked", "question"];
+const FLAG_KINDS: SendKind[] = ["done", "blocked"];
 
 /** The refusal a worker gets for any send target but its brain (D5). The server says the same. */
 export const WORKER_SEND_TARGET_REFUSAL = 'workers only send to their brain. Use: tangent send brain "<note>"';
 
 /**
- * Handles `tangent send <to> "<note>" [--done | --blocked | --question]`.
+ * Handles `tangent send <to> "<note>" [--done | --blocked]`.
  * `brain` is the brain that controls the caller's Goal, resolved on the
  * server; any other target is a live session or an Area path.
  */
 export async function runSendCli(argv = process.argv.slice(2)): Promise<void> {
+  if (argv.includes("--question")) throw new Error("--question was removed. Send an ordinary note and continue, use --done when finished, or use --blocked for a real dependency.");
   const args = parseArgs(argv, { boolean: FLAG_KINDS, repeatable: ["present"] });
   if (args.help) {
     console.log(renderCommandHelp(sendCommandSpec));
@@ -34,50 +35,31 @@ export async function runSendCli(argv = process.argv.slice(2)): Promise<void> {
     if (!from) throw new Error("tangent send brain works inside a worker session. Name a session or an Area path.");
     const present = stringsArg(args.present);
     const result = await postJson(server, "/api/agents/send", { to, text, from, kind, ...(present.length ? { present } : {}) });
-    if (kind === "question" && result.question?.id) {
-      console.log(`asked ${result.to}; waiting for the brain`);
-      const delivered = await waitForBrainAnswer(server, result.question, from);
-      if (delivered.status === "transferred") {
-        console.log(`question transferred to ${delivered.recipient?.session ?? "a replacement worker"}`);
-        return;
-      }
-      console.log(`[Answer from ${delivered.answer.brainSession}] ${delivered.answer.text}`);
-      await postJson(server, "/api/agents/questions/ack", {
-        questionId: result.question.id,
-        attemptId: result.question.recipient?.attemptId ?? result.question.askedAttemptId,
-        session: from,
-      });
-      return;
-    }
-    console.log(`sent to ${result.to} (${result.kind ?? kind})`);
+    console.log(workerBrainResultLine(result, kind));
     return;
   }
-  if (kind !== "note" || stringsArg(args.present).length) throw new Error("--done, --blocked, --question, and --present work only with tangent send brain.");
+  if (kind !== "note" || stringsArg(args.present).length) throw new Error("--done, --blocked, and --present work only with tangent send brain.");
   if (!stringArg(args.session) && await currentSessionIsWorker()) throw new Error(WORKER_SEND_TARGET_REFUSAL);
   const result = await postJson(server, "/api/agents/send", { to, text, from });
   console.log(sendResultLine(result));
 }
 
-/** Waits across controller restarts for one durable control-plane answer. */
-export async function waitForBrainAnswer(server: URL, question: Record<string, any>, session: string): Promise<Record<string, any>> {
-  const attemptId = String(question.recipient?.attemptId ?? question.askedAttemptId ?? "");
-  const params = new URLSearchParams({ question: String(question.id), attempt: attemptId, session });
-  for (;;) {
-    try {
-      const result = await vaultFetch(server, `/api/agents/questions?${params}`);
-      if (result.status === "transferred" || result.answer) return result;
-    } catch {
-      // The queue is durable. A controller rebuild is a retry delay, not a
-      // reason to release the harness command that waits for the answer.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+/** Reports durable worker storage separately from live routing. */
+export function workerBrainResultLine(result: Record<string, any>, fallbackKind: SendKind): string {
+  const kind = result.kind ?? fallbackKind;
+  const revision = result.receipt?.queue?.revisionAfter;
+  const notice = result.receipt?.notice?.id;
+  const proof = `${revision != null ? `; queue revision ${revision}` : ""}${notice ? `; notice ${notice}` : ""}`;
+  if (result.status === "deferred" || !result.to) {
+    return `recorded for ${result.sourceArea} (${kind}); no active brain${proof}`;
   }
+  return `queued to ${result.to}${result.brainArea ? ` (${result.brainArea})` : ""} for ${result.sourceArea} (${kind})${proof}`;
 }
 
 /** The one flag of this send. Two flags at once is an error. */
 export function sendKind(args: Args): SendKind {
   const given = FLAG_KINDS.filter((flag) => booleanArg(args[flag]));
-  if (given.length > 1) throw new Error(`tangent send takes one of --done, --blocked, or --question, not ${given.map((flag) => `--${flag}`).join(" and ")}.`);
+  if (given.length > 1) throw new Error(`tangent send takes one of --done or --blocked, not ${given.map((flag) => `--${flag}`).join(" and ")}.`);
   return given[0] ?? "note";
 }
 
@@ -95,7 +77,6 @@ Examples:
   tangent send brain "Tests pass on the new parser. Next: wire the route."
   tangent send brain --done "Parser and route committed as 3f2a1c0; npm test green."
   tangent send brain --blocked "The fixture server needs port 4321, which is taken."
-  tangent send brain --question "Keep the old field name or rename it?"
   tangent send brain --done "The design is ready." --present otto/tangent/design-ready.md
   tangent send neara/essential/autodesign "Start the queued design Goal when you return."
 `;

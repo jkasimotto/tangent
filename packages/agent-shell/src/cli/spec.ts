@@ -10,7 +10,6 @@ export const sendCommandSpec: CliCommandSpec = {
   options: [
     { name: "done", description: "The work is finished; the assignment is complete" },
     { name: "blocked", description: "You cannot continue; the assignment waits for the brain" },
-    { name: "question", description: "You need a decision; the assignment waits for the brain" },
     { name: "present", takesValue: true, description: "Present a Markdown file on this worker's Goal; repeatable" },
     { name: "session", takesValue: true, description: "Sender session name; defaults to the tmux session this command runs in" },
     serverOption
@@ -19,7 +18,7 @@ export const sendCommandSpec: CliCommandSpec = {
 
 export const handoverCommandSpec: CliCommandSpec = {
   name: "handover",
-  description: "Replaced by tangent send brain \"<note>\" [--done|--blocked|--question]; kept as an alias",
+  description: "Replaced by tangent send brain \"<note>\" [--done|--blocked]; kept as an alias",
   args: "<facts...>",
   options: [
     { name: "session", takesValue: true, description: "Worker session name; defaults to the tmux session this command runs in" },

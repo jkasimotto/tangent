@@ -51,12 +51,12 @@ The live tmux ownership key is `@tangent_agent_shell_instance`. A foreign sessio
 
 - `tangent agent list` reads live agent sessions and queued message counts.
 - `tangent agent context [session] [--session <name>] [--json]` rebuilds the durable brain or Goal assignment for a tmux session. Without a name it uses the current tmux session.
-- `tangent send <brain|session|area> <note...> [--done | --blocked | --question]` is the one worker command. `brain` resolves to the brain that controls the caller's Goal. A plain note changes no assignment status. `--done` completes the assignment, and `--blocked` sets it waiting. `--question` stores a durable question and waits for the brain answer as command output. A session or Area target sends through a live-session queue or a logical Area inbox.
+- `tangent send <brain|session|area> <note...> [--done | --blocked]` is the one worker command. `brain` resolves to the brain that controls the caller's Goal. A plain note changes no assignment status. `--done` completes the assignment, and `--blocked` sets it waiting for a real dependency. A session or Area target sends through a live-session queue or a logical Area inbox.
 - `tangent agent send <session-or-area> <text...>` is an alias of `tangent send` for one release and prints a hint line.
 
 Agent Shell first resolves the target as a live session. It stores the normalized generic message before it wakes or writes to that pane. An exact Area path uses the durable Area brain inbox. A known stale brain session resolves to that same logical inbox. An unknown target returns not found. A missing or inactive brain does not block Area delivery. Queued messages survive controller restarts in first-in, first-out order. A presentation receipt is not proof that the model read the text.
 
-An exact current Area brain send to a worker with an open question is not a generic message. It atomically answers the queue question and returns the current recipient attempt. The worker polls `GET /api/agents/questions` and acknowledges through `POST /api/agents/questions/ack`. A source attempt receives `transferred` after replacement. A different concurrent answer receives 409. An exact retry returns the first answer. Ordinary messages retain composer safety.
+A brain send to a worker uses ordinary durable message semantics and retains composer safety.
 
 Context recovery reads brain records, exact-Area inbox notices, Goal records, and Goal queues without claiming or mutating the session. Current brain context contains every currently unread durable notice with its Area. Managed worker context contains the primary Goal, every co-assigned Goal, queue revision, exact assignment instruction, attempts, reports, prior handovers, and a rebuilt opening prompt. Queue context exposes the durable `extraFiles` order and repeats those Goals in the rebuilt prompt. A prompt-source failure leaves the durable context available with `promptError`. Historical brain context contains that generation's checkpoint but never the current generation's inbox. A live tmux session with no durable binding returns `role: "unassigned"`; a session that is neither durable nor live returns 404.
 
@@ -85,7 +85,7 @@ Every active Goal execution uses one `area-goal-queue.v2` record under `~/.tange
 
 A normal start acts through the Goal queue and requires the live Area brain. A brain can lend its launch when the Goal's Area allows it. Other callers must name a launch. Agent Shell rejects each disallowed launch before it writes a new attempt. A guarded `--recovery` start records `julian-emergency` in the same queue. It requires a pending assignment, no current attempt, and exhausted brain recovery.
 
-Worker report types are `implementation-result`, `review-result`, `question-needed`, `context-risk`, and `failed`. The server validates the report against the assignment kind and queue revision. A worker report never starts another assignment. Missing, malformed, truncated, shell-quoted, and non-object reports fail before queue mutation. A rejected typed report also records no queue result or notice.
+Worker report types are `implementation-result`, `review-result`, `context-risk`, and `failed`. The server validates the report against the assignment kind and queue revision. A worker report never starts another assignment. Missing, malformed, truncated, shell-quoted, and non-object reports fail before queue mutation. A rejected typed report also records no queue result or notice.
 
 An accepted handover adds one `worker-handover-receipt.v1` record to the assignment. It links the worker session, Goal, assignment, report type, queue revisions, queue result, exact destination Area, and inbox notice. The server writes the queue and pending receipt first. It then writes one notice with a stable source ID. If notice storage fails, the command fails and tells the worker to retry unchanged. Reconcile and the retry repair the same notice. A response is successful only after the receipt holds the notice ID.
 
@@ -132,10 +132,8 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 - `POST /api/goals/start`: `{ file, steps?, caller?, recovery?, extraFiles? }`. Only a live brain caller starts a worker (ADR-0041). There is no other start route: `POST /api/goals/agent` was deleted on 2026-08-28.
 - `POST /api/goals/attempts/resume`: `{ goal, attemptId?, conversationId? }`. A live attempt answers `status: "live"` with its session. A dead attempt answers `status: "resumed"` with a new `resume` session in the attempt's folder and the typed `command`. The harness needs `resume` in `harnesses.md` (ADR-0042).
 - `GET /api/goals/detail?goal=<file>[&conversations=1]`: the Goal reader model. Each attempt carries `resume: { live, session, cwd, harness, conversationId, command, contextFill }`. With `conversations=1`, attempts without a recorded id list what the transcript folder holds under `resume.found`.
-- `POST /api/goals/handover`: `{ session, text, report?, kind?, idempotencyKey? }`. `kind` is `note`, `done`, `blocked`, or `question`. A successful response includes the queue `pipeline` and its worker handover `receipt`.
+- `POST /api/goals/handover`: `{ session, text, report?, kind?, idempotencyKey? }`. `kind` is `note`, `done`, or `blocked`. A successful response includes the queue `pipeline` and its worker handover `receipt`.
 - `POST /api/agents/send` with `to: "brain"`: `{ to, from, text, kind? }`. The server resolves the worker's Goal queue and its brain. A caller that is not a worker gets 400.
-- `GET /api/agents/questions?question=<id>&attempt=<id>&session=<name>` returns `open`, `answered`, `acknowledged`, or `transferred` for one exact attempt.
-- `POST /api/agents/questions/ack`: `{ questionId, attemptId, session }`. The exact answer recipient records an idempotent acknowledgement.
 - `POST /api/pipelines/control`: `{ goal, action, step, caller, expectedRevision, idempotencyKey }`.
 - `POST /api/pipelines/append`: `{ goal, steps, caller, expectedRevision, idempotencyKey }`.
 - `POST /api/brains/start`: `{ area, instruction, choice?: { harness, model?, effort? }, expectedLaunch?, resume? }`.

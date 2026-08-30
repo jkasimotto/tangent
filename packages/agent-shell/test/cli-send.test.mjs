@@ -21,37 +21,43 @@ function capture(context, respond) {
   return { requests, lines };
 }
 
-test("tangent send has the three flags and the sender option", () => {
+test("tangent send exposes done and blocked, but no question flag", () => {
   assert.equal(sendCommandSpec.args, "<brain|session|area> <note...>");
-  assert.deepEqual(sendCommandSpec.options.map((option) => option.name), ["done", "blocked", "question", "present", "session", "server"]);
+  assert.deepEqual(sendCommandSpec.options.map((option) => option.name), ["done", "blocked", "present", "session", "server"]);
 });
 
-test("each flag maps to one send kind and the plain note is kind note", async (context) => {
-  const { requests, lines } = capture(context, () => ({ status: "sent", to: "otto-tangent-brain-g3", kind: undefined }));
+test("each flag maps to one send kind and reports the authoritative route", async (context) => {
+  const { requests, lines } = capture(context, () => ({ status: "queued", to: "otto-tangent-brain-g3", brainArea: "otto/tangent", sourceArea: "otto/tangent/tools", kind: undefined }));
   await runSendCli(["brain", "Parser wired.", "--session", "worker-a"]);
   await runSendCli(["brain", "--done", "Parser wired and proven.", "--session", "worker-a"]);
   await runSendCli(["brain", "--blocked", "Port taken.", "--session", "worker-a"]);
-  await runSendCli(["brain", "--question", "Rename the field?", "--session", "worker-a"]);
-  assert.deepEqual(requests.map((request) => request.path), Array(4).fill("/api/agents/send"));
+  assert.deepEqual(requests.map((request) => request.path), Array(3).fill("/api/agents/send"));
   assert.deepEqual(requests.map((request) => request.body), [
     { to: "brain", text: "Parser wired.", from: "worker-a", kind: "note" },
     { to: "brain", text: "Parser wired and proven.", from: "worker-a", kind: "done" },
     { to: "brain", text: "Port taken.", from: "worker-a", kind: "blocked" },
-    { to: "brain", text: "Rename the field?", from: "worker-a", kind: "question" },
   ]);
   assert.deepEqual(lines, [
-    "sent to otto-tangent-brain-g3 (note)",
-    "sent to otto-tangent-brain-g3 (done)",
-    "sent to otto-tangent-brain-g3 (blocked)",
-    "sent to otto-tangent-brain-g3 (question)",
+    "queued to otto-tangent-brain-g3 (otto/tangent) for otto/tangent/tools (note)",
+    "queued to otto-tangent-brain-g3 (otto/tangent) for otto/tangent/tools (done)",
+    "queued to otto-tangent-brain-g3 (otto/tangent) for otto/tangent/tools (blocked)",
   ]);
+});
+
+test("a worker send with no live ancestor says recorded, not sent", async (context) => {
+  const { lines } = capture(context, () => ({
+    status: "deferred", to: null, sourceArea: "otto/dnd/players", kind: "done",
+    receipt: { queue: { revisionAfter: 4 }, notice: { id: "n30" } },
+  }));
+  await runSendCli(["brain", "--done", "Movement is fixed.", "--session", "players-worker"]);
+  assert.deepEqual(lines, ["recorded for otto/dnd/players (done); no active brain; queue revision 4; notice n30"]);
 });
 
 test("two flags at once is an error before any HTTP", async (context) => {
   const { requests } = capture(context, () => ({}));
   await assert.rejects(
     () => runSendCli(["brain", "--done", "--blocked", "Both.", "--session", "worker-a"]),
-    /one of --done, --blocked, or --question, not --done and --blocked/,
+    /one of --done or --blocked, not --done and --blocked/,
   );
   assert.equal(requests.length, 0);
 });
@@ -86,25 +92,8 @@ test("a session or Area target uses the plain send path and refuses flags", asyn
   await assert.rejects(() => runSendCli(["otto/tangent", "--done", "Done.", "--session", "some-brain"]), /work only with tangent send brain/);
 });
 
-test("a question waits for command-output delivery and acknowledges the exact attempt", async (context) => {
-  const previousFetch = globalThis.fetch;
-  const previousLog = console.log;
-  const requests = [];
-  const lines = [];
-  console.log = (line) => lines.push(String(line));
-  globalThis.fetch = async (input, init = {}) => {
-    const url = new URL(String(input));
-    requests.push({ path: url.pathname, query: url.search, body: init.body ? JSON.parse(String(init.body)) : null });
-    if (url.pathname === "/api/agents/send") return Response.json({
-      status: "sent", to: "otto-brain", kind: "question",
-      question: { id: "worker-question:q1", askedAttemptId: "attempt-1", recipient: { attemptId: "attempt-1", session: "worker-a" } },
-    });
-    if (url.pathname === "/api/agents/questions") return Response.json({ status: "answered", answer: { brainSession: "otto-brain", text: "Use A." } });
-    return Response.json({ status: "acknowledged" });
-  };
-  context.after(() => { globalThis.fetch = previousFetch; console.log = previousLog; });
-  await runSendCli(["brain", "--question", "Use A or B?", "--session", "worker-a"]);
-  assert.deepEqual(requests.map((request) => request.path), ["/api/agents/send", "/api/agents/questions", "/api/agents/questions/ack"]);
-  assert.deepEqual(requests[2].body, { questionId: "worker-question:q1", attemptId: "attempt-1", session: "worker-a" });
-  assert.deepEqual(lines, ["asked otto-brain; waiting for the brain", "[Answer from otto-brain] Use A."]);
+test("--question fails before HTTP and prints current worker outcomes", async (context) => {
+  const { requests } = capture(context, () => ({}));
+  await assert.rejects(() => runSendCli(["brain", "--question", "Use A or B?", "--session", "worker-a"]), /ordinary note.*--done.*--blocked/);
+  assert.equal(requests.length, 0);
 });

@@ -19,7 +19,7 @@ function runCommand(kind, extra) {
     : runGoalCli(["handover", "Finished the assignment.", "--session", "worker-portland", ...extra]);
 }
 
-const hint = 'tangent handover is now tangent send brain "<note>" [--done|--blocked|--question]';
+const hint = 'tangent handover is now tangent send brain "<note>" [--done|--blocked]';
 
 test("both worker handover commands submit the same typed report, print the send hint, then the durable destination", async (context) => {
   const previousFetch = globalThis.fetch;

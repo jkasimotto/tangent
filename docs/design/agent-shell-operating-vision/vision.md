@@ -13,7 +13,7 @@ Three actors, two lines of contact. You talk to the brain. The brain talks to Ta
 | You | The brain | A message in Work (`a` on an Area). `x` on a Goal row to mark it, park it, or flag it `verify`. Restart on the brain row. |
 | The brain | Tangent | `tangent goal create --start`, `goal append`, `goal done`, `goal list|show`, `send <worker>`, `vault commit`, `process list`. Plus planning and research when it needs them. |
 | The brain | Its workers | The opening prompt. Messages with `tangent send <session>`. |
-| A worker | The brain | `tangent send brain "<note>"`, `--done`, `--blocked`, `--question`. Nothing else. The opening prompt says so. |
+| A worker | The brain | `tangent send brain "<note>"`, `--done`, or `--blocked` for a real dependency. Nothing else. The opening prompt says so. |
 | Tangent | The brain | Notes in its inbox: a worker finished, a process is due, you sent a message, you answered. |
 | Tangent | You | One macOS notification when a Goal you flagged is ready to check. A small mark in Work when a brain has a question. |
 
@@ -37,7 +37,7 @@ Three actors, two lines of contact. You talk to the brain. The brain talks to Ta
 |---|---|
 | You can start workers around the brain. The server refuses a start without a typed harness. | Only the brain starts workers. If it names no harness, its own is lent, as you decided. |
 | Workers know `tangent goal`, `handover`, `vault commit`, `process list`, and more. | Workers know one command: `tangent send brain`. The server refuses anything else from a worker session. |
-| `tangent handover`, `tangent goal handover`, `tangent brain handover`, `tangent agent send`. | `tangent send`, with `--done`, `--blocked`, `--question`. |
+| `tangent handover`, `tangent goal handover`, `tangent brain handover`, `tangent agent send`. | `tangent send`, with `--done` and `--blocked`. |
 | A brain hands itself over every 90 minutes. | A brain runs until you restart it. Its plan Document is its memory. |
 | Tangent closes Goals after a designated review. A brain files Tests for you. | The brain marks Goals done. A Goal you flagged waits for you instead. Brains never file Tests. |
 | Triggers in a git-ignored JSON file, run by a LaunchAgent, with retained REPLs. | `process-<slug>.md`. When due, the brain gets a note and starts a normal Goal. |

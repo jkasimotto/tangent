@@ -4,7 +4,7 @@ Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 
 - Vault CLI: `tangent area`, `tangent goal`, `tangent idea`, `tangent document`, `tangent vault commit`.
 - Agent CLI: `tangent agent list`, `tangent send`, and read-only `tangent agent context` recovery from durable brain and Goal records.
-- Worker CLI: `tangent send brain "<note>" [--done | --blocked | --question] [--present <file>]` is the one worker command (ADR-0040). `tangent handover`, `tangent goal handover`, and `tangent agent send` are aliases for one release. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
+- Worker CLI: `tangent send brain "<note>" [--done | --blocked] [--present <file>]` is the one worker command (ADR-0040). `tangent handover`, `tangent goal handover`, and `tangent agent send` are aliases for one release. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
 - Brain CLI: `tangent brain request` creates durable user requests, and `tangent brain advance` starts the next approved assignment.
 - Brain and server CLI: `tangent brain status|stop|request|withdraw` reads or stops a brain and files its questions through guarded Agent Shell routes. A brain runs until Julian restarts it; there is no handover (ADR-0041). `tangent goal create --start --path <dir>` is the brain's one command to create a Goal and start its worker. `tangent shell rebuild` rebuilds and restarts the server.
 - Study partner CLI: `tangent study` (spawns an interactive `claude-otto` session carrying the partner contract) and `tangent study contract` (prints that contract).

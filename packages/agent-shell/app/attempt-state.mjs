@@ -3,7 +3,7 @@ const FINAL_ASSIGNMENT = new Set(["complete", "ended", "skipped"]);
 /** Returns the latest durable worker report, or null. */
 export function latestAttemptReport(assignment) {
   const report = [...(assignment?.reports ?? [])].reverse().find(Boolean) ?? assignment?.attempts?.at?.(-1)?.report ?? null;
-  return report?.type === "question-needed" && report?.questionState?.answer ? null : report;
+  return report;
 }
 
 /** Converts a legacy pane row or a new observation into one observation. */
@@ -103,8 +103,8 @@ export function deriveBrainState({ brain, observation: rawObservation, unread = 
 /** Derives one queue-backed state from the latest worker report. */
 function reportState(report, assignment, brain, repair, now, repairGraceMs) {
   const type = report.type;
-  const blocked = type === "failed" || type === "question-needed" || report.status === "blocked" || report.status === "failed" || report.verdict === "blocked";
-  const word = type === "question-needed" ? "Asked the brain" : blocked ? "Reported blocked" : "Reported done";
+  const blocked = type === "failed" || report.status === "blocked" || report.status === "failed" || report.verdict === "blocked";
+  const word = blocked ? "Reported blocked" : "Reported done";
   return ownedState(word, timestamp(report.reportedAt ?? assignment?.endedAt, now), brain, repair, now, repairGraceMs, "queue", report.summary ?? report.question ?? "The worker sent a report.", "The organizer reads the report and settles the Goal.");
 }
 

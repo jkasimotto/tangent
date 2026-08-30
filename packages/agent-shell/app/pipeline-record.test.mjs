@@ -22,6 +22,7 @@ import {
   pipelinePath,
   pipelineStatus,
   mutatePendingAssignments,
+  normalizeQueueRecord,
   queueNormalizationChanged,
   readAllPipelines,
   readPipeline,
@@ -217,6 +218,39 @@ test("legacy queues gain open status and invalid authority pauses", async () => 
   const invalid = await readPipeline(root, "otto/tangent", "x");
   assert.equal(invalid.status, "paused");
   assert.match(invalid.migrationProblem, /does not match exact Area/);
+});
+
+test("legacy worker questions normalize once without trapping an attempt", () => {
+  const queue = newPipeline({ goal: "otto/tangent/goal-x.md", area: "otto/tangent", slug: "x", steps: sampleSteps() });
+  const step = queue.steps[0];
+  step.status = "waiting";
+  step.session = "worker-1";
+  step.reports = [{
+    type: ["question", "needed"].join("-"), summary: "Which field name is required?", question: "Which field name is required?", idempotencyKey: "legacy-open",
+    questionState: { status: "open", askedSession: "worker-1" },
+  }];
+  step.attempts = [{ id: "attempt-1", session: "worker-1", result: structuredClone(step.reports[0]), report: structuredClone(step.reports[0]) }];
+  const normalized = normalizeQueueRecord(queue);
+  assert.equal(normalized.steps[0].status, "waiting");
+  assert.deepEqual(normalized.steps[0].reports.map((report) => report.type), ["failed"]);
+  assert.equal(normalized.steps[0].attempts[0].result, null);
+  assert.equal(normalized.steps[0].attempts[0].report, null);
+  assert.deepEqual(normalizeQueueRecord(normalized).steps, normalized.steps);
+});
+
+test("answered legacy worker questions become ordinary continuation facts once", () => {
+  const queue = newPipeline({ goal: "otto/tangent/goal-x.md", area: "otto/tangent", slug: "x", steps: sampleSteps() });
+  const step = queue.steps[0];
+  step.status = "running";
+  step.session = "worker-1";
+  step.reports = [{
+    type: ["question", "needed"].join("-"), summary: "Which field name is required?", idempotencyKey: "legacy-answered",
+    questionState: { status: "answered", askedSession: "worker-1", answer: { text: "Keep the existing field.", answeredAt: "2026-08-29T00:00:00.000Z" } },
+  }];
+  const normalized = normalizeQueueRecord(queue);
+  assert.deepEqual(normalized.steps[0].reports, []);
+  assert.match(normalized.steps[0].continuations[0].facts, /Keep the existing field\./);
+  assert.equal(normalizeQueueRecord(normalized).steps[0].continuations.length, 1);
 });
 
 test("parked is a durable queue status and append does not reopen it", async () => {

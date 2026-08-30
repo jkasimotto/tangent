@@ -1,7 +1,7 @@
 import { stringArg } from "@tangent/core/cli";
 
 /** The one hint line every retired worker verb prints before it runs. */
-export const SEND_ALIAS_HINT = 'tangent handover is now tangent send brain "<note>" [--done|--blocked|--question]';
+export const SEND_ALIAS_HINT = 'tangent handover is now tangent send brain "<note>" [--done|--blocked]';
 
 /** Parses an optional worker report and refuses shell-damaged values. */
 export function parseWorkerReportOption(args: Record<string, unknown>): object | undefined {

@@ -16,21 +16,6 @@ test("queue words beat screen words", () => {
   assert.equal(state.evidence.source, "queue");
 });
 
-test("an answered worker question never remains Asked the brain", () => {
-  const state = deriveAttemptState({
-    assignment: {
-      status: "running",
-      reports: [{
-        type: "question-needed", summary: "Use A or B?", reportedAt: "2026-08-28T12:09:00.000Z",
-        questionState: { answer: { text: "Use A." } },
-      }],
-    },
-    observation: { at: NOW, fresh: true, process: "harness", activity: { lastOutputAt: NOW, source: "screen" }, composer: "draft", dialog: null, wall: null },
-    now: NOW,
-  });
-  assert.equal(state.word, "Working");
-});
-
 test("a stale observation is Unknown and never Working", () => {
   const state = deriveAttemptState({
     assignment: { status: "running" },

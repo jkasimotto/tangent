@@ -522,7 +522,7 @@ function normalizeStep(step, index, continueFromAssignmentId = null) {
 
 /** Adds queue fields to one stored assignment without changing its history. */
 function normalizeStoredAssignment(step, index, id) {
-  return {
+  const normalized = {
     ...step,
     id,
     index,
@@ -531,6 +531,66 @@ function normalizeStoredAssignment(step, index, id) {
     reports: Array.isArray(step.reports) ? step.reports : [],
     handoverReceipts: normalizeWorkerHandoverReceipts(step.handoverReceipts),
   };
+  normalizeLegacyWorkerQuestions(normalized);
+  return normalized;
+}
+
+/** Converts the removed worker-question protocol into blocked work or continuation facts. */
+function normalizeLegacyWorkerQuestions(assignment) {
+  const legacyType = ["question", "needed"].join("-");
+  const legacyReports = assignment.reports.filter((report) => report?.type === legacyType);
+  if (!legacyReports.length) return assignment;
+  assignment.continuations = Array.isArray(assignment.continuations) ? assignment.continuations : [];
+  const kept = [];
+  for (const report of assignment.reports) {
+    if (report?.type !== legacyType) { kept.push(stripLegacyQuestionState(report)); continue; }
+    const answer = report.questionState?.answer?.text;
+    const summary = String(report.summary ?? report.question ?? "Worker could not continue.").trim();
+    if (answer) {
+      const facts = `The earlier worker needed this fact: ${summary}\nRecorded answer: ${String(answer).trim()}`;
+      if (!assignment.continuations.some((entry) => entry?.facts === facts)) {
+        assignment.continuations.push({ session: report.questionState?.askedSession ?? assignment.session ?? "earlier worker", next: null, facts, at: report.questionState?.answer?.answeredAt ?? report.reportedAt ?? null });
+      }
+    } else {
+      const blocked = stripLegacyQuestionState({ ...report, type: "failed", summary });
+      delete blocked.question;
+      kept.push(blocked);
+      assignment.status = "waiting";
+    }
+  }
+  assignment.reports = kept;
+  assignment.attempts = assignment.attempts.map((attempt) => ({
+    ...attempt,
+    result: stripLegacyAttemptCopy(attempt.result, legacyType),
+    report: stripLegacyAttemptCopy(attempt.report, legacyType),
+  }));
+  assignment.handoverReceipts = assignment.handoverReceipts.map((receipt) => {
+    if (receipt.reportType !== legacyType) return receipt;
+    const open = kept.some((report) => report.type === "failed" && report.idempotencyKey && report.idempotencyKey === receipt.idempotencyKey)
+      || legacyReports.some((report) => !report.questionState?.answer && receipt.notice?.text?.includes(report.summary ?? report.question ?? ""));
+    const answer = legacyReports.find((report) => report.questionState?.answer)?.questionState.answer.text;
+    return {
+      ...receipt,
+      reportType: open ? "failed" : "note",
+      notice: { ...receipt.notice, text: open ? receipt.notice.text.replace(/^question:/, "blocked:") : `note: Recorded continuation fact. ${String(answer ?? "").trim()}`.trim() },
+    };
+  });
+  return assignment;
+}
+
+/** Removes an obsolete report copy from one attempt projection. */
+function stripLegacyAttemptCopy(value, legacyType) {
+  if (!value || typeof value !== "object") return value;
+  if (value.type === legacyType) return null;
+  return stripLegacyQuestionState(value);
+}
+
+/** Drops the obsolete nested state while preserving ordinary report fields. */
+function stripLegacyQuestionState(value) {
+  if (!value || typeof value !== "object") return value;
+  const copy = { ...value };
+  delete copy.questionState;
+  return copy;
 }
 
 /** Gives new assignments unique stable identities and resolves legacy numeric continuations. */

@@ -63,7 +63,7 @@ Three actors, two lines of contact.
 
 **The brain talks to Tangent and to its workers.** Tangent commands for brains: `tangent goal create --start`, `goal append`, `goal done|wont-do|park`, `goal list|show`, `send <session>`, `vault commit`, `process list|show`, `area show`. Its prompt lists the Area's resources, skills, processes, open Goals, unread notes, and the plan Document. Everything else it needs is Markdown in the Area folder. The default harness, model, and effort come from the Area note block Julian edits in the UI.
 
-**A worker talks to the brain only.** It receives its opening prompt. It sends `tangent send brain "<note>"`, `--done`, `--blocked`, or `--question`. Nothing else. The opening prompt says so, and the server refuses other Tangent commands from a worker session.
+**A worker talks to the brain only.** It receives its opening prompt. It sends `tangent send brain "<note>"`, `--done`, or `--blocked` for a real dependency. Nothing else. The opening prompt says so, and the server refuses other Tangent commands from a worker session.
 
 **Tangent talks to the brain with notes.** A worker sent `--done`. A process is due. Julian sent a message. Julian answered a question. Notes wait in the brain's inbox when the brain is not running.
 
@@ -135,7 +135,7 @@ Julian's answers are marked (Julian).
 
 ### 5.2 Worker contract
 
-**D5. Workers have one command (Julian).** `tangent send brain "<note>" [--done | --blocked | --question]`. Plain text is a note on the attempt and a message to the brain, with no status change. `--done` marks the assignment finished. `--blocked` and `--question` mark it waiting. All three write the note into the brain inbox. The opening prompt ends with the exact command. `~/.agents/AGENTS.md` keeps the worker section to that one command.
+**D5. Workers have one command (Julian).** `tangent send brain "<note>" [--done | --blocked]`. Plain text is a note on the attempt and a message to the brain, with no status change. `--done` marks the assignment finished. `--blocked` names a real dependency and marks it waiting. Each send writes the note into the brain inbox. The opening prompt ends with the exact command. `~/.agents/AGENTS.md` keeps the worker section to that one command.
 
 **D6. The server refuses other Tangent commands from a worker session.** Goal, document, idea, vault, process, and area mutations from a session whose `@tangent_kind` is `goal` return 403 `workers only send. Use: tangent send brain "<note>"`. Reads (`goal show`, `area show`) stay allowed because a worker may need to read its Goal.
 

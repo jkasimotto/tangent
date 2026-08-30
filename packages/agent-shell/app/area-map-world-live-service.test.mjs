@@ -97,12 +97,27 @@ async function startServer(fixture, suffix) {
   return { base, child, output };
 }
 
+/** Reports whether one fixture server process has stopped for any reason. */
+function childStopped(child) {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+/** Waits up to two seconds for one fixture server process to stop. */
+async function waitForChildStop(child) {
+  for (let attempt = 0; attempt < 80 && !childStopped(child); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 /** Stops one fixture server without involving the live port 4321 service. */
 async function stopServer(server) {
-  if (!server || server.child.exitCode !== null) return;
+  if (!server || childStopped(server.child)) return;
   server.child.kill("SIGTERM");
-  await Promise.race([once(server.child, "exit"), new Promise((resolve) => setTimeout(resolve, 2_000))]);
-  if (server.child.exitCode === null) server.child.kill("SIGKILL");
+  await waitForChildStop(server.child);
+  if (!childStopped(server.child)) {
+    server.child.kill("SIGKILL");
+    await waitForChildStop(server.child);
+  }
 }
 
 /** Writes one source Area scene at its canonical rollback-compatible path. */

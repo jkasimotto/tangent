@@ -1,5 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { createAreaCanvasRepository } from "./area-canvas-repository.mjs";
+import { parseAreaCanvas } from "./area-canvas.mjs";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createBlockElements, createEmptyScene, createRegionElements, createTextElement } from "./public/area-board-core.js";
 
@@ -46,4 +51,33 @@ test("loads a matching deferred shard after an unrelated shard changes", async (
   hashes.set("root/b", "hash-root/b"); hashes.set("root", "changed-unrelated");
   const stillLoaded = await index.shard("root/b", world.worldRevision, "root/a");
   assert.equal(stillLoaded.status, 200, "an unrelated shard does not invalidate matching deferred content");
+});
+
+test("an unchanged structural poll performs zero additional scene parses", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-map-poll-cache-"));
+  const scene = createEmptyScene();
+  await mkdir(path.join(root, "@root"), { recursive: true });
+  await mkdir(path.join(root, "neara"), { recursive: true });
+  await writeFile(path.join(root, "@root", "@root.excalidraw"), JSON.stringify(scene));
+  await writeFile(path.join(root, "neara", "neara.excalidraw"), JSON.stringify(scene));
+  let parses = 0;
+  const repository = createAreaCanvasRepository({
+    root,
+    /** Keeps the real parser while counting cache misses. */
+    parseCanvas(text) { parses += 1; return parseAreaCanvas(text); },
+  });
+  const index = createAreaMapWorldIndex({
+    root,
+    repository,
+    /** Supplies one unchanged structural hierarchy. */
+    async listAreas() { return ["neara"]; },
+  });
+
+  const first = await index.snapshot("neara");
+  const parsesAfterFirstRead = parses;
+  const second = await index.snapshot("neara");
+
+  assert.equal(parsesAfterFirstRead, 1, "one shared content hash is parsed once across root and Area scenes");
+  assert.equal(parses, parsesAfterFirstRead, "the unchanged poll parses no scene again");
+  assert.equal(second.worldRevision, first.worldRevision);
 });

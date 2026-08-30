@@ -18,6 +18,56 @@ const leaf = (area) => String(area ?? "").split("/").at(-1) || "Area";
 /** Returns the local fallback view key for one stable world. */
 const viewKey = (worldId) => `tangent.area-map-view.v2:${worldId}`;
 
+/** Returns the exact Excalidraw projection change, or null for a no-op poll. */
+export function areaMapProjectionUpdate({ appliedFingerprint = null, currentSelection = [], scene = null, selection = [] } = {}) {
+  const fingerprint = boardCore.authoredFingerprint(scene?.elements ?? []);
+  const current = [...currentSelection].sort();
+  const desired = [...selection].sort();
+  const sceneChanged = appliedFingerprint !== fingerprint;
+  if (!sceneChanged && same(current, desired)) return null;
+  return {
+    fingerprint,
+    sceneChanged,
+    selectedElementIds: Object.fromEntries(desired.map((id) => [id, true])),
+  };
+}
+
+/** Returns Area-region geometry only for an explicit keyboard command. */
+export function selectedAreaMapRegionChanges(elements, selectedIds, regionRects, { geometryCommand = null } = {}) {
+  if (geometryCommand !== "keyboard-nudge") return [];
+  const selected = new Set(selectedIds ?? []);
+  return (elements ?? []).filter((element) => {
+    if (element.isDeleted || element.customData?.tangent?.role !== "area-region" || !selected.has(element.id)) return false;
+    const previous = regionRects?.get?.(element.customData.tangent.area);
+    return previous && ["x", "y", "width", "height"].some((field) => Math.abs(Number(element[field]) - Number(previous[field])) >= 0.01);
+  });
+}
+
+/** Returns the squared center distance between two structural rectangles. */
+function regionDistance(left, right) {
+  if (!left || !right) return Number.POSITIVE_INFINITY;
+  const x = Number(left.x) + Number(left.width) / 2 - Number(right.x) - Number(right.width) / 2;
+  const y = Number(left.y) + Number(left.height) / 2 - Number(right.y) - Number(right.height) / 2;
+  return x * x + y * y;
+}
+
+/** Plans selected, located-descendant, then spatially nearby deferred loads. */
+export function areaMapDeferredLoadPlan(world, composition, area, { includeDescendants = true, nearbyCount = 3, requireSelectedDeferred = false } = {}) {
+  const available = (world?.areas ?? []).filter((node) => ["deferred", "load-error"].includes(node.shard?.state));
+  const selected = available.filter((node) => node.key === area);
+  if (requireSelectedDeferred && !selected.length) return [];
+  const descendants = includeDescendants
+    ? available.filter((node) => node.key.startsWith(`${area}/`)).sort((left, right) => left.depth - right.depth || left.key.localeCompare(right.key))
+    : [];
+  const planned = new Set([...selected, ...descendants].map((node) => node.key));
+  const targetRect = composition?.regionRects?.get?.(area);
+  const nearby = available.filter((node) => !planned.has(node.key)).sort((left, right) => {
+    const distance = regionDistance(targetRect, composition?.regionRects?.get?.(left.key)) - regionDistance(targetRect, composition?.regionRects?.get?.(right.key));
+    return distance || left.key.localeCompare(right.key);
+  }).slice(0, Math.max(0, Number(nearbyCount) || 0));
+  return [...selected, ...descendants, ...nearby].map((node) => node.key);
+}
+
 /** Selects source ownership for one new runtime element at an explicit command boundary. */
 export function ownerForNewAreaMapElement({ copiedOwner = null, pasteOwner = null, startOwner = null, pointOwner = null } = {}) {
   return pasteOwner ?? copiedOwner ?? startOwner ?? pointOwner;
@@ -88,6 +138,7 @@ export function createAreaMapWorldController({
   let draft = null;
   let treeRefresh = null;
   let treeRefreshRequested = false;
+  const inFlightLoads = new Map();
   const recoveryStore = suppliedDraftStore ?? createAreaMapWorldDraftStore();
 
   /** Emits one coordinate-free structured client event. */
@@ -435,6 +486,7 @@ export function createAreaMapWorldController({
     const element = regionElement(area);
     selection = new Set(element ? [element.id] : []);
     notify("selection");
+    if (element) void prioritizeLoads(area, { includeDescendants: false, requireSelectedDeferred: true });
     return element;
   }
 
@@ -455,6 +507,7 @@ export function createAreaMapWorldController({
     saveView();
     onNavigation?.({ area, trail: [...cameraTrail], nextEscape: cameraTrail.length ? `Esc → ${leaf(cameraTrail.at(-1))}` : "Esc → Work" });
     notify("camera-target");
+    void prioritizeLoads(area, { nearbyCount: 0 });
     return element;
   }
 
@@ -488,25 +541,37 @@ export function createAreaMapWorldController({
   }
 
   /** Materializes one deferred shard in the existing world. */
-  async function materialize(area) {
+  function materialize(area) {
+    if (inFlightLoads.has(area)) return inFlightLoads.get(area);
     const node = world.areas.find((entry) => entry.key === area);
-    if (!node || !["deferred", "load-error"].includes(node.shard.state) || !loadShard) return node?.shard ?? null;
-    const startedAt = performance.now();
-    const generation = authorityGeneration; const requestedRevision = world.worldRevision;
-    node.shard = { ...node.shard, state: "loading" }; install(world, "loading");
-    try {
-      const loaded = await loadShard(area, { locatedArea, worldRevision: world.worldRevision });
-      if (generation !== authorityGeneration || requestedRevision !== world.worldRevision) return world.areas.find((entry) => entry.key === area)?.shard ?? null;
-      if (loaded?.worldRevision !== world.worldRevision || !["ready", "missing"].includes(loaded?.state)) throw new Error(loaded?.error || "map world changed");
-      const current = world.areas.find((entry) => entry.key === area);
-      current.shard = { ...current.shard, ...loaded };
-      install(world, "loaded"); recordEvent("area_map_shard_loaded", { owner: area, state: current.shard.state, bytes: JSON.stringify(loaded).length, duration: performance.now() - startedAt }); return current.shard;
-    } catch (error) {
-      if (generation !== authorityGeneration || requestedRevision !== world.worldRevision) return world.areas.find((entry) => entry.key === area)?.shard ?? null;
-      const current = world.areas.find((entry) => entry.key === area);
-      current.shard = { ...current.shard, state: "load-error", errors: [String(error?.message ?? error)] };
-      install(world, "load-error"); recordEvent("area_map_shard_loaded", { owner: area, state: "load-error", bytes: 0, duration: performance.now() - startedAt }); return current.shard;
-    }
+    if (!node || !["deferred", "load-error"].includes(node.shard.state) || !loadShard) return Promise.resolve(node?.shard ?? null);
+    const task = (async () => {
+      const startedAt = performance.now();
+      const generation = authorityGeneration; const requestedRevision = world.worldRevision;
+      node.shard = { ...node.shard, state: "loading" }; install(world, "loading");
+      try {
+        const loaded = await loadShard(area, { locatedArea, worldRevision: world.worldRevision });
+        if (generation !== authorityGeneration || requestedRevision !== world.worldRevision) return world.areas.find((entry) => entry.key === area)?.shard ?? null;
+        if (loaded?.worldRevision !== world.worldRevision || !["ready", "missing"].includes(loaded?.state)) throw new Error(loaded?.error || "map world changed");
+        const current = world.areas.find((entry) => entry.key === area);
+        current.shard = { ...current.shard, ...loaded };
+        install(world, "loaded"); recordEvent("area_map_shard_loaded", { owner: area, state: current.shard.state, bytes: JSON.stringify(loaded).length, duration: performance.now() - startedAt }); return current.shard;
+      } catch (error) {
+        if (generation !== authorityGeneration || requestedRevision !== world.worldRevision) return world.areas.find((entry) => entry.key === area)?.shard ?? null;
+        const current = world.areas.find((entry) => entry.key === area);
+        current.shard = { ...current.shard, state: "load-error", errors: [String(error?.message ?? error)] };
+        install(world, "load-error"); recordEvent("area_map_shard_loaded", { owner: area, state: "load-error", bytes: 0, duration: performance.now() - startedAt }); return current.shard;
+      }
+    })();
+    inFlightLoads.set(area, task);
+    void task.finally(() => { if (inFlightLoads.get(area) === task) inFlightLoads.delete(area); });
+    return task;
+  }
+
+  /** Starts deferred reads in selected, descendant, then nearby priority order. */
+  function prioritizeLoads(area, options = {}) {
+    const plan = areaMapDeferredLoadPlan(world, composition, area, options);
+    return Promise.all(plan.map((owner) => materialize(owner)));
   }
 
   /** Reconciles a changed Area tree after local authored work reaches authority. */
@@ -601,7 +666,7 @@ export function createAreaMapWorldController({
         currentNode.region = clone(mineNode.region);
       }
       const rebasedCommand = {
-        ...clone(pending.command), id: crypto.randomUUID(), kind: "conflict-rebase",
+        ...clone(pending.command), id: crypto.randomUUID(), kind: "conflict-rebase", operationIds: {},
         before: historyState(current, changedAreas, changedOwners),
         after: historyState(rebased, changedAreas, changedOwners),
       };
@@ -667,7 +732,7 @@ export function createAreaMapWorldController({
     /** Redoes one map-owned command word. */
     redo: () => worldHistory.redo(),
     selectArea, setSelection, fitArea, escape, toggleFold, setFocus, setCamera,
-    materialize, refreshFacts,
+    materialize, prioritizeLoads, refreshFacts,
     /** Waits for all queued map persistence. */
     flush: () => worldHistory.flush(),
     retry, reload, keepMine, restoreDraft, discardDraft, recordEvent,

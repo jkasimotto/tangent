@@ -17,7 +17,7 @@
 .tangent-map-toolbar-extra button > span[aria-hidden] { margin-right: 6px; }
 .tangent-map-glyph { display: none; font-size: 15px; }
 
-.tangent-map-top-right { display: flex; align-items: center; gap: 8px; }
+.tangent-map-top-right { position: absolute; z-index: 4; top: 16px; right: 24px; display: flex; align-items: center; gap: 8px; font-family: Assistant, system-ui, sans-serif; }
 .tangent-map-top-right button, .tangent-map-verbs button, .tangent-map-save button, .tangent-map-outline-close, .tangent-map-help button {
   min-height: 36px; padding: 0 11px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); white-space: nowrap; cursor: pointer; font: inherit; font-size: 13px; line-height: 1;
 }
@@ -91,6 +91,7 @@
 
 /* Narrow windows: the Tangent buttons shrink to glyphs so Excalidraw's toolbar keeps its room. */
 @media (max-width: 960px) {
+  .tangent-map-top-right { top: 76px; right: 60px; }
   .tangent-map-toolbar-extra button .tangent-map-label, .tangent-map-top-right > button .tangent-map-label, .tangent-map-top-right > button kbd, .tangent-map-toolbar-extra kbd { display: none; }
   .tangent-map-toolbar-extra button > span[aria-hidden] { margin-right: 0; }
   .tangent-map-glyph { display: inline; }
@@ -103,7 +104,7 @@
 }
 /* Under 730px Excalidraw uses its mobile layout: a wrapped tool island at the top and a bar along the bottom.
    The Tangent row leaves the top grid so the island keeps one line, and the bottom controls step above the bar. */
-.excalidraw--mobile .tangent-map-top-right { position: absolute; top: 58px; right: 60px; flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; max-width: 100%; }
+.TangentAreaMap:has(.excalidraw--mobile) .tangent-map-top-right { top: 76px; right: 60px; flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; max-width: 100%; }
 .excalidraw--mobile .tangent-map-verbs { order: 1; }
 .TangentAreaMap:has(.excalidraw--mobile) .tangent-map-save { bottom: 66px; right: 12px; }
 .TangentAreaMap:has(.excalidraw--mobile) .tangent-map-inbox { bottom: 114px; }

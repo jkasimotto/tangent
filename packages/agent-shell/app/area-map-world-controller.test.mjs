@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { performance } from "node:perf_hooks";
 import test from "node:test";
 
 import core from "./public/area-board-core.js";
-import { createAreaMapWorldController, ownerForNewAreaMapElement } from "./public/area-map-world-controller.js";
+import { areaMapProjectionUpdate, createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "./public/area-map-world-controller.js";
 
 /** Creates one small complete world with source-owned content. */
 function fixtureWorld() {
@@ -19,6 +20,39 @@ function fixtureWorld() {
       key, parent, children: records.filter((entry) => entry[1] === key).map((entry) => entry[0]), depth: key.split("/").length - 1,
       region: { key: `${parent}>${key}`, owner: parent, child: key, sourceId: `region-${key}`, labelSourceId: `region-${key}-label`, source: "stored", storedRect },
       shard: { owner: key, hash: `hash-${key}`, state: "ready", elementCount: source.elements.length, scene: source },
+    })),
+  };
+}
+
+/** Creates the current-vault-size structural fixture for deterministic budgets. */
+function fortyOneAreaWorld() {
+  const entries = [
+    ["atlas", "@root", { x: 40, y: 40, width: 12_000, height: 8_000 }, "ready"],
+    ["atlas/focus", "atlas", { x: 100, y: 100, width: 6_000, height: 5_000 }, "deferred"],
+    ...Array.from({ length: 35 }, (_, index) => [
+      `atlas/focus/item-${String(index).padStart(2, "0")}`,
+      "atlas/focus",
+      { x: 140 + index % 7 * 760, y: 180 + Math.floor(index / 7) * 720, width: 620, height: 520 },
+      "deferred",
+    ]),
+    ["atlas/near-a", "atlas", { x: 6_300, y: 200, width: 500, height: 420 }, "deferred"],
+    ["atlas/near-b", "atlas", { x: 6_900, y: 260, width: 500, height: 420 }, "deferred"],
+    ["atlas/far", "atlas", { x: 10_800, y: 6_800, width: 500, height: 420 }, "deferred"],
+    ["other", "@root", { x: 20_000, y: 20_000, width: 800, height: 600 }, "deferred"],
+  ];
+  return {
+    schema: "area-map-world.v1", worldId: "world-41", treeRevision: "tree-41", worldRevision: "revision-41", locatedArea: "atlas/focus",
+    rootShard: { owner: "@root", hash: "root-41", state: "deferred" },
+    areas: entries.map(([key, parent, storedRect, state]) => ({
+      key,
+      parent,
+      children: entries.filter((entry) => entry[1] === key).map((entry) => entry[0]),
+      depth: key.split("/").length - 1,
+      region: { key: `${parent}>${key}`, owner: parent, child: key, sourceId: `region-${key}`, labelSourceId: `region-${key}-label`, source: "stored", storedRect },
+      shard: {
+        owner: key, hash: `hash-${key}`, state, elementCount: 0, blockCount: 0,
+        ...(state === "ready" ? { scene: core.createEmptyScene() } : {}),
+      },
     })),
   };
 }
@@ -41,6 +75,18 @@ test("duplicate, paste, and bound-arrow ownership use their explicit command bou
   assert.equal(ownerForNewAreaMapElement({ copiedOwner: "neara", pasteOwner: "neara/delivery", pointOwner: "neara" }), "neara/delivery");
   assert.equal(ownerForNewAreaMapElement({ startOwner: "neara/delivery", pointOwner: "neara" }), "neara/delivery");
   assert.equal(ownerForNewAreaMapElement({ pointOwner: "neara" }), "neara");
+});
+
+test("delayed hull projections never become stored Area moves", () => {
+  const region = {
+    id: "runtime-region", type: "rectangle", x: -250.9, y: 60, width: 1_230.9, height: 700, isDeleted: false,
+    customData: { tangent: { role: "area-region", area: "neara" } },
+  };
+  const rectangles = new Map([["neara", { x: 80, y: 60, width: 900, height: 700 }]]);
+  assert.deepEqual(selectedAreaMapRegionChanges([region], [], rectangles), [], "unselected automatic growth is view geometry only");
+  assert.deepEqual(selectedAreaMapRegionChanges([region], [region.id], rectangles), [], "selection does not grant source authority to a projection callback");
+  assert.deepEqual(selectedAreaMapRegionChanges([region], [region.id], rectangles, { geometryCommand: "fact-projection" }), [], "fact projection geometry stays derived");
+  assert.deepEqual(selectedAreaMapRegionChanges([region], [region.id], rectangles, { geometryCommand: "keyboard-nudge" }), [region], "an explicit keyboard nudge can change stored geometry");
 });
 
 test("view masks and camera history never replace complete world authority", () => {
@@ -267,5 +313,109 @@ test("a structural fact poll reconciles a changed tree without replacing session
   assert.equal(snapshot.folded.has("neara"), true);
   assert.equal(controller.undo(), false, "a changed tree clears authored history against the old topology");
   assert.ok(events.some((event) => event.name === "area_map_tree_reconciled" && event.areaCount === 3));
+  controller.destroy();
+});
+
+test("Keep mine uses a new operation and reports a second external conflict", async () => {
+  const attempts = [];
+  const external = fixtureWorld(); external.worldRevision = "external-2"; external.rootShard.hash = "external-root";
+  const controller = createAreaMapWorldController({
+    world: fixtureWorld(), storage: memoryStorage(),
+    /** Returns the external authority used for three-way rebase. */
+    reloadWorld: async () => structuredClone(external),
+    /** Simulates a new external conflict on both save attempts. */
+    persistWorld: async (_world, _areas, _owners, command, direction) => {
+      command.operationIds ??= {};
+      command.operationIds[direction] ??= `operation-${attempts.length + 1}`;
+      attempts.push({ commandId: command.id, operationId: command.operationIds[direction], kind: command.kind });
+      return { status: 409, conflict: true, code: "world-conflict", error: `external change ${attempts.length}` };
+    },
+  });
+  const changed = controller.world(); changed.areas[1].region.storedRect.x += 18;
+  controller.commitWorld(changed, { changedAreas: ["neara/delivery"] }, "pointer");
+  await controller.flush();
+  assert.equal(controller.snapshot().save.state, "conflict");
+
+  const second = await controller.keepMine();
+  assert.equal(second.status, 409);
+  assert.equal(controller.snapshot().save.state, "conflict");
+  assert.equal(attempts.length, 2);
+  assert.notEqual(attempts[1].commandId, attempts[0].commandId);
+  assert.notEqual(attempts[1].operationId, attempts[0].operationId);
+  assert.equal(attempts[1].kind, "conflict-rebase");
+  assert.ok(controller.snapshot().draft?.pending?.length, "the second conflict remains recoverable");
+  controller.destroy();
+});
+
+test("selection starts its deferred shard before spatially nearby shards", async () => {
+  const world = fortyOneAreaWorld();
+  for (const node of world.areas) if (!["atlas/focus", "atlas/near-a", "atlas/near-b", "atlas/far"].includes(node.key)) {
+    node.shard = { ...node.shard, state: "ready", scene: core.createEmptyScene() };
+  }
+  const calls = [];
+  const controller = createAreaMapWorldController({
+    world, storage: memoryStorage(),
+    /** Records fetch start order and returns a matching shard. */
+    loadShard: async (area, context) => {
+      calls.push(area);
+      return { owner: area, hash: `loaded-${area}`, state: "ready", worldRevision: context.worldRevision, scene: core.createEmptyScene() };
+    },
+  });
+  controller.selectArea("atlas/focus");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["atlas/focus", "atlas/near-a", "atlas/near-b", "atlas/far"]);
+  assert.ok(controller.world().areas.filter((node) => calls.includes(node.key)).every((node) => node.shard.state === "ready"));
+  controller.destroy();
+});
+
+test("an unchanged structural poll needs no scene compose or Excal update", async () => {
+  const world = fixtureWorld(); let reloads = 0;
+  const controller = createAreaMapWorldController({
+    world, storage: memoryStorage(),
+    /** Returns byte-equivalent structural authority for one poll. */
+    reloadWorld: async () => { reloads += 1; return structuredClone(world); },
+  });
+  const before = controller.snapshot();
+  const appliedFingerprint = core.authoredFingerprint(before.scene.elements);
+  assert.equal(await controller.refreshFacts(before.focus), false);
+  const after = controller.snapshot();
+  assert.equal(reloads, 1);
+  assert.equal(after.composition, before.composition, "unchanged structure does not recompose or parse a scene");
+  assert.equal(areaMapProjectionUpdate({
+    appliedFingerprint,
+    currentSelection: before.selection,
+    scene: after.scene,
+    selection: after.selection,
+  }), null, "the browser projection performs zero Excalidraw updates");
+  controller.destroy();
+});
+
+test("the current 41-Area structure and planned loads stay within product budgets", async () => {
+  const world = fortyOneAreaWorld();
+  const events = [];
+  const calls = [];
+  const interactiveStart = performance.now();
+  const controller = createAreaMapWorldController({
+    world, storage: memoryStorage(),
+    /** Captures the controller's coordinate-free load timing. */
+    onEvent: (event) => events.push(event),
+    /** Resolves one deterministic in-memory planned shard. */
+    loadShard: async (area, context) => {
+      calls.push(area);
+      return { owner: area, hash: `loaded-${area}`, state: "ready", worldRevision: context.worldRevision, scene: core.createEmptyScene() };
+    },
+  });
+  const interactiveDuration = performance.now() - interactiveStart;
+  const worldEvent = events.find((event) => event.name === "area_map_world_loaded");
+  assert.equal(controller.snapshot().world.areas.length, 41);
+  assert.ok(interactiveDuration < 1_000, `41-Area controller became interactive in ${interactiveDuration.toFixed(1)} ms`);
+  assert.ok(worldEvent.usableTime < 1_000, `reported usable time was ${worldEvent.usableTime.toFixed(1)} ms`);
+
+  const plannedStart = performance.now();
+  await controller.prioritizeLoads("atlas/focus", { includeDescendants: true, nearbyCount: 3 });
+  const plannedDuration = performance.now() - plannedStart;
+  assert.equal(calls[0], "atlas/focus", "the selected deferred shard starts first");
+  assert.deepEqual(calls.slice(1, 36), world.areas.filter((node) => node.key.startsWith("atlas/focus/")).map((node) => node.key));
+  assert.ok(plannedDuration < 3_000, `planned subtree loading finished in ${plannedDuration.toFixed(1)} ms`);
   controller.destroy();
 });

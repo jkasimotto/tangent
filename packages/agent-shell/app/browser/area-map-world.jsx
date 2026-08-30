@@ -3,7 +3,31 @@ import { Excalidraw } from "@excalidraw/excalidraw";
 import boardCore from "../public/area-board-core.js";
 import worldCore from "../public/area-map-world-core.js";
 import pickerModel from "../public/area-board-picker.js";
-import { createAreaMapWorldController, ownerForNewAreaMapElement } from "../public/area-map-world-controller.js";
+import { createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "../public/area-map-world-controller.js";
+
+const EXCALIDRAW_UI_OPTIONS = Object.freeze({
+  tools: { image: false },
+  canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false },
+});
+
+/** Keeps Excalidraw mounted while the outer world controller repaints its overlays. */
+const StableWorldCanvas = React.memo(function StableWorldCanvas({ initialData, handlers }) {
+  return <Excalidraw
+    initialData={initialData}
+    excalidrawAPI={(value) => handlers.current.setApi(value)}
+    theme="dark"
+    name="Area map"
+    autoFocus
+    handleKeyboardGlobally={false}
+    UIOptions={EXCALIDRAW_UI_OPTIONS}
+    onPointerDown={(tool, pointerDownState) => handlers.current.onPointerDown(tool, pointerDownState)}
+    onPointerUp={() => handlers.current.onPointerUp()}
+    onPointerUpdate={(value) => handlers.current.onPointerUpdate(value)}
+    onScrollChange={(scrollX, scrollY, zoom) => handlers.current.onScrollChange(scrollX, scrollY, zoom)}
+    onPaste={(data) => handlers.current.onPaste(data)}
+    onChange={(elements, appState) => handlers.current.onChange(elements, appState)}
+  />;
+});
 
 /** Stops one browser event before the shell or Excalidraw can reinterpret it. */
 const stop = (event) => { event.preventDefault(); event.stopPropagation(); };
@@ -133,6 +157,11 @@ export function AreaMapWorld({ host, bridge, options }) {
   });
   const controller = controllerRef.current;
   const [state, setState] = useState(controller.snapshot());
+  const initialDataRef = useRef({
+    ...state.scene,
+    appState: { ...(state.scene.appState ?? {}), scrollX: state.camera.scrollX, scrollY: state.camera.scrollY, zoom: { value: state.camera.zoom } },
+  });
+  const canvasHandlersRef = useRef({});
   const [api, setApi] = useState(null);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [picker, setPicker] = useState(null);
@@ -141,7 +170,6 @@ export function AreaMapWorld({ host, bridge, options }) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [announcement, setAnnouncement] = useState({ id: 0, text: "" });
-  const applyingRef = useRef(false);
   const initializingRef = useRef(true);
   const pointerBaselineRef = useRef(null);
   const pointerCompositionRef = useRef(null);
@@ -156,6 +184,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const stableSelectionRef = useRef(new Set(state.selection));
   const pointerSettlingRef = useRef(false);
   const pointerSettleTokenRef = useRef(0);
+  const pointerSettleWaitersRef = useRef([]);
   const pointerDomActiveRef = useRef(false);
   const pastePlacementRef = useRef(null);
   const pasteTimerRef = useRef(null);
@@ -164,13 +193,87 @@ export function AreaMapWorld({ host, bridge, options }) {
   const actionKindRef = useRef(null);
   const programmaticSelectionRef = useRef(null);
   const claimedRuntimeIdsRef = useRef(new Map());
+  const claimedOriginsRef = useRef(new Map());
   const textEditRef = useRef(null);
   const fingerprintRef = useRef(boardCore.authoredFingerprint(state.scene.elements));
   const appliedProjectionRef = useRef("");
   const previousSaveStateRef = useRef(state.save.state);
   const announcedReasonRef = useRef(0);
+  const deferredCanvasUpdateTokenRef = useRef(0);
+  const projectionTokenRef = useRef(0);
+  const expectedProjectionsRef = useRef([]);
 
-  useEffect(() => controller.subscribe(setState), [controller]);
+  /** Returns one stable key for an Excalidraw selection. */
+  function selectionKey(ids) {
+    return JSON.stringify([...new Set(ids ?? [])].sort());
+  }
+
+  /** Applies one exact controller projection and fences its matching callback. */
+  function projectCanvas(update, reason = "unknown") {
+    if (!api) return null;
+    const elements = update.elements ?? api.getSceneElements?.() ?? state.scene.elements;
+    const selection = Object.hasOwn(update.appState ?? {}, "selectedElementIds")
+      ? selectedIds({ selectedElementIds: update.appState.selectedElementIds })
+      : selectedIds(api.getAppState?.());
+    const token = {
+      id: ++projectionTokenRef.current,
+      fingerprint: boardCore.authoredFingerprint(elements),
+      selection: selectionKey(selection),
+      reason,
+      includesElements: Boolean(update.elements),
+    };
+    expectedProjectionsRef.current.push(token);
+    if (expectedProjectionsRef.current.length > 32) expectedProjectionsRef.current.splice(0, expectedProjectionsRef.current.length - 32);
+    if (token.includesElements) {
+      appliedProjectionRef.current = token.fingerprint;
+      fingerprintRef.current = token.fingerprint;
+    }
+    api.updateScene(update);
+    return token;
+  }
+
+  /** Consumes one callback produced by an exact controller projection. */
+  function consumeExpectedProjection(elements, appState) {
+    const fingerprint = boardCore.authoredFingerprint(elements);
+    const selection = selectionKey(selectedIds(appState));
+    const index = expectedProjectionsRef.current.findIndex((token) => token.fingerprint === fingerprint && token.selection === selection);
+    if (index < 0) return false;
+    const [token] = expectedProjectionsRef.current.splice(index, 1);
+    fingerprintRef.current = fingerprint;
+    if (token.includesElements) appliedProjectionRef.current = fingerprint;
+    return true;
+  }
+
+  /** Applies one Excalidraw correction after its current React lifecycle returns. */
+  function deferCanvasUpdate(update, reason = "unknown") {
+    const token = ++deferredCanvasUpdateTokenRef.current;
+    queueMicrotask(() => {
+      if (token !== deferredCanvasUpdateTokenRef.current) return;
+      projectCanvas(update, reason);
+    });
+  }
+
+  /** Lets a new user command supersede a queued projection correction. */
+  function cancelDeferredCanvasUpdate() {
+    deferredCanvasUpdateTokenRef.current += 1;
+  }
+
+  // Excalidraw calls onChange from its componentDidUpdate lifecycle. Keep the
+  // controller synchronous, but mirror its newest snapshot after that React
+  // lifecycle returns so a preview cannot recursively update the parent tree.
+  useEffect(() => {
+    let active = true; let queued = false; let latest = controller.snapshot();
+    const unsubscribe = controller.subscribe((value) => {
+      latest = value;
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        if (active) setState(latest);
+      });
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [controller]);
 
   /** Prints one action result and gives assistive technology a fresh live node. */
   function announce(message, { visible = true } = {}) {
@@ -197,7 +300,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (state.save.state === previousSaveStateRef.current) return;
     previousSaveStateRef.current = state.save.state;
     const message = {
-      saving: "Saving…", saved: "Saved", blocked: "Not saved. Retry.", conflict: "Not saved. Reload or keep mine.", dirty: "Change queued.",
+      saving: "Saving map…", saved: "Map saved.", blocked: "Map not saved. Retry.", conflict: "Map not saved. Reload or keep mine.", dirty: "Map change queued.",
     }[state.save.state];
     if (message) announce(message, { visible: false });
   }, [state.save.state]);
@@ -222,19 +325,18 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (!api) return;
     const liveEditingId = api.getAppState?.().editingTextElement?.id;
     if (liveEditingId && textEditRef.current) return;
+    // A brand-new Excalidraw element has no baseline selection. Let Excalidraw
+    // own that live pointer frame, then project once the release fence closes.
+    if (pointerBaselineRef.current && !pointerSelectedRef.current.size) return;
     const elementSelection = Object.fromEntries([...state.selection].map((id) => [id, true]));
     const projectionFingerprint = boardCore.authoredFingerprint(state.scene.elements);
     const currentSelection = selectedIds(api.getAppState?.()).sort().join("\0");
     const desiredSelection = [...state.selection].sort().join("\0");
     const sceneChanged = appliedProjectionRef.current !== projectionFingerprint;
     if (!sceneChanged && currentSelection === desiredSelection) return;
-    applyingRef.current = true;
     if (sceneChanged) api.addFiles?.(Object.values(state.scene.files ?? {}));
-    api.updateScene({ ...(sceneChanged ? { elements: state.scene.elements } : {}), appState: { selectedElementIds: elementSelection }, captureUpdate: "NEVER" });
+    deferCanvasUpdate({ ...(sceneChanged ? { elements: state.scene.elements } : {}), appState: { selectedElementIds: elementSelection }, captureUpdate: "NEVER" }, "projection");
     if (sceneChanged) api.history?.clear?.();
-    appliedProjectionRef.current = projectionFingerprint;
-    fingerprintRef.current = projectionFingerprint;
-    queueMicrotask(() => { applyingRef.current = false; });
     if (initializingRef.current) requestAnimationFrame(() => requestAnimationFrame(() => {
       fingerprintRef.current = boardCore.authoredFingerprint(api.getSceneElements?.() ?? state.scene.elements);
       initializingRef.current = false;
@@ -246,9 +348,8 @@ export function AreaMapWorld({ host, bridge, options }) {
     const element = controller.selectArea(area);
     if (!element) return null;
     stableSelectionRef.current = new Set([element.id]);
-    void controller.materialize(area);
     programmaticSelectionRef.current = new Set([element.id]);
-    requestAnimationFrame(() => api?.updateScene({ appState: { selectedElementIds: { [element.id]: true } }, captureUpdate: "NEVER" }));
+    requestAnimationFrame(() => projectCanvas({ appState: { selectedElementIds: { [element.id]: true } }, captureUpdate: "NEVER" }, "area-selection"));
     return element;
   }
 
@@ -258,11 +359,9 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (!element || !api) return null;
     if (select) {
       programmaticSelectionRef.current = new Set([element.id]);
-      api.updateScene({ appState: { selectedElementIds: { [element.id]: true } }, captureUpdate: "NEVER" });
+      projectCanvas({ appState: { selectedElementIds: { [element.id]: true } }, captureUpdate: "NEVER" }, "camera-selection");
     }
     api.scrollToContent([element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
-    void controller.materialize(area);
-    for (const child of controller.world().areas.find((node) => node.key === area)?.children ?? []) void controller.materialize(child);
     announce(`${leaf(area)} in view`);
     return element;
   }
@@ -298,7 +397,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     publish(next.elements, api?.getAppState?.() ?? {});
     const runtime = worldCore.runtimeId(area, id);
     controller.setSelection([runtime]); programmaticSelectionRef.current = new Set([runtime]);
-    requestAnimationFrame(() => api?.updateScene({ appState: { selectedElementIds: { [runtime]: true } }, captureUpdate: "NEVER" }));
+    requestAnimationFrame(() => projectCanvas({ appState: { selectedElementIds: { [runtime]: true } }, captureUpdate: "NEVER" }, "placed-block-selection"));
     setPicker(keepOpen ? target : null); setPickerQuery("");
   }
 
@@ -348,9 +447,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     const claimed = resolveClaimedId(claimedRuntimeIdsRef.current, editing.id);
     if (!force && claimed && validRuntimeIds.has(claimed) && appState?.activeTool?.type === "text") return false;
     const selection = new Set(selectedIds(appState).map((id) => resolveClaimedId(claimedRuntimeIdsRef.current, id)).filter((id) => validRuntimeIds.has(id)));
-    api?.updateScene({ elements: snapshot.scene.elements, appState: { editingTextElement: null, selectedElementIds: Object.fromEntries([...selection].map((id) => [id, true])) }, captureUpdate: "NEVER" });
-    appliedProjectionRef.current = boardCore.authoredFingerprint(snapshot.scene.elements);
-    fingerprintRef.current = appliedProjectionRef.current;
+    projectCanvas({ elements: snapshot.scene.elements, appState: { editingTextElement: null, selectedElementIds: Object.fromEntries([...selection].map((id) => [id, true])) }, captureUpdate: "NEVER" }, "stale-text-repair");
     return true;
   }
 
@@ -358,9 +455,11 @@ export function AreaMapWorld({ host, bridge, options }) {
   function beginPointerGesture(origin, pointerDownState = { origin }) {
     if (pointerBaselineRef.current) return;
     if (textEditRef.current && api?.getAppState?.().editingTextElement) return;
+    cancelDeferredCanvasUpdate();
     clearStaleEditingText(undefined, { force: true });
     finishNonPointer(); pointerSettlingRef.current = false; programmaticSelectionRef.current = null;
     claimedRuntimeIdsRef.current = new Map();
+    claimedOriginsRef.current = new Map();
     wallAnnouncedRef.current = false; outlineProtectionAnnouncedRef.current = false;
     pointerBaselineRef.current = controller.beginGesture("pointer");
     pointerCompositionRef.current = worldCore.composeAreaMapWorld(pointerBaselineRef.current);
@@ -377,7 +476,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       const nextSelection = new Set([...stableSelectionRef.current, hitElement.id]);
       stableSelectionRef.current = nextSelection; additiveSelectionRef.current = nextSelection;
       controller.setSelection(nextSelection); programmaticSelectionRef.current = nextSelection;
-      api?.updateScene({ appState: { selectedElementIds: Object.fromEntries([...nextSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" });
+      projectCanvas({ appState: { selectedElementIds: Object.fromEntries([...nextSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" }, "additive-pointer-selection");
     }
     const selectedElements = pointerCompositionRef.current.scene.elements.filter((element) => stableSelectionRef.current.has(element.id));
     const hitBlock = selectedElements.some((element) => element.customData?.tangent?.role !== "area-region" && pointerHits(element, origin, zoom));
@@ -413,8 +512,8 @@ export function AreaMapWorld({ host, bridge, options }) {
     announceWall(preview.wall);
   }
 
-  /** Publishes Excalidraw's final release state inside the open pointer word. */
-  function settlePointerCommand() {
+  /** Publishes the current Excalidraw pointer state inside the open command. */
+  function publishCurrentPointerState() {
     if (!pointerBaselineRef.current) return;
     const finalAppState = api?.getAppState?.() ?? {};
     if (!finalAppState.editingTextElement) {
@@ -430,15 +529,37 @@ export function AreaMapWorld({ host, bridge, options }) {
         publish(clone(finalElements), normalizedAppState);
       }
     }
+  }
+
+  /** Resolves readers that wait for the release fence before persistence. */
+  function resolvePointerSettleWaiters() {
+    const waiters = pointerSettleWaitersRef.current.splice(0);
+    for (const resolve of waiters) resolve();
+  }
+
+  /** Publishes Excalidraw's final release state inside the open pointer word. */
+  function settlePointerCommand() {
+    if (!pointerBaselineRef.current) { pointerSettlingRef.current = false; resolvePointerSettleWaiters(); return; }
+    publishCurrentPointerState();
     controller.endGesture("pointer");
     pointerBaselineRef.current = null; pointerCompositionRef.current = null; pointerStateRef.current = null; pointerCurrentRef.current = null; pointerHandleRef.current = null;
     pointerSelectedRef.current = new Set(); pointerSettlingRef.current = false;
+    resolvePointerSettleWaiters();
+  }
+
+  /** Waits until a released pointer command has entered controller history. */
+  function waitForPointerSettle() {
+    if (!pointerBaselineRef.current && !pointerSettlingRef.current) return Promise.resolve();
+    return new Promise((resolve) => pointerSettleWaitersRef.current.push(resolve));
   }
 
   /** Finishes the one pointer command after Excalidraw's release callback settles. */
   function endPointerGesture() {
     if (!pointerBaselineRef.current || pointerSettlingRef.current) return;
     pointerSettlingRef.current = true;
+    // Publish the current release snapshot now. The double-RAF pass below
+    // still absorbs Excalidraw's final callback into this same history word.
+    if (api?.getAppState?.().activeTool?.type !== "text") publishCurrentPointerState();
     const token = ++pointerSettleTokenRef.current;
     const additiveSelection = additiveSelectionRef.current ? new Set(additiveSelectionRef.current) : null;
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -454,7 +575,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       if (settledSelection.size) {
         stableSelectionRef.current = settledSelection; programmaticSelectionRef.current = settledSelection;
         controller.setSelection(settledSelection);
-        api?.updateScene({ appState: { selectedElementIds: Object.fromEntries([...settledSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" });
+        projectCanvas({ appState: { selectedElementIds: Object.fromEntries([...settledSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" }, "pointer-release-selection");
       }
       requestAnimationFrame(() => { additiveSelectionRef.current = null; });
     }));
@@ -474,12 +595,8 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (protectedOutline && !outlineProtectionAnnouncedRef.current) {
       outlineProtectionAnnouncedRef.current = true; announce("Area outlines come from the Area tree");
     }
-    const regionElements = elements.filter((element) => element.customData?.tangent?.role === "area-region" && !element.isDeleted);
-    const directRegionSelection = pointerBaselineRef.current && [...pointerSelectedRef.current].some((id) => baselineComposition.scene.elements.find((element) => element.id === id)?.customData?.tangent?.role === "area-region");
-    const changedRegions = directRegionSelection ? [] : regionElements.filter((element) => {
-      const old = baselineComposition.regionRects.get(element.customData.tangent.area);
-      return old && ["x", "y", "width", "height"].some((field) => Math.abs(Number(element[field]) - Number(old[field])) >= 0.01);
-    });
+    const geometryCommand = !pointerBaselineRef.current && [actionKindRef.current, nonPointerKindRef.current].includes("nudge") ? "keyboard-nudge" : null;
+    const changedRegions = selectedAreaMapRegionChanges(elements, selectedIds(appState), baselineComposition.regionRects, { geometryCommand });
     if (changedRegions.length) {
       const selected = new Set(changedRegions.map((element) => element.customData.tangent.area));
       for (const area of [...selected]) for (const ancestor of selected) if (area !== ancestor && area.startsWith(`${ancestor}/`)) selected.delete(area);
@@ -536,12 +653,19 @@ export function AreaMapWorld({ host, bridge, options }) {
       const motion = ownerMotion(origin.owner); const carried = clone(original); carried.x += motion.x; carried.y += motion.y; return carried;
     });
     const origins = new Map([...baselineComposition.origins, ...nextComposition.origins]);
+    for (const element of authoredRuntime) {
+      const claimedOrigin = claimedOriginsRef.current.get(element.id);
+      if (!claimedOrigin) continue;
+      origins.set(element.id, claimedOrigin);
+      element.customData = { ...(element.customData ?? {}), tangentWorld: claimedOrigin };
+    }
     const pastePlacement = pastePlacementRef.current;
     const currentElements = new Map(nextComposition.scene.elements.map((element) => [element.id, element]));
     const candidateOwners = new Set([...selectedSources].flatMap((id) => {
       const element = baselineElements.get(id) ?? currentElements.get(id);
       return element && element.customData?.tangent?.role !== "area-region" && !ephemeral(element) ? [origins.get(id)?.owner] : [];
     }).filter(Boolean));
+    if (pointerBaselineRef.current) for (const origin of claimedOriginsRef.current.values()) if (origin?.owner) candidateOwners.add(origin.owner);
     const pointer = pastePlacement?.point ?? pointerStateRef.current?.origin;
     const owners = new Set(nextWorld.areas.map((node) => node.key));
     const sourceIds = new Map();
@@ -559,9 +683,14 @@ export function AreaMapWorld({ host, bridge, options }) {
       const runtimeId = worldCore.runtimeId(owner, sourceId);
       for (const mapping of [claimedRuntimeIds, claimedRuntimeIdsRef.current]) {
         const aliases = [...mapping].filter(([alias]) => resolveClaimedId(mapping, alias) === incomingId).map(([alias]) => alias);
-        for (const alias of aliases) mapping.set(alias, runtimeId);
+        for (const alias of aliases) {
+          mapping.set(alias, runtimeId);
+          claimedOriginsRef.current.set(alias, origin);
+        }
         mapping.set(incomingId, runtimeId);
       }
+      claimedOriginsRef.current.set(incomingId, origin);
+      claimedOriginsRef.current.set(runtimeId, origin);
       candidateOwners.add(owner);
       element.customData = { ...(element.customData ?? {}), tangentWorld: origin };
       return origin;
@@ -584,25 +713,33 @@ export function AreaMapWorld({ host, bridge, options }) {
       return matches.length === 1 ? authoredElementById.get(matches[0][0]) ?? null : null;
     };
     /** Returns the connectable element at an arrow endpoint when Excal omits one side. */
-    const endpointTarget = (arrow, side) => {
+    const endpointTarget = (arrow, side, oppositeId = null) => {
       const direct = resolveBindingElement(arrow[`${side}Binding`]?.elementId);
       if (direct) return direct;
       const points = arrow.points ?? [[0, 0], [Number(arrow.width ?? 0), Number(arrow.height ?? 0)]];
       const offset = side === "start" ? points[0] : points.at(-1);
       const point = { x: Number(arrow.x ?? 0) + Number(offset?.[0] ?? 0), y: Number(arrow.y ?? 0) + Number(offset?.[1] ?? 0) };
-      const reverse = authoredRuntime.find((element) => element.id !== arrow.id && (element.boundElements ?? []).some((binding) => binding.type === "arrow" && binding.id === arrow.id)
-        && point.x >= Number(element.x) - 24 && point.y >= Number(element.y) - 24
-        && point.x <= Number(element.x) + Number(element.width) + 24 && point.y <= Number(element.y) + Number(element.height) + 24);
-      if (reverse) return reverse;
       return authoredRuntime.filter((element) => element.id !== arrow.id && !element.isDeleted && origins.has(element.id)
+        && element.id !== oppositeId
         && ["rectangle", "diamond", "ellipse"].includes(element.type)
         && point.x >= Number(element.x) - 24 && point.y >= Number(element.y) - 24
         && point.x <= Number(element.x) + Number(element.width) + 24 && point.y <= Number(element.y) + Number(element.height) + 24)
-        .sort((left, right) => Number(!boardCore.tangentOf(left)) - Number(!boardCore.tangentOf(right))
-          || left.width * left.height - right.width * right.height)[0] ?? null;
+        .sort((left, right) => {
+          /** Returns squared distance from the endpoint to one element rectangle. */
+          const distance = (element) => {
+            const dx = Math.max(Number(element.x) - point.x, 0, point.x - Number(element.x) - Number(element.width));
+            const dy = Math.max(Number(element.y) - point.y, 0, point.y - Number(element.y) - Number(element.height));
+            return dx * dx + dy * dy;
+          };
+          const leftReverse = (left.boundElements ?? []).some((binding) => binding.type === "arrow" && binding.id === arrow.id);
+          const rightReverse = (right.boundElements ?? []).some((binding) => binding.type === "arrow" && binding.id === arrow.id);
+          return Number(rightReverse) - Number(leftReverse) || distance(left) - distance(right)
+            || left.width * left.height - right.width * right.height;
+        })[0] ?? null;
     };
     for (const element of authoredRuntime.filter((value) => value.type === "arrow")) {
       const startElement = endpointTarget(element, "start");
+      const endElement = endpointTarget(element, "end", startElement?.id);
       const start = startElement ? origins.get(startElement.id) ?? startElement.customData?.tangentWorld : null;
       if (!origins.has(element.id)) {
         const copiedOwner = element.customData?.tangentWorld?.owner;
@@ -611,7 +748,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       }
       const endpoints = clone(element.customData?.tangentWorldEndpoints ?? {});
       for (const side of ["start", "end"]) {
-        const target = side === "start" ? startElement : endpointTarget(element, side);
+        const target = side === "start" ? startElement : endElement;
         const endpoint = target ? origins.get(target.id) ?? target.customData?.tangentWorld : null;
         if (!endpoint?.owner || !endpoint?.sourceId) continue;
         endpoints[side] = { owner: endpoint.owner, sourceId: endpoint.sourceId };
@@ -685,10 +822,11 @@ export function AreaMapWorld({ host, bridge, options }) {
       changedOwners.add(owner);
     }
     if (!changedAreas.size && !changedOwners.size) {
+      // A new Excalidraw pointer command owns its live frames. Projecting the
+      // controller's first claimed frame here truncates later geometry.
+      if (pointerBaselineRef.current && !pointerSelectedRef.current.size && claimedOriginsRef.current.size) return;
       const projection = controller.snapshot().scene;
-      applyingRef.current = true;
-      api?.updateScene({ elements: projection.elements, captureUpdate: "NEVER" });
-      requestAnimationFrame(() => { applyingRef.current = false; });
+      deferCanvasUpdate({ elements: projection.elements, captureUpdate: "NEVER" }, "no-change");
       return;
     }
     const changes = { changedAreas, changedOwners };
@@ -707,9 +845,10 @@ export function AreaMapWorld({ host, bridge, options }) {
         .filter((id) => validRuntimeIds.has(id)));
       stableSelectionRef.current = remappedSelection;
       const liveClaimedText = Boolean(appState?.editingTextElement);
+      const liveNewPointer = Boolean(pointerBaselineRef.current && !pointerSelectedRef.current.size);
       programmaticSelectionRef.current = !liveClaimedText && remappedSelection.size ? remappedSelection : null;
       controller.setSelection(remappedSelection);
-      if (!liveClaimedText) api?.updateScene({ appState: { selectedElementIds: Object.fromEntries([...remappedSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" });
+      if (!liveClaimedText && !liveNewPointer) deferCanvasUpdate({ appState: { selectedElementIds: Object.fromEntries([...remappedSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" }, "claim");
     }
   }
 
@@ -741,6 +880,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       const typing = event.target instanceof HTMLElement && (event.target.matches("input, textarea, select") || event.target.isContentEditable);
       if (typing || appState?.editingTextElement && !clearedStaleEditing) return;
       if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+        cancelDeferredCanvasUpdate();
         if (pointerBaselineRef.current) {
           pointerSettleTokenRef.current += 1;
           settlePointerCommand();
@@ -788,12 +928,10 @@ export function AreaMapWorld({ host, bridge, options }) {
           stableSelectionRef.current = remappedSelection; programmaticSelectionRef.current = remappedSelection;
           controller.setSelection(remappedSelection);
           const projection = controller.snapshot().scene;
-          const projectionFingerprint = boardCore.authoredFingerprint(projection.elements);
-          applyingRef.current = true; pointerSettlingRef.current = true;
-          api.updateScene({ elements: projection.elements, appState: { selectedElementIds: Object.fromEntries([...remappedSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" });
-          appliedProjectionRef.current = projectionFingerprint; fingerprintRef.current = projectionFingerprint;
+          pointerSettlingRef.current = true;
+          projectCanvas({ elements: projection.elements, appState: { selectedElementIds: Object.fromEntries([...remappedSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" }, "claimed-nudge");
           requestAnimationFrame(() => requestAnimationFrame(() => {
-            applyingRef.current = false; pointerSettlingRef.current = false;
+            pointerSettlingRef.current = false;
           }));
           return;
         }
@@ -898,7 +1036,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     bridge.fitArea = (area, settings) => scrollToArea(area, settings);
     bridge.selectArea = (area) => selectArea(area);
     bridge.escape = escape;
-    bridge.flush = () => controller.flush();
+    bridge.flush = async () => { await waitForPointerSettle(); return controller.flush(); };
     bridge.refreshFacts = (documentsOrFocus, maybeFocus) => controller.refreshFacts(maybeFocus ?? (Array.isArray(documentsOrFocus) ? controller.snapshot().focus : documentsOrFocus));
     bridge.setFocus = (focus) => controller.setFocus(focus);
     bridge.reload = () => controller.reload();
@@ -908,14 +1046,13 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (api && !initial.viewRestored) {
       const element = controller.fitArea(initial.locatedArea, { push: false, select: false });
       if (element) api.scrollToContent([element], { fitToContent: true, animate: false });
-      void controller.materialize(initial.locatedArea);
-      for (const child of controller.world().areas.find((node) => node.key === initial.locatedArea)?.children ?? []) void controller.materialize(child);
     }
     return () => { bridge.controller = null; };
   }, [api]);
 
   useEffect(() => () => {
     nonPointerSettleRef.current += 1; finishNonPointer();
+    resolvePointerSettleWaiters();
     if (pasteTimerRef.current !== null) clearTimeout(pasteTimerRef.current);
     controller.destroy();
   }, [controller]);
@@ -964,89 +1101,101 @@ export function AreaMapWorld({ host, bridge, options }) {
     }}>{areaName(node.key)} · depth {node.depth + 1} · {state.folded.has(node.key) ? "folded" : node.shard.state} · {Number(node.shard.blockCount ?? 0)} blocks</button>{children.length && !state.folded.has(node.key) ? outlineTree(node.key) : null}</li>;
   })}</ol>;
 
-  const initialData = { ...state.scene, appState: { ...(state.scene.appState ?? {}), scrollX: state.camera.scrollX, scrollY: state.camera.scrollY, zoom: { value: state.camera.zoom } } };
+  /** Captures one Excalidraw pointer command through the current world closure. */
+  function handleCanvasPointerDown(_tool, pointerDownState) { beginPointerGesture(pointerDownState.origin, pointerDownState); }
+
+  /** Routes Excalidraw pointer previews through the current containment solver. */
+  function handleCanvasPointerUpdate({ pointer }) { previewPointerGesture(pointer); }
+
+  /** Stores the current camera without entering authored history. */
+  function handleCanvasScroll(scrollX, scrollY, zoom) { controller.setCamera({ scrollX, scrollY, zoom: zoom?.value ?? zoom }); }
+
+  /** Claims ordinary paste placement or consumes a semantic Tangent reference. */
+  function handleCanvasPaste(data) {
+    if (data.files?.length) return true;
+    actionKindRef.current = "paste";
+    const point = placementPoint(); const area = areaAtPoint(state.composition, point, state.locatedArea);
+    pastePlacementRef.current = { area, point };
+    if (pasteTimerRef.current !== null) clearTimeout(pasteTimerRef.current);
+    pasteTimerRef.current = setTimeout(() => { pastePlacementRef.current = null; pasteTimerRef.current = null; }, 1_000);
+    const choice = boardCore.referenceFromText(data.text, pickerModel.wideChoices("", documents));
+    if (!choice) return false;
+    pastePlacementRef.current = null; clearTimeout(pasteTimerRef.current); pasteTimerRef.current = null; placeBlock(choice, false, { area, point }); return true;
+  }
+
+  /** Normalizes one Excalidraw callback into source-owned world authority. */
+  function handleCanvasChange(elements, appState) {
+    if (consumeExpectedProjection(elements, appState)) return;
+    if (appState.editingTextElement) {
+      cancelDeferredCanvasUpdate();
+      textEditRef.current = { editingId: appState.editingTextElement.id, elements: clone(elements) };
+      return;
+    }
+    if (textEditRef.current) cancelDeferredCanvasUpdate();
+    else if (initializingRef.current) return;
+    if (pointerSettlingRef.current && !textEditRef.current) return;
+    let sourceElements = elements;
+    if (textEditRef.current) {
+      const buffered = textEditRef.current; textEditRef.current = null;
+      const latestText = buffered.elements.find((element) => element.id === buffered.editingId);
+      if (latestText) {
+        sourceElements = clone(elements);
+        const index = sourceElements.findIndex((element) => element.id === buffered.editingId);
+        if (index < 0) sourceElements.push(latestText);
+        else if (!sourceElements[index].isDeleted) sourceElements[index] = latestText;
+      }
+      actionKindRef.current = "text";
+    }
+    const claimedRuntimeIds = new Map(claimedRuntimeIdsRef.current);
+    const editingSourceId = appState.editingTextElement?.id;
+    const liveClaimedText = Boolean(editingSourceId && resolveClaimedId(claimedRuntimeIds, editingSourceId) !== editingSourceId);
+    const normalizedElements = claimedRuntimeIds.size ? remapClaimedIdentities(sourceElements, claimedRuntimeIds) : sourceElements;
+    const normalizedAppState = claimedRuntimeIds.size ? {
+      ...appState,
+      editingTextElement: remapClaimedIdentities(appState.editingTextElement, claimedRuntimeIds),
+      selectedElementIds: Object.fromEntries(selectedIds(appState).map((id) => [resolveClaimedId(claimedRuntimeIds, id), true])),
+    } : appState;
+    if (!normalizedAppState.editingTextElement && nonPointerKindRef.current === "text") settleNonPointer();
+    let ids = liveClaimedText ? [...controller.snapshot().selection] : selectedIds(normalizedAppState);
+    if (!liveClaimedText) {
+      if (additiveSelectionRef.current?.size && ![...additiveSelectionRef.current].every((id) => ids.includes(id))) {
+        ids = [...new Set([...ids, ...additiveSelectionRef.current])];
+        const additive = Object.fromEntries(ids.map((id) => [id, true]));
+        requestAnimationFrame(() => projectCanvas({ appState: { selectedElementIds: additive }, captureUpdate: "NEVER" }, "additive-selection-repair"));
+      }
+      if (programmaticSelectionRef.current?.size && ![...programmaticSelectionRef.current].every((id) => ids.includes(id))) {
+        const selected = Object.fromEntries([...programmaticSelectionRef.current].map((id) => [id, true]));
+        requestAnimationFrame(() => projectCanvas({ appState: { selectedElementIds: selected }, captureUpdate: "NEVER" }, "selection-repair"));
+        return;
+      }
+      controller.setSelection(ids);
+      if (ids.length) stableSelectionRef.current = new Set(ids);
+      for (const element of state.composition.scene.elements) if (ids.includes(element.id) && element.customData?.tangent?.role === "area-region") void controller.prioritizeLoads(element.customData.tangent.area, { includeDescendants: false, requireSelectedDeferred: true });
+    }
+    const fingerprint = boardCore.authoredFingerprint(normalizedElements);
+    if (fingerprint === fingerprintRef.current) return;
+    fingerprintRef.current = fingerprint;
+    publish(clone(normalizedElements), normalizedAppState);
+  }
+
+  canvasHandlersRef.current = {
+    setApi,
+    onPointerDown: handleCanvasPointerDown,
+    onPointerUp: endPointerGesture,
+    onPointerUpdate: handleCanvasPointerUpdate,
+    onScrollChange: handleCanvasScroll,
+    onPaste: handleCanvasPaste,
+    onChange: handleCanvasChange,
+  };
+
   return <div className="TangentAreaMap theme--dark" data-tangent-area-map={state.locatedArea} data-tangent-area-map-world={options.world.worldId}>
-    <Excalidraw
-      initialData={initialData}
-      excalidrawAPI={setApi}
-      theme="dark"
-      name="Area map"
-      autoFocus
-      handleKeyboardGlobally={false}
-      UIOptions={{ tools: { image: false }, canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false } }}
-      renderTopRightUI={() => <div className="tangent-map-top-right">
-        <div className="tangent-map-toolbar-extra"><button type="button" onClick={openPicker} aria-keyshortcuts="b" title="Place a Tangent block (B)"><span aria-hidden="true">◈</span><span className="tangent-map-label">Block</span><kbd>B</kbd></button></div>
-        {currentBlock && <div className="tangent-map-verbs" role="group" aria-label="Tangent block actions"><button type="button" onClick={() => openBlock(currentBlock)}>Open <kbd>Enter</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "ask")}>Ask brain <kbd>A</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "correct")}>Correct <kbd>C</kbd></button><button type="button" onClick={() => hideBlock(currentBlock)}>Hide <kbd>X</kbd></button></div>}
-        <button type="button" onClick={() => setOutlineOpen((value) => !value)} aria-expanded={outlineOpen} title="Outline"><span aria-hidden="true" className="tangent-map-glyph">≣</span><span className="tangent-map-label">Outline</span></button>
-        <button type="button" onClick={() => setHelpOpen(true)} aria-keyshortcuts="?" title="Map keys (?)"><span aria-hidden="true" className="tangent-map-glyph">?</span><span className="tangent-map-label">Keys</span><kbd>?</kbd></button>
-      </div>}
-      onPointerDown={(_tool, pointerDownState) => beginPointerGesture(pointerDownState.origin, pointerDownState)}
-      onPointerUp={endPointerGesture}
-      onPointerUpdate={({ pointer }) => previewPointerGesture(pointer)}
-      onScrollChange={(scrollX, scrollY, zoom) => controller.setCamera({ scrollX, scrollY, zoom: zoom?.value ?? zoom })}
-      onPaste={(data) => {
-        if (data.files?.length) return true;
-        actionKindRef.current = "paste";
-        const point = placementPoint(); const area = areaAtPoint(state.composition, point, state.locatedArea);
-        pastePlacementRef.current = { area, point };
-        if (pasteTimerRef.current !== null) clearTimeout(pasteTimerRef.current);
-        pasteTimerRef.current = setTimeout(() => { pastePlacementRef.current = null; pasteTimerRef.current = null; }, 1_000);
-        const choice = boardCore.referenceFromText(data.text, pickerModel.wideChoices("", documents));
-        if (!choice) return false;
-        pastePlacementRef.current = null; clearTimeout(pasteTimerRef.current); pasteTimerRef.current = null; placeBlock(choice, false, { area, point }); return true;
-      }}
-      onChange={(elements, appState) => {
-        if (applyingRef.current) return;
-        if (initializingRef.current) return;
-        if (appState.editingTextElement) {
-          textEditRef.current = { editingId: appState.editingTextElement.id, elements: clone(elements) };
-          return;
-        }
-        if (pointerSettlingRef.current && !textEditRef.current) return;
-        let sourceElements = elements;
-        if (textEditRef.current) {
-          const buffered = textEditRef.current; textEditRef.current = null;
-          const latestText = buffered.elements.find((element) => element.id === buffered.editingId);
-          if (latestText) {
-            sourceElements = clone(elements);
-            const index = sourceElements.findIndex((element) => element.id === buffered.editingId);
-            if (index < 0) sourceElements.push(latestText);
-            else if (!sourceElements[index].isDeleted) sourceElements[index] = latestText;
-          }
-          actionKindRef.current = "text";
-        }
-        const claimedRuntimeIds = new Map(claimedRuntimeIdsRef.current);
-        const editingSourceId = appState.editingTextElement?.id;
-        const liveClaimedText = Boolean(editingSourceId && resolveClaimedId(claimedRuntimeIds, editingSourceId) !== editingSourceId);
-        const normalizedElements = claimedRuntimeIds.size ? remapClaimedIdentities(sourceElements, claimedRuntimeIds) : sourceElements;
-        const normalizedAppState = claimedRuntimeIds.size ? {
-          ...appState,
-          editingTextElement: remapClaimedIdentities(appState.editingTextElement, claimedRuntimeIds),
-          selectedElementIds: Object.fromEntries(selectedIds(appState).map((id) => [resolveClaimedId(claimedRuntimeIds, id), true])),
-        } : appState;
-        if (!normalizedAppState.editingTextElement && nonPointerKindRef.current === "text") settleNonPointer();
-        let ids = liveClaimedText ? [...controller.snapshot().selection] : selectedIds(normalizedAppState);
-        if (!liveClaimedText) {
-          if (additiveSelectionRef.current?.size && ![...additiveSelectionRef.current].every((id) => ids.includes(id))) {
-            ids = [...new Set([...ids, ...additiveSelectionRef.current])];
-            const additive = Object.fromEntries(ids.map((id) => [id, true]));
-            requestAnimationFrame(() => api?.updateScene({ appState: { selectedElementIds: additive }, captureUpdate: "NEVER" }));
-          }
-          if (programmaticSelectionRef.current?.size && ![...programmaticSelectionRef.current].every((id) => ids.includes(id))) {
-            const selection = Object.fromEntries([...programmaticSelectionRef.current].map((id) => [id, true]));
-            requestAnimationFrame(() => api?.updateScene({ appState: { selectedElementIds: selection }, captureUpdate: "NEVER" }));
-            return;
-          }
-          controller.setSelection(ids);
-          if (ids.length) stableSelectionRef.current = new Set(ids);
-          for (const element of state.composition.scene.elements) if (ids.includes(element.id) && element.customData?.tangent?.role === "area-region") void controller.materialize(element.customData.tangent.area);
-        }
-        const fingerprint = boardCore.authoredFingerprint(normalizedElements);
-        if (fingerprint === fingerprintRef.current) return;
-        fingerprintRef.current = fingerprint;
-        publish(clone(normalizedElements), normalizedAppState);
-      }}
-    />
+    <StableWorldCanvas initialData={initialDataRef.current} handlers={canvasHandlersRef} />
+    <div className="tangent-map-top-right">
+      <div className="tangent-map-toolbar-extra"><button type="button" onClick={openPicker} aria-keyshortcuts="b" title="Place a Tangent block (B)"><span aria-hidden="true">◈</span><span className="tangent-map-label">Block</span><kbd>B</kbd></button></div>
+      {currentBlock && <div className="tangent-map-verbs" role="group" aria-label="Tangent block actions"><button type="button" onClick={() => openBlock(currentBlock)}>Open <kbd>Enter</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "ask")}>Ask brain <kbd>A</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "correct")}>Correct <kbd>C</kbd></button><button type="button" onClick={() => hideBlock(currentBlock)}>Hide <kbd>X</kbd></button></div>}
+      <button type="button" onClick={() => setOutlineOpen((value) => !value)} aria-expanded={outlineOpen} title="Outline"><span aria-hidden="true" className="tangent-map-glyph">≣</span><span className="tangent-map-label">Outline</span></button>
+      <button type="button" onClick={() => setHelpOpen(true)} aria-keyshortcuts="?" title="Map keys (?)"><span aria-hidden="true" className="tangent-map-glyph">?</span><span className="tangent-map-label">Keys</span><kbd>?</kbd></button>
+    </div>
     <div className="tangent-map-ancestry" aria-label="Complete Area hierarchy">
       {visibleNodes.map((node) => {
         const box = state.composition.regionRects.get(node.key);

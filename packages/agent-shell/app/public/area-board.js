@@ -123,7 +123,11 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
     /** Returns the live composed scene after the editor mounts. */
     current: () => editor?.current?.() ?? null,
     /** Flushes both editor and controller save queues. */
-    async flush() { await ready.catch(() => null); await authority.flush(); },
+    async flush() {
+      await ready.catch(() => null);
+      if (editor?.flush) await editor.flush();
+      else await authority.flush();
+    },
     /** Fits one Area now or after the editor finishes mounting. */
     fitArea(area, settings) { if (!editor) { pendingFit = { area, settings }; return authority.selectArea(area); } return editor.fitArea?.(area, settings); },
     /** Runs the map-owned Escape order. */

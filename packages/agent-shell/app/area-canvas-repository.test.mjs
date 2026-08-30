@@ -95,3 +95,42 @@ test("commits a multi-file gesture once and rolls every file back together", asy
   assert.deepEqual(JSON.parse(await readFile(path.join(root, "neara/delivery/delivery.excalidraw"), "utf8")), second);
   assert.match(commits[1].message, /standards extent/);
 });
+
+test("records idempotent operation results and rejects operation ID reuse", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-canvas-operation-"));
+  const transactions = path.join(root, "state"); let commits = 0;
+  const repository = createAreaCanvasRepository({ root, transactionRoot: transactions,
+    /** Avoids invoking Git. */
+    async runGit() {},
+    /** Counts durable map commits. */
+    async commit() { commits += 1; return { committed: true }; },
+  });
+  const scene = createEmptyScene(); scene.elements.push(createTextElement({ id: "one", text: "One" }));
+  const first = await repository.save("otto", scene, { operationId: "same-operation" });
+  const repeated = await repository.save("otto", scene, { operationId: "same-operation" });
+  assert.equal(first.committed, true); assert.equal(repeated.idempotent, true); assert.equal(commits, 1);
+  const changed = structuredClone(scene); changed.elements[0].x = 20;
+  const rejected = await repository.save("otto", changed, { baseHash: first.hash, operationId: "same-operation" });
+  assert.equal(rejected.status, 409);
+});
+
+test("restores every old shard before reads after an interrupted prepared transaction", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-canvas-recovery-"));
+  const transactions = path.join(root, "state");
+  await mkdir(path.join(root, "neara"), { recursive: true });
+  const oldScene = createEmptyScene(); oldScene.elements.push(createTextElement({ id: "old", text: "Old" }));
+  const newScene = createEmptyScene(); newScene.elements.push(createTextElement({ id: "new", text: "New" }));
+  const file = path.join(root, "neara/neara.excalidraw");
+  await writeFile(file, JSON.stringify(newScene));
+  const operation = path.join(transactions, "interrupted"); await mkdir(operation, { recursive: true });
+  await writeFile(path.join(operation, "manifest.json"), JSON.stringify({ schema: "area-map-transaction.v1", operationId: "crash", digest: "x", state: "prepared", targets: [{ area: "neara", file: "neara/neara.excalidraw", oldText: JSON.stringify(oldScene) }] }));
+  const repository = createAreaCanvasRepository({ root, transactionRoot: transactions,
+    /** Avoids invoking Git. */
+    async runGit() {},
+    /** Supplies the repository contract. */
+    async commit() { return { committed: true }; },
+  });
+  assert.deepEqual((await repository.read("neara")).scene, oldScene);
+  const manifest = JSON.parse(await readFile(path.join(operation, "manifest.json"), "utf8"));
+  assert.equal(manifest.state, "recovered");
+});

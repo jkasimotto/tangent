@@ -1,13 +1,48 @@
-import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { areaCanvasPath, canvasHash, legacyAreaCanvasPath, parseAreaCanvas, parseLegacyAreaCanvas, safeCanvasPath, serializeAreaCanvas } from "./area-canvas.mjs";
 import { createEmptyScene } from "./public/area-board-core.js";
 
 /** Creates the vault-backed repository for canonical Area-map scenes. */
-export function createAreaCanvasRepository({ root, runGit, commit, reportError = console.error }) {
+export function createAreaCanvasRepository({ root, runGit, commit, transactionRoot = path.join(process.env.TANGENT_MAP_STATE_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "map-state"), "transactions"), reportError = console.error }) {
   let saveQueue = Promise.resolve();
+  let recovered = null;
+  /** Returns the durable directory for one operation ID. */
+  const operationPath = (operationId) => path.join(transactionRoot, createHash("sha256").update(String(operationId)).digest("hex"));
+  /** Returns the identity digest for one source-space write request. */
+  const requestDigest = (writes) => createHash("sha256").update(JSON.stringify(writes.map((write) => ({ area: write.area, baseHash: write.baseHash ?? null, canvas: write.canvas })))).digest("hex");
+  /** Writes one JSON record through a same-directory rename. */
+  async function writeRecord(file, value) {
+    await mkdir(path.dirname(file), { recursive: true });
+    const temporary = `${file}.${process.pid}.tmp`;
+    await writeFile(temporary, JSON.stringify(value), "utf8");
+    await rename(temporary, file);
+  }
+  /** Restores interrupted prepared writes before a map reader can observe them. */
+  async function recover() {
+    let names = [];
+    try { names = await readdir(transactionRoot); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    for (const name of names) {
+      const directory = path.join(transactionRoot, name);
+      let manifest;
+      try { manifest = JSON.parse(await readFile(path.join(directory, "manifest.json"), "utf8")); } catch { continue; }
+      if (manifest.state !== "prepared") continue;
+      for (const target of manifest.targets ?? []) {
+        const safe = safeCanvasPath(root, target.file);
+        if (!safe) continue;
+        if (target.oldText === null) await unlink(safe.absolute).catch((error) => { if (error.code !== "ENOENT") throw error; });
+        else { await mkdir(path.dirname(safe.absolute), { recursive: true }); await writeFile(safe.absolute, target.oldText, "utf8"); }
+      }
+      await writeRecord(path.join(directory, "manifest.json"), { ...manifest, state: "recovered", recoveredAt: new Date().toISOString() });
+    }
+  }
+  /** Runs crash recovery once for this repository instance. */
+  async function ensureRecovered() { recovered ??= recover(); await recovered; }
   /** Reads a canonical scene without invoking legacy migration. */
   async function readScene(area) {
+    await ensureRecovered();
     const file = areaCanvasPath(area);
     const safe = file && safeCanvasPath(root, file);
     if (!safe) throw new Error(`unsafe Area path: ${area}`);
@@ -48,6 +83,16 @@ export function createAreaCanvasRepository({ root, runGit, commit, reportError =
 
   /** Saves all files of one map gesture through one conflict check and commit. */
   async function saveManyNow(writes, { operationId = null, session = null, area = writes[0]?.area ?? "" } = {}) {
+    await ensureRecovered();
+    const digest = requestDigest(writes);
+    const operationDirectory = operationId ? operationPath(operationId) : null;
+    if (operationDirectory) {
+      try {
+        const prior = JSON.parse(await readFile(path.join(operationDirectory, "manifest.json"), "utf8"));
+        if (prior.digest !== digest) return { status: 409, conflict: true, operationId, error: "operation ID was already used for different map content" };
+        if (prior.state === "committed") return { ...prior.result, idempotent: true };
+      } catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
     const unique = new Map();
     for (const write of writes) {
       if (!write?.area || unique.has(write.area)) throw new Error("a canvas gesture must name each Area once");
@@ -63,6 +108,10 @@ export function createAreaCanvasRepository({ root, runGit, commit, reportError =
     if (!changed.length) return { committed: true, idempotent: true, operationId, hash: prepared.find((entry) => entry.area === area)?.desiredHash ?? null, hashes: Object.fromEntries(prepared.map((entry) => [entry.area, entry.desiredHash])) };
     const newFiles = []; let staged = [];
     try {
+      if (operationDirectory) await writeRecord(path.join(operationDirectory, "manifest.json"), {
+        schema: "area-map-transaction.v1", operationId, digest, state: "prepared", preparedAt: new Date().toISOString(),
+        targets: changed.map((entry) => ({ area: entry.area, file: entry.current.file, oldText: entry.canonicalExists ? entry.current.text : null, newHash: entry.desiredHash })),
+      });
       for (const entry of changed) {
         await mkdir(path.dirname(entry.safe.absolute), { recursive: true });
         const temporary = `${entry.safe.absolute}.tangent-${process.pid}-${Date.now()}.tmp`;
@@ -89,7 +138,9 @@ export function createAreaCanvasRepository({ root, runGit, commit, reportError =
     }
     const primary = prepared.find((entry) => entry.area === area) ?? null;
     const metadata = primary ? await stat(primary.safe.absolute) : null;
-    return { area, file: primary?.current.file ?? null, exists: Boolean(primary?.current.exists || primary), canvas: primary?.canvas, scene: primary?.canvas, hash: primary?.desiredHash ?? null, hashes: Object.fromEntries(prepared.map((entry) => [entry.area, entry.desiredHash])), bytes: metadata?.size ?? 0, changedAt: metadata?.mtimeMs ?? Date.now(), idempotent: false, committed: true, operationId };
+    const result = { area, file: primary?.current.file ?? null, exists: Boolean(primary?.current.exists || primary), canvas: primary?.canvas, scene: primary?.canvas, hash: primary?.desiredHash ?? null, hashes: Object.fromEntries(prepared.map((entry) => [entry.area, entry.desiredHash])), bytes: metadata?.size ?? 0, changedAt: metadata?.mtimeMs ?? Date.now(), idempotent: false, committed: true, operationId };
+    if (operationDirectory) await writeRecord(path.join(operationDirectory, "manifest.json"), { schema: "area-map-transaction.v1", operationId, digest, state: "committed", committedAt: new Date().toISOString(), result });
+    return result;
   }
 
   /** Serializes repository gestures so their optimistic checks cannot interleave. */
@@ -106,5 +157,5 @@ export function createAreaCanvasRepository({ root, runGit, commit, reportError =
     return result;
   }
 
-  return { read, save, saveMany };
+  return { read, recover, save, saveMany };
 }

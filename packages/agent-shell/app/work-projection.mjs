@@ -125,9 +125,9 @@ export function projectWorkRepair(repair) {
 /** Removes durable generations and notice bodies from one live brain row. */
 export function projectWorkBrain(brain) {
   const fields = [
-    "area", "status", "session", "generation", "currentAttemptId", "updatedAt", "resolvedLaunch",
+    "area", "status", "desiredStatus", "session", "generation", "currentAttemptId", "updatedAt", "resolvedLaunch",
     "live", "state", "stateDetail", "stateQuestion", "idleSince", "waitingSince", "observation", "health", "recovery",
-    "forJulian", "requests", "agentState", "lastAction", "repair",
+    "forJulian", "requests", "agentState", "lastAction", "repair", "authority",
   ];
   const projected = Object.fromEntries(fields.filter((field) => brain?.[field] !== undefined).map((field) => [field, brain[field]]));
   if (projected.repair !== undefined) projected.repair = projectWorkRepair(projected.repair);
@@ -149,6 +149,10 @@ export function projectWork({ vault, session, programs }) {
     ownershipKey: session.runtime.ownershipKey,
   } : undefined;
   const { pipelines: _pipelines, brains: _brains, ...sessionSummary } = session ?? {};
+  const liveBrainSessions = new Set((session?.brains ?? []).filter((brain) => brain.authority?.live).map((brain) => brain.session));
+  if (Array.isArray(sessionSummary.sessions)) {
+    sessionSummary.sessions = sessionSummary.sessions.filter((item) => item.kind !== "brain" || liveBrainSessions.has(item.name));
+  }
   const value = {
     schema: "agent-shell-work.v1",
     vault: projectedVault,

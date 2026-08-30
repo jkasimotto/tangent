@@ -17,7 +17,7 @@
 
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
+import { readJsonObject, readJsonObjectResult, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
 import { boundedSessionName } from "./session-names.mjs";
 
 export const BRAIN_SCHEMA = "area-brain.v3";
@@ -34,6 +34,16 @@ export function brainPath(root, area) {
 /** Reads one brain record, or null when the file is missing or unparsable. */
 export async function readBrain(root, area) {
   return normalizeBrainRecord(await readJsonObject(brainPath(root, area)), area);
+}
+
+/** Reads one brain and preserves malformed-record evidence for diagnostics. */
+export async function readBrainResult(root, area) {
+  const result = await readJsonObjectResult(brainPath(root, area));
+  if (result.state !== "ok") return { ...result, record: null };
+  const record = normalizeBrainRecord(result.value, area);
+  return record
+    ? { ...result, record }
+    : { ...result, state: "malformed", error: "the JSON object is not an Area brain record", record: null };
 }
 
 /** Reads every brain record under the root; empty when the root is missing. */

@@ -13,12 +13,13 @@ test("Work projection excludes durable queue and brain history bodies", () => {
       documents: [],
     },
     session: {
-      sessions: [],
+      sessions: [{ name: "brain", kind: "brain", fresh: false }],
       pipelines: [{ goal: "otto/goal.md", area: "otto", slug: "goal", revision: 3, status: "open", assignments: [{ id: "a1", index: 1, status: "running", instruction: "Do work", handover, reports: [report], attempts: [{ report }], handoverReceipts: [{ notice: { text: handover } }] }] }],
       brains: [{
         area: "otto",
         status: "active",
         session: "brain",
+        authority: { live: false, state: "absent", evidence: { observedAt: "2026-08-30T00:00:00.000Z" } },
         generations: [{ handover, notices: [{ text: handover }] }],
         repair: {
           schema: "area-repair.v1",
@@ -42,6 +43,7 @@ test("Work projection excludes durable queue and brain history bodies", () => {
   assert.equal(projected.value.vault.areas[0].goals[0].run.steps[0].attemptCount, 1);
   assert.equal(projected.value.vault.areas[0].goals[0].run.assignments, undefined);
   assert.equal(projected.value.vault.areas[0].brain.generations, undefined);
+  assert.equal(projected.value.session.sessions.some((session) => session.kind === "brain"), false);
   assert.deepEqual(projected.value.vault.areas[0].brain.repair, {
     schema: "area-repair.v1",
     area: "otto",

@@ -56,3 +56,18 @@ test("a captured live snapshot remains safe evidence while the lock waits", asyn
   assert.equal(result.live, true);
   assert.equal(result.observed, observed);
 });
+
+test("a replacement target or stale generation cannot satisfy the current attempt", async () => {
+  const base = { name: "hedno-brain", owned: true, target: "$replacement", brain: "otto/hedno", area: "otto/hedno", generation: 2 };
+  const replaced = await refreshBrainObservation({ session: base.name, observed: base, instanceId: "shell-one", expectedTarget: "$1854", expectedArea: "otto/hedno", expectedGeneration: 2,
+    /** Supplies an unused fallback because the snapshot has the session. */
+    inspect: async () => ({ state: "absent" }),
+  });
+  assert.equal(replaced.live, false);
+  assert.equal(replaced.state, "mismatch");
+  const stale = await refreshBrainObservation({ session: base.name, observed: { ...base, target: "$1854", generation: 1 }, instanceId: "shell-one", expectedTarget: "$1854", expectedArea: "otto/hedno", expectedGeneration: 2,
+    /** Supplies an unused fallback because the snapshot has the session. */
+    inspect: async () => ({ state: "absent" }),
+  });
+  assert.equal(stale.live, false);
+});

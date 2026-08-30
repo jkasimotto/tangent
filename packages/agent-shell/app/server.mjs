@@ -32,9 +32,10 @@ import { appendSteps, continuationSource, currentStep, endPipeline, goalBindingG
 import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
 import { continuationSection } from "./context-handover.mjs";
 import { messageBanner, noticeMessage, normalizeMessage } from "./agent-messages.mjs";
-import { beginGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, brainSessionNames, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { beginGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, brainSessionNames, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, readBrainResult, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { resolveBrainAttemptLaunch } from "./brain-launch.mjs";
 import { refreshBrainObservation } from "./brain-lifecycle.mjs";
+import { brainAttemptAuthority, inactiveBrainAuthorityState } from "./brain-authority.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, unreadNotices, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
@@ -4681,11 +4682,12 @@ async function recordCommittedCommand({ operation, actorSession = "", targetArea
     operationId,
     result,
   });
-  const brain = await readBrain(BRAINS_ROOT, targetArea);
-  if (brain) {
+  await withBrainMutation(targetArea, async () => {
+    const brain = await readBrain(BRAINS_ROOT, targetArea);
+    if (!brain) return;
     brain.lastAction = { command: operation, target: goal || targetArea, at: new Date().toISOString(), operationId };
     await writeBrain(BRAINS_ROOT, brain);
-  }
+  });
   if (actor.role === "repair") {
     const repairRecord = await readRepair(REPAIRS_ROOT, actor.area);
     if (repairRecord.current?.session === actor.session && extendRepairLease(repairRecord.current)) {
@@ -5637,6 +5639,9 @@ async function reconcileBrain(area, { allByName, live, index }) {
     session: record.session,
     observed,
     instanceId: INSTANCE_ID,
+    expectedTarget: entry?.target ?? null,
+    expectedArea: record.area,
+    expectedGeneration: record.generation,
     /** Reuses the current live observation before reconciliation acquires the lifecycle lock. */
     inspect: (session) => sessionOwnership.inspect(session),
   });
@@ -5841,14 +5846,20 @@ async function brainsView(sessions, { includeForJulian = true } = {}) {
   const index = includeForJulian ? await vaultIndex() : null;
   const [records, repairs] = await Promise.all([readAllBrains(BRAINS_ROOT), readAllRepairs(REPAIRS_ROOT)]);
   const projected = await Promise.all(records.map(async (record) => {
-    const live = record.session ? byName.get(record.session) : null;
+    const candidate = record.session ? byName.get(record.session) : null;
+    const authority = brainAttemptAuthority(record, candidate, { instanceId: INSTANCE_ID, now: sessionObservation.status().loadedAt || Date.now() });
+    const live = authority.live ? candidate : null;
     const storedRepair = repairs.find((item) => item.area === record.area) ?? null;
     const repairSession = storedRepair?.current?.session ? byName.get(storedRepair.current.session) : null;
     const repair = storedRepair?.current ? { ...storedRepair, current: { ...storedRepair.current, observation: repairSession?.observation ?? null } } : storedRepair;
     const unread = unreadNotices(await readInbox(BRAINS_ROOT, record.area));
-    const agentState = deriveBrainState({ brain: { ...record, live: Boolean(live) }, observation: live?.observation ?? live, unread, repair });
+    const agentState = authority.live
+      ? deriveBrainState({ brain: { ...record, live: true }, observation: live?.observation ?? live, unread, repair })
+      : inactiveBrainAuthorityState(authority, unread);
     return {
       ...record,
+      status: authority.live ? record.status : "inactive",
+      desiredStatus: record.status,
       resolvedLaunch: currentGeneration(record)?.resolvedLaunch ?? null,
       live: Boolean(live),
       state: live?.state ?? null,
@@ -5857,6 +5868,7 @@ async function brainsView(sessions, { includeForJulian = true } = {}) {
       idleSince: live?.idleSince ?? null,
       waitingSince: live?.waitingSince ?? null,
       observation: live?.observation ?? null,
+      authority,
       agentState,
       repair,
       latestHandover: latestHandover(record),
@@ -6437,7 +6449,16 @@ const brainRoutes = createBrainRoutes({
       return [];
     });
     const brains = await brainsView(sessions);
-    return brains.find((item) => (area && item.area === area) || (session && (item.session === session || item.repair?.current?.session === session))) ?? null;
+    const projected = brains.find((item) => (area && item.area === area) || (session && (item.session === session || item.repair?.current?.session === session))) ?? null;
+    if (projected || !area) return projected;
+    const read = await readBrainResult(BRAINS_ROOT, area);
+    if (read.state !== "malformed") return null;
+    return {
+      area, status: "inactive", session: null, live: false, malformed: true,
+      recordEvidence: { source: "malformed brain record", file: read.file, error: read.error },
+      agentState: { word: "Brain stopped", owner: "none", evidence: { source: "malformed brain record", text: `${read.file}: ${read.error}` } },
+      forJulian: [], requests: [], repair: null,
+    };
   },
   /** Returns the plan lines that the parser could not classify. */
   async unparsed(brain) {
@@ -6497,10 +6518,11 @@ const agentRoutes = createAgentRoutes({
     const sessions = await listSessions();
     const [pipelines, brains] = await Promise.all([pipelinesView(sessions), brainsView(sessions, { includeForJulian: false })]);
     const attempts = new Map(pipelines.flatMap((queue) => queue.steps.filter((step) => step.session).map((step) => [step.session, step.attemptState])));
-    const brainStates = new Map(brains.filter((brain) => brain.session).map((brain) => [brain.session, brain.agentState]));
+    const brainStates = new Map(brains.filter((brain) => brain.session && brain.authority?.live).map((brain) => [brain.session, brain.agentState]));
     const repairStates = new Map(brains.flatMap((brain) => brain.repair?.current?.session ? [[brain.repair.current.session, brain.agentState]] : []));
     return sessions
       .filter((session) => !["process", "service", "command"].includes(session.kind ?? ""))
+      .filter((session) => session.kind !== "brain" || brainStates.has(session.name))
       .map((session) => ({
         name: session.name,
         area: session.area,

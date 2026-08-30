@@ -20,6 +20,7 @@ import {
   normalizeBrainRecord,
   readAllBrains,
   readBrain,
+  readBrainResult,
   validateInstruction,
   writeBrain
 } from "./brain-record.mjs";
@@ -33,6 +34,18 @@ test("brain session identity includes current and historical attempts", () => {
     }])].sort(),
     ["brain-attempt", "brain-current", "brain-old"]
   );
+});
+
+test("brain reads preserve malformed-record evidence", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "brains-malformed-"));
+  const file = brainPath(root, "otto/hedno");
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, '{"schema":"area-brain.v3"}}\n', "utf8");
+  const result = await readBrainResult(root, "otto/hedno");
+  assert.equal(result.state, "malformed");
+  assert.equal(result.file, file);
+  assert.match(result.error, /JSON/);
 });
 
 const claude = { harness: "claude", model: "fable-5", effort: null };

@@ -67,7 +67,11 @@ function mountWorld(host, { world, getDocuments, api, onBack, focus = null }) {
   };
   const ready = editorLoader().then((module) => {
     loader.remove();
-    editor = module.mountAreaBoardEditor(host, { world, scene: { elements: [], appState: {}, files: {} }, getDocuments, onBack, focus, onWorldChange: persist, initialSaveState: { state: "saved" } });
+    editor = module.mountAreaBoardEditor(host, { world, scene: { elements: [], appState: {}, files: {} }, getDocuments, onBack, focus,
+      /** Loads one deferred shard without replacing the world. */
+      loadShard: (area) => api(`/api/areas/map-shard?area=${encodeURIComponent(area)}&worldRevision=${encodeURIComponent(world.worldRevision)}&located=${encodeURIComponent(world.locatedArea)}`),
+      onWorldChange: persist, initialSaveState: { state: "saved" },
+    });
     return editor;
   });
   return {

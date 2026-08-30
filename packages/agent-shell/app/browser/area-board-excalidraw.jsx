@@ -107,6 +107,15 @@ function AreaMapWorld({ host, bridge, options }) {
     foldedRef.current = next; setFolded(next); applyView(next); setNotice(`${area.split("/").at(-1)} ${next.has(area) ? "folded" : "unfolded"}`);
   }
 
+  /** Moves keyboard focus through the complete hierarchy. */
+  function moveOutlineFocus(event) {
+    if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    const buttons = [...host.querySelectorAll(".tangent-map-outline button")];
+    const current = buttons.indexOf(event.currentTarget);
+    const delta = ["ArrowUp", "ArrowLeft"].includes(event.key) ? -1 : 1;
+    stop(event); buttons[Math.max(0, Math.min(buttons.length - 1, current + delta))]?.focus();
+  }
+
   /** Applies edited region geometry to source records and recomposes every ancestor. */
   function publish(elements, appState) {
     const prior = compositionRef.current;
@@ -172,11 +181,22 @@ function AreaMapWorld({ host, bridge, options }) {
   }
 
   /** Fits the camera to one Area without changing map authority. */
-  function fitArea(area) {
+  async function fitArea(area) {
     const element = sceneRef.current.elements.find((item) => item.customData?.tangent?.area === area && item.customData?.tangent?.role === "area-region");
     if (!element || !api) return;
     api.updateScene({ appState: { selectedElementIds: { [element.id]: true } } });
     api.scrollToContent([element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
+    const node = worldRef.current.areas.find((entry) => entry.key === area);
+    if (node?.shard.state !== "deferred" || !options.loadShard) return;
+    setNotice(`${area.split("/").at(-1)} loading`);
+    try {
+      const loaded = await options.loadShard(area);
+      if (loaded?.worldRevision !== worldRef.current.worldRevision || !["ready", "missing"].includes(loaded?.state)) throw new Error(loaded?.error || "map world changed");
+      node.shard = { ...node.shard, ...loaded };
+      const next = worldCore.composeAreaMapWorld(worldRef.current);
+      compositionRef.current = next; sceneRef.current = next.scene; applyView();
+      setNotice(`${area.split("/").at(-1)} loaded`);
+    } catch { setNotice(`${area.split("/").at(-1)} could not load`); }
   }
 
   useEffect(() => {
@@ -251,7 +271,7 @@ function AreaMapWorld({ host, bridge, options }) {
     <div className={`tangent-map-save ${saveState.state}`} role="status">{saveState.state === "saving" ? "Saving…" : saveState.state === "blocked" ? "Not saved" : "Saved"}</div>
     {notice && <div className="tangent-map-location" role="status">{notice}</div>}
     <button type="button" className="tangent-map-world-outline-button" onClick={() => setOutlineOpen((value) => !value)} aria-expanded={outlineOpen}>Outline</button>
-    {outlineOpen && <section className="tangent-map-outline visible" aria-label="Area hierarchy"><ol>{options.world.areas.map((node) => <li key={node.key} style={{ marginLeft: `${node.depth * 16}px` }}><button type="button" onClick={() => fitArea(node.key)} onKeyDown={(event) => { if (event.key === " ") { stop(event); toggleFold(node.key); } }}>{node.key.split("/").at(-1)} · depth {node.depth + 1} · {folded.has(node.key) ? "folded" : node.shard.state} · {node.shard.elementCount} blocks</button></li>)}</ol></section>}
+    {outlineOpen && <section className="tangent-map-outline visible" aria-label="Area hierarchy"><ol>{options.world.areas.map((node) => <li key={node.key} style={{ marginLeft: `${node.depth * 16}px` }}><button type="button" onClick={() => fitArea(node.key)} onKeyDown={(event) => { if (event.key === " ") { stop(event); toggleFold(node.key); } else moveOutlineFocus(event); }}>{node.key.split("/").at(-1)} · depth {node.depth + 1} · {folded.has(node.key) ? "folded" : node.shard.state} · {node.shard.elementCount} blocks</button></li>)}</ol></section>}
   </div>;
 }
 

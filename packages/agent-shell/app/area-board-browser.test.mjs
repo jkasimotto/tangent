@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
@@ -63,6 +64,20 @@ window.extentWrites = [];
 window.editor = mountAreaBoardEditor(document.querySelector("#map"), { area: "neara/delivery/standards", scene: standards, context, childScenes: new Map(), view: null, proposals: [], getDocuments: () => documents, backLabel: "Delivery", onSceneChange: (_next, gesture) => { if (gesture?.extentWrite) window.extentWrites.push(gesture.extentWrite); }, onFactScene: () => {}, onEntityVerb: () => {}, onBack: () => {}, onSaveNow: () => {} });
 </script></body></html>`;
 
+const worldFixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/agent-shell-map.css"><style>html,body,#map{width:100%;height:100%;margin:0}</style></head><body><div id="map"></div><script type="module">
+import { mountAreaBoardEditor } from "/agent-shell-map.js";
+const empty = () => ({ type: "excalidraw", version: 2, source: "test", elements: [], appState: {}, files: {} });
+const nodes = [
+  ["neara", "@root", { x: 80, y: 80, width: 1100, height: 800 }],
+  ["neara/delivery", "neara", { x: 100, y: 100, width: 900, height: 600 }],
+  ["neara/delivery/standards", "neara/delivery", { x: 120, y: 120, width: 620, height: 420 }],
+];
+const world = { schema: "area-map-world.v1", worldId: "near-world", treeRevision: "tree-1", worldRevision: "world-1", locatedArea: "neara/delivery/standards", areas: nodes.map(([key, parent, storedRect], index) => ({ key, parent, children: nodes.filter((entry) => entry[1] === key).map((entry) => entry[0]), depth: index, region: { key: parent + ">" + key, owner: parent, child: key, sourceId: "region-" + index, labelSourceId: "label-" + index, source: "stored", storedRect }, shard: { owner: key, hash: key, state: "ready", elementCount: 0, scene: empty() } })) };
+const documents = nodes.map(([area]) => ({ kind: "area", area, title: area.split("/").at(-1) }));
+window.changes = [];
+window.editor = mountAreaBoardEditor(document.querySelector("#map"), { world, scene: empty(), getDocuments: () => documents, focus: { only: false, activeOnly: false, areas: [] }, onWorldChange: (_world, areas, owners) => window.changes.push({ areas: [...areas], owners: [...owners] }), onBack: () => {} });
+</script></body></html>`;
+
 test("an editor render failure explains the problem and retry mounts the canvas", { skip: !enabled, timeout: 90_000 }, async () => {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -83,6 +98,42 @@ test("an editor render failure explains the problem and retry mounts the canvas"
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("every ancestor and descendant is one selectable live region", { skip: !enabled, timeout: 90_000 }, async () => {
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    if (url.pathname === "/world-fixture") { response.writeHead(200, { "content-type": "text/html" }); response.end(worldFixture); return; }
+    await serveStaticAsset(url, response, here);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  let browser = null;
+  try {
+    browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath(), headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1, reducedMotion: "reduce" });
+    await page.goto(`http://127.0.0.1:${server.address().port}/world-fixture`);
+    await page.locator(".excalidraw canvas.interactive").waitFor();
+    const actualGolden = await page.screenshot({ animations: "disabled" });
+    const expectedGolden = await readFile(path.join(here, "test-fixtures/area-map/near-delivery-standards-crossing.png"));
+    assert.deepEqual(actualGolden, expectedGolden, "the corrected Neara, Delivery, Standards hierarchy matches its deterministic golden");
+    for (const [name, area] of [["neara", "neara"], ["delivery", "neara/delivery"], ["standards", "neara/delivery/standards"]]) {
+      await page.getByRole("button", { name: new RegExp(`^${name}, depth`) }).click();
+      const selected = await page.evaluate(() => { const ids = window.editor.appState().selectedElementIds; return window.editor.current().elements.find((element) => ids[element.id])?.customData?.tangent?.area; });
+      assert.equal(selected, area);
+    }
+    const regions = await page.evaluate(() => window.editor.current().elements.filter((element) => element.customData?.tangent?.role === "area-region").map((element) => ({ area: element.customData.tangent.area, locked: element.locked, deleted: element.isDeleted })));
+    assert.deepEqual(regions.map((region) => region.area), ["neara", "neara/delivery", "neara/delivery/standards"]);
+    assert.ok(regions.every((region) => region.locked === false && region.deleted === false));
+    await page.keyboard.press("Meta+Shift+o");
+    await page.getByRole("region", { name: "Area hierarchy" }).waitFor();
+    assert.equal(await page.getByRole("region", { name: "Area hierarchy" }).getByRole("button").count(), 3);
+    await page.getByRole("button", { name: /^delivery, depth/ }).click(); await page.keyboard.press("Space");
+    await page.getByText("folded · Space", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: /^standards, depth/ }).count(), 0, "fold hides descendant labels but keeps the hierarchy authority");
+    assert.equal(await page.getByRole("region", { name: "Area hierarchy" }).getByRole("button").count(), 3);
+  } finally {
+    await browser?.close(); await new Promise((resolve) => server.close(resolve));
   }
 });
 

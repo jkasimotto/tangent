@@ -120,6 +120,14 @@ export function splitComposed(elements, origins, offsets = new Map()) {
     const origin = origins.get(runtime.id) ?? runtime.customData?.tangentWorld;
     if (!origin) continue;
     const source = rewriteIds(runtime, origin.identity ?? fallback);
+    if (Array.isArray(runtime.boundElements)) {
+      source.boundElements = runtime.boundElements
+        .filter((binding) => {
+          const boundOrigin = origins.get(binding.id);
+          return !boundOrigin || boundOrigin.owner === origin.owner;
+        })
+        .map((binding) => rewriteIds(binding, origin.identity ?? fallback));
+    }
     const offset = offsets.get(origin.owner) ?? { x: 0, y: 0 };
     source.id = origin.sourceId;
     source.x = Number(source.x ?? 0) - Number(offset.x ?? 0);
@@ -431,6 +439,7 @@ function deferredEndpointDot(arrow, side, endpoint, point) {
 /** Resolves cross-owner endpoint metadata after every materialized shard has composed. */
 function resolveWorldEndpoints(elements, origins, regionRects) {
   const dots = [];
+  const byId = new Map(elements.map((element) => [element.id, element]));
   for (const element of elements) {
     if (element.type !== "arrow" || !element.customData?.tangentWorldEndpoints) continue;
     for (const side of ["start", "end"]) {
@@ -439,6 +448,13 @@ function resolveWorldEndpoints(elements, origins, regionRects) {
       const target = runtimeId(endpoint.owner, endpoint.sourceId);
       if (origins.has(target)) {
         element[`${side}Binding`] = { ...(element[`${side}Binding`] ?? {}), elementId: target };
+        const targetElement = byId.get(target);
+        if (targetElement) {
+          const boundElements = Array.isArray(targetElement.boundElements) ? targetElement.boundElements : [];
+          if (!boundElements.some((binding) => binding.id === element.id && binding.type === "arrow")) {
+            targetElement.boundElements = [...boundElements, { id: element.id, type: "arrow" }];
+          }
+        }
         continue;
       }
       element[`${side}Binding`] = null;

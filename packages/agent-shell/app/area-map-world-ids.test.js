@@ -70,12 +70,18 @@ test("resolves cross-Area endpoints at runtime and keeps source bindings local",
   ] };
   const composed = composeAreaMapWorld(world);
   const runtimeArrow = composed.scene.elements.find((element) => element.customData?.tangentWorld?.sourceId === "cross");
+  const runtimeStart = composed.scene.elements.find((element) => element.id === runtimeId("root/a", "a-block"));
+  const runtimeEnd = composed.scene.elements.find((element) => element.id === runtimeId("root/b", "b-block"));
   assert.equal(runtimeArrow.startBinding.elementId, runtimeId("root/a", "a-block"));
   assert.equal(runtimeArrow.endBinding.elementId, runtimeId("root/b", "b-block"));
-  const split = splitComposed([runtimeArrow], composed.origins, composed.offsets).get("root/a")[0];
+  assert.deepEqual(runtimeStart.boundElements, [{ id: runtimeArrow.id, type: "arrow" }]);
+  assert.deepEqual(runtimeEnd.boundElements, [{ id: runtimeArrow.id, type: "arrow" }]);
+  const splitWorld = splitComposed(composed.scene.elements, composed.origins, composed.offsets);
+  const split = splitWorld.get("root/a").find((element) => element.id === "cross");
   assert.equal(split.startBinding.elementId, "a-block");
   assert.equal(split.endBinding, null, "a foreign runtime binding never enters the source shard");
   assert.deepEqual(split.customData.tangentWorldEndpoints.end, { owner: "root/b", sourceId: "b-block" });
+  assert.deepEqual(splitWorld.get("root/b").find((element) => element.id === "b-block").boundElements, [], "the derived reverse edge never enters the foreign source shard");
 });
 
 test("routes a deferred cross-Area endpoint to its interactive region without changing source geometry", () => {

@@ -210,4 +210,56 @@ export function solveAreaMapGesture(baseline, intent) {
   return { ...accepted, valid };
 }
 
-export default { composeShard, computeWorldGeometry, elementKey, inflateRect, provisionalRegions, regionId, regionKey, runtimeId, solveAreaMapGesture, splitComposed, unionRects };
+/** Returns one Excalidraw rectangle for an Area tree node. */
+export function composeRegionElement(node, geometry, worldRect) {
+  const id = runtimeId(node.parent, node.region.sourceId);
+  return {
+    id, type: "rectangle", x: worldRect.x, y: worldRect.y,
+    width: geometry.drawn.width, height: geometry.drawn.height, angle: 0,
+    strokeColor: "#8b95a3", backgroundColor: "transparent", fillStyle: "solid",
+    strokeWidth: 2, strokeStyle: "dashed", roughness: 0, opacity: 100,
+    groupIds: [], frameId: null, roundness: null, seed: 1, version: 1,
+    versionNonce: 1, isDeleted: false, boundElements: [], updated: 1, link: null,
+    locked: false,
+    customData: { tangent: { role: "area-region", area: node.key }, tangentWorld: { owner: node.parent, sourceId: node.region.sourceId, regionKey: node.region.key } },
+  };
+}
+
+/** Composes one complete structural world and all supplied shard content. */
+export function composeAreaMapWorld(world) {
+  const areas = world.areas.map((node) => node.key);
+  const regions = new Map(world.areas.map((node) => [node.key, clone(node.region)]));
+  const geometry = computeWorldGeometry({ areas, regions });
+  const nodes = new Map(world.areas.map((node) => [node.key, node]));
+  const offsets = new Map();
+  const regionRects = new Map();
+  /** Resolves the world-space content origin for one Area. */
+  function locate(area) {
+    if (offsets.has(area)) return offsets.get(area);
+    const node = nodes.get(area);
+    const parentOffset = node.parent === "@root" ? { x: 0, y: 0 } : locate(node.parent);
+    const stored = node.region.storedRect;
+    const regionRect = { x: parentOffset.x + stored.x, y: parentOffset.y + stored.y, width: geometry.get(area).drawn.width, height: geometry.get(area).drawn.height };
+    regionRects.set(area, regionRect);
+    const offset = { x: regionRect.x, y: regionRect.y + LABEL_BAND };
+    offsets.set(area, offset);
+    return offset;
+  }
+  for (const area of areas) locate(area);
+  const elements = [];
+  const origins = new Map();
+  const files = {};
+  for (const node of world.areas) {
+    const region = composeRegionElement(node, geometry.get(node.key), regionRects.get(node.key));
+    elements.push(region);
+    origins.set(region.id, region.customData.tangentWorld);
+    if (!node.shard.scene) continue;
+    const composed = composeShard(node.key, node.shard.scene, offsets.get(node.key));
+    elements.push(...composed.elements);
+    Object.assign(files, composed.files);
+    for (const entry of composed.origins) origins.set(...entry);
+  }
+  return { scene: { type: "excalidraw", version: 2, source: "tangent", elements, appState: { viewBackgroundColor: "#121417" }, files }, origins, offsets, regions, geometry, regionRects };
+}
+
+export default { composeAreaMapWorld, composeRegionElement, composeShard, computeWorldGeometry, elementKey, inflateRect, provisionalRegions, regionId, regionKey, runtimeId, solveAreaMapGesture, splitComposed, unionRects };

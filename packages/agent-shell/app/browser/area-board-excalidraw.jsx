@@ -4,6 +4,7 @@ import { Excalidraw } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import "./area-board-excalidraw.css";
 import core from "../public/area-board-core.js";
+import worldCore from "../public/area-map-world-core.js";
 import pickerModel from "../public/area-board-picker.js";
 
 globalThis.EXCALIDRAW_ASSET_PATH = "/agent-shell-map-assets/";
@@ -22,13 +23,132 @@ class AreaMapErrorBoundary extends React.Component {
   componentDidCatch(error) { this.props.onError?.(error); }
   /** Renders the editor or its actionable failure state. */
   render() {
-    if (!this.state.error) return <TangentMap key={this.state.retry} {...this.props.mapProps} />;
+    if (!this.state.error) return this.props.mapProps.options.world
+      ? <AreaMapWorld key={this.state.retry} {...this.props.mapProps} />
+      : <TangentMap key={this.state.retry} {...this.props.mapProps} />;
     return <section className="area-board-empty" role="alert">
       <h2>The drawing tools did not load.</h2>
       <p>{String(this.state.error?.message ?? this.state.error)}</p>
       <button type="button" onClick={() => this.setState(({ retry }) => ({ error: null, retry: retry + 1 }))}>Retry</button>
     </section>;
   }
+}
+
+/** Renders the complete Area hierarchy as one editable Excalidraw world. */
+function AreaMapWorld({ host, bridge, options }) {
+  const [api, setApi] = useState(null);
+  const [camera, setCamera] = useState({ scrollX: 0, scrollY: 0, zoom: 1 });
+  const [saveState, setSaveState] = useState(options.initialSaveState ?? { state: "saved" });
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [notice, setNotice] = useState("");
+  const worldRef = useRef(structuredClone(options.world));
+  const compositionRef = useRef(worldCore.composeAreaMapWorld(worldRef.current));
+  const sceneRef = useRef(compositionRef.current.scene);
+  const applyingRef = useRef(false);
+  const fingerprintRef = useRef(core.authoredFingerprint(sceneRef.current.elements));
+
+  /** Applies edited region geometry to source records and recomposes every ancestor. */
+  function publish(elements, appState) {
+    const prior = compositionRef.current;
+    const changedAreas = new Set();
+    for (const element of elements) {
+      const area = element.customData?.tangent?.role === "area-region" && element.customData?.tangent?.area;
+      if (!area) continue;
+      const node = worldRef.current.areas.find((entry) => entry.key === area);
+      const old = prior.regionRects.get(area);
+      if (!node || !old) continue;
+      if ([element.x, element.y, element.width, element.height].some((value) => !Number.isFinite(value))) continue;
+      if (Math.abs(element.x - old.x) < 0.01 && Math.abs(element.y - old.y) < 0.01 && Math.abs(element.width - old.width) < 0.01 && Math.abs(element.height - old.height) < 0.01) continue;
+      const parentOffset = node.parent === "@root" ? { x: 0, y: 0 } : prior.offsets.get(node.parent);
+      node.region.storedRect = {
+        x: Math.round((element.x - parentOffset.x) * 100) / 100,
+        y: Math.round((element.y - parentOffset.y) * 100) / 100,
+        width: Math.max(300, Math.round(element.width * 100) / 100),
+        height: Math.max(220, Math.round(element.height * 100) / 100),
+      };
+      node.region.source = "stored";
+      changedAreas.add(area);
+    }
+    if (!changedAreas.size) return;
+    const next = worldCore.composeAreaMapWorld(worldRef.current);
+    next.scene.appState = appState;
+    compositionRef.current = next;
+    sceneRef.current = next.scene;
+    fingerprintRef.current = core.authoredFingerprint(next.scene.elements);
+    applyingRef.current = true;
+    api?.updateScene({ elements: next.scene.elements, captureUpdate: "NEVER" });
+    requestAnimationFrame(() => { applyingRef.current = false; });
+    options.onWorldChange?.(worldRef.current, changedAreas);
+  }
+
+  /** Fits the camera to one Area without changing map authority. */
+  function fitArea(area) {
+    const element = sceneRef.current.elements.find((item) => item.customData?.tangent?.area === area && item.customData?.tangent?.role === "area-region");
+    if (!element || !api) return;
+    api.updateScene({ appState: { selectedElementIds: { [element.id]: true } } });
+    api.scrollToContent([element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
+  }
+
+  useEffect(() => {
+    bridge.setSaveState = setSaveState;
+    bridge.current = () => sceneRef.current;
+    bridge.appState = () => api?.getAppState?.() ?? null;
+    bridge.fitArea = fitArea;
+    if (api) fitArea(options.world.locatedArea);
+    return () => { bridge.setSaveState = null; };
+  }, [api]);
+
+  useEffect(() => {
+    /** Keeps map navigation local to the persistent world. */
+    const keydown = (event) => {
+      if (isTyping(event.target)) return;
+      if (event.key === "Escape") {
+        stop(event);
+        const selected = api?.getAppState?.().selectedElementIds ?? {};
+        if (Object.keys(selected).length) api.updateScene({ appState: { selectedElementIds: {} } });
+        else options.onBack?.();
+      }
+      if (event.key === "Enter") {
+        const selected = api?.getAppState?.().selectedElementIds ?? {};
+        const region = sceneRef.current.elements.find((item) => selected[item.id] && item.customData?.tangent?.role === "area-region");
+        if (region) { stop(event); fitArea(region.customData.tangent.area); }
+      }
+    };
+    host.addEventListener("keydown", keydown, true);
+    return () => host.removeEventListener("keydown", keydown, true);
+  }, [api]);
+
+  return <div className="TangentAreaMap theme--dark" data-tangent-area-map={options.world.locatedArea} data-tangent-area-map-world={options.world.worldId}>
+    <Excalidraw
+      initialData={sceneRef.current}
+      excalidrawAPI={setApi}
+      theme="dark"
+      name="Area map"
+      autoFocus
+      handleKeyboardGlobally={false}
+      UIOptions={{ tools: { image: false }, canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false } }}
+      onScrollChange={(scrollX, scrollY, zoom) => setCamera({ scrollX, scrollY, zoom: zoom?.value ?? zoom ?? 1 })}
+      onChange={(elements, appState) => {
+        if (applyingRef.current) return;
+        const fingerprint = core.authoredFingerprint(elements);
+        if (fingerprint === fingerprintRef.current) return;
+        fingerprintRef.current = fingerprint;
+        publish(elements, appState);
+      }}
+    />
+    <div className="tangent-map-ancestry" aria-label="Complete Area hierarchy">
+      {options.world.areas.map((node) => {
+        const box = compositionRef.current.regionRects.get(node.key);
+        const name = options.getDocuments().find((item) => item.kind === "area" && item.area === node.key)?.title ?? node.key.split("/").at(-1);
+        return <button type="button" key={node.key} style={{ left: `${(box.x + camera.scrollX) * camera.zoom + 12}px`, top: `${(box.y + camera.scrollY) * camera.zoom + 10}px` }} onClick={() => fitArea(node.key)} onDoubleClick={() => fitArea(node.key)} aria-label={`${name}, depth ${node.depth + 1}`}><strong>{name}</strong>{node.shard.state !== "ready" && <span>{node.shard.state}</span>}</button>;
+      })}
+    </div>
+    <button type="button" className="tangent-map-escape" onClick={() => options.onBack?.()}>Esc → Work</button>
+    <div className={`tangent-map-save ${saveState.state}`} role="status">{saveState.state === "saving" ? "Saving…" : saveState.state === "blocked" ? "Not saved" : "Saved"}</div>
+    {notice && <div className="tangent-map-location" role="status">{notice}</div>}
+    <button type="button" className="tangent-map-world-outline-button" onClick={() => setOutlineOpen((value) => !value)} aria-expanded={outlineOpen}>Outline</button>
+    {outlineOpen && <section className="tangent-map-outline visible" aria-label="Area hierarchy"><ol>{options.world.areas.map((node) => <li key={node.key} style={{ marginLeft: `${node.depth * 16}px` }}><button type="button" onClick={() => fitArea(node.key)}>{node.key.split("/").at(-1)}</button></li>)}</ol></section>}
+  </div>;
 }
 
 /** Returns the selected Tangent block, when selection contains one. */
@@ -411,7 +531,7 @@ function TangentMap({ host, bridge, options }) {
 /** Mounts the React editor island inside the framework-free Agent Shell. */
 export function mountAreaBoardEditor(host, options) {
   const bridge = {
-    selected: "", setSaveState: null, updateScene: null,
+    selected: "", setSaveState: null, updateScene: null, fitArea: null,
     /** Returns the initial scene until React installs its live bridge. */
     current: () => options.scene,
     /** Returns no app state until Excalidraw installs its live bridge. */
@@ -428,6 +548,8 @@ export function mountAreaBoardEditor(host, options) {
     setSaveState: (state) => bridge.setSaveState?.(state),
     /** Applies an authoritative external scene refresh. */
     updateScene: (scene) => bridge.updateScene?.(scene),
+    /** Fits the persistent world camera to one Area. */
+    fitArea: (area) => bridge.fitArea?.(area),
     /** Unmounts the React editor island. */
     destroy: () => root.unmount(),
   };

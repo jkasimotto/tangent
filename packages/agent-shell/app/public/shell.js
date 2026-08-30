@@ -1547,6 +1547,11 @@ function openAreaMap(area, trigger) {
 /** Narrows to an Area-owned file and keeps the prior map layer for Escape. */
 function drillAreaMap(area) {
   if (!area || area === state.mapArea) return;
+  if (activeAreaBoard?.fitArea) {
+    mapLocatedArea = area;
+    activeAreaBoard.fitArea(area);
+    return;
+  }
   disposeAreaMap();
   mapTrail.push({ area: state.mapArea, locatedArea: mapLocatedArea });
   state.mapArea = area;
@@ -1576,9 +1581,9 @@ function mountDedicatedAreaMap() {
   const host = screen.querySelector("[data-dedicated-area-map]");
   if (!host || !state.mapArea || host.dataset.loaded) return;
   host.dataset.loaded = "loading";
-  Promise.all([api(`/api/areas/canvas?area=${encodeURIComponent(state.mapArea)}`), api(`/api/areas/map-context?area=${encodeURIComponent(state.mapArea)}`).catch(() => ({ area: state.mapArea, ancestors: [], legacyBaseline: null }))]).then(([payload, context]) => {
+  Promise.all([api(`/api/areas/canvas?area=${encodeURIComponent(state.mapArea)}`), api(`/api/areas/map-context?area=${encodeURIComponent(state.mapArea)}`).catch(() => ({ area: state.mapArea, ancestors: [], legacyBaseline: null })), api(`/api/areas/map-world?located=${encodeURIComponent(state.mapArea)}`).catch(() => null)]).then(([payload, context, world]) => {
     host.dataset.loaded = "yes";
-    activeAreaBoard = areaBoardView.mount(host, { area: state.mapArea, payload, context, documents: areaMapEntities(), getDocuments: areaMapEntities, api, onOpenDocument: openDocument, onSelectArea: drillAreaMap, onEntityVerb: areaMapEntityVerb, onBack: closeAreaMap, backLabel: mapTrail.at(-1)?.area.split("/").at(-1) || "Work", locatedArea: mapLocatedArea, focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly }, onToggleAreaStar: toggleAreaStar, onToggleStarredOnly: toggleStarredOnly, onToggleActiveOnly: toggleActiveOnly, brainLive: Boolean(state.brains.find((brain) => brain.area === state.mapArea && brain.live)) });
+    activeAreaBoard = areaBoardView.mount(host, { area: state.mapArea, payload, world: world?.schema === "area-map-world.v1" ? world : null, context, documents: areaMapEntities(), getDocuments: areaMapEntities, api, onOpenDocument: openDocument, onSelectArea: drillAreaMap, onEntityVerb: areaMapEntityVerb, onBack: closeAreaMap, backLabel: mapTrail.at(-1)?.area.split("/").at(-1) || "Work", locatedArea: mapLocatedArea, focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly }, onToggleAreaStar: toggleAreaStar, onToggleStarredOnly: toggleStarredOnly, onToggleActiveOnly: toggleActiveOnly, brainLive: Boolean(state.brains.find((brain) => brain.area === state.mapArea && brain.live)) });
   }).catch(() => { host.dataset.loaded = "error"; host.innerHTML = `<section class="area-board-empty"><h2>Agent Shell did not answer.</h2><p>The map could not be loaded.</p><button type="button" data-map-retry>Retry</button></section>`; });
 }
 shellBindings = bindShellEvents({

@@ -21,6 +21,60 @@ function loadEditorStyle() {
 /** Loads the test editor or the production Excalidraw browser bundle. */
 const editorLoader = () => globalThis.__TANGENT_AREA_EDITOR_LOADER__?.() ?? loadEditorStyle().then(() => import("/agent-shell-map.js"));
 
+/** Mounts the complete hierarchy through one persistent browser island. */
+function mountWorld(host, { world, getDocuments, api, onBack }) {
+  host.replaceChildren();
+  const loader = document.createElement("div");
+  loader.className = "area-board-loading";
+  loader.innerHTML = "<p>Loading drawing tools…</p>";
+  host.append(loader);
+  let editor = null;
+  let saveState = "saved";
+  let chain = Promise.resolve();
+  /** Saves direct region changes in their parent shards. */
+  const persist = (nextWorld, changedAreas) => {
+    const writes = [];
+    for (const area of changedAreas) {
+      const node = nextWorld.areas.find((entry) => entry.key === area);
+      if (!node || node.parent === "@root") continue;
+      const parent = nextWorld.areas.find((entry) => entry.key === node.parent);
+      if (!parent || parent.shard.state === "unreadable") continue;
+      const scene = structuredClone(parent.shard.scene ?? core.createEmptyScene());
+      const ref = `${area}/${area.split("/").at(-1)}.md`;
+      const [region, label] = core.createRegionElements({ id: node.region.sourceId, ref, title: area.split("/").at(-1), ...node.region.storedRect });
+      const ids = new Set([region.id, label.id]);
+      scene.elements = [...scene.elements.filter((element) => !ids.has(element.id)), region, label];
+      writes.push({ area: node.parent, baseHash: parent.shard.hash ?? null, canvas: scene, reason: `${area.split("/").at(-1)} region` });
+    }
+    if (!writes.length) return;
+    saveState = "saving"; editor?.setSaveState({ state: saveState });
+    chain = chain.then(async () => {
+      const result = await api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area: writes[0].area, writes, operationId: crypto.randomUUID() }) });
+      if (result?.error || result?.status === 409) throw Object.assign(new Error(result.error || "map changed elsewhere"), { result });
+      for (const [area, hash] of Object.entries(result.hashes ?? {})) {
+        const node = nextWorld.areas.find((entry) => entry.key === area);
+        if (node) node.shard.hash = hash;
+      }
+      saveState = "saved"; editor?.setSaveState({ state: saveState });
+    }).catch((error) => { saveState = "blocked"; editor?.setSaveState({ state: saveState, result: error.result }); });
+  };
+  const ready = editorLoader().then((module) => {
+    loader.remove();
+    editor = module.mountAreaBoardEditor(host, { world, scene: { elements: [], appState: {}, files: {} }, getDocuments, onBack, onWorldChange: persist, initialSaveState: { state: "saved" } });
+    return editor;
+  });
+  return {
+    /** Returns the current composed scene. */
+    current: () => editor?.current?.() ?? null,
+    /** Waits for editor startup and all queued region saves. */
+    async flush() { await ready; await chain; },
+    /** Fits the persistent camera to one Area. */
+    fitArea(area) { editor?.fitArea?.(area); },
+    /** Releases the persistent browser island. */
+    destroy() { editor?.destroy?.(); },
+  };
+}
+
 /** Builds an unsaved blank scope. No vault entity is placed automatically. */
 function initialScene(area) {
   const scene = core.createEmptyScene();
@@ -29,7 +83,8 @@ function initialScene(area) {
 }
 
 /** Mounts the Excalidraw editor island and the existing durable save contract. */
-function mount(host, { area, payload: suppliedPayload, context = { ancestors: [] }, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, backLabel = "Work", locatedArea = area, focus = null, onToggleAreaStar = null, onToggleStarredOnly = null, onToggleActiveOnly = null, brainLive = false, ignoreDraft = false }) {
+function mount(host, { area, payload: suppliedPayload, world = null, context = { ancestors: [] }, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, backLabel = "Work", locatedArea = area, focus = null, onToggleAreaStar = null, onToggleStarredOnly = null, onToggleActiveOnly = null, brainLive = false, ignoreDraft = false }) {
+  if (world) return mountWorld(host, { world, getDocuments, api, onBack });
   host.replaceChildren();
   let payload = suppliedPayload;
   const drafts = draftStore.create(localStorage);
@@ -258,5 +313,5 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
   };
 }
 
-export { initialScene, mount };
-export default { initialScene, mount };
+export { initialScene, mount, mountWorld };
+export default { initialScene, mount, mountWorld };

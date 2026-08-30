@@ -11,7 +11,7 @@ const rectangle = (element) => ({ x: Number(element.x), y: Number(element.y), wi
 export function createAreaMapWorldIndex({ root, repository, listAreas }) {
   /** Reads one complete structural world snapshot. */
   async function snapshot(locatedArea) {
-    const areaKeys = [...new Set(await listAreas())].sort();
+    const areaKeys = [...new Set(await listAreas())].filter((area) => area && area !== "@root").sort();
     if (!areaKeys.includes(locatedArea)) return null;
     const reads = await Promise.all(areaKeys.map(async (area) => {
       try { return [area, await repository.read(area)]; }

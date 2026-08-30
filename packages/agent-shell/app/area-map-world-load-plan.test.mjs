@@ -8,7 +8,7 @@ test("includes full structure while eagerly loading the path and two descendant 
   /** Reads one fixture shard. */
   async function read(area) { return { area, file: `${area}.excalidraw`, exists: true, ok: area !== "neara/hackathon", hash: area, scene: createEmptyScene(), ...(area === "neara/hackathon" ? { errors: ["bad map"] } : {}) }; }
   /** Lists fixture Areas. */
-  async function listAreas() { return keys; }
+  async function listAreas() { return ["@root", ...keys]; }
   const index = createAreaMapWorldIndex({ root: "/vault", repository: { read }, listAreas });
   const world = await index.snapshot("neara/delivery");
   assert.deepEqual(world.areas.map((area) => area.key), keys.slice().sort());

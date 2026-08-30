@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeWorldGeometry, provisionalRegions, solveAreaMapGesture } from "./public/area-map-world-core.js";
+import { composeAreaMapWorld, computeWorldGeometry, provisionalRegions, solveAreaMapGesture } from "./public/area-map-world-core.js";
 
 const areas = ["neara", "neara/delivery", "neara/delivery/standards"];
 
@@ -43,4 +43,14 @@ test("the solver uses the pointer baseline and prevents a large jump through a s
   assert.equal(preview.wall, "root/b");
   assert.ok(preview.regions.get("root/a").storedRect.x + 300 <= 500.01);
   assert.deepEqual(solveAreaMapGesture(baseline, { selectedAreas: ["root/a"], handle: null, desiredWorldDelta: { x: 900, y: 0 } }), preview);
+});
+
+test("composes every ancestor and descendant as one unlocked interactive region", () => {
+  const regions = provisionalRegions(areas);
+  const world = { locatedArea: areas.at(-1), areas: areas.map((key) => ({ key, parent: regions.get(key).owner, region: regions.get(key), shard: { state: "ready", scene: { elements: [], files: {} } } })) };
+  const composed = composeAreaMapWorld(world);
+  const live = composed.scene.elements.filter((element) => element.customData?.tangent?.role === "area-region");
+  assert.deepEqual(live.map((element) => element.customData.tangent.area), areas);
+  assert.ok(live.every((element) => element.locked === false && element.isDeleted === false));
+  assert.equal(new Set(live.map((element) => element.id)).size, areas.length);
 });

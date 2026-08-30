@@ -30,10 +30,10 @@ function showWorldError(host, error, retry = null) {
 }
 
 /** Mounts the complete hierarchy through one persistent browser island. */
-function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = null, onEntityVerb = null, onEvent = null, focus = null }) {
+function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = null, onViewState = null, onEntityVerb = null, onEvent = null, focus = null }) {
   host.replaceChildren();
   const loader = document.createElement("div"); loader.className = "area-board-loading"; loader.innerHTML = "<p>Loading drawing tools…</p>"; host.append(loader);
-  let editor = null; let pendingFit = null; let authority = null;
+  let editor = null; let pendingFit = null; let pendingFind = false; let authority = null;
   /** Returns the source shard for one explicit owner. */
   const shardFor = (value, owner) => owner === "@root" ? value.rootShard : value.areas.find((entry) => entry.key === owner)?.shard;
   /** Merges one full source element into its owner mutation. */
@@ -114,10 +114,12 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
     persistView: (value) => api("/api/areas/map-view", { method: "POST", body: JSON.stringify({ worldId: world.worldId, view: value }) }),
   });
   const ready = editorLoader().then((module) => {
-    loader.remove(); editor = module.mountAreaBoardEditor(host, { world, controller: authority, scene: { elements: [], appState: {}, files: {} }, getDocuments, onEntityVerb });
-    if (pendingFit) editor.fitArea?.(pendingFit.area, pendingFit.settings); return editor;
+    loader.remove(); editor = module.mountAreaBoardEditor(host, { world, controller: authority, scene: { elements: [], appState: {}, files: {} }, getDocuments, onEntityVerb, onViewState });
+    if (pendingFit) editor.fitArea?.(pendingFit.area, pendingFit.settings);
+    if (pendingFind) editor.openFind?.();
+    return editor;
   }).catch((error) => {
-    loader.remove(); showWorldError(host, error, () => mountWorld(host, { world, getDocuments, api, onBack, onNavigation, onEntityVerb, onEvent, focus })); throw error;
+    loader.remove(); showWorldError(host, error, () => mountWorld(host, { world, getDocuments, api, onBack, onNavigation, onViewState, onEntityVerb, onEvent, focus })); throw error;
   });
   return {
     /** Returns the live composed scene after the editor mounts. */
@@ -132,6 +134,10 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
     fitArea(area, settings) { if (!editor) { pendingFit = { area, settings }; return authority.selectArea(area); } return editor.fitArea?.(area, settings); },
     /** Runs the map-owned Escape order. */
     escape() { return editor?.escape?.() ?? authority.escape(); },
+    /** Opens map find after the browser island is ready. */
+    openFind() { if (!editor) { pendingFind = true; return true; } return editor.openFind?.() ?? false; },
+    /** Toggles Only in the mounted browser island. */
+    toggleRestriction(area) { return editor?.toggleRestriction?.(area) ?? authority.toggleRestriction(area); },
     /** Reconciles fact or structural polling without remounting. */
     refreshFacts(documentsOrFocus, maybeFocus) {
       return editor?.refreshFacts
@@ -216,6 +222,10 @@ function mountLegacy(host, { area, payload, api, onBack = null }) {
     async flush() { await ready.catch(() => null); await flushPending(); },
     /** A rollback shard has no composed Area camera target. */
     fitArea: () => null,
+    /** A rollback shard has no complete-world Area finder. */
+    openFind: () => false,
+    /** A rollback shard has no complete-world restriction. */
+    toggleRestriction: () => false,
     /** Leaves the rollback editor through its map-local boundary. */
     escape() { return editor?.escape?.() ?? onBack?.(); },
     /** Fact polling never replaces direct source authority. */
@@ -239,6 +249,10 @@ function mount(host, options) {
     flush: async () => null,
     /** Cannot fit an Area without world authority. */
     fitArea: () => null,
+    /** Cannot find without world authority. */
+    openFind: () => false,
+    /** Cannot restrict without world authority. */
+    toggleRestriction: () => false,
     /** Cannot change view history without world authority. */
     escape: () => null,
     /** Cannot reconcile facts without world authority. */

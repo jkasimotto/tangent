@@ -3,6 +3,7 @@ import { Excalidraw } from "@excalidraw/excalidraw";
 import boardCore from "../public/area-board-core.js";
 import worldCore from "../public/area-map-world-core.js";
 import pickerModel from "../public/area-board-picker.js";
+import { areaInRestriction, mapFindMatches } from "../public/area-map-find-core.js";
 import { createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "../public/area-map-world-controller.js";
 
 const EXCALIDRAW_UI_OPTIONS = Object.freeze({
@@ -168,6 +169,10 @@ export function AreaMapWorld({ host, bridge, options }) {
   const [pickerQuery, setPickerQuery] = useState("");
   const [widePicker, setWidePicker] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0);
+  const [findKept, setFindKept] = useState(false);
   const [notice, setNotice] = useState("");
   const [announcement, setAnnouncement] = useState({ id: 0, text: "" });
   const initializingRef = useRef(true);
@@ -203,6 +208,8 @@ export function AreaMapWorld({ host, bridge, options }) {
   const deferredCanvasUpdateTokenRef = useRef(0);
   const projectionTokenRef = useRef(0);
   const expectedProjectionsRef = useRef([]);
+  const findOriginRef = useRef(null);
+  const findInputRef = useRef(null);
 
   /** Returns one stable key for an Excalidraw selection. */
   function selectionKey(ids) {
@@ -262,6 +269,10 @@ export function AreaMapWorld({ host, bridge, options }) {
   // Excalidraw calls onChange from its componentDidUpdate lifecycle. Keep the
   // controller synchronous, but mirror its newest snapshot after that React
   // lifecycle returns so a preview cannot recursively update the parent tree.
+  bridge.escape = escape;
+  bridge.openFind = openFind;
+  bridge.toggleRestriction = (area) => toggleRestriction(area);
+
   useEffect(() => {
     let active = true; let queued = false; let latest = controller.snapshot();
     const unsubscribe = controller.subscribe((value) => {
@@ -275,6 +286,11 @@ export function AreaMapWorld({ host, bridge, options }) {
     });
     return () => { active = false; unsubscribe(); };
   }, [controller]);
+
+  /** Keeps the shell header aligned without moving map state into the shell. */
+  useEffect(() => {
+    options.onViewState?.({ locatedArea: state.locatedArea, restrictionArea: state.restrictionArea, findOpen });
+  }, [findOpen, state.locatedArea, state.restrictionArea]);
 
   /** Prints one action result and gives assistive technology a fresh live node. */
   function announce(message, { visible = true } = {}) {
@@ -365,6 +381,103 @@ export function AreaMapWorld({ host, bridge, options }) {
     api.scrollToContent([element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
     announce(`${leaf(area)} in view`);
     return element;
+  }
+
+  /** Returns the selected Area region, or the current located Area. */
+  function restrictionTarget() {
+    const ids = selectedIds(api?.getAppState?.());
+    return state.composition.scene.elements.find((element) => ids.includes(element.id) && element.customData?.tangent?.role === "area-region")?.customData?.tangent?.area ?? state.locatedArea;
+  }
+
+  /** Toggles the temporary ancestor-and-descendant restriction. */
+  function toggleRestriction(area = restrictionTarget()) {
+    const result = controller.toggleRestriction(area);
+    if (result.active && result.element && api) api.scrollToContent([result.element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
+    announce(result.active ? `Only ${areaName(result.area)}, ${result.foldedCount} Areas folded` : "Whole map");
+    return result;
+  }
+
+  /** Opens map find and records the camera and selection restored by Cancel. */
+  function openFind() {
+    if (!findOpen) findOriginRef.current = { area: state.cameraTarget, selection: [...state.selection] };
+    setFindOpen(true); setFindKept(true);
+    requestAnimationFrame(() => { findInputRef.current?.focus(); findInputRef.current?.select(); });
+    return true;
+  }
+
+  /** Returns fresh Area and loaded-block matches for one query. */
+  function matchesFor(query) {
+    return mapFindMatches({
+      areas: state.world.areas.map((node) => ({ path: node.key, name: areaName(node.key), depth: node.depth })),
+      blocks: state.composition.scene.elements.flatMap((element) => {
+        const tangent = boardCore.tangentOf(element);
+        if (!tangent || tangent.role === "area-region" || tangent.role === "boundary") return [];
+        const fact = boardCore.factForBlock(element, documents);
+        if (!fact) return [];
+        return [{ kind: fact.kind, elementId: element.id, name: fact.title, area: element.customData?.tangentWorld?.owner || boardCore.areaForBlock(element, documents), hidden: state.hiddenIds.has(element.id) }];
+      }),
+    }, query);
+  }
+
+  /** Previews one find row without adding a camera-history step. */
+  function previewFind(row, { say = true } = {}) {
+    if (!row || !api) return false;
+    if (state.restrictionArea && !areaInRestriction(row.area, state.restrictionArea)) {
+      controller.setRestriction(null);
+      announce("Whole map");
+    }
+    const element = row.kind === "area"
+      ? controller.selectArea(row.area)
+      : state.composition.scene.elements.find((candidate) => candidate.id === row.elementId);
+    if (!element) return false;
+    if (row.kind !== "area") { controller.setFindReveal(element.id); controller.setSelection([element.id]); }
+    api.scrollToContent([element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
+    if (say) announce(`${matchesFor(findQuery).length} matches, ${row.name} in view`, { visible: false });
+    return true;
+  }
+
+  /** Applies a typed pattern and previews its first result. */
+  function applyFindQuery(query) {
+    setFindQuery(query); setFindIndex(0);
+    const rows = matchesFor(query);
+    if (!rows.length) { setFindKept(false); controller.setFindReveal(null); if (query.trim()) announce("No match", { visible: false }); return; }
+    setFindKept(true);
+    previewFind(rows[0], { say: false });
+    announce(`${rows.length} ${rows.length === 1 ? "match" : "matches"}, ${rows[0].name} in view`, { visible: false });
+  }
+
+  /** Steps through the current find rows with wrap. */
+  function stepFind(direction) {
+    const rows = matchesFor(findQuery);
+    if (!rows.length) { if (findQuery.trim()) announce("No match", { visible: false }); return false; }
+    const index = (findIndex + direction + rows.length) % rows.length;
+    setFindIndex(index); setFindKept(true); previewFind(rows[index], { say: false });
+    announce(`${index + 1} of ${rows.length}, ${rows[index].name} in view`, { visible: false });
+    return true;
+  }
+
+  /** Keeps the current match and adds one normal camera return step. */
+  function confirmFind() {
+    const rows = matchesFor(findQuery); const row = rows[findIndex];
+    if (!row) return false;
+    const element = controller.fitArea(row.area, { push: true, select: row.kind === "area" });
+    if (row.kind === "area") controller.setFindReveal(null);
+    else { controller.setFindReveal(row.elementId); controller.setSelection([row.elementId]); }
+    const target = row.kind === "area" ? element : state.composition.scene.elements.find((candidate) => candidate.id === row.elementId);
+    if (target && api) api.scrollToContent([target], { fitToContent: true, animate: false });
+    setFindOpen(false); setFindKept(true); findOriginRef.current = null;
+    return true;
+  }
+
+  /** Cancels find and restores its exact opening camera target and selection. */
+  function cancelFind() {
+    const origin = findOriginRef.current;
+    setFindOpen(false); setFindKept(false); findOriginRef.current = null;
+    if (!origin) return;
+    controller.setFindReveal(null);
+    const element = controller.fitArea(origin.area, { push: false, select: false });
+    controller.setSelection(origin.selection);
+    if (element && api) api.scrollToContent([element], { fitToContent: true, animate: false });
   }
 
   /** Returns the last scene point, or the current viewport center. */
@@ -860,9 +973,10 @@ export function AreaMapWorld({ host, bridge, options }) {
 
   /** Runs the map-owned Escape order and applies a returned camera target. */
   function escape() {
-    if (picker) { setPicker(null); setPickerQuery(""); return; }
-    if (helpOpen) { setHelpOpen(false); return; }
-    if (outlineOpen) { setOutlineOpen(false); return; }
+    if (findOpen) { cancelFind(); return { kind: "find" }; }
+    if (picker) { setPicker(null); setPickerQuery(""); return { kind: "picker" }; }
+    if (helpOpen) { setHelpOpen(false); return { kind: "help" }; }
+    if (outlineOpen) { setOutlineOpen(false); return { kind: "outline" }; }
     const result = controller.escape();
     if (result.kind === "selection") stableSelectionRef.current = new Set();
     programmaticSelectionRef.current = result.kind === "selection" ? null : programmaticSelectionRef.current;
@@ -870,6 +984,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       api.scrollToContent([result.element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
       announce(`${leaf(result.area)} in view`);
     }
+    return result;
   }
 
   /** Handles the map keys before Excalidraw or the shell can reinterpret them. */
@@ -878,7 +993,10 @@ export function AreaMapWorld({ host, bridge, options }) {
     /** Routes one host key through map-owned command boundaries. */
     const keydown = (event) => {
       if (event.isComposing) return;
-      if (event.key === "Escape" && (picker || helpOpen || outlineOpen)) { stop(event); escape(); return; }
+      const findKey = (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f";
+      if (findKey || !findOpen && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key === "/") { stop(event); openFind(); return; }
+      if (event.key === "Escape" && (findOpen || picker || helpOpen || outlineOpen)) { stop(event); escape(); return; }
+      if (findOpen) return;
       if (event.target.closest?.(".tangent-map-outline")) return;
       const appState = api.getAppState?.();
       if (textEditRef.current && appState?.editingTextElement) return;
@@ -982,6 +1100,12 @@ export function AreaMapWorld({ host, bridge, options }) {
         stop(event); changeFold(region.customData.tangent.area);
         return;
       }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.shiftKey && event.key.toLowerCase() === "o" && !block) {
+        stop(event); toggleRestriction(region?.customData?.tangent?.area ?? state.locatedArea); return;
+      }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && findQuery && ["n", "N"].includes(event.key)) {
+        stop(event); stepFind(event.key === "n" ? 1 : -1); return;
+      }
       if (event.key.toLowerCase() === "b") { stop(event); openPicker(); }
     };
     /** Opens the selected semantic block on a host double click. */
@@ -993,7 +1117,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     host.addEventListener("keydown", keydown, true);
     host.addEventListener("dblclick", doubleClick, true);
     return () => { host.removeEventListener("keydown", keydown, true); host.removeEventListener("dblclick", doubleClick, true); };
-  }, [api, picker, helpOpen, outlineOpen, state.revision]);
+  }, [api, findOpen, findQuery, findIndex, picker, helpOpen, outlineOpen, state.revision]);
 
   useEffect(() => {
     if (!picker && !helpOpen && !outlineOpen) return undefined;
@@ -1041,7 +1165,6 @@ export function AreaMapWorld({ host, bridge, options }) {
     bridge.appState = () => api?.getAppState?.() ?? null;
     bridge.fitArea = (area, settings) => scrollToArea(area, settings);
     bridge.selectArea = (area) => selectArea(area);
-    bridge.escape = escape;
     bridge.flush = async () => { await waitForPointerSettle(); return controller.flush(); };
     bridge.refreshFacts = (documentsOrFocus, maybeFocus) => controller.refreshFacts(maybeFocus ?? (Array.isArray(documentsOrFocus) ? controller.snapshot().focus : documentsOrFocus));
     bridge.setFocus = (focus) => controller.setFocus(focus);
@@ -1077,7 +1200,8 @@ export function AreaMapWorld({ host, bridge, options }) {
   const accessibleAreaName = (node) => {
     const count = Number(node.shard.blockCount ?? 0);
     const parent = node.parent === "@root" ? "map root" : areaPathName(node.parent);
-    return `${areaName(node.key)}, child of ${parent}, depth ${node.depth + 1}, ${state.folded.has(node.key) ? "folded" : "unfolded"}, ${node.shard.state}, ${count} ${count === 1 ? "block" : "blocks"}`;
+    const foldState = state.restrictionFolded.has(node.key) ? "folded by Only" : state.folded.has(node.key) ? "folded" : "unfolded";
+    return `${areaName(node.key)}, child of ${parent}, depth ${node.depth + 1}, ${foldState}, ${node.shard.state}, ${count} ${count === 1 ? "block" : "blocks"}`;
   };
   const targetArea = picker?.area ?? state.locatedArea;
   const contextualChoices = boardCore.entityChoices(targetArea, documents);
@@ -1086,8 +1210,13 @@ export function AreaMapWorld({ host, bridge, options }) {
   const matchingChoices = widePicker || !needle ? choiceSource : choiceSource.filter((choice) => `${choice.kind} ${choice.title} ${choice.ref}`.toLowerCase().includes(needle));
   const typedChoice = boardCore.referenceFromText(pickerQuery, [...contextualChoices, ...pickerModel.wideChoices("", documents)]);
   const pickerChoices = typedChoice && !matchingChoices.some((choice) => choice.ref === typedChoice.ref) ? [typedChoice, ...matchingChoices] : matchingChoices;
+  const findRows = matchesFor(findQuery);
+  const activeFindIndex = Math.min(findIndex, Math.max(0, findRows.length - 1));
+  const activeFindRow = findOpen || findKept ? findRows[activeFindIndex] ?? null : null;
+  const findWindowStart = Math.min(Math.max(0, activeFindIndex - 7), Math.max(0, findRows.length - 8));
+  const visibleFindRows = findRows.slice(findWindowStart, findWindowStart + 8);
   const currentBlock = state.composition.scene.elements.find((element) => state.selection.has(element.id) && boardCore.tangentOf(element));
-  const nextEscape = picker ? "Esc closes picker" : helpOpen ? "Esc closes key sheet" : outlineOpen ? "Esc closes outline" : state.nextEscape;
+  const nextEscape = findOpen ? "Esc closes find" : picker ? "Esc closes picker" : helpOpen ? "Esc closes key sheet" : outlineOpen ? "Esc closes outline" : state.nextEscape;
   const debug = typeof location !== "undefined" && new URLSearchParams(location.search).get("debug") === "area-map";
   const nodeByParent = new Map();
   for (const node of state.world.areas) { const list = nodeByParent.get(node.parent) ?? []; list.push(node); nodeByParent.set(node.parent, list); }
@@ -1208,13 +1337,26 @@ export function AreaMapWorld({ host, bridge, options }) {
         if (!box) return null;
         const name = areaName(node.key);
         const summary = !state.detailAreas.has(node.key) ? `${Number(node.shard.blockCount ?? 0)} blocks` : "";
-        return <button type="button" key={node.key} style={{ left: `${(box.x + state.camera.scrollX) * state.camera.zoom + 12}px`, top: `${(box.y + state.camera.scrollY) * state.camera.zoom + 10}px` }} onClick={() => selectArea(node.key)} onDoubleClick={() => scrollToArea(node.key)} aria-label={accessibleAreaName(node)}><strong>{name}</strong>{state.folded.has(node.key) && <span>folded · Space</span>}{["loading", "deferred", "unreadable", "load-error"].includes(node.shard.state) && <span>{node.shard.state === "unreadable" ? "map file unreadable" : node.shard.state === "load-error" ? "load failed · click to retry" : node.shard.state}</span>}{summary && <span>{summary}</span>}</button>;
+        const findCurrent = activeFindRow?.kind === "area" && activeFindRow.area === node.key;
+        const foldedByOnly = state.restrictionFolded.has(node.key);
+        return <button type="button" key={node.key} className={`${findCurrent ? "find-match-current " : ""}${foldedByOnly ? "only-folded" : ""}`} style={{ left: `${(box.x + state.camera.scrollX) * state.camera.zoom + 12}px`, top: `${(box.y + state.camera.scrollY) * state.camera.zoom + 10}px` }} onClick={() => selectArea(node.key)} onDoubleClick={() => scrollToArea(node.key)} aria-label={accessibleAreaName(node)}><strong>{name}</strong>{state.folded.has(node.key) && <span>{foldedByOnly ? "folded by Only" : "folded · Space"}</span>}{["loading", "deferred", "unreadable", "load-error"].includes(node.shard.state) && <span>{node.shard.state === "unreadable" ? "map file unreadable" : node.shard.state === "load-error" ? "load failed · click to retry" : node.shard.state}</span>}{summary && <span>{summary}</span>}</button>;
       })}
     </div>
     <button type="button" className="tangent-map-escape" onClick={escape}>{nextEscape}</button>
     <div className={`tangent-map-save ${state.save.state}`}>{state.save.state === "saving" ? "Saving…" : state.save.state === "dirty" ? "Saved ·" : state.save.state === "conflict" ? <>Not saved <button type="button" onClick={() => controller.reload().catch((error) => announce(String(error?.message ?? error)))}>Reload</button><button type="button" onClick={() => controller.keepMine()}>Keep mine</button></> : state.save.state === "blocked" ? <>Not saved <button type="button" onClick={() => controller.retry()}>Retry</button></> : "Saved"}</div>
     {notice && <div className="tangent-map-location" aria-hidden="true">{notice}</div>}
     {announcement.text && <div key={announcement.id} className="tangent-map-live" role="status" aria-live="polite" aria-atomic="true">{announcement.text}</div>}
+    {findOpen && <section className="tangent-map-find" role="search" aria-label="Find on the map">
+      <div className="tangent-map-find-line"><input ref={findInputRef} aria-label="Find on the map" value={findQuery} onChange={(event) => applyFindQuery(event.target.value)} onKeyDown={(event) => {
+        if (event.key === "Escape") { stop(event); cancelFind(); }
+        else if (event.key === "Enter") { stop(event); confirmFind(); }
+        else if (["ArrowDown", "ArrowUp"].includes(event.key)) { stop(event); stepFind(event.key === "ArrowDown" ? 1 : -1); }
+      }} placeholder="Area name or path" aria-controls="tangent-map-find-results" aria-activedescendant={activeFindRow ? `tangent-map-find-${activeFindIndex}` : undefined} />
+      <strong className={findQuery.trim() && !findRows.length ? "miss" : ""}>{!findQuery.trim() ? "" : !findRows.length ? "No match" : `${activeFindIndex + 1} of ${findRows.length}`}</strong>
+      <button type="button" onClick={() => stepFind(-1)} aria-label="Previous match">↑</button><button type="button" onClick={() => stepFind(1)} aria-label="Next match">↓</button><button type="button" onClick={cancelFind}>Esc</button></div>
+      <ul id="tangent-map-find-results" role="listbox">{visibleFindRows.map((row, offset) => { const index = findWindowStart + offset; return <li key={row.key}><button id={`tangent-map-find-${index}`} type="button" role="option" aria-selected={index === activeFindIndex} onClick={() => { setFindIndex(index); previewFind(row); }}><small>{row.kind}</small><span><strong>{row.name}</strong><em>{areaPathName(row.area)}</em></span>{row.hidden && <i>hidden</i>}</button></li>; })}</ul>
+      <p><kbd>↓</kbd> next · <kbd>↑</kbd> previous · <kbd>↵</kbd> keep · <kbd>Esc</kbd> back</p>
+    </section>}
     {outlineOpen && <section className="tangent-map-outline visible" aria-label="Area hierarchy">{outlineTree()}</section>}
     {picker && <div className={`tangent-map-dialog-backdrop dock-${picker.dock}`}><section className="tangent-map-picker" role="dialog" aria-modal="true" aria-label="Place a Tangent block">
       <h2>{widePicker ? "Place from the whole vault" : picker.outside ? "Outside every Area" : `Place in ${leaf(picker.area)}`}</h2>
@@ -1226,7 +1368,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       <ul role="listbox">{pickerChoices.slice(0, 30).map((choice) => <li key={`${choice.kind}:${choice.ref}`}><button type="button" onClick={() => placeBlock(choice)}><small>{choice.kind}</small><span>{choice.title}</span><em>{choice.status}</em></button></li>)}</ul>
       <p><kbd>Tab</kbd> {widePicker ? "return here" : "whole vault"} · <kbd>Enter</kbd> place · <kbd>⇧Enter</kbd> place another · <kbd>Esc</kbd> close</p>
     </section></div>}
-    {helpOpen && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p>Space-drag pans. Command-wheel zooms. Command-Z undoes. Escape prints and runs its next effect.</p><p><kbd>b</kbd> brain beside · <kbd>Ctrl-L</kbd> / <kbd>Ctrl-H</kbd> switch columns.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelpOpen(false)}>Close</button></section></div>}
+    {helpOpen && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p><kbd>/</kbd> or <kbd>Ctrl-F</kbd> finds Areas. <kbd>⇧O</kbd> shows only the selected Area, its ancestors, and descendants.</p><p>Space-drag pans. Command-wheel zooms. Command-Z undoes. Escape prints and runs its next effect.</p><p><kbd>b</kbd> brain beside · <kbd>Ctrl-L</kbd> / <kbd>Ctrl-H</kbd> switch columns.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelpOpen(false)}>Close</button></section></div>}
     {debug && <aside className="tangent-map-debug" aria-label="Area map diagnostics"><h2>Area map diagnostics</h2><p>dirty owners: {[...state.dirtyOwners].join(", ") || "none"}</p><table><thead><tr><th>owner</th><th>source</th><th>runtime</th><th>stored</th><th>constraint</th><th>load</th></tr></thead><tbody>{state.world.areas.map((node) => <tr key={node.key}><td>{node.parent}</td><td>{node.region.sourceId}</td><td>{worldCore.runtimeId(node.parent, node.region.sourceId)}</td><td>{rectWords(node.region.storedRect)}</td><td>{rectWords(state.composition.geometry.get(node.key)?.constraint)}</td><td>{node.shard.state}</td></tr>)}</tbody></table><details><summary>Authored identities</summary><ul>{[...state.composition.origins].filter(([, origin]) => !origin.regionKey).map(([runtime, origin]) => <li key={runtime}>{origin.owner} · {origin.sourceId} · {runtime}</li>)}</ul></details></aside>}
     {state.draft && !state.draft.restored && <section className="tangent-map-draft-choice"><strong>Draft from {new Date(state.draft.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong><button type="button" onClick={() => controller.restoreDraft()}>Restore</button><button type="button" onClick={() => controller.discardDraft()}>Discard</button></section>}
   </div>;

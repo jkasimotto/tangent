@@ -121,6 +121,25 @@ test("view masks and camera history never replace complete world authority", () 
   controller.destroy();
 });
 
+test("Only derives temporary folds and Escape restores the user's complete-map state", () => {
+  const controller = createAreaMapWorldController({ world: fortyOneAreaWorld(), storage: memoryStorage() });
+  const authority = controller.world();
+  controller.toggleFold("atlas/near-a");
+  const restricted = controller.setRestriction("atlas/focus");
+  assert.deepEqual({ active: restricted.active, area: restricted.area, foldedCount: restricted.foldedCount }, { active: true, area: "atlas/focus", foldedCount: 4 });
+  assert.ok(restricted.element);
+  assert.deepEqual([...controller.snapshot().restrictionFolded], ["atlas/far", "atlas/near-a", "atlas/near-b", "other"]);
+  assert.equal(controller.snapshot().folded.has("atlas/focus/item-00"), false, "the complete descendant subtree stays open");
+  assert.equal(controller.snapshot().nextEscape, "Esc → whole map");
+  controller.selectArea("atlas/focus/item-00");
+  assert.equal(controller.escape().kind, "selection", "selection unwinds before the restriction");
+  assert.equal(controller.escape().kind, "restriction");
+  assert.equal(controller.snapshot().restrictionArea, null);
+  assert.deepEqual([...controller.snapshot().folded], ["atlas/near-a"], "only the user's own fold remains");
+  assert.deepEqual(controller.world(), authority, "Only never changes the unified map authority");
+  controller.destroy();
+});
+
 test("server world view initializes camera but never overrides the newly opened Area", async () => {
   const world = fixtureWorld();
   world.view = { schema: "area-map-view.v2", worldId: "world", locatedArea: "neara", pan: { x: 12, y: -9 }, zoom: 0.75, foldedAreas: ["neara/delivery"], detailAreas: ["neara"] };

@@ -901,7 +901,7 @@ function renderScreen() {
   else if (state.view === "harnesses") screen.innerHTML = renderHarnessEditor();
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument() + launchPopover();
-  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header map-screen-header"><button type="button" data-map-back>Work <kbd>Esc</kbd></button><h1><span class="map-breadcrumb">${mapBreadcrumb()}</span><span> · Map</span></h1><div class="map-focus-controls"><button type="button" data-map-brain>Brain <kbd>b</kbd></button><button type="button" data-starred-only aria-pressed="${state.areaFocusOnly}">${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd></button><button type="button" data-active-only aria-pressed="${state.activeOnly}">${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd></button></div></header><div class="map-companion"><div class="map-column focused" data-map-column tabindex="-1"><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the complete Area map…</p></div></div><div class="map-brain-divider" data-map-brain-divider hidden></div><aside class="map-brain-pane" data-map-brain-pane hidden></aside></div></section>`;
+  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header map-screen-header"><button type="button" data-map-back>Work <kbd>Esc</kbd></button><h1><span class="map-breadcrumb">${mapBreadcrumb()}</span><span> · Map</span></h1><div class="map-focus-controls">${mapFindControls()}<button type="button" data-map-brain>Brain <kbd>b</kbd></button><button type="button" data-starred-only aria-pressed="${state.areaFocusOnly}">${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd></button><button type="button" data-active-only aria-pressed="${state.activeOnly}">${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd></button></div></header><div class="map-companion"><div class="map-column focused" data-map-column tabindex="-1"><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the complete Area map…</p></div></div><div class="map-brain-divider" data-map-brain-divider hidden></div><aside class="map-brain-pane" data-map-brain-pane hidden></aside></div></section>`;
   else {
     state.view = "work";
     screen.innerHTML = renderWork();
@@ -1527,6 +1527,8 @@ let mapLocatedArea = "";
 let mapBrainOpen = false;
 let mapBrainFocus = "map";
 let mapBrainSession = "";
+let mapViewState = { restrictionArea: "", findOpen: false };
+let mapNavigation = { trail: [] };
 let mapBrainWidth = clampMapBrainWidth(localStorage.getItem("agent-shell.map-brain-width"), window.innerWidth);
 /** Prints the full launch path while keeping each Area segment actionable. */
 function mapBreadcrumb() {
@@ -1536,6 +1538,12 @@ function mapBreadcrumb() {
     const current = area === (mapLocatedArea || state.mapArea);
     return `<button type="button" data-map-breadcrumb="${escapeHtml(area)}"${current ? " aria-current=\"page\"" : ""}>${escapeHtml(part)}</button>`;
   }).join("<span aria-hidden=\"true\"> / </span>");
+}
+/** Prints the map-owned find and temporary restriction controls. */
+function mapFindControls() {
+  const area = mapViewState.restrictionArea || mapLocatedArea || state.mapArea || "Area";
+  const name = area.split("/").at(-1) || "Area";
+  return `<button type="button" data-map-find aria-expanded="${mapViewState.findOpen}">Find <kbd>/</kbd></button><button type="button" data-map-only aria-pressed="${Boolean(mapViewState.restrictionArea)}">Only ${escapeHtml(name)}${mapViewState.restrictionArea ? " ✕" : ""} <kbd>⇧O</kbd></button>`;
 }
 /** Builds the live entity index consumed by Tangent blocks and their picker. */
 function areaMapEntities() {
@@ -1560,14 +1568,21 @@ function disposeAreaMap() {
 }
 /** Updates map navigation and Focus chrome without replacing the editor island. */
 function updateAreaMapChrome(navigation = null) {
+  if (navigation) mapNavigation = navigation;
   const breadcrumb = screen.querySelector(".map-breadcrumb");
   if (breadcrumb) breadcrumb.innerHTML = mapBreadcrumb();
   const back = screen.querySelector("[data-map-back]");
-  if (back) back.innerHTML = `${navigation?.trail?.length ? "Back" : "Work"} <kbd>Esc</kbd>`;
+  if (back) back.innerHTML = `${mapNavigation.trail?.length ? "Back" : "Work"} <kbd>Esc</kbd>`;
   const starred = screen.querySelector("[data-starred-only]");
   if (starred) { starred.setAttribute("aria-pressed", String(state.areaFocusOnly)); starred.innerHTML = `${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd>`; }
   const active = screen.querySelector("[data-active-only]");
   if (active) { active.setAttribute("aria-pressed", String(state.activeOnly)); active.innerHTML = `${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd>`; }
+  const find = screen.querySelector("[data-map-find]");
+  const only = screen.querySelector("[data-map-only]");
+  const area = mapViewState.restrictionArea || mapLocatedArea || state.mapArea || "Area";
+  const name = area.split("/").at(-1) || "Area";
+  if (find) { find.setAttribute("aria-expanded", String(mapViewState.findOpen)); find.innerHTML = "Find <kbd>/</kbd>"; }
+  if (only) { only.setAttribute("aria-pressed", String(Boolean(mapViewState.restrictionArea))); only.innerHTML = `Only ${escapeHtml(name)}${mapViewState.restrictionArea ? " ✕" : ""} <kbd>⇧O</kbd>`; }
 }
 /** Applies current Work Focus as a render mask in every mounted Area world. */
 function refreshAreaMapFocus() {
@@ -1691,10 +1706,16 @@ function openAreaMap(area, trigger) {
   const row = trigger?.closest?.("[data-work-cursor]");
   if (row?.dataset.workCursor) mapReturnCursor = row.dataset.workCursor;
   mapLocatedArea = area;
+  mapViewState = { restrictionArea: "", findOpen: false };
+  mapNavigation = { trail: [] };
   state.mapArea = area;
   state.view = "map";
   paint(true);
 }
+/** Opens the map-owned finder from shell chrome or a reserved shortcut. */
+function openAreaMapFind() { return activeAreaBoard?.openFind?.() ?? false; }
+/** Toggles Only for the current located Area from shell chrome. */
+function toggleAreaMapOnly() { return activeAreaBoard?.toggleRestriction?.(mapViewState.restrictionArea || mapLocatedArea) ?? false; }
 /** Fits the one persistent world to another Area without changing authority. */
 function drillAreaMap(area) {
   if (!area) return;
@@ -1737,6 +1758,8 @@ function mountDedicatedAreaMap() {
       onBack: leaveAreaMap,
       /** Keeps shell chrome aligned with the session-only located marker. */
       onNavigation(navigation) { mapLocatedArea = navigation.area; updateAreaMapChrome(navigation); },
+      /** Reflects transient map-owned find and Only state in the shell header. */
+      onViewState(viewState) { mapViewState = { ...mapViewState, ...viewState }; updateAreaMapChrome(); },
       locatedArea: mapLocatedArea,
       focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly },
     });
@@ -1750,7 +1773,7 @@ shellBindings = bindShellEvents({
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
     confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, restoreReturnPoint,
     showDecision, showDescribe, toggleAwake, openModal, closeModal, modalConfirm: getModalConfirm, openSessionLayer, closeSessionLayer,
-    openAreaMap, drillAreaMap, closeAreaMap, toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane,
+    openAreaMap, drillAreaMap, closeAreaMap, openAreaMapFind, toggleAreaMapOnly, toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane,
   },
   prompts: {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,

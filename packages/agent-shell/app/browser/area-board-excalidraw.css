@@ -39,10 +39,29 @@
 .tangent-map-ancestry { position: absolute; z-index: 3; inset: 0; pointer-events: none; overflow: hidden; }
 .tangent-map-ancestry button { position: absolute; padding: 2px 6px; border: 0; border-radius: 4px; background: color-mix(in srgb, var(--tangent-island) 82%, transparent); color: var(--tangent-text); font: 14px Excalifont, Virgil, sans-serif; white-space: nowrap; pointer-events: auto; }
 .tangent-map-ancestry button:focus-visible { outline: 2px solid var(--tangent-accent); outline-offset: 1px; }
+.tangent-map-ancestry button.only-folded { opacity: .48; }
+.tangent-map-ancestry button.find-match-current { outline: 3px solid var(--tangent-accent); outline-offset: 3px; animation: tangent-map-find-pulse 900ms ease-in-out infinite alternate; }
+@keyframes tangent-map-find-pulse { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tangent-accent) 55%, transparent); } to { box-shadow: 0 0 0 8px transparent; } }
 .tangent-map-ancestry button strong { font-weight: 600; }
 .tangent-map-ancestry button span { margin-left: 6px; color: var(--tangent-muted); font-size: 11px; }
 .tangent-map-location { position: absolute; z-index: 4; left: 50%; bottom: 62px; padding: 6px 9px; border-radius: 6px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font-size: 12px; pointer-events: none; transform: translateX(-50%); }
 .tangent-map-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.tangent-map-find { position: absolute; z-index: 17; top: 64px; left: 50%; box-sizing: border-box; width: min(760px, calc(100% - 24px)); padding: 8px; border: 1px solid var(--tangent-border); border-radius: 10px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: 0 14px 48px rgba(0, 0, 0, .5); font: 13px Assistant, system-ui, sans-serif; transform: translateX(-50%); }
+.tangent-map-find-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; gap: 6px; align-items: center; }
+.tangent-map-find input { box-sizing: border-box; min-width: 0; height: 38px; padding: 8px 10px; border: 1px solid var(--tangent-border); border-radius: 7px; background: var(--tangent-input); color: var(--tangent-text); font: inherit; }
+.tangent-map-find input:focus { outline: 2px solid var(--tangent-accent); outline-offset: -1px; }
+.tangent-map-find-line > strong { min-width: 58px; color: var(--tangent-muted); font-size: 12px; text-align: center; }
+.tangent-map-find-line > strong.miss { color: #ff8787; }
+.tangent-map-find-line > button { height: 34px; padding: 0 9px; border: 1px solid var(--tangent-border); border-radius: 7px; background: transparent; color: var(--tangent-text); cursor: pointer; }
+.tangent-map-find ul { margin: 7px 0 0; padding: 0; list-style: none; }
+.tangent-map-find li button { display: grid; grid-template-columns: 74px minmax(0, 1fr) auto; gap: 9px; align-items: center; width: 100%; padding: 7px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--tangent-text); cursor: pointer; font: inherit; text-align: left; }
+.tangent-map-find li button:hover, .tangent-map-find li button[aria-selected="true"] { background: var(--tangent-hover); }
+.tangent-map-find li small { color: var(--tangent-accent); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+.tangent-map-find li span { display: flex; min-width: 0; flex-direction: column; }
+.tangent-map-find li strong, .tangent-map-find li em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tangent-map-find li em, .tangent-map-find li i { color: var(--tangent-muted); font-size: 11px; font-style: normal; }
+.tangent-map-find > p { margin: 7px 3px 0; color: var(--tangent-muted); font-size: 11px; text-align: right; }
 .tangent-map-world-outline-button { position: absolute; z-index: 4; top: 12px; right: 12px; min-height: 36px; padding: 0 11px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); cursor: pointer; }
 .tangent-map-world-outline-button:focus-visible { outline: 2px solid var(--tangent-accent); outline-offset: 1px; }
 .tangent-map-draft-choice { position: absolute; z-index: 19; left: 50%; bottom: 64px; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid #e8a317; border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); transform: translateX(-50%); }
@@ -102,6 +121,7 @@
   .tangent-map-dialog-backdrop.dock-left { left: 0; }
   .tangent-map-picker { height: 100%; max-height: none; border-radius: 0; }
 }
+@media (max-width: 1119px) { .tangent-map-find li:nth-child(n + 5) { display: none; } }
 /* Under 730px Excalidraw uses its mobile layout: a wrapped tool island at the top and a bar along the bottom.
    The Tangent row leaves the top grid so the island keeps one line, and the bottom controls step above the bar. */
 .TangentAreaMap:has(.excalidraw--mobile) .tangent-map-top-right { top: 76px; right: 60px; flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; max-width: 100%; }

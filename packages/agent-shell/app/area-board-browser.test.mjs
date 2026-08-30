@@ -102,6 +102,8 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     /** Returns focus to the canvas and selects one keyboard tool. */
     const tool = async (key) => { await page.mouse.click(point(1020, 700).x, point(1020, 700).y); await page.keyboard.press(key); };
 
+    await tool("o");
+    assert.equal((await page.evaluate(() => window.editor.appState())).activeTool.type, "ellipse", "bare O keeps Excalidraw's existing ellipse interaction");
     await tool("t");
     await page.mouse.click(point(170, 560).x, point(170, 560).y);
     await page.waitForFunction(() => document.activeElement?.matches('textarea[data-type="wysiwyg"]'));
@@ -222,8 +224,11 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     schema: "area-map-world.v1", worldId: "work-world", treeRevision: "tree-1", worldRevision: "world-1", locatedArea: "otto/tangent",
     rootShard: { owner: "@root", hash: "root-1", state: "ready", elementCount: 0, scene: empty() },
     areas: [
-      { key: "otto", parent: "@root", children: ["otto/tangent"], depth: 0, region: { key: "@root>otto", owner: "@root", child: "otto", sourceId: "root-otto", labelSourceId: "root-otto-label", source: "stored", storedRect: { x: 80, y: 80, width: 1100, height: 800 } }, shard: { owner: "otto", hash: "otto-1", state: "ready", elementCount: 0, scene: empty() } },
-      { key: "otto/tangent", parent: "otto", children: [], depth: 1, region: { key: "otto>otto/tangent", owner: "otto", child: "otto/tangent", sourceId: "otto-tangent", labelSourceId: "otto-tangent-label", source: "stored", storedRect: { x: 100, y: 100, width: 820, height: 580 } }, shard: { owner: "otto/tangent", hash: "tangent-1", state: "ready", elementCount: 0, scene: empty() } },
+      { key: "otto", parent: "@root", children: ["otto/tangent", "otto/other"], depth: 0, region: { key: "@root>otto", owner: "@root", child: "otto", sourceId: "root-otto", labelSourceId: "root-otto-label", source: "stored", storedRect: { x: 80, y: 80, width: 1100, height: 800 } }, shard: { owner: "otto", hash: "otto-1", state: "ready", elementCount: 0, scene: empty() } },
+      { key: "otto/tangent", parent: "otto", children: ["otto/tangent/desk"], depth: 1, region: { key: "otto>otto/tangent", owner: "otto", child: "otto/tangent", sourceId: "otto-tangent", labelSourceId: "otto-tangent-label", source: "stored", storedRect: { x: 100, y: 100, width: 820, height: 580 } }, shard: { owner: "otto/tangent", hash: "tangent-1", state: "ready", elementCount: 0, scene: empty() } },
+      { key: "otto/tangent/desk", parent: "otto/tangent", children: [], depth: 2, region: { key: "otto/tangent>otto/tangent/desk", owner: "otto/tangent", child: "otto/tangent/desk", sourceId: "tangent-desk", labelSourceId: "tangent-desk-label", source: "stored", storedRect: { x: 120, y: 120, width: 360, height: 260 } }, shard: { owner: "otto/tangent/desk", hash: "desk-1", state: "ready", elementCount: 0, scene: empty() } },
+      { key: "otto/other", parent: "otto", children: [], depth: 1, region: { key: "otto>otto/other", owner: "otto", child: "otto/other", sourceId: "otto-other", labelSourceId: "otto-other-label", source: "stored", storedRect: { x: 940, y: 120, width: 340, height: 260 } }, shard: { owner: "otto/other", hash: "other-1", state: "ready", elementCount: 0, scene: empty() } },
+      { key: "neara", parent: "@root", children: [], depth: 0, region: { key: "@root>neara", owner: "@root", child: "neara", sourceId: "root-neara", labelSourceId: "root-neara-label", source: "stored", storedRect: { x: 1300, y: 100, width: 420, height: 320 } }, shard: { owner: "neara", hash: "neara-1", state: "ready", elementCount: 0, scene: empty() } },
     ],
   };
   const server = http.createServer(async (request, response) => {
@@ -251,6 +256,74 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await page.getByRole("button", { name: "Otto, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
     await page.getByRole("button", { name: "Tangent, child of Otto, depth 2, unfolded, ready, 0 blocks" }).waitFor();
     assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/);
+    const tangentLabel = page.getByRole("button", { name: "Tangent, child of Otto, depth 2, unfolded, ready, 0 blocks" });
+    const openingBox = await tangentLabel.boundingBox();
+    assert.ok(openingBox);
+
+    // Keyboard find owns Ctrl-F, reports misses, previews a folded descendant,
+    // and Cancel restores the exact opening camera instead of creating history.
+    await page.keyboard.press("Control+f");
+    const find = page.getByRole("search", { name: "Find on the map" });
+    const findInput = find.getByRole("textbox", { name: "Find on the map" });
+    await findInput.fill("does-not-exist");
+    await find.getByText("No match", { exact: true }).waitFor();
+    const missBox = await tangentLabel.boundingBox();
+    assert.ok(Math.abs(missBox.x - openingBox.x) < 1 && Math.abs(missBox.y - openingBox.y) < 1, "a miss does not move the camera");
+    await findInput.fill("desk");
+    assert.equal(await find.getByRole("option").count(), 1);
+    assert.match(await find.textContent(), /1 of 1/);
+    await page.keyboard.press("Escape");
+    await find.waitFor({ state: "detached" });
+    const restoredBox = await tangentLabel.boundingBox();
+    assert.ok(Math.abs(restoredBox.x - openingBox.x) < 1 && Math.abs(restoredBox.y - openingBox.y) < 1, "Escape restores the camera from before find");
+    await page.keyboard.press("Control+f");
+    await findInput.fill("desk");
+    await page.keyboard.press("Enter");
+    await find.waitFor({ state: "detached" });
+    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent \/ desk · Map$/, "Enter keeps the Area match as one camera step");
+    assert.match(await page.locator(".tangent-map-escape").textContent(), /clears selection/, "the kept Area remains selected");
+    await page.keyboard.press("Escape");
+    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent \/ desk · Map$/, "the first Escape clears only the kept selection");
+    await page.keyboard.press("Escape");
+    assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/, "camera Escape returns to the find origin");
+
+    // Pointer Only keeps every label, dims only branch roots, and restores a
+    // fold that Julian made before entering the temporary restriction.
+    await page.getByRole("button", { name: "Outline", exact: true }).click();
+    const otherTreeItem = page.getByRole("treeitem", { name: "Other, child of Otto, depth 2, unfolded, ready, 0 blocks" });
+    await otherTreeItem.focus();
+    await page.keyboard.press(" ");
+    await page.getByRole("button", { name: "Other, child of Otto, depth 2, folded, ready, 0 blocks" }).waitFor();
+    await page.getByRole("button", { name: "Outline", exact: true }).click();
+    const only = page.locator("[data-map-only]");
+    await only.click();
+    assert.equal(await only.getAttribute("aria-pressed"), "true");
+    await page.getByRole("button", { name: "Neara, child of map root, depth 1, folded by Only, ready, 0 blocks" }).waitFor();
+    await page.getByRole("button", { name: "Desk, child of Otto / Tangent, depth 3, unfolded, ready, 0 blocks" }).waitFor();
+    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 5, "Only keeps the complete map's Area labels");
+    assert.match(await page.locator(".tangent-map-escape").textContent(), /whole map/);
+    await only.click();
+    assert.equal(await only.getAttribute("aria-pressed"), "false");
+    await page.getByRole("button", { name: "Neara, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
+    await page.getByRole("button", { name: "Other, child of Otto, depth 2, folded, ready, 0 blocks" }).waitFor();
+    await page.locator("[data-map-column]").focus();
+    await page.keyboard.press("Shift+o");
+    assert.equal(await only.getAttribute("aria-pressed"), "true", "Shift-O enters Only without taking Excalidraw's bare O ellipse key");
+    await page.keyboard.press("Escape");
+    assert.equal(await only.getAttribute("aria-pressed"), "false", "Escape leaves Only before it leaves the map");
+
+    // Pointer find can leave an incorrect restriction without losing the one
+    // unified map. Cancel restores the camera but deliberately not the scope.
+    await only.click();
+    await page.locator("[data-map-find]").click();
+    await findInput.fill("neara");
+    await page.waitForTimeout(100);
+    assert.match(await find.textContent(), /neara/i, "the pointer-opened finder lists the Area outside Only");
+    await find.getByRole("option", { name: /neara/i }).click();
+    assert.equal(await only.getAttribute("aria-pressed"), "false", "finding outside Only returns the whole map");
+    await find.getByRole("button", { name: "Esc" }).click();
+    await find.waitFor({ state: "detached" });
+
     await page.locator(".excalidraw canvas.interactive").evaluate((canvas) => { canvas.dataset.companionIdentity = "original"; });
     await page.keyboard.press("b");
     const pane = page.locator("[data-map-brain-pane]");

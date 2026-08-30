@@ -13,7 +13,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
-    showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap, drillAreaMap, closeAreaMap,
+    showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap, drillAreaMap, closeAreaMap, openAreaMapFind, toggleAreaMapOnly,
     toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane,
   } = chrome;
   const {
@@ -1621,6 +1621,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const mapButton = target.closest?.("[data-open-area-map]");
     if (mapButton) return openAreaMap(mapButton.dataset.openAreaMap, mapButton);
     if (target.closest?.("[data-map-back]")) return closeAreaMap();
+    if (target.closest?.("[data-map-find]")) return openAreaMapFind();
+    if (target.closest?.("[data-map-only]")) return toggleAreaMapOnly();
     const mapBreadcrumb = target.closest?.("[data-map-breadcrumb]");
     if (mapBreadcrumb) return drillAreaMap(mapBreadcrumb.dataset.mapBreadcrumb);
     if (target.closest?.("[data-map-retry]")) { state.view = "map"; paint(true); return; }
@@ -2891,6 +2893,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     // shortcut may reinterpret its provisional key value.
     if (keyboardEventIsComposing(event)) return;
     const context = keyboardContext(event);
+    const mapFindKey = state.view === "map" && !event.altKey && !event.shiftKey && ((event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === "f" || !event.metaKey && !event.ctrlKey && event.key === "/" && context !== "text-entry");
+    if (mapFindKey) {
+      event.preventDefault(); event.stopPropagation(); openAreaMapFind(); return;
+    }
+    if (state.view === "map" && context !== "text-entry" && !event.metaKey && !event.ctrlKey && !event.altKey && event.shiftKey && String(event.key).toLowerCase() === "o" && !event.target.closest?.("[data-tangent-area-map]")) {
+      event.preventDefault(); event.stopPropagation(); toggleAreaMapOnly(); return;
+    }
     if (state.view === "map" && (event.metaKey !== event.ctrlKey) && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "h" && event.target.closest?.("[data-map-brain-pane]")) {
       event.preventDefault(); event.stopPropagation(); focusMapCompanion("map"); return;
     }

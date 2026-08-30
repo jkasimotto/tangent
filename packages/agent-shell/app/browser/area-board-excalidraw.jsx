@@ -59,8 +59,8 @@ function TangentMap({ host, bridge, options }) {
   const [notice, setNotice] = useState("");
   const [recoveredDraft, setRecoveredDraft] = useState(options.recoveredDraft ?? null);
   const [camera, setCamera] = useState({ scrollX: options.scene.appState?.scrollX ?? 0, scrollY: options.scene.appState?.scrollY ?? 0, zoom: options.scene.appState?.zoom?.value ?? 1 });
-  const frames = options.frames ?? core.ancestryFrames(options.area, options.context, options.scene);
-  const canonicalRef = useRef(core.refreshTangentFacts(options.scene, options.getDocuments()).scene);
+  const canonicalRef = useRef(core.scopeScene(core.refreshTangentFacts(options.scene, options.getDocuments()).scene, options.area, options.context, options.view));
+  const frames = core.ancestryFrames(options.area, options.context, canonicalRef.current);
   const framed = structuredClone(canonicalRef.current);
   framed.elements.unshift(...core.ancestryProjection(frames));
   const spatial = core.projectSpatialChildren(framed, options.area, options.childScenes);
@@ -73,6 +73,10 @@ function TangentMap({ host, bridge, options }) {
   const projectedRegionFingerprintRef = useRef("");
 
   const documents = options.getDocuments();
+  for (const frame of frames) {
+    const document = documents.find((item) => item.kind === "area" && item.area === frame.area);
+    if (document?.title) frame.label.name = document.title;
+  }
   const targetArea = picker?.area ?? options.area;
   const choices = useMemo(() => wide ? pickerModel.wideChoices(query, documents) : core.entityChoices(targetArea, documents), [wide, query, targetArea, documents, sceneTick]);
   const currentBlock = selectedBlock(api, sceneRef.current);
@@ -84,17 +88,39 @@ function TangentMap({ host, bridge, options }) {
   const locatedChoice = locatedDocument ? { kind: "area", ref: locatedDocument.file, title: locatedDocument.title || options.locatedArea, status: locatedDocument.status || "" } : null;
   const outsideStars = Boolean(options.focus?.only && (options.focus?.areas ?? []).length && !(options.focus.areas ?? []).some((root) => options.locatedArea === root || options.locatedArea?.startsWith(`${root}/`)));
 
+  /** Describes which authoritative files one editor change made dirty. */
+  function gestureFor(canonical, previous) {
+    const nested = Boolean(options.context?.ancestors?.length);
+    const currentCanvas = core.sceneWithoutScopeBoundary(canonical, nested);
+    const previousCanvas = core.sceneWithoutScopeBoundary(previous, nested);
+    const currentChanged = core.authoredFingerprint(currentCanvas.elements) !== core.authoredFingerprint(previousCanvas.elements);
+    const extentWrite = core.scopeExtentGesture(canonical, previous, options.area, options.context);
+    if (extentWrite) {
+      const parent = options.context.ancestors.at(-1);
+      parent.scene = structuredClone(extentWrite.canvas);
+      const region = parent.scene.elements.find((element) => element.id === parent.elementId);
+      if (region) parent.regionForChild = { x: region.x, y: region.y, width: region.width, height: region.height };
+      const boundary = canonical.elements.find((element) => !element.isDeleted && core.isAreaBoundary(element));
+      if (boundary) options.onViewChange?.(core.viewFromAppState(api?.getAppState?.(), { ...(options.view ?? {}), foldedGroupIds: collapsedIds, scopeProxy: { x: boundary.x, y: boundary.y } }));
+      setNotice(`${frames.find((frame) => frame.area === options.area)?.label.name ?? options.area.split("/").at(-1)} moves inside ${parent.name ?? parent.area.split("/").at(-1)}`);
+    }
+    return { currentCanvas, currentChanged, extentWrite };
+  }
+
   /** Publishes an authored edit or a non-dirty fact repaint. */
   function publish(next, { authored = true } = {}) {
     if (authored) setRecoveredDraft(null);
     const owned = authored ? core.stripSpatialProjections(next) : next;
     const restored = authored ? core.restoreFocusedElements(owned, canonicalRef.current, hiddenFocusIdsRef.current) : owned;
-    const fenced = authored ? core.fenceRegionGeometry(restored, canonicalRef.current) : { scene: restored, refused: null };
+    const previous = canonicalRef.current;
+    const fenced = authored ? core.fenceRegionGeometry(restored, previous, { area: options.area, context: options.context, childScenes: options.childScenes }) : { scene: restored, refused: null };
     const canonical = fenced.scene;
+    const gesture = authored ? gestureFor(canonical, previous) : null;
     if (fenced.refused) setNotice(fenced.refused.wall ? `stopped at ${fenced.refused.wall.split("/").at(-1)}` : `stopped at ${fenced.refused.region.split("/").at(-1)}`);
     canonicalRef.current = canonical;
+    const liveFrames = core.ancestryFrames(options.area, options.context, canonical);
     const withAncestry = structuredClone(canonical);
-    withAncestry.elements.unshift(...core.ancestryProjection(frames));
+    withAncestry.elements.unshift(...core.ancestryProjection(liveFrames));
     const children = core.projectSpatialChildren(withAncestry, options.area, options.childScenes);
     const projection = core.focusProjection(core.collapseSpatialRegions(children.scene, collapsedIds), options.getDocuments(), options.focus, options.locatedArea);
     hiddenFocusIdsRef.current = projection.hiddenIds;
@@ -102,7 +128,9 @@ function TangentMap({ host, bridge, options }) {
     fingerprintRef.current = core.authoredFingerprint(projection.scene.elements);
     api?.updateScene({ elements: projection.scene.elements, appState: projection.scene.appState });
     setSceneTick((value) => value + 1);
-    if (authored) options.onSceneChange(core.sceneForSave(canonical.elements, api?.getAppState?.() ?? canonical.appState));
+    if (authored) {
+      options.onSceneChange(core.sceneForSave(canonical.elements, api?.getAppState?.() ?? canonical.appState), gesture);
+    }
     else options.onFactScene?.(canonical);
   }
 
@@ -125,8 +153,9 @@ function TangentMap({ host, bridge, options }) {
   function openPicker() {
     const appState = api?.getAppState?.() ?? {};
     const point = core.placementPoint(appState, pointerRef.current, [], frames.find((frame) => frame.role === "scope"));
+    const center = core.insertionPoint(appState, null);
     setWide(false);
-    setPicker(core.areaAtPoint(frames, point, appState.zoom?.value ?? 1) ?? { area: options.area, label: { name: "Outside every Area" }, outside: true });
+    setPicker({ ...(core.areaAtPoint(frames, point, appState.zoom?.value ?? 1) ?? { area: options.area, label: { name: "Outside every Area" }, outside: true }), dock: point.x < center.x ? "right" : "left" });
   }
 
   /** Sends a selected block verb to the Agent Shell. */
@@ -314,24 +343,27 @@ function TangentMap({ host, bridge, options }) {
         if (fingerprint === fingerprintRef.current) return;
         fingerprintRef.current = fingerprint;
         const authoredElements = core.stripSpatialProjections(core.sceneForSave(elements, appState));
-        const fenced = core.fenceRegionGeometry(authoredElements, canonicalRef.current);
+        const previous = canonicalRef.current;
+        const fenced = core.fenceRegionGeometry(authoredElements, previous, { area: options.area, context: options.context, childScenes: options.childScenes });
         const authored = fenced.scene;
         const corrected = core.authoredFingerprint(authored.elements) !== core.authoredFingerprint(authoredElements.elements);
         const regionFingerprint = JSON.stringify(authoredElements.elements.filter(core.isAreaRegion).map((element) => [element.id, Math.round(element.x * 100) / 100, Math.round(element.y * 100) / 100, Math.round(element.width * 100) / 100, Math.round(element.height * 100) / 100, Math.round(element.angle * 100) / 100]));
-        const withAncestry = structuredClone(authored);
-        withAncestry.elements.unshift(...core.ancestryProjection(frames));
+        const canonical = core.restoreFocusedElements(authored, previous, hiddenFocusIdsRef.current);
+        const gesture = gestureFor(canonical, previous);
+        const liveFrames = core.ancestryFrames(options.area, options.context, canonical);
+        const withAncestry = structuredClone(canonical);
+        withAncestry.elements.unshift(...core.ancestryProjection(liveFrames));
         const projected = core.projectSpatialChildren(withAncestry, options.area, options.childScenes);
         const visible = projected.scene;
-        if (corrected || regionFingerprint !== projectedRegionFingerprintRef.current) {
+        if (corrected || gesture.extentWrite || regionFingerprint !== projectedRegionFingerprintRef.current) {
           projectedRegionFingerprintRef.current = regionFingerprint;
           api?.updateScene({ elements: visible.elements, captureUpdate: "NEVER" });
         }
         if (fenced.refused) setNotice(fenced.refused.wall ? `stopped at ${fenced.refused.wall.split("/").at(-1)}` : `stopped at ${fenced.refused.region.split("/").at(-1)}`);
         sceneRef.current = visible;
         setSceneTick((value) => value + 1);
-        const canonical = core.restoreFocusedElements(authored, canonicalRef.current, hiddenFocusIdsRef.current);
         canonicalRef.current = canonical;
-        options.onSceneChange(canonical);
+        options.onSceneChange(canonical, gesture);
       }}
     />
 
@@ -358,7 +390,7 @@ function TangentMap({ host, bridge, options }) {
       {hiddenBlocks.map((block) => <button type="button" key={block.id} onClick={() => restoreBlock(block.id)}>{core.factForBlock(block, documents)?.title || core.tangentOf(block).ref}<small>Restore</small></button>)}
     </section>}
 
-    {picker && <div className="tangent-map-dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) setPicker(false); }}><section className="tangent-map-picker" role="dialog" aria-modal="true" aria-label="Place a Tangent block">
+    {picker && <div className={`tangent-map-dialog-backdrop dock-${picker.dock ?? "right"}`} onPointerDown={(event) => { if (event.target === event.currentTarget) setPicker(false); }}><section className="tangent-map-picker" role="dialog" aria-modal="true" aria-label="Place a Tangent block">
       <h2 id="tangent-block-picker-title">{wide ? "Place from the whole vault" : `Place in ${picker.label?.name ?? options.area.split("/").at(-1)}`}</h2>
       <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Tab") { stop(event); setWide((value) => !value); } else if (event.key === "Escape") { stop(event); setPicker(false); } else if (event.key === "Enter" && filtered[0]) { stop(event); place(filtered[0], event.shiftKey); } }} placeholder="Goal, Document, Area, idea, or URL" />
       <ul role="listbox">{filtered.slice(0, 30).map((choice) => <li key={`${choice.kind}:${choice.ref}`}><button type="button" onClick={() => place(choice)}><small>{choice.kind}</small><span>{choice.title}</span><em>{choice.status}</em></button></li>)}</ul>

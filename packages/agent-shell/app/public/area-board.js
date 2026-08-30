@@ -38,7 +38,9 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
   const draftScene = pendingDraft?.scene ?? pendingDraft?.canvas;
   const draftEqualsCommitted = draftScene && core.authoredFingerprint(draftScene.elements) === core.authoredFingerprint(committedScene.elements);
   if (draftEqualsCommitted) drafts.clear(area);
-  const matchingDraft = !draftEqualsCommitted && draftScene && pendingDraft.baseHash === payload.hash;
+  const knownHashes = Object.fromEntries([[area, payload.hash ?? null], ...(context.ancestors ?? []).map((ancestor) => [ancestor.area, ancestor.hash ?? null])]);
+  const draftHashesMatch = pendingDraft?.baseHashes ? Object.entries(pendingDraft.baseHashes).every(([target, hash]) => knownHashes[target] === hash) : pendingDraft?.baseHash === payload.hash;
+  const matchingDraft = !draftEqualsCommitted && draftScene && draftHashesMatch;
   if (matchingDraft) payload = { ...payload, exists: true, scene: draftScene, canvas: draftScene, restoreDraft: true, recoveredDraft: pendingDraft };
   let controller = {
     /** Returns the scene while the editor is starting. */
@@ -56,7 +58,7 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
     choice.innerHTML = `<strong>A draft from ${time} was not saved.</strong><button type="button" data-draft-restore>Restore</button><button type="button" data-draft-discard>Discard</button>`;
     choice.querySelector("[data-draft-restore]").addEventListener("click", () => {
       const scene = pendingDraft.scene ?? pendingDraft.canvas;
-      controller = mount(host, { area, context, payload: { ...payload, exists: true, hash: pendingDraft.baseHash, scene, canvas: scene, restoreDraft: true }, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, backLabel, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true });
+      controller = mount(host, { area, context, payload: { ...payload, exists: true, hash: pendingDraft.baseHash, scene, canvas: scene, restoreDraft: true, recoveredDraft: pendingDraft }, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, backLabel, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true });
     });
     choice.querySelector("[data-draft-discard]").addEventListener("click", () => { drafts.clear(area); controller = mount(host, { area, context, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, backLabel, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true }); });
     host.append(choice);
@@ -72,12 +74,19 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
 
   const normalized = core.normalizeSceneColors(structuredClone(payload.scene ?? payload.canvas ?? core.createEmptyScene()));
   const conversion = payload.exists ? core.convertToBlankSlate(normalized.scene, area, getDocuments(), context.legacyBaseline) : { scene: initialScene(area), changed: false, inboxed: [] };
-  let current = conversion.scene;
+  let current = core.scopeScene(conversion.scene, area, context, payload.view);
   current.appState = core.appStateWithView(current.appState, payload.view);
   let baseHash = payload.hash ?? null;
   let editor = null;
   let viewTimer = null;
   let pendingView = null;
+  const baseHashes = new Map([[area, payload.hash ?? null], ...(context.ancestors ?? []).map((ancestor) => [ancestor.area, ancestor.hash ?? null])]);
+  const dirtyWrites = new Map();
+  let lastGesture = null;
+  let recoveredGesture = payload.recoveredDraft ? {
+    canvas: current,
+    writes: payload.recoveredDraft.writes?.length ? payload.recoveredDraft.writes : [{ area, baseHash: payload.recoveredDraft.baseHash ?? payload.hash ?? null, canvas: core.sceneWithoutScopeBoundary(current, Boolean(context.ancestors?.length)), reason: `${area.split("/").at(-1)} content` }],
+  } : null;
   const loader = document.createElement("div");
   loader.className = "area-board-loading";
   loader.innerHTML = `<p>Loading drawing tools…</p>`;
@@ -86,30 +95,53 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
   const saver = boardSave.create({
     area,
     drafts,
-    /** Persists a scene against the last known repository hash. */
-    post: (next, hash) => api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area, baseHash: hash, canvas: next, operationId: crypto.randomUUID() }) }),
+    /** Persists every authoritative file changed by one editor gesture. */
+    post: (gesture, hash) => api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area, baseHash: hash, canvas: gesture.canvas, writes: gesture.writes.map((write) => ({ ...write, baseHash: baseHashes.get(write.area) ?? write.baseHash ?? null })), operationId: crypto.randomUUID() }) }),
+    /** Stores the whole failed gesture while keeping its display scene recoverable. */
+    draftFor: (gesture) => ({ baseHash: baseHashes.get(area) ?? null, baseHashes: Object.fromEntries(baseHashes), canvas: gesture.canvas, writes: gesture.writes }),
     /** Reflects the save machine state in the mounted editor. */
     onState: ({ state, result }) => {
       if (result?.hash) baseHash = result.hash;
+      for (const [target, hash] of Object.entries(result?.hashes ?? {})) {
+        baseHashes.set(target, hash);
+        const ancestor = context.ancestors?.find((item) => item.area === target);
+        if (ancestor) ancestor.hash = hash;
+      }
+      if (state === "saved") { dirtyWrites.clear(); recoveredGesture = null; }
       const visible = state === "blocked" && result?.status === 409 ? "conflict" : state;
       editor?.setSaveState({ state: visible, result, label: payload.migrated && state === "saved" ? "Converted from canvas" : undefined });
     },
   });
   saver.start(baseHash);
 
-  /** Converts legacy grid content once. A new map still writes nothing. */
-  async function convertLegacy() {
-    if (!conversion.changed) return;
-    const result = await api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area, baseHash, canvas: current, reason: "blank slate", operationId: crypto.randomUUID() }) });
-    baseHash = result.hash;
-    saver.start(baseHash);
+  /** Merges one editor change into the atomic gesture waiting to save. */
+  function queueGesture(next, gesture = {}) {
+    current = next;
+    if (gesture.currentChanged) dirtyWrites.set(area, { area, baseHash: baseHashes.get(area) ?? null, canvas: core.sceneForSave(gesture.currentCanvas.elements, next.appState), reason: `${area.split("/").at(-1)} content` });
+    if (gesture.extentWrite) dirtyWrites.set(gesture.extentWrite.area, { ...gesture.extentWrite, baseHash: baseHashes.get(gesture.extentWrite.area) ?? gesture.extentWrite.baseHash ?? null });
+    for (const write of recoveredGesture?.writes ?? []) if (!dirtyWrites.has(write.area)) dirtyWrites.set(write.area, write);
+    if (!dirtyWrites.size) return;
+    lastGesture = { canvas: current, writes: [...dirtyWrites.values()] };
+    saver.edit(lastGesture);
+  }
+
+  /** Saves a silently restored draft only after an explicit save or departure. */
+  function flush() {
+    if (recoveredGesture && !lastGesture) { lastGesture = recoveredGesture; saver.edit(lastGesture); }
+    return saver.flush();
   }
 
   /** Replaces a conflicted local scene with the repository version. */
   async function reload() {
-    const latest = await api(`/api/areas/canvas?area=${encodeURIComponent(area)}`);
-    current = structuredClone(latest.scene ?? latest.canvas);
+    const [latest, latestContext] = await Promise.all([
+      api(`/api/areas/canvas?area=${encodeURIComponent(area)}`),
+      api(`/api/areas/map-context?area=${encodeURIComponent(area)}`).catch(() => null),
+    ]);
+    if (latestContext?.ancestors) context.ancestors.splice(0, context.ancestors.length, ...latestContext.ancestors);
+    current = core.scopeScene(latest.scene ?? latest.canvas, area, context, pendingView ?? payload.view);
     baseHash = latest.hash;
+    baseHashes.set(area, baseHash);
+    dirtyWrites.clear(); lastGesture = null; recoveredGesture = null;
     drafts.clear(area);
     saver.start(baseHash);
     editor?.updateScene(current);
@@ -118,18 +150,22 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
 
   /** Resubmits the local scene against a newly acknowledged repository hash. */
   async function keepMine(conflict) {
-    const hash = conflict?.currentHash;
-    if (hash === undefined) return;
-    baseHash = hash;
+    const hashes = conflict?.currentHashes ?? (conflict?.currentHash !== undefined ? { [area]: conflict.currentHash } : null);
+    if (!hashes) return;
+    for (const [target, hash] of Object.entries(hashes)) {
+      baseHashes.set(target, hash);
+      if (dirtyWrites.has(target)) dirtyWrites.get(target).baseHash = hash;
+    }
+    baseHash = baseHashes.get(area) ?? baseHash;
     saver.start(baseHash);
-    saver.edit(current);
+    if (lastGesture) saver.edit(lastGesture);
     await saver.flush();
   }
 
   /** Retries the current scene after a temporary save failure. */
   async function retry() {
     saver.start(baseHash);
-    saver.edit(current);
+    if (lastGesture) saver.edit(lastGesture);
     await saver.flush();
   }
 
@@ -169,11 +205,12 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
       viewTimer = null;
       const state = pendingView;
       pendingView = null;
+      payload = { ...payload, view: state };
       api("/api/map-state", { method: "POST", body: JSON.stringify({ area, state }) }).catch(() => {});
     }, 350);
   }
 
-  const ready = convertLegacy().then(async () => {
+  const ready = Promise.resolve().then(async () => {
     const children = core.scopedEntities(area, getDocuments()).children;
     const entries = await Promise.all(children.map(async (child) => {
       try { const payload = await api(`/api/areas/canvas?area=${encodeURIComponent(child.area)}`); return [child.area, payload.exists && payload.ok !== false ? payload.scene ?? payload.canvas : null]; }
@@ -184,16 +221,16 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
     loader.remove();
     editor = module.mountAreaBoardEditor(host, {
       area, scene: current, context, frames: core.ancestryFrames(area, context, current), childScenes, view: payload.view, proposals: payload.proposals ?? [], inboxed: conversion.inboxed ?? [], getDocuments, backLabel,
-      initialSaveState: { state: "saved", label: payload.migrated ? "Converted from canvas" : undefined },
+      initialSaveState: { state: "saved" },
       recoveredDraft: payload.recoveredDraft ?? null,
       brainLive, onBack, locatedArea, focus, onSelectArea, onPlaceInto: placeInto, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly,
       /** Queues a Julian-authored scene edit for durable save. */
-      onSceneChange(next) { current = next; saver.edit(current); },
+      onSceneChange: queueGesture,
       /** Accepts a fact-only repaint without dirtying the shared scene. */
       onFactScene(next) { current = next; },
       onViewChange: viewChanged,
       /** Flushes the debounced scene save immediately. */
-      onSaveNow: () => saver.flush(),
+      onSaveNow: flush,
       onDiscardDraft: reload,
       onReload: reload, onKeepMine: keepMine, onRetry: retry,
       onEntityVerb: entityVerb, onProposalPlaced: proposalPlaced,
@@ -211,7 +248,7 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
     /** Returns the latest authored or fact-refreshed scene. */
     current: () => editor?.current?.() ?? current,
     /** Waits for editor startup and flushes pending scene changes. */
-    async flush() { await ready.catch(() => null); return saver.flush(); },
+    async flush() { await ready.catch(() => null); return flush(); },
     /** Saves private view state and releases the editor island. */
     destroy() {
       if (viewTimer !== null) window.clearTimeout(viewTimer);

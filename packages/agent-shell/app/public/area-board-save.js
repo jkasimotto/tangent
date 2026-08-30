@@ -1,5 +1,5 @@
   /** Creates the debounced, optimistic Area-map save machine. */
-  function create({ area, post, drafts, delay = 2_000, setTimer = setTimeout, clearTimer = clearTimeout, onState = () => {} }) {
+  function create({ area, post, drafts, draftFor = (canvas, baseHash) => ({ baseHash, canvas }), delay = 2_000, setTimer = setTimeout, clearTimer = clearTimeout, onState = () => {} }) {
     let timer = null; let pending = null; let active = null; let stopped = false; let baseHash = null; let failed = null;
     /** Saves the latest pending scene, if one exists. */
     async function flush() {
@@ -7,7 +7,7 @@
       const canvas = pending; pending = null; onState({ state: "saving" });
       active = post(canvas, baseHash).then((result) => {
         if (result?.status === 409 || result?.status === 503 || result?.error) {
-          stopped = true; failed = structuredClone(canvas); drafts.save(area, { baseHash, canvas: failed });
+          stopped = true; failed = structuredClone(canvas); drafts.save(area, draftFor(failed, baseHash));
           onState({ state: "blocked", result }); return result;
         }
         baseHash = result.hash; failed = null; drafts.clear(area); onState({ state: "saved", result }); return result;

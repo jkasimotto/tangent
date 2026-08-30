@@ -18,10 +18,15 @@ export function createAreaCanvasRoutes({ repository, proposals = null, view = nu
     }
     if (request.method === "POST") {
       const body = await readJson(request); const area = String(body.area ?? "");
-      if (!await areaExists(area)) { sendJson(response, 404, { error: `no Area ${area || "(none)"}` }); return true; }
+      const writes = Array.isArray(body.writes) ? body.writes.map((write) => ({ area: String(write?.area ?? ""), canvas: write?.canvas, baseHash: write?.baseHash ?? null, reason: typeof write?.reason === "string" ? write.reason.slice(0, 120) : null })) : null;
+      if (writes && !writes.length) { sendJson(response, 422, { error: "canvas gesture must change at least one file" }); return true; }
+      const areas = writes ? writes.map((write) => write.area) : [area];
+      for (const target of areas) if (!await areaExists(target)) { sendJson(response, 404, { error: `no Area ${target || "(none)"}` }); return true; }
       const reason = body.reason ?? null;
       if (reason !== null && !["blank slate", "undo blank slate"].includes(reason)) { sendJson(response, 422, { error: "unknown canvas save reason" }); return true; }
-      const result = await repository.save(area, body.canvas, { baseHash: body.baseHash ?? null, operationId: body.operationId ?? null, session: body.session ?? null, reason });
+      const result = writes
+        ? await repository.saveMany(writes, { operationId: body.operationId ?? null, session: body.session ?? null, area })
+        : await repository.save(area, body.canvas, { baseHash: body.baseHash ?? null, operationId: body.operationId ?? null, session: body.session ?? null, reason });
       const status = result.status ?? 200;
       sendJson(response, status, status < 400 ? result : { error: result.error ?? (status === 409 ? "canvas changed" : "canvas commit failed"), ...result }); return true;
     }

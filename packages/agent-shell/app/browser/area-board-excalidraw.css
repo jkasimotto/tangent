@@ -49,6 +49,7 @@
 .tangent-map-inbox button small { color: var(--tangent-accent); font-size: 11px; }
 
 .tangent-map-dialog-backdrop { position: absolute; z-index: 20; top: 64px; right: 12px; width: min(560px, calc(100% - 24px)); max-height: calc(100% - 88px); pointer-events: none; }
+.tangent-map-dialog-backdrop.dock-left { right: auto; left: 12px; }
 .tangent-map-picker, .tangent-map-help { box-sizing: border-box; width: min(560px, calc(100% - 32px)); max-height: calc(100% - 96px); padding: 18px; overflow: auto; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: 0 12px 50px rgba(0, 0, 0, .45); font: 14px Assistant, system-ui, sans-serif; line-height: 1.5; }
 .tangent-map-picker, .tangent-map-help { width: 100%; max-height: calc(100vh - 160px); pointer-events: auto; }
 .tangent-map-picker h2, .tangent-map-help h2 { margin: 0 0 12px; font-size: 17px; font-weight: 600; }
@@ -82,6 +83,10 @@
   .tangent-map-glyph { display: inline; }
   .tangent-map-top-right > button, .tangent-map-toolbar-extra button { padding: 0 10px; }
   .tangent-map-inbox { left: 12px; width: calc(100% - 24px); transform: none; }
+  .tangent-map-dialog-backdrop { top: 0; bottom: 0; width: min(420px, 56vw); max-height: none; }
+  .tangent-map-dialog-backdrop.dock-right { right: 0; }
+  .tangent-map-dialog-backdrop.dock-left { left: 0; }
+  .tangent-map-picker { height: 100%; max-height: none; border-radius: 0; }
 }
 /* Under 730px Excalidraw uses its mobile layout: a wrapped tool island at the top and a bar along the bottom.
    The Tangent row leaves the top grid so the island keeps one line, and the bottom controls step above the bar. */

@@ -11,3 +11,16 @@ test("derives the Area, returns ETags, and reports stale saves", async () => {
   const routes = createAreaCanvasRoutes({ repository }); const get = response(); await routes.handle({ method: "GET", headers: {} }, get, new URL("http://x/api/areas/canvas?area=otto/tangent")); assert.equal(get.status, 200); assert.equal(get.headers.ETag, '"abc"');
   const post = response(); const request = Readable.from([JSON.stringify({ area: "otto/tangent", baseHash: "old", canvas: scene })]); request.method = "POST"; request.headers = { "content-type": "application/json" }; await routes.handle(request, post, new URL("http://x/api/areas/canvas")); assert.equal(post.status, 409); assert.equal(post.body.currentHash, "new");
 });
+
+test("routes one multi-file gesture through the repository transaction", async () => {
+  const calls = []; const scene = { type: "excalidraw", version: 2, source: "test", elements: [], appState: {}, files: {} };
+  const repository = {
+    /** Records the atomic repository call. */
+    async saveMany(writes, options) { calls.push({ writes, options }); return { committed: true, hashes: { neara: "n", "neara/delivery": "d" } }; },
+  };
+  const routes = createAreaCanvasRoutes({ repository });
+  const request = Readable.from([JSON.stringify({ area: "neara/delivery", operationId: "gesture-1", writes: [{ area: "neara", baseHash: "old-n", canvas: scene }, { area: "neara/delivery", baseHash: "old-d", canvas: scene, reason: "standards extent" }] })]);
+  request.method = "POST"; request.headers = { "content-type": "application/json" };
+  const post = response(); await routes.handle(request, post, new URL("http://x/api/areas/canvas"));
+  assert.equal(post.status, 200); assert.equal(calls.length, 1); assert.equal(calls[0].writes.length, 2); assert.equal(calls[0].options.operationId, "gesture-1");
+});

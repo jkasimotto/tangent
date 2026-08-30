@@ -12,7 +12,11 @@ export function sceneFrames(scene, childArea = "") {
   const boundary = visible.find(isAreaBoundary) ?? null;
   const regions = visible.filter(isAreaRegion);
   const region = regions.find((element) => areaForBlock(element) === childArea) ?? null;
-  return { boundary: rect(boundary), regionForChild: rect(region), elementId: region?.id ?? null, placedChildren: regions.map(areaForBlock).filter(Boolean) };
+  return {
+    boundary: rect(boundary), regionForChild: rect(region), elementId: region?.id ?? null,
+    placedChildren: regions.map(areaForBlock).filter(Boolean),
+    regions: regions.map((element) => ({ area: areaForBlock(element), elementId: element.id, rect: rect(element) })).filter((item) => item.area),
+  };
 }
 
 /** Parses first-commit Tangent element positions. */
@@ -63,7 +67,7 @@ export function createAreaMapContextRoutes({ root, repository, runGit, areaExist
     const parts = area.split("/"); const current = await readScene(area); const ancestors = [];
     for (let depth = 1; depth < parts.length; depth += 1) {
       const ancestorArea = parts.slice(0, depth).join("/"); const childArea = parts.slice(0, depth + 1).join("/"); const source = await readScene(ancestorArea);
-      ancestors.push({ area: ancestorArea, name: parts[depth - 1], status: "active", exists: source.exists, hash: source.hash, ...sceneFrames(source.scene, childArea) });
+      ancestors.push({ area: ancestorArea, name: parts[depth - 1], status: "active", exists: source.exists, hash: source.hash, scene: source.scene, ...sceneFrames(source.scene, childArea) });
     }
     sendJson(response, 200, { area, hash: current.hash, ancestors, legacyBaseline: await baselineFor(area, current) }); return true;
   }

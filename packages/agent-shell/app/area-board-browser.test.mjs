@@ -45,6 +45,24 @@ const documents = [{ file: "otto/child/child.md", kind: "area", area: "otto/chil
 window.editor = mountAreaBoardEditor(document.querySelector("#map"), { area: "otto", scene, childScenes: new Map([["otto/child", child]]), view: null, proposals: [], getDocuments: () => documents, onSceneChange: (next) => { window.lastScene = next; sessionStorage.setItem("region-scene", JSON.stringify(next)); }, onFactScene: () => {}, onEntityVerb: () => {}, onBack: () => {}, onSaveNow: () => {} });
 </script></body></html>`;
 
+const nestedFixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/agent-shell-map.css"><style>html,body,#map{width:100%;height:100%;margin:0}</style></head><body><div id="map"></div><script type="module">
+import { mountAreaBoardEditor } from "/agent-shell-map.js";
+import core from "/area-board-core.js";
+const neara = core.withBoundary(core.createEmptyScene(), "neara");
+neara.elements.push(...core.createRegionElements({ id: "delivery", ref: "neara/delivery/delivery.md", title: "Delivery", x: 100, y: 100, width: 900, height: 600 }));
+const delivery = core.withBoundary(core.createEmptyScene(), "neara/delivery");
+delivery.elements.push(...core.createRegionElements({ id: "standards", ref: "neara/delivery/standards/standards.md", title: "Standards", x: 120, y: 120, width: 620, height: 420 }));
+const standards = core.withBoundary(core.createEmptyScene(), "neara/delivery/standards");
+standards.elements.push(...core.createBlockElements({ id: "standard-goal", kind: "goal", ref: "neara/delivery/standards/goal-proof.md", title: "Proof", x: 140, y: 140, width: 220, height: 100 }));
+const context = { ancestors: [
+  { area: "neara", name: "Neara", hash: "n", boundary: { x: -80, y: -80, width: 1760, height: 1160 }, regionForChild: { x: 100, y: 100, width: 900, height: 600 }, elementId: "delivery", scene: neara, regions: [{ area: "neara/delivery", elementId: "delivery", rect: { x: 100, y: 100, width: 900, height: 600 } }] },
+  { area: "neara/delivery", name: "Delivery", hash: "d", boundary: { x: -80, y: -80, width: 1200, height: 800 }, regionForChild: { x: 120, y: 120, width: 620, height: 420 }, elementId: "standards", scene: delivery, regions: [{ area: "neara/delivery/standards", elementId: "standards", rect: { x: 120, y: 120, width: 620, height: 420 } }] },
+] };
+const documents = [{ file: "neara/neara.md", kind: "area", area: "neara", title: "Neara", status: "active" }, { file: "neara/delivery/delivery.md", kind: "area", area: "neara/delivery", title: "Delivery", status: "active" }, { file: "neara/delivery/standards/standards.md", kind: "area", area: "neara/delivery/standards", title: "Standards", status: "active" }, { file: "neara/delivery/standards/goal-proof.md", kind: "goal", area: "neara/delivery/standards", title: "Proof", status: "active" }];
+window.extentWrites = [];
+window.editor = mountAreaBoardEditor(document.querySelector("#map"), { area: "neara/delivery/standards", scene: standards, context, childScenes: new Map(), view: null, proposals: [], getDocuments: () => documents, backLabel: "Delivery", onSceneChange: (_next, gesture) => { if (gesture?.extentWrite) window.extentWrites.push(gesture.extentWrite); }, onFactScene: () => {}, onEntityVerb: () => {}, onBack: () => {}, onSaveNow: () => {} });
+</script></body></html>`;
+
 test("an editor render failure explains the problem and retry mounts the canvas", { skip: !enabled, timeout: 90_000 }, async () => {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -264,6 +282,45 @@ test("pointer move and resize keep Area geometry coherent without transforming c
   }
 });
 
+test("Neara Delivery Standards keeps ancestry and routes its own outline to Delivery", { skip: !enabled, timeout: 90_000 }, async () => {
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    if (url.pathname === "/nested-fixture") { response.writeHead(200, { "content-type": "text/html" }); response.end(nestedFixture); return; }
+    if (url.pathname === "/area-board-core.js") { response.writeHead(200, { "content-type": "text/javascript" }); response.end(await import("node:fs/promises").then(({ readFile }) => readFile(path.join(here, "public", "area-board-core.js")))); return; }
+    await serveStaticAsset(url, response, here);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  let browser = null;
+  try {
+    browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath(), headless: true });
+    const page = await browser.newPage({ viewport: { width: 1200, height: 820 } });
+    await page.goto(`http://127.0.0.1:${server.address().port}/nested-fixture`);
+    const canvas = page.locator(".excalidraw canvas.interactive"); await canvas.waitFor();
+    assert.deepEqual(await page.locator(".tangent-map-ancestry button strong").allTextContents(), ["Neara", "Delivery", "Standards"], "the complete ancestry stays in root-first order");
+    const box = await canvas.boundingBox(); assert.ok(box);
+    const geometry = await page.evaluate(() => { const boundary = window.editor.current().elements.find((element) => element.customData?.tangent?.role === "boundary"); return { x: boundary.x, y: boundary.y, width: boundary.width, height: boundary.height }; });
+    const state = await page.evaluate(() => window.editor.appState());
+    /** Converts one nested fixture scene point to the browser viewport. */
+    const point = (x, y) => ({ x: box.x + (x + state.scrollX) * state.zoom.value, y: box.y + (y + state.scrollY) * state.zoom.value });
+    const select = point(geometry.x + geometry.width / 2, geometry.y + geometry.height); await page.mouse.click(select.x, select.y);
+    await page.waitForFunction(() => Object.values(window.editor.appState().selectedElementIds).some(Boolean));
+    const start = point(geometry.x + geometry.width - 80, geometry.y + geometry.height - 80); const end = point(geometry.x + geometry.width + 10, geometry.y + geometry.height - 50);
+    await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(end.x, end.y, { steps: 12 }); await page.mouse.up();
+    await page.waitForFunction(() => window.extentWrites.length > 0);
+    const result = await page.evaluate(() => { const write = window.extentWrites.at(-1); const region = write.canvas.elements.find((element) => element.id === "standards"); const goal = window.editor.current().elements.find((element) => element.id === "standard-goal"); return { area: write.area, region: { x: region.x, y: region.y, width: region.width, height: region.height }, goal: { x: goal.x, y: goal.y } }; });
+    assert.equal(result.area, "neara/delivery"); assert.ok(result.region.x > 120 && result.region.y > 120, "the parent-file region follows the own-scope outline"); assert.deepEqual(result.goal, { x: 140, y: 140 }, "the child's authored coordinates and ownership do not move");
+    await page.keyboard.press("Meta+z"); await page.waitForFunction(() => window.extentWrites.length > 1);
+    const undone = await page.evaluate(() => { const write = window.extentWrites.at(-1); const region = write.canvas.elements.find((element) => element.id === "standards"); return { x: region.x, y: region.y }; });
+    assert.ok(Math.abs(undone.x - 120) < 1 && Math.abs(undone.y - 120) < 1, "undo reverses the complete parent-file extent gesture");
+    await page.setViewportSize({ width: 760, height: 820 }); await page.keyboard.press("b");
+    const picker = page.getByRole("dialog", { name: "Place a Tangent block" }); await picker.waitFor();
+    const pickerBox = await picker.boundingBox(); assert.ok(pickerBox.height > 780 && pickerBox.width < 440, "the narrow picker is a full-height edge sheet");
+    await page.keyboard.press("Escape"); await picker.waitFor({ state: "hidden" });
+  } finally {
+    await browser?.close(); await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 90_000 }, async () => {
   const work = workTableFixture();
   let scene = areaBoardCore.withBoundary(areaBoardCore.createEmptyScene(), "otto");
@@ -271,6 +328,7 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
   let childScene = areaBoardCore.withBoundary(areaBoardCore.createEmptyScene(), "otto/tangent");
   childScene.elements.push(areaBoardCore.createTextElement({ id: "child-note", text: "inside Tangent", x: 180, y: 180 }));
   let savedHash = "scene-1";
+  let recordSave; const saveObserved = new Promise((resolve) => { recordSave = resolve; });
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
     if (url.pathname === "/api/work") return sendJson(response, 404, { error: "use compatibility projection" });
@@ -283,6 +341,7 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
       const update = JSON.parse(body);
       if (update.area === "otto/tangent") childScene = update.canvas; else scene = update.canvas;
       savedHash = `scene-${Number(savedHash.split("-")[1]) + 1}`;
+      recordSave();
       return sendJson(response, 200, { hash: savedHash });
     }
     if (url.pathname === "/api/areas/canvas") {
@@ -321,7 +380,7 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await page.mouse.down();
     await page.mouse.move(box.x + 790, box.y + 350, { steps: 6 });
     await page.mouse.up();
-    await page.getByText("Saving…", { exact: true }).waitFor();
+    await saveObserved;
     await page.getByText("Saved", { exact: true }).waitFor({ timeout: 10_000 });
     assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/);
 

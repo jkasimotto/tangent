@@ -2446,7 +2446,29 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (event.target === modalLayer) closeModal();
   });
 
-  document.querySelector("#session-layer").addEventListener("click", (event) => {
+  document.querySelector("#session-layer").addEventListener("click", async (event) => {
+    const copy = event.target.closest?.("[data-copy-session-tag]");
+    if (copy) {
+      const tag = copy.dataset.copySessionTag;
+      const feedback = copy.querySelector(".session-tag-feedback");
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+        await navigator.clipboard.writeText(tag);
+        feedback.textContent = "Copied";
+        copy.dataset.copyState = "success";
+        showToast(`Copied ${tag}`);
+      } catch {
+        feedback.textContent = "Could not copy";
+        copy.dataset.copyState = "failure";
+        showToast(`Could not copy ${tag}`);
+      }
+      window.setTimeout(() => {
+        if (!copy.isConnected) return;
+        feedback.textContent = "";
+        delete copy.dataset.copyState;
+      }, 1800);
+      return;
+    }
     if (event.target === event.currentTarget || event.target.closest?.("[data-close-session-layer]")) closeSessionLayer();
   });
 

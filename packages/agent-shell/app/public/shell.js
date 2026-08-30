@@ -954,7 +954,10 @@ function renderSessionLayer() {
       : session?.state
         ? session.state
         : "";
+  sessionLayer.querySelector("[data-copy-session-tag]")?.remove();
   sessionLayerTitle.innerHTML = `<strong>${escapeHtml(primary)}</strong><span>${escapeHtml(secondary)}</span>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}`;
+  const tag = escapeHtml(peek.session);
+  sessionLayerTitle.insertAdjacentHTML("afterend", `<button class="session-tag" type="button" data-copy-session-tag="${tag}" aria-label="Copy tmux session tag ${tag}" title="Copy tmux session tag"><code>${tag}</code><span class="session-tag-feedback" role="status" aria-live="polite"></span></button>`);
   sessionLayer.querySelector(".session-surface")?.setAttribute("aria-label", `${primary} session`);
   sessionLayerTerminal.dataset.session = peek.session;
   mountTerminal(sessionLayerTerminal, peek.session);

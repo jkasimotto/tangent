@@ -490,7 +490,21 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .session-layer-title strong { color: #e4e9ef; font-size: 12px; font-weight: 720; }
 .session-layer-title span { color: #9ebbe0; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .session-layer-title small { color: #78838f; font-size: 9px; }
+.session-tag { display: inline-flex; flex: none; max-width: min(42vw, 520px); align-items: center; gap: 7px; padding: 3px 7px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #8190a0; cursor: copy; }
+.session-tag:hover { border-color: #3a4654; color: #c2cfdd; }
+.session-tag:focus-visible { border-color: #74a8e8; outline: 2px solid #74a8e8; outline-offset: 2px; color: #e3edf8; }
+.session-tag code { overflow-wrap: anywhere; color: inherit; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: left; }
+.session-tag-feedback { flex: none; color: #82c99a; font-size: 9px; }
+.session-tag[data-copy-state="failure"] { border-color: #9f5960; color: #e3a0a7; }
+.session-tag[data-copy-state="failure"] .session-tag-feedback { color: #e3a0a7; }
 .session-layer-terminal { min-height: 0; }
+
+@media (max-width: 620px) {
+  .session-layer { padding: 10px; }
+  .session-layer-header { flex-wrap: wrap; gap: 5px 10px; padding-block: 5px; }
+  .session-layer-title { flex: 1 1 calc(100% - 80px); }
+  .session-tag { flex: 1 1 100%; max-width: 100%; margin-left: 68px; }
+}
 /* A caption keeps `display: table-caption`. Any other display value drops it
    out of the table box, and the browser then sizes it to one column. */
 .work-caption { box-sizing: border-box; height: 24px; padding: 0 4px 8px; color: #9fa7b0; font-size: 11px; font-weight: 760; letter-spacing: .1em; line-height: 16px; text-align: left; text-transform: uppercase; }

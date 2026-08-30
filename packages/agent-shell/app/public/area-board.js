@@ -29,7 +29,7 @@ function initialScene(area) {
 }
 
 /** Mounts the Excalidraw editor island and the existing durable save contract. */
-function mount(host, { area, payload: suppliedPayload, context = { ancestors: [] }, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, locatedArea = area, focus = null, onToggleAreaStar = null, onToggleStarredOnly = null, onToggleActiveOnly = null, brainLive = false, ignoreDraft = false }) {
+function mount(host, { area, payload: suppliedPayload, context = { ancestors: [] }, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, backLabel = "Work", locatedArea = area, focus = null, onToggleAreaStar = null, onToggleStarredOnly = null, onToggleActiveOnly = null, brainLive = false, ignoreDraft = false }) {
   host.replaceChildren();
   let payload = suppliedPayload;
   const drafts = draftStore.create(localStorage);
@@ -56,9 +56,9 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
     choice.innerHTML = `<strong>A draft from ${time} was not saved.</strong><button type="button" data-draft-restore>Restore</button><button type="button" data-draft-discard>Discard</button>`;
     choice.querySelector("[data-draft-restore]").addEventListener("click", () => {
       const scene = pendingDraft.scene ?? pendingDraft.canvas;
-      controller = mount(host, { area, context, payload: { ...payload, exists: true, hash: pendingDraft.baseHash, scene, canvas: scene, restoreDraft: true }, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true });
+      controller = mount(host, { area, context, payload: { ...payload, exists: true, hash: pendingDraft.baseHash, scene, canvas: scene, restoreDraft: true }, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, backLabel, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true });
     });
-    choice.querySelector("[data-draft-discard]").addEventListener("click", () => { drafts.clear(area); controller = mount(host, { area, context, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true }); });
+    choice.querySelector("[data-draft-discard]").addEventListener("click", () => { drafts.clear(area); controller = mount(host, { area, context, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, backLabel, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true }); });
     host.append(choice);
     return {
       /** Returns the restored or discarded draft controller's scene. */
@@ -183,7 +183,7 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
   }).then(({ module, childScenes }) => {
     loader.remove();
     editor = module.mountAreaBoardEditor(host, {
-      area, scene: current, context, frames: core.ancestryFrames(area, context, current), childScenes, view: payload.view, proposals: payload.proposals ?? [], inboxed: conversion.inboxed ?? [], getDocuments,
+      area, scene: current, context, frames: core.ancestryFrames(area, context, current), childScenes, view: payload.view, proposals: payload.proposals ?? [], inboxed: conversion.inboxed ?? [], getDocuments, backLabel,
       initialSaveState: { state: "saved", label: payload.migrated ? "Converted from canvas" : undefined },
       recoveredDraft: payload.recoveredDraft ?? null,
       brainLive, onBack, locatedArea, focus, onSelectArea, onPlaceInto: placeInto, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly,
@@ -203,7 +203,7 @@ function mount(host, { area, payload: suppliedPayload, context = { ancestors: []
     return editor;
   }).catch((error) => {
     host.innerHTML = `<section class="area-board-empty"><h2>The drawing tools did not load.</h2><p>${String(error?.message ?? error)}</p><button type="button">Retry</button></section>`;
-    host.querySelector("button")?.addEventListener("click", () => mount(host, { area, context, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true }));
+    host.querySelector("button")?.addEventListener("click", () => mount(host, { area, context, payload, documents, getDocuments, api, onOpenDocument, onSelectArea, onEntityVerb, onBack, backLabel, locatedArea, focus, onToggleAreaStar, onToggleStarredOnly, onToggleActiveOnly, brainLive, ignoreDraft: true }));
     throw error;
   });
 

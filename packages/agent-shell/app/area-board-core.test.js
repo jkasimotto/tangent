@@ -66,7 +66,7 @@ test("child maps project through regions as locked read-only content and never e
   assert.equal(collapsed.elements.find((element) => element.id === nested.id).isDeleted, true);
 });
 
-test("region fences reject invented containment but leave ordinary blocks and ink alone", () => {
+test("region walls slide siblings apart but leave ordinary ink alone", () => {
   const previous = core.withBoundary(core.createEmptyScene(), "neara");
   previous.elements.push(...core.createRegionElements({ id: "pgande", ref: "neara/pgande/pgande.md", x: 100, y: 100, width: 300, height: 220 }));
   previous.elements.push(...core.createRegionElements({ id: "portland", ref: "neara/portland/portland.md", x: 500, y: 100, width: 300, height: 220 }));
@@ -75,9 +75,24 @@ test("region fences reject invented containment but leave ordinary blocks and in
   changed.elements.find((element) => element.id === "portland").x = 200;
   changed.elements.find((element) => element.id === "note").x = 1200;
   const fenced = core.fenceRegionGeometry(changed, previous);
-  assert.equal(fenced.refused.reason, "overlap");
-  assert.equal(fenced.scene.elements.find((element) => element.id === "portland").x, 500);
+  assert.equal(fenced.refused.reason, "sibling");
+  assert.equal(fenced.refused.wall, "neara/pgande");
+  assert.equal(fenced.scene.elements.find((element) => element.id === "portland").x, 400);
   assert.equal(fenced.scene.elements.find((element) => element.id === "note").x, 1200, "Julian-owned ink is not fenced");
+});
+
+test("a block slides along a child region without changing semantic ownership", () => {
+  const previous = core.createEmptyScene();
+  previous.elements.push(...core.createRegionElements({ id: "standards", ref: "neara/delivery/standards/standards.md", x: 400, y: 100, width: 300, height: 260 }));
+  previous.elements.push(...core.createBlockElements({ id: "delivery-goal", kind: "goal", ref: "neara/delivery/goal-plan.md", x: 80, y: 140, width: 220, height: 100 }));
+  const changed = structuredClone(previous);
+  changed.elements.find((element) => element.id === "delivery-goal").x = 450;
+  changed.elements.find((element) => element.id === "delivery-goal-tangent-label").x = 450;
+  const fenced = core.fenceRegionGeometry(changed, previous);
+  assert.equal(fenced.refused.reason, "child");
+  assert.equal(fenced.refused.wall, "neara/delivery/standards");
+  assert.equal(fenced.scene.elements.find((element) => element.id === "delivery-goal").x, 180);
+  assert.equal(core.areaForBlock(fenced.scene.elements.find((element) => element.id === "delivery-goal")), "neara/delivery");
 });
 
 test("creates connectable fact-backed blocks with one authoritative reference", () => {

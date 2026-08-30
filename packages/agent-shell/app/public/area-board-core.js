@@ -418,28 +418,73 @@ function migrateAreaCardsToRegions(scene, area, documents = []) {
   return { scene: bounded, changed: changed || bounded !== next };
 }
 
-/** Refuses region geometry that visually invents containment. */
+/**
+ * Applies the map's walls to one Excalidraw change frame.
+ *
+ * A parent is deliberately not a wall: its drawn extent can grow around its
+ * contents. Sibling regions wall each other, and child regions wall blocks
+ * authored in the current file. The correction is made in the same change
+ * frame, so pointer-up never produces a later snap-back.
+ */
 function fenceRegionGeometry(candidate, previous) {
   const next = structuredClone(candidate);
   const previousById = new Map((previous?.elements ?? []).map((element) => [element.id, element]));
   const boundary = next.elements.find(isAreaBoundary);
   const oldBoundary = previousById.get(boundary?.id);
   let refused = null;
-  /** Reports whether two region rectangles visually overlap. */
+  /** Reports whether two rectangles visually overlap. */
   const overlaps = (left, right) => left.x < right.x + right.width && right.x < left.x + left.width && left.y < right.y + right.height && right.y < left.y + left.height;
+  /** Slides a moved rectangle to the first wall on its dominant movement axis. */
+  const slideAgainst = (element, old, walls) => {
+    const collisions = walls.filter((wall) => overlaps(element, wall));
+    if (!collisions.length) return null;
+    const resized = element.width !== old.width || element.height !== old.height;
+    if (resized) {
+      for (const wall of collisions) {
+        if (old.x + old.width <= wall.x) element.width = Math.min(element.width, wall.x - element.x);
+        else if (old.x >= wall.x + wall.width) { const right = element.x + element.width; element.x = Math.max(element.x, wall.x + wall.width); element.width = right - element.x; }
+        if (old.y + old.height <= wall.y) element.height = Math.min(element.height, wall.y - element.y);
+        else if (old.y >= wall.y + wall.height) { const bottom = element.y + element.height; element.y = Math.max(element.y, wall.y + wall.height); element.height = bottom - element.y; }
+      }
+      return collisions[0];
+    }
+    const dx = element.x - old.x; const dy = element.y - old.y;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      if (dx > 0) element.x = Math.min(...collisions.map((wall) => wall.x - element.width));
+      else if (dx < 0) element.x = Math.max(...collisions.map((wall) => wall.x + wall.width));
+    } else if (dy > 0) element.y = Math.min(...collisions.map((wall) => wall.y - element.height));
+    else if (dy < 0) element.y = Math.max(...collisions.map((wall) => wall.y + wall.height));
+    return collisions[0];
+  };
   for (const region of next.elements.filter((element) => !element.isDeleted && isAreaRegion(element))) {
     const old = previousById.get(region.id);
     if (!old) continue;
-    const outside = boundary && (region.x < boundary.x || region.y < boundary.y || region.x + region.width > boundary.x + boundary.width || region.y + region.height > boundary.y + boundary.height);
     const rotated = Math.abs(Number(region.angle || 0)) > 0.0001;
     const tooSmall = region.height < LABEL_BAND + REGION_MIN_CONTENT;
-    const collision = next.elements.some((other) => other.id !== region.id && !other.isDeleted && isAreaRegion(other) && overlaps(region, other));
-    if (!outside && !collision && !rotated && !tooSmall) continue;
+    const wall = slideAgainst(region, old, next.elements.filter((other) => other.id !== region.id && !other.isDeleted && isAreaRegion(other)));
+    if (!rotated && !tooSmall) {
+      if (wall) refused = { region: areaForBlock(region), wall: areaForBlock(wall), reason: "sibling" };
+      continue;
+    }
     Object.assign(region, { x: old.x, y: old.y, width: old.width, height: old.height, angle: old.angle, version: Number(region.version || 0) + 1 });
     const label = next.elements.find((element) => element.containerId === region.id);
     const oldLabel = previousById.get(label?.id);
     if (label && oldLabel) Object.assign(label, { x: oldLabel.x, y: oldLabel.y, width: oldLabel.width, height: oldLabel.height, version: Number(label.version || 0) + 1 });
-    refused = { region: areaForBlock(region), reason: rotated ? "rotate" : tooSmall ? "min-size" : outside ? "outside-parent" : "overlap" };
+    refused = { region: areaForBlock(region), reason: rotated ? "rotate" : "min-size" };
+  }
+  const childWalls = next.elements.filter((element) => !element.isDeleted && isAreaRegion(element));
+  for (const block of next.elements.filter((element) => !element.isDeleted && tangentOf(element) && !isAreaRegion(element) && !isAreaBoundary(element))) {
+    const old = previousById.get(block.id);
+    if (!old) continue;
+    const wall = slideAgainst(block, old, childWalls);
+    if (!wall) continue;
+    const label = next.elements.find((element) => element.containerId === block.id);
+    const oldLabel = previousById.get(label?.id);
+    if (label && oldLabel) {
+      label.x += block.x - candidate.elements.find((element) => element.id === block.id).x;
+      label.y += block.y - candidate.elements.find((element) => element.id === block.id).y;
+    }
+    refused = { region: areaForBlock(block), wall: areaForBlock(wall), reason: "child" };
   }
   if (boundary && oldBoundary && (boundary.x !== oldBoundary.x || boundary.y !== oldBoundary.y || boundary.angle !== oldBoundary.angle) && !boundary.isDeleted) {
     Object.assign(boundary, { x: oldBoundary.x, y: oldBoundary.y, angle: oldBoundary.angle, version: Number(boundary.version || 0) + 1 });

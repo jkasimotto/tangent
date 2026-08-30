@@ -91,7 +91,7 @@ function TangentMap({ host, bridge, options }) {
     const restored = authored ? core.restoreFocusedElements(owned, canonicalRef.current, hiddenFocusIdsRef.current) : owned;
     const fenced = authored ? core.fenceRegionGeometry(restored, canonicalRef.current) : { scene: restored, refused: null };
     const canonical = fenced.scene;
-    if (fenced.refused) setNotice(`${fenced.refused.region.split("/").at(-1)} stays in its parent Area · use Move Area for an ownership change`);
+    if (fenced.refused) setNotice(fenced.refused.wall ? `stopped at ${fenced.refused.wall.split("/").at(-1)}` : `stopped at ${fenced.refused.region.split("/").at(-1)}`);
     canonicalRef.current = canonical;
     const withAncestry = structuredClone(canonical);
     withAncestry.elements.unshift(...core.ancestryProjection(frames));
@@ -195,6 +195,16 @@ function TangentMap({ host, bridge, options }) {
     setOutlineOpen(false);
   }
 
+  /** Performs the exact effect printed by the map's Escape control. */
+  function escapeNow() {
+    if (picker) { setPicker(null); return; }
+    if (help) { setHelp(false); return; }
+    if (outlineOpen) { setOutlineOpen(false); return; }
+    const selectedIds = api?.getAppState?.().selectedElementIds ?? {};
+    if (Object.keys(selectedIds).length) { api?.updateScene({ appState: { selectedElementIds: {} } }); return; }
+    options.onBack?.();
+  }
+
   useEffect(() => {
     bridge.setSaveState = setSaveState;
     bridge.updateScene = (next) => publish(core.refreshTangentFacts(core.stripSpatialProjections(next), options.getDocuments()).scene, { authored: false });
@@ -225,13 +235,11 @@ function TangentMap({ host, bridge, options }) {
     const keydown = (event) => {
       const key = event.key.toLowerCase();
       if (event.key === "Escape") {
-        if (picker) { stop(event); setPicker(null); return; }
-        if (help) { stop(event); setHelp(false); return; }
-        if (outlineOpen) { stop(event); setOutlineOpen(false); return; }
-        if (isTyping(event.target)) return;
+        if (picker || help || outlineOpen) { stop(event); escapeNow(); return; }
+        if (isTyping(event.target)) { stop(event); event.target.blur(); return; }
         const selectedIds = api?.getAppState?.().selectedElementIds ?? {};
-        if (Object.keys(selectedIds).length) { stop(event); api?.updateScene({ appState: { selectedElementIds: {} } }); return; }
-        stop(event); options.onBack?.(); return;
+        if (Object.keys(selectedIds).length) { stop(event); escapeNow(); return; }
+        stop(event); escapeNow(); return;
       }
       if (isTyping(event.target)) return;
       const block = selectedBlock(api, sceneRef.current);
@@ -318,7 +326,7 @@ function TangentMap({ host, bridge, options }) {
           projectedRegionFingerprintRef.current = regionFingerprint;
           api?.updateScene({ elements: visible.elements, captureUpdate: "NEVER" });
         }
-        if (fenced.refused) setNotice(`${fenced.refused.region.split("/").at(-1)} stays in its parent Area · use Move Area for an ownership change`);
+        if (fenced.refused) setNotice(fenced.refused.wall ? `stopped at ${fenced.refused.wall.split("/").at(-1)}` : `stopped at ${fenced.refused.region.split("/").at(-1)}`);
         sceneRef.current = visible;
         setSceneTick((value) => value + 1);
         const canonical = core.restoreFocusedElements(authored, canonicalRef.current, hiddenFocusIdsRef.current);
@@ -331,6 +339,7 @@ function TangentMap({ host, bridge, options }) {
       {frames.map((frame, index) => <button type="button" key={frame.area} style={{ left: `${(frame.rect.x + camera.scrollX) * camera.zoom + 12}px`, top: `${(frame.rect.y + camera.scrollY) * camera.zoom + 10}px` }} aria-label={frame.role === "scope" ? `${frame.label.name}, your scope` : `${frame.label.name}, inside ${frames[index - 1]?.label.name ?? "vault"}`} onClick={() => frame.role === "ancestor" && options.onSelectArea?.(frame.area)}><strong>{frame.label.name}</strong> <span>{frame.label.status}</span></button>)}
     </div>
 
+    <button type="button" className="tangent-map-escape" onClick={escapeNow} aria-keyshortcuts="Escape">{picker ? "Esc closes picker" : help ? "Esc closes key sheet" : outlineOpen ? "Esc closes outline" : currentBlock || currentText ? "Esc clears selection" : "Esc → " + (options.backLabel || "Work")}</button>
     <div className={`tangent-map-save ${saveState.state}`} role="status">
       <span>{saveState.state === "dirty" ? "• Saved" : saveState.state === "saving" ? "Saving…" : saveState.state === "conflict" ? "Not saved" : saveState.state === "blocked" ? "Not saved" : saveState.label || "Saved"}</span>
       {saveState.state === "conflict" && <><button type="button" onClick={options.onReload}>Reload</button><button type="button" onClick={() => options.onKeepMine?.(saveState.result)}>Keep mine</button></>}

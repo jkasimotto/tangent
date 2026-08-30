@@ -207,6 +207,18 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
     const assignments = detail.queue?.assignments ?? detail.queue?.steps ?? [];
     const attempts = detail.attempts ?? [];
     const relatedDocuments = detail.relatedDocuments ?? [];
+    const cards = detail.cards ?? [];
+    const cardUrl = (url, label) => url?.href ? `<a href="${escapeHtml(url.href)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>` : `<button type="button" data-open-document="${escapeHtml(url?.file ?? "")}">${escapeHtml(label)}</button>`;
+    const cardBody = (card) => {
+      const f = card.fields ?? {};
+      if (card.kind === "copy") return `<pre tabindex="0">${escapeHtml(f.text)}</pre>`;
+      if (card.kind === "link") return cardUrl(f.url, f.label);
+      if (card.kind === "links") return `<ul>${(f.items ?? []).map((item) => `<li>${cardUrl(item.url, item.label)}</li>`).join("")}</ul>`;
+      if (card.kind === "progress") return `<ol>${(f.steps ?? []).map((item, index) => `<li><span aria-hidden="true">${item.status === "done" ? "✓" : item.status === "current" || f.current === index + 1 ? "→" : "○"}</span> ${escapeHtml(item.label)} <small>${escapeHtml(item.status === "current" || f.current === index + 1 ? "current" : item.status)}</small></li>`).join("")}</ol>`;
+      if (card.kind === "checklist") return `<ul>${(f.items ?? []).map((item) => `<li><span aria-hidden="true">${item.done ? "☑" : "☐"}</span> ${escapeHtml(item.label)} <small>${item.done ? "done" : "open"}</small></li>`).join("")}</ul>`;
+      if (card.kind === "commits") return `<ul>${(f.commits ?? []).map((item) => `<li><code>${escapeHtml(item.hash)}</code> ${item.url ? cardUrl(item.url, item.subject) : escapeHtml(item.subject)}</li>`).join("")}</ul>`;
+      return `<ul>${(f.items ?? []).map((item) => `<li>${cardUrl(item.url, `${item.id} · ${item.title}`)} <small>${escapeHtml(item.state)}</small></li>`).join("")}</ul>`;
+    };
     return `<section class="goal-reader-detail" aria-label="Goal details">
       <div class="goal-reader-facts">
         <span><small>State</small><strong>${escapeHtml(goal.status === "deferred" ? "parked" : goal.status || "open")}</strong></span>
@@ -216,6 +228,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
       <div class="goal-reader-sections">
         <section><h2>Dependencies</h2>${references.length ? `<ul>${references.map((item) => `<li><span>${escapeHtml(item.relation)}</span><strong>${escapeHtml(item.title || item.file || item.slug)}</strong><small>${escapeHtml(item.status || "open")}</small></li>`).join("")}</ul>` : `<p>None.</p>`}</section>
         <section><h2>Related Documents</h2>${relatedDocuments.length ? `<ul>${relatedDocuments.map((item) => { const record = typeof item === "string" ? { file: item, title: item } : item; const presented = record.presentedBy?.session ? `Presented by ${record.presentedBy.session}` : ""; return `<li><button type="button" data-open-document="${escapeHtml(record.file)}">${escapeHtml(record.title || record.file)}</button>${presented ? `<small>${escapeHtml(presented)}</small>` : ""}</li>`; }).join("")}</ul>` : `<p>None.</p>`}</section>
+        ${cards.length || relatedDocuments.some((item) => item?.presentedBy) ? `<section><h2 id="presented" tabindex="-1">Presented</h2>${cards.map((card) => `<article class="presented-card-detail" aria-label="${escapeHtml(`${card.kind}: ${card.title}, presented by ${card.presentedBy?.session || "brain"}`)}"><h3>${escapeHtml(card.title)}</h3><small>${escapeHtml(card.kind)} · Presented by ${escapeHtml(card.presentedBy?.session || "brain")}</small>${cardBody(card)}</article>`).join("")}</section>` : ""}
         <section><h2>Queue</h2>${assignments.length ? `<ol>${assignments.map((item, index) => `<li><span>${escapeHtml(String(item.index ?? index + 1))}</span><strong>${escapeHtml(item.instruction || item.label || "Assignment")}</strong><small>${escapeHtml([item.status, goalLaunchLabel(item)].filter(Boolean).join(" · "))}</small></li>`).join("")}</ol>` : `<p>No assignments.</p>`}</section>
         <section><h2>Attempt history</h2>${attempts.length ? `<ol>${attempts.map((item) => attemptHistoryRow(item, goal.file)).join("")}</ol>` : `<p>No attempts.</p>`}</section>
       </div>

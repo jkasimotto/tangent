@@ -20,9 +20,6 @@ All Tangent state lives under `~/.tangent/`. Know these paths:
 | `worklog.jsonl` | Time-tracking worklog entries (entity, cwd, name, estimate, actual minutes) |
 | `feedback.jsonl` / `feedback-triage.jsonl` | User feedback capture |
 
-## Querying conversations — use the Usage API, never grep raw transcripts
-
-When asked to find, filter, or inspect conversations (by project, model, date, role, content, etc.), **always use the `tangent usage` CLI or the `@tangent/usage/core` SDK**. Do not grep raw `~/.claude/projects/**/*.jsonl` files — the Usage index is faster, structured, and already normalizes provider schemas.
 
 ### CLI quick reference
 

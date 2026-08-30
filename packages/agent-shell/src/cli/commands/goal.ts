@@ -12,7 +12,7 @@ import { goalCommandSpec } from "../spec.js";
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   // Boolean flags never consume the token after them.
-  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status"], boolean: ["continue", "own", "confirm", "start", "verify", "conversations", "withdraw"] });
+  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status", "url", "label", "item", "commit", "review"], boolean: ["continue", "own", "confirm", "start", "verify", "conversations", "withdraw"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
   // `tangent goal <subcommand> --help` prints that subcommand's own flags:
@@ -43,8 +43,24 @@ async function presentCommand(args: Args): Promise<void> {
   const slug = requiredString(args._[1], "tangent goal present requires <slug>.");
   const goal = await requireGoal(server, slug);
   const files = args._.slice(2).map(String).filter(Boolean);
-  if (!files.length) throw new Error("tangent goal present requires at least one <file>.");
   const session = stringArg(args.session) || (await currentTmuxSession()) || "";
+  const withdrawCard = stringArg(args["withdraw-card"]);
+  const kind = stringArg(args.card);
+  if (withdrawCard) {
+    if (files.length || kind) throw new Error("--withdraw-card takes no file or --card.");
+    await postJson(server, "/api/goals/withdraw-card", { goal: goal.file, title: withdrawCard, session });
+    console.log(`withdrew card "${withdrawCard}" from ${slug}`);
+    return;
+  }
+  if (kind) {
+    if (files.length) throw new Error("--card takes no file.");
+    const title = requiredString(args.title, "--card requires --title.");
+    const fields = cardFields(kind, title, args);
+    const result = await postJson(server, "/api/goals/present-card", { goal: goal.file, session, card: { kind, title, fields } });
+    console.log(`${result.changed === false ? "unchanged" : "presented"} ${kind} card "${title}" on ${slug}`);
+    return;
+  }
+  if (!files.length) throw new Error("tangent goal present requires at least one <file>, --card, or --withdraw-card.");
   if (booleanArg(args.withdraw)) {
     if (files.length !== 1) throw new Error("tangent goal present --withdraw takes one <file>.");
     await postJson(server, "/api/goals/withdraw-presentation", { goal: goal.file, file: files[0], session });
@@ -53,6 +69,44 @@ async function presentCommand(args: Args): Promise<void> {
   }
   const result = await postJson(server, "/api/goals/present", { goal: goal.file, files, note: stringArg(args.note) ?? "", session });
   console.log(`presented ${result.items.length} document${result.items.length === 1 ? "" : "s"} on ${slug}`);
+}
+
+/** Splits one repeatable card field at its last colon. */
+function splitLast(value: string, label: string): [string, string] {
+  const at = value.lastIndexOf(":");
+  if (at < 1) throw new Error(`${label} must contain a colon.`);
+  return [value.slice(0, at), value.slice(at + 1)];
+}
+
+/** Converts repeatable CLI fields to raw card data; the server owns validation. */
+function cardFields(kind: string, title: string, args: Args): Record<string, unknown> {
+  if (kind === "copy") return { text: stringArg(args.text) };
+  const urls = stringsArg(args.url); const labels = stringsArg(args.label);
+  if (kind === "link") {
+    if (urls.length !== 1 || labels.length > 1) throw new Error("link needs one --url and at most one --label.");
+    return { url: urls[0], label: labels[0] || title };
+  }
+  if (kind === "links") {
+    if (!urls.length || urls.length !== labels.length) throw new Error("links needs matching --label and --url flags.");
+    return { items: urls.map((url, index) => ({ label: labels[index], url })) };
+  }
+  if (kind === "progress") return { steps: stringsArg(args.step).map((value) => { const [label, status] = splitLast(value, "--step"); return { label, status }; }), current: stringArg(args.current) };
+  if (kind === "checklist") return { items: stringsArg(args.item).map((value) => {
+    const [label, raw] = splitLast(value, "--item"); const normalized = raw.toLowerCase();
+    if (!["yes", "no", "true", "false", "done", "open", "1", "0"].includes(normalized)) throw new Error("--item done must be yes, no, true, false, done, open, 1, or 0.");
+    return { label, done: ["yes", "true", "done", "1"].includes(normalized) };
+  }) };
+  if (kind === "commits") return { repo: stringArg(args.repo), commits: stringsArg(args.commit).map((value) => {
+    const at = value.indexOf(":"); if (at < 1) throw new Error("--commit must be <hash>:<subject>[:<url>].");
+    const hash = value.slice(0, at); const rest = value.slice(at + 1); const match = rest.match(/:(https?:\/\/\S+)$/);
+    return { hash, subject: match ? rest.slice(0, match.index) : rest, ...(match ? { url: match[1] } : {}) };
+  }) };
+  if (kind === "reviews") return { items: stringsArg(args.review).map((value) => {
+    const first = value.indexOf(":"); const last = value.lastIndexOf(":"); const middle = value.slice(first + 1, last); const match = middle.match(/https?:\/\/\S+/);
+    if (first < 1 || last <= first || !match) throw new Error("--review must be <id>:<title>:<url>:<state>.");
+    return { id: value.slice(0, first), title: middle.slice(0, match.index).replace(/:$/, ""), url: match[0], state: value.slice(last + 1) };
+  }) };
+  return {};
 }
 
 /** Adds or removes advisory prerequisite links for one Goal. */
@@ -388,6 +442,11 @@ async function showCommand(args: Args): Promise<void> {
   if (dependencies.length) console.log(`depends on: ${dependencies.map((item) => item.title ?? item.slug ?? item.file).join(", ")}`);
   const unresolved = Array.isArray(detail.dependencies?.unresolvedReferences) ? detail.dependencies.unresolvedReferences : [];
   if (unresolved.length) console.log(`missing dependencies: ${unresolved.join(", ")}`);
+  const cards = (Array.isArray(detail.cards) ? detail.cards : []) as Array<{ kind?: string; title?: string; summary?: string }>;
+  if (cards.length) {
+    console.log("Presented:");
+    for (const card of cards) console.log(`  ${card.kind} · ${card.title} · ${card.summary ?? ""}`.trimEnd());
+  }
   const queue = detail.queue;
   if (queue) {
     const assignments = queueAssignments(queue);

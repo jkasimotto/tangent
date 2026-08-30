@@ -63,7 +63,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
   }
 
   /** Opens one Document and records its place in the reading trail. */
-  async function openDocument(file, { trail = "push", trailIndex = -1, heading = "" } = {}) {
+  async function openDocument(file, { trail = "push", trailIndex = -1, heading = "", presentation = null } = {}) {
     const enteringReader = state.view !== "document" || !state.document;
     const vaultRecord = vaultLinkRecord(file);
     const goal = goalByFile(file) ?? (vaultRecord?.kind === "goal" ? vaultRecord : null);
@@ -92,7 +92,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
           : Promise.resolve(null),
       ]);
       state.document = documentRecord;
-      await markPresentationOpened(file, documentRecord.hash);
+      await markPresentationOpened(file, documentRecord.hash, presentation);
       state.goalDetail = goalDetail;
       updateDocumentTrail(file, trail, trailIndex);
       paint(true);
@@ -124,18 +124,28 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
   }
 
   /** Finds the Goal presentation that authorizes one reader file. */
-  function presentationForFile(file) {
+  function presentationForFile(file, scope = null) {
+    if (scope?.dataset?.presentationArea) {
+      const area = (state.vault?.areas ?? []).find((entry) => entry.path === scope.dataset.presentationArea);
+      const item = (area?.presentations ?? []).find((entry) => entry.file === file);
+      if (item) return { scope: "area", area, item };
+    }
     for (const area of state.vault?.areas ?? []) for (const goal of area.goals ?? []) {
       const item = (goal.presentations ?? []).find((entry) => entry.file === file);
-      if (item) return { goal, item };
+      if (item) return { scope: "goal", goal, item };
+    }
+    for (const area of state.vault?.areas ?? []) {
+      const item = (area.presentations ?? []).find((entry) => entry.file === file);
+      if (item) return { scope: "area", area, item };
     }
     return null;
   }
 
   /** Clears temporary Work attention after a successful read. */
-  async function markPresentationOpened(file, hash) {
-    const presentation = presentationForFile(file);
-    if (presentation) await post("/api/goals/presented-opened", { goal: presentation.goal.file, file, hash }).catch(() => {});
+  async function markPresentationOpened(file, hash, scope = null) {
+    const presentation = presentationForFile(file, scope);
+    if (presentation?.scope === "area") await post("/api/areas/presented-opened", { area: presentation.area.path, file, hash }).catch(() => {});
+    else if (presentation) await post("/api/goals/presented-opened", { goal: presentation.goal.file, file, hash }).catch(() => {});
   }
 
   /** Selects the vault or repository allow-list read route. */
@@ -195,7 +205,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
    * `state.view`, never touches the terminal, and never stores a screen return
    * point, because everything below it stays mounted.
    */
-  async function openDocumentPeek(file, { heading = "", trail = "push", trailIndex = -1, origin = null } = {}) {
+  async function openDocumentPeek(file, { heading = "", trail = "push", trailIndex = -1, origin = null, presentation = null } = {}) {
     if (!file) return;
     const opening = !state.documentPeek;
     if (!opening && state.commentComposer?.surface === "quick" && state.commentComposer.file !== file) state.commentComposer = null;
@@ -211,6 +221,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
       state.documentPeek = {
         file, document: null, trail: [], trailIndex: -1, positions: new Map(),
         returnFocus: focus, returnFocusKey: focus?.dataset?.focusKey ?? "",
+        presentation,
         requestSerial: serial, error: "", title: record?.title ?? "", area: record?.area ?? "",
       };
     } else {
@@ -225,7 +236,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
       const loaded = await api(documentReadUrl(file), { signal: request.signal });
       if (!peekOwnsResult(serial, file)) return;
       state.documentPeek.document = loaded;
-      await markPresentationOpened(file, loaded.hash);
+      await markPresentationOpened(file, loaded.hash, state.documentPeek.presentation);
       state.documentPeek.error = "";
       paintPeek();
       restorePeekPosition(heading);
@@ -309,7 +320,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     closeDocumentPeek();
     if (state.sessionPeek) closeSessionLayer();
     state.documentPositions.set(file, top);
-    return openDocument(file);
+    return openDocument(file, { presentation: peek.presentation });
   }
 
   /** Leaves the quick path for one explicit Goal or Area route. */

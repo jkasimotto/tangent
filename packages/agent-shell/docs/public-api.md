@@ -36,6 +36,7 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 - `tangent area create <parent> <name>` creates one nested Area.
 - `tangent area recent <area>` reads subtree milestones. `--since` takes a window (`30d`, `12h`, `2w`, `90m`) or an ISO time, and `--query` keeps the milestones whose summary or reference holds any of its words.
 - `tangent area audit <area>` writes one detached compatibility audit.
+- `tangent area present <area> <file>... [--note <text>] [--withdraw]` lets the exact active Area brain present or withdraw vault Documents from its own Area. It creates no Goal relation.
 - `tangent goal create --area <area> --title <text> --done-when <text> ...` creates one Goal and optional Subgoals.
 - `tangent goal start <slug> [--step <instruction> --launch <ref> --path <directory>]...` starts work. A worker opens in the step's `--path`, else in the nearest `- Worktree:` or `- Repository:` line under `## Resources` in the Area note or a parent Area note. An Area with no folder is refused before any record is written. The refusal names the note to edit and the line to add. A `- Repository:` line that points into the vault binds only the Area that declares it. The start output prints the folder beside each step's harness, and the attempt records `cwd` and `cwdSource` (`step` or `area:<area>`).
 - `tangent goal show <slug>` prints each attempt's session, cwd, harness, conversation id, resume command, and last context fill (ADR-0042). `--conversations` finds a codex conversation by the attempt's folder and start time.

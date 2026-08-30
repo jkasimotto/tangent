@@ -12,6 +12,7 @@ export function projectGoalDetail({
   queue = null,
   sessions = [],
   relatedDocuments = null,
+  cards = null,
   commands = null,
   registry = null,
 } = {}) {
@@ -61,6 +62,7 @@ export function projectGoalDetail({
     markdown: String(markdown || goal.text || ""),
     dependencies,
     relatedDocuments: structuredClone(relatedDocuments ?? normalizedGoal.documents ?? []),
+    cards: structuredClone(cards ?? normalizedGoal.cards ?? []),
     queue: queue ? structuredClone(queue) : null,
     sessions: structuredClone(relatedSessions),
     attempts,

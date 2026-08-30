@@ -141,6 +141,38 @@ test("presented Documents are capped child rows whose visible dismiss control us
   }, "the pointer dismisses only its own Goal presentation");
 });
 
+test("brain cards share the child-row cap, expose accessible actions, copy, open, and dismiss without Goal mutation", async () => {
+  const fixture = workTableFixture();
+  const goal = fixture.goals[0];
+  goal.presentations = [{ file: "otto/onboarding/design.md", root: "vault", title: "Design", presentedBy: { session: "worker-a" }, presentedAt: "2026-08-28T00:00:00.000Z" }];
+  goal.cards = [
+    { id: "copy-1", kind: "copy", title: "Review request", fields: { text: "Please review" }, fieldsHash: "a", summary: "Please review", presentedBy: { session: "brain-a" }, presenterLive: true },
+    { id: "link-1", kind: "link", title: "Preview", fields: { label: "Preview", url: { href: "https://example.com/", host: "example.com" } }, fieldsHash: "b", summary: "example.com", presentedBy: { session: "brain-a" }, presenterLive: true },
+    { id: "check-1", kind: "checklist", title: "Done when", fields: { items: [{ label: "Tests", done: true }] }, fieldsHash: "c", summary: "1 of 1 done", presentedBy: { session: "brain-a" }, presenterLive: false },
+  ];
+  const copied = [];
+  const { window, document, posts } = await bootWorkTable(fixture);
+  Object.defineProperty(window.navigator, "clipboard", { value: {
+    /** Records one clipboard write. */
+    writeText: async (value) => copied.push(value),
+  } });
+  const opened = [];
+  window.open = (...args) => { opened.push(args); return {}; };
+  const cards = [...document.querySelectorAll("[data-card-id]")];
+  assert.equal(cards.length, 2, "one Document and two cards use the three-row render budget");
+  assert.match(document.querySelector("[data-work-cursor^='document-more:']").textContent, /and 1 more/);
+  assert.equal(cards[0].querySelector("[data-work-row-title]").getAttribute("aria-label"), "copy: Review request, presented by brain-a");
+  assert.ok([...cards[0].querySelectorAll("button")].every((button) => button.hasAttribute("aria-keyshortcuts")));
+  cards[0].querySelector("[data-card-action]").click();
+  await settle(window);
+  assert.deepEqual(copied, ["Please review"]);
+  cards[1].querySelector("[data-card-action]").click();
+  assert.deepEqual(opened[0], ["https://example.com/", "_blank", "noopener"]);
+  cards[0].querySelector("[data-card-dismiss]").click();
+  await settle(window);
+  assert.deepEqual(posts.at(-1), { path: "/api/goals/dismiss-card", body: { goal: goal.file, id: "copy-1" } });
+});
+
 test("presented Documents stay on Work after Enter opens one, o is the full-reader alias, and x dismisses only its own row", async () => {
   const fixture = workTableFixture();
   const goal = fixture.goals[0];
@@ -183,6 +215,25 @@ test("presented Documents stay on Work after Enter opens one, o is the full-read
     file: "otto/onboarding/design-1.md",
   }, "x sends the same exact Goal presentation as its visible dismiss control");
   assert.equal(posts.some((post) => post.path === "/api/goals/withdraw-presentation"), false);
+});
+
+test("Area presentations use the Document readers and Area routes without a Goal", async () => {
+  const fixture = workTableFixture();
+  const area = fixture.vault.areas.find((item) => item.path === "otto/tangent");
+  area.presentations = [{ file: "otto/tangent/design-area.md", root: "vault", title: "Area direction", presentedBy: { session: "otto-tangent--brain" }, presentedAt: "2026-08-28T00:00:00Z", note: "Read this" }];
+  /** Serves the presented Area Document. */
+  const documentRecord = (url) => ({ file: url.searchParams.get("file"), title: "Area direction", hash: "h1", markdown: "# Area direction", html: "<h1>Area direction</h1>", headings: [], comments: [] });
+  const { window, document, posts } = await bootWorkTable(fixture, { documentRecord });
+  const row = document.querySelector("[data-presentation-area='otto/tangent']");
+  assert.ok(row, "the presentation appears below its Area header");
+  assert.equal(row.dataset.presentationGoal, undefined, "the row has no Goal identity");
+  row.querySelector("[data-open-document]").click();
+  await settle(window);
+  assert.deepEqual(posts.find((post) => post.path === "/api/areas/presented-opened")?.body, { area: "otto/tangent", file: "otto/tangent/design-area.md", hash: "h1" });
+  assert.equal(document.querySelectorAll("[data-presentation-area='otto/tangent']").length, 1, "opening keeps the Area presentation");
+  row.querySelector("[data-withdraw-presentation]").click();
+  await settle(window);
+  assert.deepEqual(posts.at(-1), { path: "/api/areas/dismiss-presentation", body: { area: "otto/tangent", file: "otto/tangent/design-area.md" } });
 });
 
 test("Area presentation keys preserve owner scope and restore focus after dismissal", async () => {

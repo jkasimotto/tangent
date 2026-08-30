@@ -18,6 +18,42 @@ export async function readGoalPresentations(root, area, slug) {
   }
 }
 
+/** Presents or updates one validated card without changing its stable identity. */
+export async function presentGoalCard(root, goal, card, presenter, now = new Date().toISOString()) {
+  const record = await readGoalPresentations(root, goal.area, goal.slug);
+  record.cards ??= [];
+  const current = record.cards.find((entry) => entry.kind === card.kind && entry.title === card.title);
+  if (current?.fieldsHash === card.fieldsHash) return { record, card: current, changed: false };
+  const entry = current ?? { id: randomUUID(), kind: card.kind, title: card.title, presentedAt: now };
+  Object.assign(entry, { fields: card.fields, fieldsHash: card.fieldsHash, presentedBy: presenter, updatedAt: now, dismissedAt: null, dismissedHash: null });
+  if (!current) record.cards.push(entry);
+  await save(root, record);
+  return { record, card: entry, changed: true };
+}
+
+export async function withdrawGoalCard(root, goal, title) {
+  const record = await readGoalPresentations(root, goal.area, goal.slug);
+  const before = (record.cards ?? []).length;
+  record.cards = (record.cards ?? []).filter((entry) => entry.title !== title);
+  if (record.cards.length === before) return { record, card: null, changed: false };
+  await save(root, record);
+  return { record, changed: true };
+}
+
+export async function dismissGoalCard(root, goal, id, now = new Date().toISOString()) {
+  const record = await readGoalPresentations(root, goal.area, goal.slug);
+  const card = (record.cards ?? []).find((entry) => entry.id === id);
+  if (!card) return { record, card: null, changed: false };
+  if (card.dismissedAt && card.dismissedHash === card.fieldsHash) return { record, card, changed: false };
+  card.dismissedAt = now; card.dismissedHash = card.fieldsHash;
+  await save(root, record);
+  return { record, card, changed: true };
+}
+
+export function projectCards(record) {
+  return [...(record.cards ?? [])].filter((card) => card.dismissedAt === null || card.dismissedHash !== card.fieldsHash).sort((a, b) => a.presentedAt.localeCompare(b.presentedAt));
+}
+
 /** Saves one complete presentation record atomically. */
 async function save(root, record) {
   const file = recordPath(root, record.area, record.slug);

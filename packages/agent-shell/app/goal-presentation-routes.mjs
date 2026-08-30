@@ -10,6 +10,9 @@ export function createGoalPresentationRoutes(operations) {
       "/api/goals/withdraw-presentation": operations.withdraw,
       "/api/goals/dismiss-presentation": operations.dismiss,
       "/api/goals/presented-opened": operations.opened,
+      "/api/goals/present-card": operations.presentCard,
+      "/api/goals/withdraw-card": operations.withdrawCard,
+      "/api/goals/dismiss-card": operations.dismissCard,
     };
     const operation = handlers[url.pathname];
     if (!operation) return false;

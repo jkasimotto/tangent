@@ -13,6 +13,8 @@ Start with `tangent goal list <area>` and `tangent area show <area>`. Informatio
 - `tangent goal list <area>`, `tangent goal show <slug>`: what is open and its state.
 - `tangent goal create --area <area> --title "<t>" --start --path <dir> [--launch <harness[/model[/effort]]>] [--verify] [--instruction "<i>"] [--source <vault-file>]`: create a Goal and start a worker in `<dir>`. Take `<dir>` from your Area's Knowledge. No `--launch` lends your own harness.
 - `tangent goal append <slug> --step "<instruction>"`: add a step, for example a review.
+- `tangent goal present <slug> --card <kind> --title "<t>" [<fields>]`: show Julian one fact or action under the Goal on Work. Kinds are `copy`, `link`, `links`, `progress`, `checklist`, `commits`, and `reviews`. Send the same kind and title again to update it. Use `tangent goal present --help` for fields.
+- `tangent goal present <slug> --withdraw-card "<t>"`: take a card down. `tangent goal present <slug> <file>` still presents a Document.
 - `tangent goal done <slug>`, `tangent goal wont-do <slug> --reason "<r>"`, `tangent goal park <slug>`: finish or park a Goal after a worker's done note. A Goal Julian flagged `verify` waits for him instead.
 - `tangent send <session|area> "<text>"`: message a worker or another Area's brain.
 - `tangent area show <area>`: the Area's note, skills, and processes.

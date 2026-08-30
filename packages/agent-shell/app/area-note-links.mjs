@@ -19,6 +19,8 @@ const KNOWN_ROOT_AGENTS_SHA256 = new Set([
   "ccdb0bea5e2062651bd59b959541fc5b63a3ffe8edd52dca492ba498e75ca6e3",
   "a33774d85bed7b636db43925e50583691ede9898397924f3df723656013163c0",
   "bab789f8f60d1f0269cd7ea095be7234fcf2267607b8a4713a0603ea3c99cfb0",
+  "14dfde36d20ba15569e0808a1ff622748b9c258db7e14335b827636d757332a7",
+  "9432e7e2fd709684ea6d826b8a814f3962bf6fd1b09ddc7c946a5f16678cb3ca",
 ]);
 
 /** The text of the vault root AGENTS.md this build ships, for a vault that has none. */

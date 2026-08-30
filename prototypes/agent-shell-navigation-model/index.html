@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Shell navigation model mockup</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fafafa; --fg: #1a1a1a; --muted: #6b6b6b; --line: #ddd; --cursor: #dbeafe; --live: #16a34a; --key-bg: #eee; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161616; --fg: #e6e6e6; --muted: #9a9a9a; --line: #333; --cursor: #1e3a5f; --key-bg: #2a2a2a; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
+  header { display: flex; gap: 16px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 14px; margin: 0; }
+  header .spacer { flex: 1; }
+  main { display: grid; grid-template-columns: 1fr 320px; min-height: calc(100vh - 40px); }
+  #tree { padding: 8px 0; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 4px 16px; cursor: default; border-left: 3px solid transparent; }
+  .row.cursor { background: var(--cursor); border-left-color: #2563eb; }
+  .row .title { flex: 1; }
+  .row .kind { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; width: 84px; }
+  .row .status { color: var(--muted); font-size: 12px; }
+  .row .live { color: var(--live); font-size: 12px; }
+  .row .verbs { display: none; gap: 4px; }
+  .row.cursor .verbs, .row:hover .verbs { display: flex; }
+  .twisty { width: 12px; color: var(--muted); }
+  kbd { display: inline-block; min-width: 14px; padding: 0 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; background: var(--key-bg); font: 11px ui-monospace, monospace; text-align: center; }
+  button { font: inherit; background: var(--key-bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+  button:hover { border-color: var(--fg); }
+  aside { border-left: 1px solid var(--line); padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 4px; }
+  #log { font: 12px ui-monospace, monospace; color: var(--muted); max-height: 40vh; overflow: auto; }
+  #log div:first-child { color: var(--fg); }
+  #layers { position: fixed; inset: 0; pointer-events: none; }
+  .layer { position: absolute; inset: 40px 0 0 0; background: var(--bg); border-top: 3px solid #2563eb; pointer-events: auto; padding: 16px 24px; }
+  .layer.modal { inset: auto; top: 30%; left: 50%; transform: translateX(-50%); min-width: 360px; border: 1px solid var(--line); border-top: 3px solid #2563eb; border-radius: 6px; box-shadow: 0 8px 32px rgba(0,0,0,.3); }
+  .layer .bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .layer .bar strong { flex: 1; }
+  .choice { display: flex; gap: 10px; padding: 4px 0; align-items: center; cursor: pointer; }
+  .choice.cursor { background: var(--cursor); }
+  .term { font: 13px ui-monospace, monospace; background: #000; color: #9f9; padding: 12px; border-radius: 4px; min-height: 200px; }
+  input { font: inherit; width: 100%; padding: 6px 8px; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
+  .path { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agent Shell navigation model mockup</h1>
+  <span class="spacer"></span>
+  <button data-action="goto">Go To <kbd>⌘K</kbd></button>
+  <button data-action="keys">Keys <kbd>?</kbd></button>
+</header>
+<main>
+  <div id="tree" role="tree"></div>
+  <aside>
+    <div><h2>Cursor</h2><div id="cursor-info"></div></div>
+    <div><h2>Verbs on this object</h2><div id="cursor-verbs"></div></div>
+    <div><h2>Log</h2><div id="log"></div></div>
+  </aside>
+</main>
+<div id="layers"></div>
+<script type="module">
+import { STATUS_CHOICES, applyVerb, back, cursorRow, goToRows, handleListKey, initialState, revealPath, setCursor, verbsFor, visibleRows } from "./navigation-model.mjs";
+
+let state = initialState();
+let goToQuery = "";
+let goToIndex = 0;
+const log = [];
+
+/** Record a log line and repaint. */
+function commit(next, line) {
+  state = next;
+  if (line) log.unshift(line);
+  render();
+}
+
+/** Paint the tree, side panel, and layer stack from state. */
+function render() {
+  const tree = document.getElementById("tree");
+  tree.innerHTML = "";
+  for (const row of visibleRows(state.tree, state.expanded)) {
+    const el = document.createElement("div");
+    el.className = "row" + (row.id === state.cursor ? " cursor" : "");
+    el.style.paddingLeft = 16 + row.depth * 20 + "px";
+    el.dataset.id = row.id;
+    const live = row.session ? `<span class="live">● ${row.session}</span>` : "";
+    const status = row.status ? `<span class="status">${row.status}</span>` : "";
+    const verbs = verbsFor(row).map((verb) => `<button data-verb="${verb.id}" title="${verb.label}"><kbd>${verb.key}</kbd></button>`).join("");
+    el.innerHTML = `<span class="twisty">${row.hasChildren ? (row.expanded ? "▾" : "▸") : ""}</span><span class="kind">${row.kind}</span><span class="title">${row.title}</span>${status}${live}<span class="verbs">${verbs}</span>`;
+    tree.appendChild(el);
+  }
+  const row = cursorRow(state);
+  document.getElementById("cursor-info").innerHTML = `<div><strong>${row.title}</strong></div><div class="path">${row.kind} · ${row.id}</div>`;
+  document.getElementById("cursor-verbs").innerHTML = verbsFor(row).map((verb) => `<div class="choice"><kbd>${verb.key}</kbd>${verb.label}</div>`).join("");
+  document.getElementById("log").innerHTML = log.slice(0, 40).map((line) => `<div>${line}</div>`).join("");
+  renderLayers();
+}
+
+/** Paint the layer stack; only the top layer takes input. */
+function renderLayers() {
+  const host = document.getElementById("layers");
+  host.innerHTML = "";
+  state.layers.forEach((layer, index) => {
+    const el = document.createElement("div");
+    const modal = ["status", "menu", "keys", "goto"].includes(layer.kind);
+    el.className = "layer" + (modal ? " modal" : "");
+    el.inert = index !== state.layers.length - 1;
+    let body = "";
+    if (layer.kind === "session") body = `<div class="term">$ tmux attach -t ${layer.session}\n\n(worker output would stream here)\n\nOnly <kbd>⌘J</kbd> and Escape leave the terminal.</div>`;
+    if (layer.kind === "reader") body = `<p>Reader for <strong>${layer.title}</strong>. <kbd>j</kbd>/<kbd>k</kbd> scroll, <kbd>{</kbd>/<kbd>}</kbd> headings, <kbd>n</kbd>/<kbd>N</kbd> comments.</p>`;
+    if (layer.kind === "editor") body = `<p>${layer.title}</p><p class="path">Editing makes the thing live; Enter on it afterwards attaches.</p>`;
+    if (layer.kind === "status") body = layer.choices.map(([key, label]) => `<div class="choice" data-choice="${key}"><kbd>${key}</kbd>${label}</div>`).join("");
+    if (layer.kind === "menu" || layer.kind === "keys") body = layer.verbs.map((verb) => `<div class="choice" data-menu-verb="${verb.id}"><kbd>${verb.key}</kbd>${verb.label}</div>`).join("") + (layer.kind === "keys" ? `<div class="choice"><kbd>j</kbd>/<kbd>k</kbd> rows, <kbd>h</kbd>/<kbd>l</kbd> tree, <kbd>gg</kbd>/<kbd>G</kbd>, <kbd>{</kbd>/<kbd>}</kbd> Areas, <kbd>⌘K</kbd> Go To, <kbd>Esc</kbd> Back</div>` : "");
+    if (layer.kind === "goto") {
+      const rows = goToRows(state.tree, goToQuery);
+      goToIndex = Math.min(goToIndex, Math.max(0, rows.length - 1));
+      body = `<input id="goto-input" placeholder="Type to find any object or session" value="${goToQuery}">` + rows.map((r, i) => `<div class="choice${i === goToIndex ? " cursor" : ""}" data-goto="${r.id}"><span class="kind">${r.kind}</span>${r.path}${r.session ? ` <span class="live">● ${r.session}</span>` : ""}</div>`).join("");
+    }
+    el.innerHTML = `<div class="bar"><strong>${layer.title}</strong><button data-action="back">Back <kbd>Esc</kbd></button></div>${body}`;
+    host.appendChild(el);
+  });
+  const input = document.getElementById("goto-input");
+  if (input) { input.focus(); input.setSelectionRange(goToQuery.length, goToQuery.length); }
+}
+
+/** Open Go To as a layer; arrows move while letters type. */
+function openGoTo() {
+  goToQuery = ""; goToIndex = 0;
+  commit({ ...state, layers: [...state.layers, { kind: "goto", title: "Go To", returnCursor: state.cursor }] }, "");
+}
+
+/** Land on a Go To row: reveal it, then apply Enter through the verb table. */
+function landGoTo(id) {
+  const revealed = revealPath(back(state), id);
+  const result = applyVerb(revealed, "enter");
+  commit(result.state, `Go To → ${id}. ${result.log}`);
+}
+
+document.addEventListener("keydown", (event) => {
+  const top = state.layers.at(-1);
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); return top?.kind === "goto" ? commit(back(state), "") : openGoTo(); }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") { event.preventDefault(); return top?.kind === "session" ? commit(back(state), "Back to the list") : commit(applyVerb(state, "enter").state, applyVerb(state, "enter").log); }
+  if (event.key === "Escape") { event.preventDefault(); return top ? commit(back(state), "Back: cursor restored to " + top.returnCursor) : commit(state, "Escape at the root: nothing above"); }
+  if (!top) {
+    if (["j", "k", "h", "l", "g", "G", "{", "}", "Enter", "o", "x", ":", "a", "?", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+      event.preventDefault();
+      const result = handleListKey(state, event.key);
+      commit(result.state, result.log);
+    }
+    return;
+  }
+  if (top.kind === "goto") {
+    const rows = goToRows(state.tree, goToQuery);
+    if (event.key === "ArrowDown") { event.preventDefault(); goToIndex = Math.min(rows.length - 1, goToIndex + 1); return render(); }
+    if (event.key === "ArrowUp") { event.preventDefault(); goToIndex = Math.max(0, goToIndex - 1); return render(); }
+    if (event.key === "Enter") { event.preventDefault(); return rows[goToIndex] && landGoTo(rows[goToIndex].id); }
+    return;
+  }
+  if (top.kind === "status") {
+    const result = applyVerb(state, "status", event.key);
+    if (result.log && !/not a status choice/.test(result.log)) { event.preventDefault(); commit(result.state, result.log); }
+    return;
+  }
+  if (top.kind === "menu") {
+    const verb = top.verbs.find((v) => v.key === event.key);
+    if (verb) { event.preventDefault(); const result = applyVerb(back(state), verb.id); commit(result.state, result.log); }
+    return;
+  }
+  if (top.kind === "session") event.preventDefault();
+});
+
+document.addEventListener("input", (event) => {
+  if (event.target.id === "goto-input") { goToQuery = event.target.value; goToIndex = 0; render(); }
+});
+
+document.addEventListener("click", (event) => {
+  const verbButton = event.target.closest("[data-verb]");
+  if (verbButton) { event.stopPropagation(); const id = verbButton.closest(".row").dataset.id; const result = applyVerb(setCursor(state, id), verbButton.dataset.verb); return commit(result.state, result.log); }
+  const row = event.target.closest(".row");
+  if (row) return commit(setCursor(state, row.dataset.id), "");
+  const choice = event.target.closest("[data-choice]");
+  if (choice) { const result = applyVerb(state, "status", choice.dataset.choice); return commit(result.state, result.log); }
+  const menuVerb = event.target.closest("[data-menu-verb]");
+  if (menuVerb) { const result = applyVerb(back(state), menuVerb.dataset.menuVerb); return commit(result.state, result.log); }
+  const goto = event.target.closest("[data-goto]");
+  if (goto) return landGoTo(goto.dataset.goto);
+  const action = event.target.closest("[data-action]")?.dataset.action;
+  if (action === "back") return commit(back(state), "Back");
+  if (action === "goto") return openGoTo();
+  if (action === "keys") { const result = handleListKey(state, "?"); return commit(result.state, ""); }
+});
+
+document.addEventListener("dblclick", (event) => {
+  const row = event.target.closest(".row");
+  if (row) { const result = applyVerb(setCursor(state, row.dataset.id), "enter"); commit(result.state, result.log); }
+});
+
+render();
+</script>
+</body>
+</html>

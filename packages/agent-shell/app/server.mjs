@@ -105,8 +105,9 @@ import { notifyGoalWaitsForCheck, removeGoalCheckNotification } from "./julian-n
 import { appendIdea, areaNoteTemplate, areaTitle, currentSectionKey, ensureAreaNoteLinks, ensureVaultRootLinks, ideasFilePath, ideasFromFile, noteSignal, orderGoals, vaultRootAgentsText } from "./area-note-links.mjs";
 import { newAttemptReplacement, readAllAttemptReplacements, readAttemptReplacement, sameAttemptReplacementRequest, transitionAttemptReplacement, unsettledAttemptReplacements, writeAttemptReplacement } from "./goal-attempt-replacement.mjs";
 import { GoalExecutionTransitionError, attachLateSourceEvidence, parkCurrentGoalAttempt, promoteReadyReplacement, reopenParkedGoalQueue } from "./goal-execution-transition.mjs";
-import { dismissGoalDocument, markGoalDocumentOpened, presentGoalDocument, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalDocument } from "./goal-presentations.mjs";
+import { dismissGoalCard, dismissGoalDocument, markGoalDocumentOpened, presentGoalCard, presentGoalDocument, projectCards, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalCard, withdrawGoalDocument } from "./goal-presentations.mjs";
 import { createGoalPresentationRoutes } from "./goal-presentation-routes.mjs";
+import { createAreaPresentationRoutes } from "./area-presentation-routes.mjs";
 import { createAreaMapContextRoutes } from "./area-map-context-routes.mjs";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createAreaMapWorldRoutes } from "./area-map-world-routes.mjs";
@@ -114,6 +115,8 @@ import { createAreaMapTransactionRepository } from "./area-map-transaction-repos
 import { createAreaMapWorldViewStore } from "./area-map-world-view-store.mjs";
 import { areaMapWorldEnabled } from "./public/area-map-rollout.js";
 import { workerWallNotice } from "./worker-wall-notice.mjs";
+import { dismissAreaDocument, markAreaDocumentOpened, presentAreaDocuments, projectAreaPresentations, pruneMissingAreaPresentations, readAreaPresentations, removeAreaPresentations, withdrawAreaDocument } from "./area-presentations.mjs";
+import { cardFieldsHash, cardSummary, validateCard } from "./goal-cards.mjs";
 import { projectWork } from "./work-projection.mjs";
 
 const rawExecFileAsync = promisify(execFile);
@@ -1035,6 +1038,16 @@ async function buildVaultIndex() {
     await pruneMissingPresentations(PRESENTATIONS_ROOT, record, (item) => stat(item.root === "vault" ? path.join(TREES_ROOT, item.file) : item.file).then(() => true, () => false));
     return [goal.file, record];
   })));
+  const presentationsByArea = new Map(await Promise.all(flat.map(async ({ path: area }) => {
+    try {
+      const record = await readAreaPresentations(PRESENTATIONS_ROOT, area);
+      await pruneMissingAreaPresentations(PRESENTATIONS_ROOT, record, (item) => stat(path.join(TREES_ROOT, item.file)).then(() => true, () => false));
+      return [area, record];
+    } catch (error) {
+      console.error(`area presentation projection failed for ${area}:`, error?.message ?? error);
+      return [area, null];
+    }
+  })));
   for (const goal of bySlug.values()) {
     for (const subgoal of goal.subgoals) {
       if (!parentBySlug.has(subgoal)) parentBySlug.set(subgoal, goal.slug);
@@ -1120,6 +1133,11 @@ async function buildVaultIndex() {
     const presentationRecord = presentationsByGoal.get(goal.file);
     const presented = projectPresentations(presentationRecord);
     goal.presentations = presented.map((item) => ({ ...item }));
+    goal.cards = await Promise.all(projectCards(presentationRecord).map(async (card) => ({
+      ...card,
+      summary: cardSummary(card),
+      presenterLive: Boolean(await liveBrainForSession(card.presentedBy?.session)),
+    })));
     for (const item of presented.reverse()) {
       const existing = goal.documents.findIndex((document) => document.file === item.file);
       const projected = { file: item.file, title: item.title, kind: "document", root: item.root, repository: item.repository, presentedBy: item.presentedBy, presentedAt: item.presentedAt, note: item.note };
@@ -1176,6 +1194,7 @@ async function buildVaultIndex() {
       note: records.find((r) => r.kind === "note" && r.area === n.path),
       noteSignal: signal,
       documents: documents.map((d) => ({ ...d, backlinks: backlinks.get(d.file) ?? [] })),
+      presentations: presentationsByArea.get(n.path) ? projectAreaPresentations(presentationsByArea.get(n.path)).map((item) => ({ ...item })) : [],
       goals,
     });
   }
@@ -1533,6 +1552,9 @@ async function setAreaStatus(area, status, tmuxSession) {
   await vaultRepository.writeMarkdown(file, next);
   await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
   await vaultCommit([file], `update: ${area} area ${status === "active" ? "reopened" : status}`, area, tmuxSession);
+  if (HIDDEN_AREA_STATUSES.has(status)) {
+    await removeAreaPresentations(PRESENTATIONS_ROOT, area, true).catch((error) => console.error(`remove Area presentations for ${area}:`, error));
+  }
   const openGoals = (await readAreaGoalsDeep(area)).filter((goal) => !["done", "dropped", "parked"].includes(goal.status));
   return { file, status, openGoals: openGoals.length };
 }
@@ -6524,10 +6546,10 @@ const agentRoutes = createAgentRoutes({
     const text = normalizeMessage(body.text);
     const session = String(body.from ?? "").trim();
     const kind = body.kind == null ? null : String(body.kind);
-    if (kind !== null && !WORKER_SEND_KINDS.has(kind)) return { status: 400, error: `Unknown send kind "${kind}". Use --done, --blocked, --question, or no flag.` };
+    if (kind !== null && !WORKER_SEND_KINDS.has(kind)) return { status: 400, error: `Unknown send kind "${kind}". Use --done, --blocked, or no flag.` };
     const actor = await commandProvenance(session);
     if (actor.role === "repair") {
-      if (!actor.area || !["done", "blocked", "question"].includes(kind)) return { status: 400, error: "the repair crew finishes with tangent send brain --done or --blocked" };
+      if (!actor.area || !["done", "blocked"].includes(kind)) return { status: 400, error: "the repair crew finishes with tangent send brain --done or --blocked" };
       const result = kind === "done" ? "done" : "blocked";
       const ended = await withBrainMutation(actor.area, () => endRepairCrewUnlocked(actor.area, result, text));
       if (!ended || ended.session !== session) return { status: 409, error: "this repair crew is no longer current" };
@@ -6989,6 +7011,98 @@ const goalPresentationRoutes = createGoalPresentationRoutes({
     for (const goal of candidates) changed = (await markGoalDocumentOpened(PRESENTATIONS_ROOT, goal, String(body.file ?? ""), body.hash ?? null)).changed || changed;
     return { status: 200, value: { ok: true, changed } };
   },
+  /** Validates declarative data and lets only the Goal's live Area brain store it. */
+  async presentCard(body) {
+    const goals = await goalsByFile();
+    const requested = String(body.goal ?? "");
+    const goal = goals.get(requested) ?? [...goals.values()].find((item) => item.slug === requested);
+    if (!goal || ["done", "dropped", "parked", "deferred"].includes(normalizeGoalStatus(goal.status))) return { status: 404, error: `no open Goal ${requested}` };
+    const organizer = await liveCallingOrganizer(actingSession(body), goal.area);
+    if (!organizer) return { status: 403, error: `only the live organizer of ${goal.area} can present a card on this Goal` };
+    let card;
+    try {
+      card = await validateCard(body.card?.kind, body.card?.title, body.card?.fields, async (file) => {
+        const document = await resolvePresentedDocument(goal, file);
+        if (document.error) throw new Error(document.error);
+        return { file: document.file, root: document.root, ...(document.repository ? { repository: document.repository } : {}) };
+      });
+    } catch (error) { return { status: 400, error: String(error.message ?? error) }; }
+    const queue = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+    if (card.kind === "progress" && (queue?.steps ?? queue?.assignments ?? []).some((step) => ["running", "waiting"].includes(step.status))) {
+      return { status: 409, error: "progress card: this Goal has a live pipeline" };
+    }
+    const stored = await presentGoalCard(PRESENTATIONS_ROOT, goal, { ...card, fieldsHash: cardFieldsHash(card.fields) }, { session: organizer.session, role: organizer.role === "repair" ? "repair" : "brain", area: organizer.area });
+    return { status: 200, value: { goal: goal.file, card: stored.card, changed: stored.changed } };
+  },
+  /** Withdraws one current Goal card for its live Area brain. */
+  async withdrawCard(body) {
+    const goals = await goalsByFile();
+    const requested = String(body.goal ?? "");
+    const goal = goals.get(requested) ?? [...goals.values()].find((item) => item.slug === requested);
+    if (!goal) return { status: 404, error: `no Goal ${requested}` };
+    const brain = await liveBrainForSession(actingSession(body));
+    if (!brain || brain.area !== goal.area) return { status: 403, error: `only the live brain of ${goal.area} can withdraw a card on this Goal` };
+    const result = await withdrawGoalCard(PRESENTATIONS_ROOT, goal, String(body.title ?? ""));
+    return result.changed ? { status: 200, value: { ok: true } } : { status: 404, error: "no card with that title" };
+  },
+  /** Dismisses one Goal card from Julian's surface. */
+  async dismissCard(body) {
+    const goals = await goalsByFile();
+    const requested = String(body.goal ?? "");
+    const goal = goals.get(requested) ?? [...goals.values()].find((item) => item.slug === requested);
+    if (!goal) return { status: 404, error: `no Goal ${requested}` };
+    const result = await dismissGoalCard(PRESENTATIONS_ROOT, goal, String(body.id ?? ""));
+    return result.changed ? { status: 200, value: { ok: true } } : { status: 404, error: "no card with that id" };
+  },
+});
+const areaPresentationRoutes = createAreaPresentationRoutes({
+  /** Presents validated Area Documents for the exact active brain. */
+  async present(body) {
+    const area = cleanAreaPath(String(body.area ?? ""));
+    if (!area || !existsSync(areaDirectory(TREES_ROOT, area))) return { status: 404, error: `no Area ${area || "(none)"}` };
+    if (await hiddenAreaStatus(area)) return { status: 409, error: `Area ${area} is not open` };
+    const session = String(body.session ?? body.caller ?? "").trim();
+    const [actor, brain] = await Promise.all([commandProvenance(session), liveBrainForArea(area)]);
+    if (actor.role !== "brain" || actor.area !== area || !brain || brain.session !== session || (actor.generation && brain.generation && actor.generation !== brain.generation)) {
+      return { status: 403, error: `only the exact active brain of ${area} can present an Area Document` };
+    }
+    const files = Array.isArray(body.files) ? body.files : [body.file];
+    if (!files.length || files.some((file) => !String(file ?? "").trim())) return { status: 400, error: "at least one Document is required" };
+    const index = await vaultProjection.get();
+    const documents = [];
+    for (const requested of files) {
+      const file = String(requested);
+      const safe = safeMarkdownPath(TREES_ROOT, file);
+      if (!safe) return { status: 400, error: `${file} is not a vault Markdown file` };
+      const indexed = index.documents.find((item) => item.file === safe.relative);
+      if (!indexed) return { status: 404, error: `no Document ${file}` };
+      if (indexed.kind !== "document") return { status: 400, error: `${file} is not a Document` };
+      if (indexed.area !== area) return { status: 400, error: `${file} does not belong to ${area}` };
+      const text = await readFile(safe.absolute, "utf8");
+      documents.push({ file: safe.relative, root: "vault", title: indexed.title || markdownTitle(text), hash: documentHash(text) });
+    }
+    const result = await presentAreaDocuments(PRESENTATIONS_ROOT, area, documents, { session: brain.session, role: "brain", area }, body.note);
+    return { status: 200, value: { area, items: result.items } };
+  },
+  /** Withdraws one Area Document for the exact active brain. */
+  async withdraw(body) {
+    const area = cleanAreaPath(String(body.area ?? ""));
+    const session = String(body.session ?? body.caller ?? "").trim();
+    const [actor, brain] = await Promise.all([commandProvenance(session), liveBrainForArea(area)]);
+    if (actor.role !== "brain" || actor.area !== area || !brain || brain.session !== session) return { status: 403, error: `only the exact active brain of ${area} can withdraw an Area Document` };
+    const result = await withdrawAreaDocument(PRESENTATIONS_ROOT, area, String(body.file ?? ""));
+    return result.changed ? { status: 200, value: { ok: true } } : { status: 404, error: "no active Area presentation for that Document" };
+  },
+  /** Dismisses one Area Document from Julian's surface. */
+  async dismiss(body) {
+    const result = await dismissAreaDocument(PRESENTATIONS_ROOT, cleanAreaPath(String(body.area ?? "")), String(body.file ?? ""));
+    return result.changed ? { status: 200, value: { ok: true } } : { status: 404, error: "no active Area presentation for that Document" };
+  },
+  /** Records that Julian opened one presented Area Document revision. */
+  async opened(body) {
+    const result = await markAreaDocumentOpened(PRESENTATIONS_ROOT, cleanAreaPath(String(body.area ?? "")), String(body.file ?? ""), body.hash ?? null);
+    return { status: 200, value: { ok: true, changed: result.changed } };
+  },
 });
 const shellControlOperations = {
   spawn: spawnSession,
@@ -7417,6 +7531,7 @@ async function readGoalDetail(file, { conversations = false } = {}) {
     queue,
     sessions,
     relatedDocuments: goal.documents ?? [],
+    cards: goal.cards ?? [],
     registry: validRegistry,
   });
   if (conversations) await attachFoundConversations(goal, detail, validRegistry);
@@ -7945,6 +8060,7 @@ const server = http.createServer(async (req, res) => {
     if (await areaMapRoutes.handle(req, res, url)) return;
     if (await programRoutes.handle(req, res, url)) return;
     if (await processRoutes.handle(req, res, url)) return;
+    if (await areaPresentationRoutes.handle(req, res, url)) return;
     if (await goalPresentationRoutes.handle(req, res, url)) return;
     if (await documentRoutes.handle(req, res, url)) return;
     if (await shellControlRoutes.handle(req, res, url)) return;

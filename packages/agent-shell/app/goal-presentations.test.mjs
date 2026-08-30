@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { dismissGoalDocument, markGoalDocumentOpened, presentGoalDocument, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalDocument } from "./goal-presentations.mjs";
+import { dismissGoalCard, dismissGoalDocument, markGoalDocumentOpened, presentGoalCard, presentGoalDocument, projectCards, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalCard, withdrawGoalDocument } from "./goal-presentations.mjs";
 
 const goal = { area: "otto/tangent", slug: "documents" };
 
@@ -50,4 +50,19 @@ test("brain withdraw, missing-file pruning, and Goal closure still clear present
   assert.equal(pruned.changed, true, "a missing file cannot litter the attention store");
   assert.equal(await removeGoalPresentations(root, goal), true);
   assert.equal((await readGoalPresentations(root, goal.area, goal.slug)).items.length, 0);
+});
+
+test("cards update in place, dismiss by hash, return on change, and withdraw", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "goal-cards-"));
+  const first = { kind: "copy", title: "Review", fields: { text: "one" }, fieldsHash: "one" };
+  const created = await presentGoalCard(root, goal, first, { session: "brain", role: "brain", area: goal.area }, "2026-01-01T00:00:00.000Z");
+  assert.equal((await presentGoalCard(root, goal, first, {})).changed, false);
+  await dismissGoalCard(root, goal, created.card.id);
+  assert.equal(projectCards(await readGoalPresentations(root, goal.area, goal.slug)).length, 0);
+  const changed = await presentGoalCard(root, goal, { ...first, fields: { text: "two" }, fieldsHash: "two" }, {}, "2026-01-02T00:00:00.000Z");
+  assert.equal(changed.card.id, created.card.id);
+  assert.equal(changed.card.presentedAt, created.card.presentedAt);
+  assert.equal(projectCards(changed.record).length, 1);
+  await withdrawGoalCard(root, goal, first.title);
+  assert.equal(projectCards(await readGoalPresentations(root, goal.area, goal.slug)).length, 0);
 });

@@ -15,6 +15,7 @@ export async function runAreaCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "recent") return recentCommand(args);
   if (subcommand === "audit") return auditCommand(args);
   if (subcommand === "create") return createCommand(args);
+  if (subcommand === "present") return presentCommand(args);
   if (subcommand === "picture") return pictureCommand(args);
   if (subcommand === "propose") return proposeCommand(args);
   if (subcommand === "promote") return promoteCommand(args);
@@ -73,6 +74,22 @@ async function promoteCommand(args: Args): Promise<void> {
   console.log(`${result.idempotent ? "kept" : "attached"} durable result for ${result.promotion.id}`);
 }
 
+/** Presents or withdraws a Document in an Area without creating a Goal relation. */
+async function presentCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const area = await requireArea(server, requiredString(args._[1], "tangent area present requires <area> <file>..."));
+  const files = args._.slice(2).map(String).filter(Boolean);
+  if (!files.length) throw new Error("tangent area present requires at least one <file>.");
+  const session = stringArg(args.session) || (await currentTmuxSession()) || "";
+  if (booleanArg(args.withdraw)) {
+    if (files.length !== 1) throw new Error("tangent area present --withdraw takes one <file>.");
+    await postJson(server, "/api/areas/withdraw-presentation", { area, file: files[0], session });
+    console.log(`withdrew ${files[0]} from ${area}`);
+    return;
+  }
+  const result = await postJson(server, "/api/areas/present", { area, files, note: stringArg(args.note) ?? "", session });
+  console.log(`presented ${result.items.length} document${result.items.length === 1 ? "" : "s"} on ${area}`);
+}
 
 /** Exports legacy coordination records to a detached compressed audit file. */
 async function auditCommand(args: Args): Promise<void> {

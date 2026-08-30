@@ -19,7 +19,7 @@ Work shows all open Goals in one projection. An explicit keyboard context owns e
 
 Each Area can have one `.excalidraw` source shard. One browser world shows the complete Area hierarchy and keeps every structural region interactive. Vault notes remain authoritative for Tangent block facts. One gesture commits all affected shards together. See ADR-0049 and ADR-0051.
 
-An agent can present a Markdown document on its Goal. Work shows the human title until Julian opens or dismisses the document. The runtime record does not change the document or the Goal queue.
+An agent can present a Markdown Document on its Goal. An exact Area brain can also use `tangent area present <area> <file>...` to present an Area Document without a Goal. Work shows each presentation under its owner until Julian dismisses it. The runtime records do not change a Document, Goal queue, or Goal relation.
 
 Generic `tangent send` messages persist before pane wake or presentation. The controller restores them after a restart and keeps their exact target order. See ADR-0039.
 

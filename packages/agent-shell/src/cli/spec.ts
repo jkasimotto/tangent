@@ -37,6 +37,7 @@ export const areaCommandSpec: CliCommandSpec = {
     { name: "show", description: "Show one Area's purpose, resources, skills, processes, Goals, and ideas", args: "<area>", options: [serverOption, jsonOption] },
     { name: "recent", description: "Show material milestones for one Area and its child Areas", args: "<area>", options: [{ name: "since", takesValue: true, description: "Only milestones inside a window (30d, 12h, 2w, 90m) or after an ISO time" }, { name: "query", takesValue: true, description: "Only milestones whose summary or reference holds any of these words" }, { name: "limit", takesValue: true, description: "Maximum rows (default 12)" }, serverOption, jsonOption] },
     { name: "audit", description: "Export detached legacy Area-brain records for explicit audit", args: "<area>", options: [serverOption, jsonOption] },
+    { name: "present", description: "Present an Area Document without a Goal", args: "<area> <file>...", options: [{ name: "note", takesValue: true, description: "Short reason to read it" }, { name: "withdraw", description: "Withdraw one presented Document" }, { name: "session", takesValue: true, description: "Calling brain session" }, serverOption] },
     { name: "picture", description: "Present the exact Area brain's structured picture", args: "<area>", options: [{ name: "file", takesValue: true, description: "Validated area-picture JSON file" }, { name: "withdraw", description: "Withdraw the current picture" }, { name: "hash", takesValue: true, description: "Expected picture hash when withdrawing" }, { name: "session", takesValue: true, description: "Calling brain session" }, serverOption] },
     { name: "propose", description: "Propose a referenced map block without placing it", args: "<area>", options: [{ name: "source", takesValue: true, description: "Vault file with optional #subpath" }, { name: "link", takesValue: true, description: "HTTP or HTTPS URL" }, { name: "note", takesValue: true, description: "Why this block belongs" }, { name: "withdraw", takesValue: true, description: "Proposal ID to withdraw" }, { name: "version", takesValue: true, description: "Expected proposal version" }, { name: "session", takesValue: true, description: "Calling brain session" }, serverOption] },
     { name: "promote", description: "Attach the durable result of an ink promotion", args: "<area>", options: [{ name: "complete", takesValue: true, description: "Promotion operation ID" }, { name: "source", takesValue: true, description: "Created vault file with optional #subpath" }, { name: "notice", takesValue: true, description: "Durable brain notice ID" }, { name: "session", takesValue: true, description: "Calling brain session" }, serverOption] },
@@ -161,9 +162,18 @@ export const goalCommandSpec: CliCommandSpec = {
   subcommands: [
     {
       name: "present",
-      description: "Present Markdown files on a Goal, or withdraw one presentation",
-      args: "<slug> <file...>",
-      options: [{ name: "note", takesValue: true, description: "Short reason to read the document" }, { name: "withdraw", description: "Withdraw the named presentation" }, { name: "session", takesValue: true, description: "Caller session; defaults to the current tmux session" }, serverOption]
+      description: "Present Documents or declarative cards on a Goal, or withdraw one",
+      args: "<slug> [<file...>]",
+      options: [
+        { name: "note", takesValue: true, description: "Short reason to read the document" }, { name: "withdraw", description: "Withdraw the named Document" },
+        { name: "card", takesValue: true, description: "Card kind: copy, link, links, progress, checklist, commits, or reviews" },
+        { name: "title", takesValue: true, description: "Card title" }, { name: "text", takesValue: true, description: "Copy text" },
+        { name: "url", takesValue: true, description: "Link URL; repeatable" }, { name: "label", takesValue: true, description: "Link label; repeatable" },
+        { name: "step", takesValue: true, description: "Progress <label>:<status>; repeatable" }, { name: "current", takesValue: true, description: "Current 1-based progress step" },
+        { name: "item", takesValue: true, description: "Checklist <label>:<done>; repeatable" }, { name: "repo", takesValue: true, description: "Commit repository" },
+        { name: "commit", takesValue: true, description: "<hash>:<subject>[:<url>]; repeatable" }, { name: "review", takesValue: true, description: "<id>:<title>:<url>:<state>; repeatable" },
+        { name: "withdraw-card", takesValue: true, description: "Withdraw the card with this title" },
+        { name: "session", takesValue: true, description: "Caller session; defaults to the current tmux session" }, serverOption]
     },
     {
       name: "create",

@@ -10,6 +10,8 @@ const CONTENT_MARGIN = 60;
 const SLOT_WIDTH = 460;
 const SLOT_HEIGHT = 320;
 const TARGET_RIGHT = 1660;
+const MIN_REGION_WIDTH = 300;
+const MIN_REGION_HEIGHT = 220;
 const ROOT_OWNER = "@root";
 const CACHE_LIMIT = 256;
 
@@ -339,6 +341,55 @@ function futureSourceIds(state, mutations) {
   return result;
 }
 
+/** Rejects an implicit source-owner transfer disguised as one remove plus one put. */
+function semanticOwnershipError(state, mutations) {
+  const before = new Map(state.owners.map((owner) => [owner, new Set((state.reads.get(owner)?.scene?.elements ?? []).map((element) => element.id).filter(safeSourceId))]));
+  const removed = new Map();
+  for (const mutation of mutations) {
+    const owner = String(mutation?.owner ?? "");
+    for (const sourceId of Array.isArray(mutation?.remove) ? mutation.remove : []) {
+      if (!safeSourceId(sourceId) || !before.get(owner)?.has(sourceId)) continue;
+      const owners = removed.get(sourceId) ?? new Set(); owners.add(owner); removed.set(sourceId, owners);
+    }
+  }
+  for (const mutation of mutations) {
+    const owner = String(mutation?.owner ?? "");
+    for (const element of Array.isArray(mutation?.put) ? mutation.put : []) {
+      if (!safeSourceId(element?.id) || before.get(owner)?.has(element.id)) continue;
+      const sourceOwner = [...(removed.get(element.id) ?? [])].find((candidate) => candidate !== owner);
+      if (sourceOwner) return `source element ${element.id} cannot move between source owners ${sourceOwner} and ${owner}`;
+    }
+  }
+  return null;
+}
+
+/** Enforces the source owner selected by an arrow's start endpoint. */
+function arrowOwnershipError(element, owner) {
+  if (element.type !== "arrow") return null;
+  const start = element.customData?.tangentWorldEndpoints?.start;
+  if (!start || start.owner === owner) return null;
+  return `source arrow ${element.id} start endpoint owner ${start.owner} does not match mutation owner ${owner}`;
+}
+
+/** Validates final stored rectangles for direct children changed by one owner mutation. */
+function directChildRegionGeometryError(state, owner, elements) {
+  const changed = new Map(elements.filter(isAreaRegion).map((element) => [areaForBlock(element), { sourceId: element.id, rect: rectangle(element) }]));
+  if (!changed.size) return null;
+  const siblings = new Map([...state.regions.values()]
+    .filter((region) => region.owner === owner)
+    .map((region) => [region.child, { sourceId: region.sourceId, rect: region.storedRect }]));
+  for (const [child, value] of changed) siblings.set(child, value);
+  for (const [child, value] of changed) {
+    if (value.rect.width < MIN_REGION_WIDTH || value.rect.height < MIN_REGION_HEIGHT) {
+      return `Area region ${value.sourceId} must be at least ${MIN_REGION_WIDTH} by ${MIN_REGION_HEIGHT}`;
+    }
+    for (const [sibling, other] of siblings) {
+      if (sibling !== child && overlaps(value.rect, other.rect)) return `Area region ${value.sourceId} overlaps sibling ${other.sourceId}`;
+    }
+  }
+  return null;
+}
+
 /** Rejects a source binding that resolves only inside another owner's shard. */
 function sourceBindingError(element, owner, idsByOwner) {
   const bindings = [];
@@ -526,8 +577,11 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
     if (!Array.isArray(request.mutations) || !request.mutations.length) return { status: 422, error: "a gesture must contain source mutations" };
     const state = await readState();
     if (request.worldId !== state.world.worldId) return { status: 409, conflict: true, code: "world-conflict", error: "map world changed", worldId: state.world.worldId };
+    if (request.treeRevision !== state.world.treeRevision) return { status: 409, conflict: true, code: "tree-conflict", error: "Area tree changed", treeRevision: state.world.treeRevision };
     const ownerSet = new Set(state.owners);
     const idsByOwner = futureSourceIds(state, request.mutations);
+    const ownershipError = semanticOwnershipError(state, request.mutations);
+    if (ownershipError) return { status: 422, error: ownershipError };
     const byOwner = new Set();
     const writes = [];
     for (const mutation of request.mutations) {
@@ -541,6 +595,7 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
       for (const element of mutation.put) {
         const error = sourceElementError(element, ownerSet); if (error) return { status: 422, error };
         const bindingError = sourceBindingError(element, owner, idsByOwner); if (bindingError) return { status: 422, error: bindingError };
+        const ownerError = arrowOwnershipError(element, owner); if (ownerError) return { status: 422, error: ownerError };
         if (ids.has(element.id)) return { status: 422, error: `source ID ${element.id} appears more than once for ${owner}` };
         ids.add(element.id);
         const authoritativeRegion = [...state.regions.values()].find((region) => region.owner === owner && region.sourceId === element.id);
@@ -552,6 +607,8 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
           if (element.isDeleted || element.width <= 0 || element.height <= 0 || element.angle !== 0) return { status: 422, error: `Area region ${element.id} needs visible positive unrotated source geometry` };
         }
       }
+      const regionGeometryError = directChildRegionGeometryError(state, owner, mutation.put);
+      if (regionGeometryError) return { status: 422, error: regionGeometryError };
       for (const sourceId of mutation.remove) {
         if (typeof sourceId !== "string" || !sourceId || sourceId.startsWith("tw-") || sourceId.includes("\0")) return { status: 422, error: "remove IDs must be safe source IDs" };
         if (ids.has(sourceId)) return { status: 422, error: `source ID ${sourceId} appears more than once for ${owner}` };

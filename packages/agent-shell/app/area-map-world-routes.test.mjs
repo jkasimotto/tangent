@@ -27,12 +27,13 @@ function jsonRequest(value) {
 function mutationFixture() {
   const root = createEmptyScene();
   root.elements.push(...createRegionElements({ id: "child-region", ref: "root/child/child.md", title: "Child", x: 80, y: 90 }));
+  root.elements.push(...createRegionElements({ id: "peer-region", ref: "root/peer/peer.md", title: "Peer", x: 680, y: 90 }));
   const child = createEmptyScene();
   child.elements.push(createTextElement({ id: "before", text: "Before", x: 10, y: 20, width: 90, height: 40 }));
-  const scenes = new Map([["@root", createEmptyScene()], ["root", root], ["root/child", child]]);
-  const hashes = new Map([["@root", "root-map-hash"], ["root", "parent-hash"], ["root/child", "child-hash"]]);
+  const scenes = new Map([["@root", createEmptyScene()], ["root", root], ["root/child", child], ["root/peer", createEmptyScene()]]);
+  const hashes = new Map([["@root", "root-map-hash"], ["root", "parent-hash"], ["root/child", "child-hash"], ["root/peer", "peer-hash"]]);
   /** Lists the source fixture's Areas. */
-  async function listAreas() { return ["root", "root/child"]; }
+  async function listAreas() { return ["root", "root/child", "root/peer"]; }
   const index = createAreaMapWorldIndex({ root: "/vault", listAreas, repository: {
     /** Reads one canonical source fixture. */
     async read(area) { return { area, file: `${area}/${area.split("/").at(-1)}.excalidraw`, exists: true, ok: true, hash: hashes.get(area), scene: scenes.get(area) }; },
@@ -113,6 +114,47 @@ test("applies source mutations to complete canonical shards through the transact
   assert.equal(saved[0].options.worldId, world.worldId);
 });
 
+test("rejects a gesture from a stale Area tree revision", async () => {
+  const { index } = mutationFixture();
+  const world = await index.snapshot("root/child");
+  let calls = 0;
+  /** Counts any transaction that escaped revision validation. */
+  async function saveGesture() { calls += 1; return { committed: true }; }
+  const routes = createAreaMapWorldRoutes({ index, saveGesture });
+  const moved = createTextElement({ id: "before", text: "Before", x: 40, y: 50, width: 90, height: 40 });
+  const result = response();
+  const request = { ...gesture(world, [{ owner: "root/child", baseHash: "child-hash", put: [moved], remove: [] }]), treeRevision: "stale-tree" };
+  await routes.handle(jsonRequest(request), result, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(result.status, 409);
+  assert.equal(JSON.parse(result.body).code, "tree-conflict");
+  assert.equal(JSON.parse(result.body).treeRevision, world.treeRevision);
+  assert.equal(calls, 0);
+});
+
+test("rejects undersized and overlapping direct-child regions", async () => {
+  const { index } = mutationFixture();
+  const world = await index.snapshot("root/child");
+  const child = world.areas.find((node) => node.key === "root/child");
+  const peer = world.areas.find((node) => node.key === "root/peer");
+  let calls = 0;
+  /** Counts any transaction that escaped structural geometry validation. */
+  async function saveGesture() { calls += 1; return { committed: true }; }
+  const routes = createAreaMapWorldRoutes({ index, saveGesture });
+
+  const [small] = createRegionElements({ id: child.region.sourceId, ref: "root/child/child.md", title: "Child", x: 80, y: 90, width: 299, height: 220 });
+  const smallResult = response();
+  await routes.handle(jsonRequest(gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [small], remove: [] }])), smallResult, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(smallResult.status, 422);
+  assert.match(JSON.parse(smallResult.body).error, /at least 300 by 220/);
+
+  const [crossing] = createRegionElements({ id: child.region.sourceId, ref: "root/child/child.md", title: "Child", ...peer.region.storedRect });
+  const crossingResult = response();
+  await routes.handle(jsonRequest({ ...gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [crossing], remove: [] }]), operationId: "gesture-2" }), crossingResult, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(crossingResult.status, 422);
+  assert.match(JSON.parse(crossingResult.body).error, /overlaps sibling/);
+  assert.equal(calls, 0);
+});
+
 test("writes a top-level region through the special root source shard", async () => {
   const { index } = mutationFixture();
   const world = await index.snapshot("root/child");
@@ -179,7 +221,7 @@ test("rejects traversal references and unsafe cross-Area endpoint identities", a
   assert.equal(calls, 0);
 });
 
-test("keeps cross-Area bindings in endpoint metadata instead of a foreign source shard", async () => {
+test("keeps cross-Area bindings in metadata while the start endpoint owns the arrow", async () => {
   const { index } = mutationFixture();
   const world = await index.snapshot("root/child");
   const saved = [];
@@ -195,11 +237,34 @@ test("keeps cross-Area bindings in endpoint metadata instead of a foreign source
   assert.match(JSON.parse(foreignBinding.body).error, /binds across source owners/);
 
   arrow.startBinding = null;
+  const wrongOwner = response();
+  await routes.handle(jsonRequest({ ...gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [arrow], remove: [] }]), operationId: "gesture-2" }), wrongOwner, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(wrongOwner.status, 422);
+  assert.match(JSON.parse(wrongOwner.body).error, /start endpoint owner/);
+
   const metadataOnly = response();
-  await routes.handle(jsonRequest({ ...gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [arrow], remove: [] }]), operationId: "gesture-2" }), metadataOnly, new URL("http://local/api/areas/map-gestures"));
+  await routes.handle(jsonRequest({ ...gesture(world, [{ owner: "root/child", baseHash: "child-hash", put: [arrow], remove: [] }]), operationId: "gesture-3" }), metadataOnly, new URL("http://local/api/areas/map-gestures"));
   assert.equal(metadataOnly.status, 200);
   assert.equal(saved.length, 1);
   assert.deepEqual(saved[0][0].canvas.elements.find((element) => element.id === "cross-arrow").customData.tangentWorldEndpoints.start, { owner: "root/child", sourceId: "before" });
+});
+
+test("rejects a source element transfer between owners", async () => {
+  const { index } = mutationFixture();
+  const world = await index.snapshot("root/child");
+  let calls = 0;
+  /** Counts any transaction that escaped semantic ownership validation. */
+  async function saveGesture() { calls += 1; return { committed: true }; }
+  const routes = createAreaMapWorldRoutes({ index, saveGesture });
+  const transferred = createTextElement({ id: "before", text: "Before", x: 40, y: 50, width: 90, height: 40 });
+  const result = response();
+  await routes.handle(jsonRequest(gesture(world, [
+    { owner: "root/child", baseHash: "child-hash", put: [], remove: ["before"] },
+    { owner: "root", baseHash: "parent-hash", put: [transferred], remove: [] },
+  ])), result, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(result.status, 422);
+  assert.match(JSON.parse(result.body).error, /cannot move between source owners/);
+  assert.equal(calls, 0);
 });
 
 test("rejects duplicate source owners and source IDs", async () => {

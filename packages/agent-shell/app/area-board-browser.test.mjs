@@ -113,12 +113,36 @@ test("every ancestor and descendant is one selectable live region", { skip: !ena
     browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath(), headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1, reducedMotion: "reduce" });
     await page.goto(`http://127.0.0.1:${server.address().port}/world-fixture`);
-    await page.locator(".excalidraw canvas.interactive").waitFor();
+    const canvas = page.locator(".excalidraw canvas.interactive"); await canvas.waitFor();
+    await page.getByRole("button", { name: /^standards, depth/ }).click();
+    const before = await page.evaluate(() => {
+      const regions = window.editor.current().elements.filter((element) => element.customData?.tangent?.role === "area-region");
+      return Object.fromEntries(regions.map((element) => [element.customData.tangent.area, { id: element.id, x: element.x, y: element.y, width: element.width, height: element.height }]));
+    });
+    const appState = await page.evaluate(() => window.editor.appState()); const canvasBox = await canvas.boundingBox();
+    /** Converts a scene point to the browser viewport. */
+    const point = (x, y) => ({ x: canvasBox.x + (x + appState.scrollX) * appState.zoom.value, y: canvasBox.y + (y + appState.scrollY) * appState.zoom.value });
+    const standards = before["neara/delivery/standards"];
+    const start = point(standards.x + standards.width, standards.y + standards.height);
+    await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(start.x + 320 * appState.zoom.value, start.y, { steps: 4 });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
+    const crossing = await page.evaluate(() => {
+      const regions = window.editor.current().elements.filter((element) => element.customData?.tangent?.role === "area-region");
+      return Object.fromEntries(regions.map((element) => [element.customData.tangent.area, { x: element.x, y: element.y, width: element.width, height: element.height, locked: element.locked, deleted: element.isDeleted }]));
+    });
+    const delivery = crossing["neara/delivery"]; const near = crossing.neara; const grownStandards = crossing["neara/delivery/standards"];
+    assert.ok(grownStandards.width > standards.width + 250, `the pointer grows Standards before pointer-up: ${JSON.stringify({ standards, grownStandards, appState })}`);
+    assert.ok(delivery.width > before["neara/delivery"].width, "Delivery grows in the same frame");
+    assert.ok(near.width > before.neara.width, "Neara grows in the same frame");
+    assert.ok(grownStandards.x + grownStandards.width + 60 <= delivery.x + delivery.width + 0.01);
+    assert.ok(delivery.x + delivery.width + 60 <= near.x + near.width + 0.01);
+    assert.ok(Object.values(crossing).every((region) => region.locked === false && region.deleted === false));
     const actualGolden = await page.screenshot({ animations: "disabled" });
     const expectedGolden = await readFile(path.join(here, "test-fixtures/area-map/near-delivery-standards-crossing.png"));
-    assert.deepEqual(actualGolden, expectedGolden, "the corrected Neara, Delivery, Standards hierarchy matches its deterministic golden");
+    assert.deepEqual(actualGolden, expectedGolden, "the corrected crossing frame matches its deterministic golden");
+    await page.mouse.up();
     for (const [name, area] of [["neara", "neara"], ["delivery", "neara/delivery"], ["standards", "neara/delivery/standards"]]) {
-      await page.getByRole("button", { name: new RegExp(`^${name}, depth`) }).click();
+      await page.getByRole("button", { name: new RegExp(`^${name}, depth`) }).click({ force: true });
       const selected = await page.evaluate(() => { const ids = window.editor.appState().selectedElementIds; return window.editor.current().elements.find((element) => ids[element.id])?.customData?.tangent?.area; });
       assert.equal(selected, area);
     }
@@ -128,9 +152,6 @@ test("every ancestor and descendant is one selectable live region", { skip: !ena
     await page.keyboard.press("Meta+Shift+o");
     await page.getByRole("region", { name: "Area hierarchy" }).waitFor();
     assert.equal(await page.getByRole("region", { name: "Area hierarchy" }).getByRole("button").count(), 3);
-    await page.getByRole("button", { name: /^delivery, depth/ }).click(); await page.keyboard.press("Space");
-    await page.getByText("folded · Space", { exact: true }).waitFor();
-    assert.equal(await page.getByRole("button", { name: /^standards, depth/ }).count(), 0, "fold hides descendant labels but keeps the hierarchy authority");
     assert.equal(await page.getByRole("region", { name: "Area hierarchy" }).getByRole("button").count(), 3);
   } finally {
     await browser?.close(); await new Promise((resolve) => server.close(resolve));

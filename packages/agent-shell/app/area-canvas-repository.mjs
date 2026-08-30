@@ -102,6 +102,31 @@ export function createAreaCanvasRepository({ root, runGit, commit, transactionRo
     return { area, file, exists: false, canonicalExists: false, hash: null, ok: true, canvas, scene: canvas, errors: [], warnings: [] };
   }
 
+  /** Reads the last complete Git scene without consulting worktree bytes. */
+  async function readCommitted(area) {
+    const file = areaCanvasPath(area);
+    if (!file) throw new Error(`unsafe Area path: ${area}`);
+    try {
+      const result = await runGit(["-C", root, "show", `HEAD:${file}`]);
+      const text = String(result?.stdout ?? result ?? "");
+      const hash = canvasHash(text);
+      const parsed = parsedScenes.get(hash) ?? cacheParsed(hash, parseCanvas(text));
+      return { area, file, exists: true, hash, text, ...parsed };
+    } catch {
+      const legacyFile = legacyAreaCanvasPath(area);
+      try {
+        const result = await runGit(["-C", root, "show", `HEAD:${legacyFile}`]);
+        const legacyText = String(result?.stdout ?? result ?? "");
+        const parsed = parseLegacyAreaCanvas(legacyText);
+        if (!parsed.ok) return { area, file: legacyFile, exists: true, hash: canvasHash(legacyText), ok: false, errors: parsed.errors, warnings: [], fallback: "list" };
+        return { area, file, exists: true, canonicalExists: false, hash: null, ok: true, canvas: parsed.canvas, scene: parsed.canvas, errors: [], warnings: [], migrated: true, legacy: { file: legacyFile, text: legacyText } };
+      } catch {
+        const canvas = createEmptyScene();
+        return { area, file, exists: false, canonicalExists: false, hash: null, ok: true, canvas, scene: canvas, errors: [], warnings: [] };
+      }
+    }
+  }
+
   /** Saves all files of one map gesture through one conflict check and commit. */
   async function saveManyNow(writes, { operationId = null, session = null, area = writes[0]?.area ?? "" } = {}) {
     await ensureRecovered();
@@ -179,5 +204,5 @@ export function createAreaCanvasRepository({ root, runGit, commit, transactionRo
     return result;
   }
 
-  return { read, recover, save, saveMany };
+  return { read, readCommitted, recover, save, saveMany };
 }

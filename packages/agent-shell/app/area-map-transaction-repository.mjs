@@ -184,6 +184,12 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     if (recoveryRequired) throw Object.assign(new Error("Area map recovery requires attention"), { status: 503, recoveryRequired });
   }
 
+  /** Reads worktree authority or the last complete Git snapshot during recovery. */
+  async function read(area) {
+    await ensureRecovered(); await readerBarrier;
+    return recoveryRequired ? repository.readCommitted(area) : repository.read(area);
+  }
+
   /** Saves every source shard of one world gesture as one exact Git commit. */
   async function saveMany(writes, { operationId, worldId = "default", area = writes[0]?.area ?? "", session = null } = {}) {
     if (!operationId) throw new Error("Area map gestures require an operation ID");
@@ -192,12 +198,14 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     const requestDigest = digest(writes.map((write) => ({ area: write.area, baseHash: write.baseHash ?? null, canvas: write.canvas })));
     const directory = operationDirectory(worldId, operationId);
     const manifestFile = path.join(directory, "manifest.json");
-    try {
-      const prior = JSON.parse(await readFile(manifestFile, "utf8"));
-      if (prior.digest !== requestDigest) return { status: 409, conflict: true, operationId, error: "operation ID was already used for different map content" };
-      if (prior.state === "committed") return { ...prior.result, idempotent: true };
-    } catch (error) { if (error.code !== "ENOENT") throw error; }
     return withLock(async () => {
+      await recoverUnlocked();
+      if (recoveryRequired) return { status: 503, error: "Area map recovery requires attention", recoveryRequired };
+      try {
+        const prior = JSON.parse(await readFile(manifestFile, "utf8"));
+        if (prior.digest !== requestDigest) return { status: 409, conflict: true, operationId, error: "operation ID was already used for different map content" };
+        if (prior.state === "committed") return { ...prior.result, idempotent: true };
+      } catch (error) { if (error.code !== "ENOENT") throw error; }
       const unique = new Map();
       for (const write of writes) {
         if (!write?.area || unique.has(write.area)) throw new Error("a map gesture must name each source owner once");
@@ -242,7 +250,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     });
   }
 
-  return { recover: ensureRecovered, saveMany, waitForReadable };
+  return { read, recover: ensureRecovered, saveMany, waitForReadable };
 }
 
 export default { createAreaMapTransactionRepository };

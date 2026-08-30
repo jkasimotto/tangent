@@ -137,12 +137,13 @@ test("readers wait through the complete multi-shard install window", async () =>
   ], { operationId: "barrier", worldId: "otto" });
   await installReached;
   let readable = false;
-  const reading = value.transactions.waitForReadable().then(() => { readable = true; });
+  const reading = value.transactions.read("neara").then((result) => { readable = true; return result; });
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(readable, false);
   releaseInstall();
-  await Promise.all([saving, reading]);
+  const [, loaded] = await Promise.all([saving, reading]);
   assert.equal(readable, true);
+  assert.equal(loaded.scene.elements[0].text, "Neara");
 });
 
 test("recovery refuses to overwrite unrelated target bytes", async () => {
@@ -165,6 +166,42 @@ test("recovery refuses to overwrite unrelated target bytes", async () => {
     reportError() {},
   });
   await assert.rejects(restarted.waitForReadable(), (error) => error.status === 503 && error.recoveryRequired?.reason.includes("unrelated bytes"));
+  const lastComplete = await restarted.read("neara");
+  assert.deepEqual(lastComplete.scene.elements, [], "map reads use the last complete Git snapshot");
   assert.equal((await manifest(value.transactionRoot)).state, "recovery-required");
   assert.equal(JSON.parse(await readFile(path.join(value.root, "neara", "neara.excalidraw"), "utf8")).elements[0].text, "Unrelated");
+});
+
+test("a writer recovers an earlier operation that failed after its startup recovery", async () => {
+  let crashed = false;
+  const value = await fixture("later-writer", {
+    /** Leaves one prepared operation after another writer already started. */
+    fault(phase) {
+      if (!crashed && phase === "prepared") { crashed = true; throw Object.assign(new Error("writer exited"), { simulatedCrash: true }); }
+    },
+  });
+  const later = createAreaMapTransactionRepository({
+    root: value.root, repository: value.repository, vault: value.vault, runGit,
+    transactionRoot: value.transactionRoot,
+    /** Keeps expected transaction failures quiet in tests. */
+    reportError() {},
+  });
+  await later.recover();
+  await assert.rejects(value.transactions.saveMany([
+    { area: "neara", baseHash: null, canvas: scene("Neara") },
+  ], { operationId: "earlier", worldId: "otto" }), /writer exited/);
+
+  const stale = await later.saveMany([
+    { area: "neara", baseHash: null, canvas: scene("Later", 90) },
+  ], { operationId: "stale-later", worldId: "otto" });
+  assert.equal(stale.status, 409, "the later write sees the recovered committed hash");
+  assert.equal((await value.repository.read("neara")).scene.elements[0].text, "Neara");
+  const recoveredHash = (await value.repository.read("neara")).hash;
+  const saved = await later.saveMany([
+    { area: "neara", baseHash: recoveredHash, canvas: scene("Later", 90) },
+  ], { operationId: "later", worldId: "otto" });
+
+  assert.equal(saved.committed, true);
+  assert.equal((await value.repository.read("neara")).scene.elements[0].text, "Later");
+  assert.equal(String((await runGit(["-C", value.root, "rev-list", "--count", "HEAD~2..HEAD"])).stdout).trim(), "2");
 });

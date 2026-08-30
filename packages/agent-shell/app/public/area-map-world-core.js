@@ -308,6 +308,13 @@ export function solveAreaMapGesture(baseline, intent) {
     }
     return { regions, geometry, wall };
   };
+  // The full swept rectangle contains both axis-segment sweeps. Accept a clear
+  // request before the fallback solver recomputes the complete world.
+  const direct = evaluate(desired);
+  if (!direct.wall) {
+    const valid = [...direct.geometry.values()].every((value) => finiteRect(value.constraint) && value.stored.width >= MIN_WIDTH && value.stored.height >= MIN_HEIGHT);
+    return { ...direct, appliedDelta: { x: quantize(desired.x), y: quantize(desired.y) }, valid };
+  }
   let applied = { x: 0, y: 0 };
   let blockedBy = null;
   const axes = Math.abs(desired.x) >= Math.abs(desired.y) ? ["x", "y"] : ["y", "x"];

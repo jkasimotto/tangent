@@ -69,8 +69,10 @@ export function createBrainRoutes(operations) {
   /** Stops one logical Area brain without trusting a stale session name. */
   async function stop(request, response) {
     const body = await readJson(request);
+    const expectedTarget = String(body.expectedTarget ?? "");
     const result = await operations.stop(String(body.area ?? ""), {
       expectedAttemptId: String(body.expectedAttemptId ?? ""),
+      ...(expectedTarget ? { expectedTarget } : {}),
       operationId: String(body.operationId ?? ""),
     });
     sendJson(response, result.status, result.status === 200

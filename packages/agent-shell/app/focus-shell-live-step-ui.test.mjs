@@ -46,7 +46,7 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   const pipeline = pipelineWithStoppedFirstStep(goal);
   let sessions = [
     { name: "viz-branch-graphics", goal: goal.file, area: goal.area, kind: "goal", state: "working", command: "pi-code", pipeline: goal.file, step: 1 },
-    { name: "viz-branch-graphics-s2", goal: goal.file, area: goal.area, kind: "goal", state: "working", command: "pi-code", pipeline: goal.file, step: 2 },
+    { name: "viz-branch-graphics-s2", target: "$viz", goal: goal.file, area: goal.area, kind: "goal", state: "working", command: "pi-code", pipeline: goal.file, step: 2 },
   ];
   let brains = [];
   const posts = [];
@@ -85,7 +85,7 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   await settle(window);
   assert.deepEqual(posts.at(-1), {
     pathname: "/api/goals/stop",
-    body: { goal: goal.file, expectedSession: "viz-branch-graphics-s2" },
+    body: { goal: goal.file, expectedSession: "viz-branch-graphics-s2", expectedTarget: "$viz" },
   }, "s fences the stop to the authoritative current pipeline session");
 
   // The For you row must not ask about step 1 either: the work moved past it.

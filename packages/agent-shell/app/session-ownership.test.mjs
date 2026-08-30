@@ -39,6 +39,7 @@ test("session termination requires the live tmux owner and records stale ownersh
         const value = tags.get(session) ?? {};
         return { stdout: `${value.kind ?? ""}\t${value.brain ?? ""}\t${value.generation ?? ""}\n` };
       }
+      if (String(args.at(-1)).includes("session_name")) return { stdout: `$${session}\t${session}\t${live.get(session) ?? ""}\n` };
       return { stdout: `$${session}\t${live.get(session) ?? ""}\n` };
     }
     if (args[0] === "kill-session") {
@@ -62,12 +63,24 @@ test("session termination requires the live tmux owner and records stale ownersh
   assert.deepEqual(await two.terminate("worker-one"), { state: "foreign", instanceId: "shell-one" });
   assert.equal(live.has("worker-one"), true);
   assert.deepEqual(await one.terminate("worker-one", "$older-worker-one"), {
-    state: "replaced", instanceId: "shell-one", target: "$worker-one", expectedTarget: "$older-worker-one",
+    state: "absent", instanceId: null, target: "$older-worker-one",
   });
   assert.equal(live.has("worker-one"), true, "an immutable target mismatch keeps the replacement alive");
   assert.deepEqual(await one.terminate("worker-one"), { state: "terminated", instanceId: "shell-one" });
   assert.equal(live.has("worker-one"), false);
   assert.deepEqual(calls.findLast((args) => args[0] === "kill-session"), ["kill-session", "-t", "$worker-one"]);
+
+  live.set("worker-race", null);
+  await one.claim("worker-race", "$worker-race");
+  live.delete("worker-race");
+  assert.deepEqual(await one.terminate("worker-race", "$worker-race"), { state: "absent", instanceId: null, target: "$worker-race" });
+
+  live.set("worker-replaced", null);
+  await one.claim("worker-replaced", "$worker-replaced");
+  live.delete("worker-replaced");
+  live.set("worker-replaced", "shell-one");
+  assert.deepEqual(await one.terminate("worker-replaced", "$old-target"), { state: "absent", instanceId: null, target: "$old-target" });
+  assert.equal(live.has("worker-replaced"), true, "a same-name replacement survives a stale immutable fence");
 
   live.set("legacy", null);
   assert.deepEqual(await one.terminate("legacy"), { state: "legacy", instanceId: null });

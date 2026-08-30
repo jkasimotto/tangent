@@ -63,6 +63,23 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
     }
   }
 
+  /** Reads one immutable tmux target without resolving a reusable session name. */
+  async function inspectTarget(target) {
+    try {
+      await runTmux(["has-session", "-t", target]);
+      const result = await runTmux(["display-message", "-p", "-t", target, `#{session_id}\t#{session_name}\t#{${SESSION_OWNER_OPTION}}`]);
+      const [observedTarget, session = "", owner = ""] = String(result.stdout ?? "").trimEnd().split("\t");
+      if (!observedTarget) return { state: "error", instanceId: null, error: new Error(`tmux returned no session ID for ${target}`) };
+      return { state: "live", instanceId: owner.trim() || null, target: observedTarget, session };
+    } catch (error) {
+      const detail = `${error?.stderr ?? ""} ${error?.message ?? ""}`.toLowerCase();
+      if (detail.includes("can't find session") || detail.includes("can't find pane") || detail.includes("no server running") || detail.includes("failed to connect to server") || detail.includes("no such file")) {
+        return { state: "absent", instanceId: null, target };
+      }
+      return { state: "error", instanceId: null, target, error };
+    }
+  }
+
   /** True when a vanished session's durable marker belongs to this instance. */
   async function ownsRecorded(session) {
     return (await readSessionOwner(root, session))?.instanceId === instanceId;
@@ -120,8 +137,11 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
 
   /** Terminates one live session only after its tmux marker proves ownership. */
   async function terminate(session, expectedTarget = "") {
-    const inspected = await inspect(session);
+    const inspected = expectedTarget ? await inspectTarget(expectedTarget) : await inspect(session);
     if (inspected.state !== "live") return inspected;
+    if (expectedTarget && (inspected.target !== expectedTarget || inspected.session !== session)) {
+      return { state: "replaced", instanceId: inspected.instanceId, target: inspected.target, expectedTarget };
+    }
     if (!inspected.instanceId) return { state: "legacy", instanceId: null };
     if (inspected.instanceId !== instanceId) return { state: "foreign", instanceId: inspected.instanceId };
     if (expectedTarget && inspected.target !== expectedTarget) {
@@ -129,11 +149,14 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
     }
     try {
       await runTmux(["kill-session", "-t", inspected.target]);
-      return { state: "terminated", instanceId };
     } catch (error) {
-      return { state: "error", instanceId, error };
+      const after = await inspectTarget(inspected.target);
+      return after.state === "absent" ? { state: "terminated", instanceId } : { state: "error", instanceId, error };
     }
+    const after = await inspectTarget(inspected.target);
+    if (after.state === "absent") return { state: "terminated", instanceId };
+    return { state: "error", instanceId, error: after.error ?? new Error(`tmux target ${inspected.target} remains live`) };
   }
 
-  return { instanceId, claim, claimLegacyBrain, claimLegacySession, inspect, ownsRecorded, recordedTarget, terminate };
+  return { instanceId, claim, claimLegacyBrain, claimLegacySession, inspect, inspectTarget, ownsRecorded, recordedTarget, terminate };
 }

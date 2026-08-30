@@ -632,15 +632,16 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
           await post("/api/brains/stop", {
             area: session.brain || session.area,
             expectedAttemptId: session.name,
+            expectedTarget: session.target,
             operationId: crypto.randomUUID(),
           });
         } else {
-          await post("/api/goals/stop", { goal: goal.file, expectedSession: session.name });
+          await post("/api/goals/stop", { goal: goal.file, expectedSession: session.name, expectedTarget: session.target });
         }
         actionTelemetry.record("stop", `kill-succeeded:${session.name}`);
       } catch (error) {
         actionTelemetry.record("stop", `kill-failed:${session.name}:${error?.name ?? "Error"}`);
-        showToast("Agent Shell could not stop the session. The failure was logged.");
+        showToast(error?.message || "Agent Shell could not stop the selected session. Try Stop again.");
         return false;
       }
       if (describing) {

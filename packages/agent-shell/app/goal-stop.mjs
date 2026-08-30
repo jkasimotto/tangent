@@ -1,9 +1,10 @@
 /** Resolves one fenced Goal stop to its exact live session. */
-export function goalStopTarget(sessions, { goal, expectedSession } = {}) {
+export function goalStopTarget(sessions, { goal, expectedSession, expectedTarget } = {}) {
   const file = String(goal ?? "").trim();
   const name = String(expectedSession ?? "").trim();
-  if (!file || !name) return { status: 400, error: "goal and expectedSession are required" };
-  const live = sessions.find((session) => session.name === name);
-  if (!live || live.goal !== file) return { status: 409, error: "the selected Goal no longer owns that live session" };
-  return { status: 200, name };
+  const target = String(expectedTarget ?? "").trim();
+  if (!file || !name || !target) return { status: 400, error: "goal, expectedSession, and expectedTarget are required" };
+  const exact = sessions.find((session) => session.target === target);
+  if (exact && (exact.name !== name || exact.goal !== file)) return { status: 409, error: "the selected tmux target belongs to different work; refresh and stop the intended agent" };
+  return { status: 200, name, target };
 }

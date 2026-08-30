@@ -68,7 +68,7 @@ export function createShellControlRoutes(operations) {
   /** Kills one exact tmux session. */
   async function kill(_request, response, url) {
     const name = decodeURIComponent(url.pathname.slice("/api/kill/".length));
-    const result = await operations.kill(name);
+    const result = await operations.kill(name, url.searchParams.get("target") ?? "");
     sendJson(response, result.status, result.status === 200 ? result.value : { error: result.error });
   }
 

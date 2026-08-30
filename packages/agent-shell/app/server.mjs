@@ -340,15 +340,16 @@ async function loadSessions() {
     const { stdout } = await runTmuxObservation([
       "list-sessions",
       "-F",
-      `#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_launch_ref}\t#{@tangent_pipeline}\t#{@tangent_step}\t#{@tangent_brain}\t#{@tangent_generation}\t#{@tangent_assignment}\t#{@tangent_attempt}\t#{${SESSION_OWNER_OPTION}}`,
+      `#{session_id}\t#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_launch_ref}\t#{@tangent_pipeline}\t#{@tangent_step}\t#{@tangent_brain}\t#{@tangent_generation}\t#{@tangent_assignment}\t#{@tangent_attempt}\t#{${SESSION_OWNER_OPTION}}`,
     ]);
     const sessions = stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel, launchIds, pipeline, step, brain, generation, assignment, attempt, instanceId] = line.split("\t");
+        const [target, name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel, launchIds, pipeline, step, brain, generation, assignment, attempt, instanceId] = line.split("\t");
         return {
+          target,
           name,
           cwd,
           windows: Number(windows),
@@ -3122,9 +3123,11 @@ async function pipelineStepForSession(sessionName) {
  * settle back to plain open work the way a solo Goal does. Returns the record
  * that ended, or null when the session was no pipeline step.
  */
-async function endPipelineForSession(sessionName) {
+async function endPipelineForSession(sessionName, expectedTarget = "") {
   const found = await pipelineStepForSession(sessionName);
   if (!found) return null;
+  const currentTarget = found.step.attempts?.at(-1)?.target ?? "";
+  if (expectedTarget && currentTarget && currentTarget !== expectedTarget) return null;
   endPipeline(found.record);
   await writePipeline(PIPELINES_ROOT, found.record);
   await notifyBrain(found.record.area, `Goal ${found.record.slug}: pipeline ended by Julian at step ${found.step.index}.`);
@@ -5470,7 +5473,7 @@ async function settleBrainStop(record) {
 }
 
 /** Makes one logical brain inactive, then terminates only its exact owned attempt. */
-async function stopBrain(area, { expectedAttemptId = "", operationId = "" } = {}) {
+async function stopBrain(area, { expectedAttemptId = "", expectedTarget = "", operationId = "" } = {}) {
   if (!area) return { status: 400, code: "area-required", error: "an Area is required" };
   if (!expectedAttemptId) return { status: 400, code: "attempt-required", error: "an expected brain attempt is required" };
   if (!operationId) return { status: 400, code: "operation-required", error: "an operation ID is required" };
@@ -5480,11 +5483,11 @@ async function stopBrain(area, { expectedAttemptId = "", operationId = "" } = {}
   } catch (error) {
     return { status: 400, code: "invalid-area", error: String(error.message ?? error) };
   }
-  return withBrainMutation(exactArea, () => stopBrainUnlocked(exactArea, { expectedAttemptId, operationId }));
+  return withBrainMutation(exactArea, () => stopBrainUnlocked(exactArea, { expectedAttemptId, expectedTarget, operationId }));
 }
 
 /** Performs one fenced stop after the exact Area lifecycle lock is held. */
-async function stopBrainUnlocked(area, { expectedAttemptId, operationId }) {
+async function stopBrainUnlocked(area, { expectedAttemptId, expectedTarget, operationId }) {
   const record = await readBrain(BRAINS_ROOT, area);
   if (!record) return { status: 404, code: "brain-not-found", error: `no brain on ${area}` };
   if (record.stopOperation?.id === operationId && record.stopOperation.status === "complete") {
@@ -5495,11 +5498,31 @@ async function stopBrainUnlocked(area, { expectedAttemptId, operationId }) {
     ? record.stopOperation.attemptId
     : record.currentAttemptId ?? record.session ?? "";
   if (expectedAttemptId && expectedAttemptId !== attemptId && !acceptedAttempts.has(expectedAttemptId)) {
+    if (expectedTarget) {
+      const stale = await sessionOwnership.terminate(expectedAttemptId, expectedTarget);
+      if (["terminated", "absent"].includes(stale.state)) {
+        sessionObservation.invalidate();
+        return { status: 200, state: "stale-attempt-stopped", brain: record };
+      }
+      return brainStopRefusal(expectedAttemptId, stale);
+    }
     return { status: 409, code: "attempt-changed", error: `the active brain attempt changed to ${attemptId}` };
   }
   if (record.status === "inactive" && unsettledBrainStop(record)) return settleBrainStop(record);
   if (record.status === "inactive") return { status: 200, state: "already-inactive", brain: record };
-  const ownership = await sessionOwnership.inspect(attemptId);
+  let ownership = expectedTarget
+    ? await sessionOwnership.inspectTarget(expectedTarget)
+    : await sessionOwnership.inspect(attemptId);
+  if (expectedTarget && ownership.state === "live" && (ownership.session !== attemptId || ownership.target !== expectedTarget)) {
+    return brainStopRefusal(attemptId, { state: "replaced", instanceId: ownership.instanceId, target: ownership.target, expectedTarget });
+  }
+  if (expectedTarget && ownership.state === "absent") {
+    const current = await sessionOwnership.inspect(attemptId);
+    if (current.state === "live" && current.target !== expectedTarget) {
+      return { status: 200, state: "stale-attempt-stopped", brain: record };
+    }
+    ownership = current.state === "absent" ? ownership : current;
+  }
   if (ownership.state === "error") {
     return { status: 503, code: "stop-incomplete", error: terminationError(attemptId, ownership) };
   }
@@ -5509,12 +5532,12 @@ async function stopBrainUnlocked(area, { expectedAttemptId, operationId }) {
     const status = ["foreign-process", "legacy-process"].includes(code) ? 409 : 503;
     return { status, code, error: terminationError(attemptId, result) };
   }
-  let durableTarget = ownership.target ?? null;
+  let durableTarget = expectedTarget || ownership.target || null;
   if (ownership.state === "absent") {
     if (!(await sessionOwnership.ownsRecorded(attemptId))) {
       return brainStopRefusal(attemptId, { state: "unowned" });
     }
-    durableTarget = await sessionOwnership.recordedTarget(attemptId);
+    durableTarget = expectedTarget || await sessionOwnership.recordedTarget(attemptId);
   }
   endBrain(record, "inactive");
   record.stopOperation = { id: operationId, attemptId, target: durableTarget, instanceId: INSTANCE_ID, status: "pending", requestedAt: new Date().toISOString() };
@@ -6998,7 +7021,7 @@ const shellControlRoutes = createShellControlRoutes({
     return agentCmd;
   },
   /** Kills one exact non-orchestrator session and closes its execution records. */
-  async kill(name) {
+  async kill(name, expectedTarget = "") {
     if (!name || name === CHAT_SESSION) return { status: 400, error: "refusing to kill this session" };
     try {
       const brain = (await readAllBrains(BRAINS_ROOT)).find((item) => item.status === "active" && item.session === name);
@@ -7008,22 +7031,27 @@ const shellControlRoutes = createShellControlRoutes({
           ? { status: 200, value: { ok: true, pipelineEnded: false, brainEnded: true } }
           : { status: result.status, error: result.error };
       }
-      const stopped = await terminateOwnedSession(name);
-      if (stopped.state !== "terminated") {
-        const status = stopped.state === "absent" ? 404 : stopped.state === "error" ? 503 : 409;
+      const stopped = await sessionOwnership.terminate(name, expectedTarget);
+      if (!["terminated", "absent"].includes(stopped.state)) {
+        const status = stopped.state === "error" ? 503 : 409;
         return { status, error: terminationError(name, stopped) };
       }
-      const ended = await endPipelineForSession(name).catch((error) => { console.error("end pipeline on kill:", error.message ?? error); return null; });
-      return { status: 200, value: { ok: true, pipelineEnded: Boolean(ended), brainEnded: false } };
+      sessionObservation.invalidate();
+      const repairRecord = (await readAllRepairs(REPAIRS_ROOT)).find((item) => item.current?.session === name && (!expectedTarget || !item.current.target || item.current.target === expectedTarget));
+      if (repairRecord) await withBrainMutation(repairRecord.area, () => endRepairCrewUnlocked(repairRecord.area, "stopped", "Stopped by Julian."));
+      const replacement = expectedTarget && stopped.state === "absent" ? await sessionOwnership.inspect(name) : null;
+      const replacementPreserved = replacement?.state === "live" && replacement.target !== expectedTarget;
+      const ended = replacementPreserved ? null : await endPipelineForSession(name, expectedTarget).catch((error) => { console.error("end pipeline on kill:", error.message ?? error); return null; });
+      return { status: 200, value: { ok: true, pipelineEnded: Boolean(ended), brainEnded: false, replacementPreserved } };
     } catch (error) {
       return { status: 500, error: String(error.stderr ?? error.message ?? error) };
     }
   },
   /** Fences a Goal stop to its exact projected live session. */
-  async stopGoal({ goal, expectedSession } = {}) {
-    const target = goalStopTarget(await listSessions(), { goal, expectedSession });
+  async stopGoal({ goal, expectedSession, expectedTarget } = {}) {
+    const target = goalStopTarget(await listSessions({ fresh: true }), { goal, expectedSession, expectedTarget });
     if (target.status !== 200) return target;
-    return shellControlOperations.kill(target.name);
+    return shellControlOperations.kill(target.name, target.target);
   },
 });
 const shellStateRoutes = createShellStateRoutes({

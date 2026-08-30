@@ -44,7 +44,7 @@ The browser refreshes through one compact `GET /api/work` read model. The model 
 
 The browser entry `app/public/shell.js` composes feature ports. `shell-coordinator.js` owns cross-feature navigation. Views and controllers receive cohesive `shell`, `work`, `areas`, `programs`, `launch`, `documents`, and chrome records. A record groups one authority; it is not a generic service locator. Browser capabilities must not be attached to functions. Gateway admission limits duplicate and total controller work. Telemetry does not publish projection invalidations.
 
-Area maps are complete Excalidraw scenes in the vault. `area-canvas.mjs` validates scenes and converts the former JSON Canvas file once. `area-canvas-repository.mjs` owns hash checks and path-limited commits. The React editor bundle loads only when Work opens a map. Tangent block text is a cache of facts from vault Markdown; refreshes do not change geometry or schedule a save (ADR-0049).
+Area maps use one Excalidraw source shard for each Area. `area-map-world-index.mjs` combines the Area tree, shard summaries, and structural regions. `area-map-world-controller.js` keeps one composed world across camera and fact changes. `area-map-transaction-repository.mjs` commits each multi-shard gesture through one durable transaction. Tangent block text remains a cache of vault facts (ADR-0049, ADR-0051).
 
 Private module and controller-loopback contracts can change with all in-repository callers. The public loopback URL, Vault Markdown, Git provenance, tmux bindings, and persisted workflow schemas remain compatible. The runtime ownership key remains `@tangent_agent_shell_instance`. See ADR-0031, ADR-0032, and ADR-0036.
 

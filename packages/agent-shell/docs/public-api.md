@@ -20,6 +20,14 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 
 `GET /api/work` returns the compact browser Work read model. It includes current Area, Goal, queue, brain, session, shell, and program summaries. It excludes durable history bodies. The response supports `ETag` and `If-None-Match`. Gateway headers report boot identity, capture time, and stale state.
 
+`GET /api/areas/map-world?located=<area>` returns the complete Area structure and the planned eager shards. It includes one world revision.
+
+`GET /api/areas/map-shard?area=<area>&worldRevision=<revision>` returns one deferred shard for that exact world revision.
+
+`POST /api/areas/map-gestures` accepts source-space mutations. It rejects runtime IDs and commits all affected source shards as one operation.
+
+`GET` and `POST /api/areas/map-view` read or write private `area-map-view.v2` state by world ID. A world response also includes this state when it exists.
+
 `tangent vault commit` writes the vault history directly. `tangent study` starts one local interactive agent directly. No other package command writes vault files or starts a process itself.
 
 ## Vault and Area commands

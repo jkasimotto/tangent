@@ -22,7 +22,7 @@ function loadEditorStyle() {
 const editorLoader = () => globalThis.__TANGENT_AREA_EDITOR_LOADER__?.() ?? loadEditorStyle().then(() => import("/agent-shell-map.js"));
 
 /** Mounts the complete hierarchy through one persistent browser island. */
-function mountWorld(host, { world, getDocuments, api, onBack }) {
+function mountWorld(host, { world, getDocuments, api, onBack, focus = null }) {
   host.replaceChildren();
   const loader = document.createElement("div");
   loader.className = "area-board-loading";
@@ -67,7 +67,7 @@ function mountWorld(host, { world, getDocuments, api, onBack }) {
   };
   const ready = editorLoader().then((module) => {
     loader.remove();
-    editor = module.mountAreaBoardEditor(host, { world, scene: { elements: [], appState: {}, files: {} }, getDocuments, onBack, onWorldChange: persist, initialSaveState: { state: "saved" } });
+    editor = module.mountAreaBoardEditor(host, { world, scene: { elements: [], appState: {}, files: {} }, getDocuments, onBack, focus, onWorldChange: persist, initialSaveState: { state: "saved" } });
     return editor;
   });
   return {
@@ -91,7 +91,7 @@ function initialScene(area) {
 
 /** Mounts the Excalidraw editor island and the existing durable save contract. */
 function mount(host, { area, payload: suppliedPayload, world = null, context = { ancestors: [] }, documents, getDocuments = () => documents, api, onOpenDocument, onSelectArea, onEntityVerb = null, onBack = null, backLabel = "Work", locatedArea = area, focus = null, onToggleAreaStar = null, onToggleStarredOnly = null, onToggleActiveOnly = null, brainLive = false, ignoreDraft = false }) {
-  if (world) return mountWorld(host, { world, getDocuments, api, onBack });
+  if (world) return mountWorld(host, { world, getDocuments, api, onBack, focus });
   host.replaceChildren();
   let payload = suppliedPayload;
   const drafts = draftStore.create(localStorage);

@@ -40,12 +40,72 @@ function AreaMapWorld({ host, bridge, options }) {
   const [camera, setCamera] = useState({ scrollX: 0, scrollY: 0, zoom: 1 });
   const [saveState, setSaveState] = useState(options.initialSaveState ?? { state: "saved" });
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [folded, setFolded] = useState(new Set());
+  const foldedRef = useRef(new Set());
   const [notice, setNotice] = useState("");
   const worldRef = useRef(structuredClone(options.world));
   const compositionRef = useRef(worldCore.composeAreaMapWorld(worldRef.current));
   const sceneRef = useRef(compositionRef.current.scene);
   const applyingRef = useRef(false);
   const fingerprintRef = useRef(core.authoredFingerprint(sceneRef.current.elements));
+  const hiddenRef = useRef(new Set());
+  const gestureBeforeRef = useRef(null);
+  const historyRef = useRef({ undo: [], redo: [] });
+
+  /** Restores one world snapshot and persists its inverse as one world action. */
+  function restoreWorld(snapshot) {
+    const current = worldRef.current;
+    const changedAreas = new Set(); const changedOwners = new Set();
+    for (const node of snapshot.areas) {
+      const old = current.areas.find((entry) => entry.key === node.key);
+      if (JSON.stringify(old?.region?.storedRect) !== JSON.stringify(node.region.storedRect)) changedAreas.add(node.key);
+      if (core.authoredFingerprint(old?.shard?.scene?.elements ?? []) !== core.authoredFingerprint(node.shard.scene?.elements ?? [])) changedOwners.add(node.key);
+    }
+    worldRef.current = structuredClone(snapshot);
+    const next = worldCore.composeAreaMapWorld(worldRef.current);
+    compositionRef.current = next; sceneRef.current = next.scene;
+    applyView(); options.onWorldChange?.(worldRef.current, changedAreas, changedOwners);
+  }
+
+  /** Applies one world undo or redo command. */
+  function travelHistory(direction) {
+    const source = historyRef.current[direction]; if (!source.length) return;
+    const target = direction === "undo" ? "redo" : "undo";
+    historyRef.current[target].push(structuredClone(worldRef.current));
+    restoreWorld(source.pop());
+    setNotice(direction === "undo" ? "Map change undone" : "Map change redone");
+  }
+
+  /** Creates a disposable visibility projection without changing the world scene. */
+  function projectView(scene, foldedAreas = foldedRef.current) {
+    const focus = core.focusProjection(scene, options.getDocuments(), options.focus ?? {}, options.world.locatedArea);
+    const projected = structuredClone(focus.scene);
+    const hidden = new Set(focus.hiddenIds);
+    for (const element of projected.elements) {
+      const area = element.customData?.tangent?.area;
+      const owner = element.customData?.tangentWorld?.owner;
+      const foldedAncestor = [...foldedAreas].find((root) => area ? area.startsWith(`${root}/`) : owner && (owner === root || owner.startsWith(`${root}/`)));
+      if (!foldedAncestor) continue;
+      element.isDeleted = true; hidden.add(element.id);
+    }
+    hiddenRef.current = hidden;
+    return projected;
+  }
+
+  /** Applies the current camera and Focus masks to Excalidraw. */
+  function applyView(nextFolded = foldedRef.current) {
+    const projected = projectView(sceneRef.current, nextFolded);
+    fingerprintRef.current = core.authoredFingerprint(projected.elements);
+    applyingRef.current = true;
+    api?.updateScene({ elements: projected.elements, captureUpdate: "NEVER" });
+    requestAnimationFrame(() => { applyingRef.current = false; });
+  }
+
+  /** Folds or unfolds one Area without changing source authority. */
+  function toggleFold(area) {
+    const next = new Set(foldedRef.current); if (next.has(area)) next.delete(area); else next.add(area);
+    foldedRef.current = next; setFolded(next); applyView(next); setNotice(`${area.split("/").at(-1)} ${next.has(area) ? "folded" : "unfolded"}`);
+  }
 
   /** Applies edited region geometry to source records and recomposes every ancestor. */
   function publish(elements, appState) {
@@ -106,7 +166,7 @@ function AreaMapWorld({ host, bridge, options }) {
     sceneRef.current = next.scene;
     fingerprintRef.current = core.authoredFingerprint(next.scene.elements);
     applyingRef.current = true;
-    api?.updateScene({ elements: next.scene.elements, captureUpdate: "NEVER" });
+    api?.updateScene({ elements: projectView(next.scene).elements, captureUpdate: "NEVER" });
     requestAnimationFrame(() => { applyingRef.current = false; });
     options.onWorldChange?.(worldRef.current, changedAreas, changedOwners);
   }
@@ -132,6 +192,7 @@ function AreaMapWorld({ host, bridge, options }) {
     /** Keeps map navigation local to the persistent world. */
     const keydown = (event) => {
       if (isTyping(event.target)) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { stop(event); travelHistory(event.shiftKey ? "redo" : "undo"); return; }
       if (event.key === "Escape") {
         stop(event);
         const selected = api?.getAppState?.().selectedElementIds ?? {};
@@ -143,6 +204,12 @@ function AreaMapWorld({ host, bridge, options }) {
         const region = sceneRef.current.elements.find((item) => selected[item.id] && item.customData?.tangent?.role === "area-region");
         if (region) { stop(event); fitArea(region.customData.tangent.area); }
       }
+      if (event.key === " " || event.code === "Space") {
+        const selected = api?.getAppState?.().selectedElementIds ?? {};
+        const region = sceneRef.current.elements.find((item) => selected[item.id] && item.customData?.tangent?.role === "area-region");
+        if (region) { stop(event); toggleFold(region.customData.tangent.area); }
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "o") { stop(event); setOutlineOpen((value) => !value); }
     };
     host.addEventListener("keydown", keydown, true);
     return () => host.removeEventListener("keydown", keydown, true);
@@ -150,34 +217,41 @@ function AreaMapWorld({ host, bridge, options }) {
 
   return <div className="TangentAreaMap theme--dark" data-tangent-area-map={options.world.locatedArea} data-tangent-area-map-world={options.world.worldId}>
     <Excalidraw
-      initialData={sceneRef.current}
+      initialData={projectView(sceneRef.current)}
       excalidrawAPI={setApi}
       theme="dark"
       name="Area map"
       autoFocus
       handleKeyboardGlobally={false}
       UIOptions={{ tools: { image: false }, canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false } }}
+      onPointerDown={() => { gestureBeforeRef.current ??= structuredClone(worldRef.current); }}
+      onPointerUp={() => {
+        const before = gestureBeforeRef.current; gestureBeforeRef.current = null;
+        if (!before || JSON.stringify(before) === JSON.stringify(worldRef.current)) return;
+        historyRef.current.undo.push(before); historyRef.current.redo = [];
+      }}
       onScrollChange={(scrollX, scrollY, zoom) => setCamera({ scrollX, scrollY, zoom: zoom?.value ?? zoom ?? 1 })}
       onChange={(elements, appState) => {
         if (applyingRef.current) return;
         const fingerprint = core.authoredFingerprint(elements);
         if (fingerprint === fingerprintRef.current) return;
         fingerprintRef.current = fingerprint;
-        publish(elements, appState);
+        const restored = core.restoreFocusedElements({ ...sceneRef.current, elements }, sceneRef.current, hiddenRef.current);
+        publish(restored.elements, appState);
       }}
     />
     <div className="tangent-map-ancestry" aria-label="Complete Area hierarchy">
-      {options.world.areas.map((node) => {
+      {options.world.areas.filter((node) => ![...folded].some((root) => node.key.startsWith(`${root}/`))).map((node) => {
         const box = compositionRef.current.regionRects.get(node.key);
         const name = options.getDocuments().find((item) => item.kind === "area" && item.area === node.key)?.title ?? node.key.split("/").at(-1);
-        return <button type="button" key={node.key} style={{ left: `${(box.x + camera.scrollX) * camera.zoom + 12}px`, top: `${(box.y + camera.scrollY) * camera.zoom + 10}px` }} onClick={() => fitArea(node.key)} onDoubleClick={() => fitArea(node.key)} aria-label={`${name}, depth ${node.depth + 1}`}><strong>{name}</strong>{node.shard.state !== "ready" && <span>{node.shard.state}</span>}</button>;
+        return <button type="button" key={node.key} style={{ left: `${(box.x + camera.scrollX) * camera.zoom + 12}px`, top: `${(box.y + camera.scrollY) * camera.zoom + 10}px` }} onClick={() => fitArea(node.key)} onDoubleClick={() => fitArea(node.key)} aria-label={`${name}, depth ${node.depth + 1}`}><strong>{name}</strong>{folded.has(node.key) && <span>folded · Space</span>}{node.shard.state !== "ready" && <span>{node.shard.state}</span>}</button>;
       })}
     </div>
     <button type="button" className="tangent-map-escape" onClick={() => options.onBack?.()}>Esc → Work</button>
     <div className={`tangent-map-save ${saveState.state}`} role="status">{saveState.state === "saving" ? "Saving…" : saveState.state === "blocked" ? "Not saved" : "Saved"}</div>
     {notice && <div className="tangent-map-location" role="status">{notice}</div>}
     <button type="button" className="tangent-map-world-outline-button" onClick={() => setOutlineOpen((value) => !value)} aria-expanded={outlineOpen}>Outline</button>
-    {outlineOpen && <section className="tangent-map-outline visible" aria-label="Area hierarchy"><ol>{options.world.areas.map((node) => <li key={node.key} style={{ marginLeft: `${node.depth * 16}px` }}><button type="button" onClick={() => fitArea(node.key)}>{node.key.split("/").at(-1)}</button></li>)}</ol></section>}
+    {outlineOpen && <section className="tangent-map-outline visible" aria-label="Area hierarchy"><ol>{options.world.areas.map((node) => <li key={node.key} style={{ marginLeft: `${node.depth * 16}px` }}><button type="button" onClick={() => fitArea(node.key)} onKeyDown={(event) => { if (event.key === " ") { stop(event); toggleFold(node.key); } }}>{node.key.split("/").at(-1)} · depth {node.depth + 1} · {folded.has(node.key) ? "folded" : node.shard.state} · {node.shard.elementCount} blocks</button></li>)}</ol></section>}
   </div>;
 }
 

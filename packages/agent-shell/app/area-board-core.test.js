@@ -7,31 +7,6 @@ const documents = [
   { file: "otto/otto.md", kind: "document", title: "Otto" },
 ];
 
-test("Focus hides only blocks and restores their canonical geometry before save", () => {
-  const scene = core.createEmptyScene();
-  scene.elements.push(...core.createBlockElements({ id: "near", kind: "area", ref: "neara/pgande/pgande.md", title: "PG&E", x: 10 }));
-  scene.elements.push(...core.createBlockElements({ id: "other", kind: "area", ref: "otto/tangent/tangent.md", title: "Tangent", x: 400 }));
-  scene.elements.push(core.createTextElement({ id: "ink", text: "Keep this ink", x: 800 }));
-  const records = [
-    { file: "neara/pgande/pgande.md", area: "neara/pgande", kind: "area", title: "PG&E" },
-    { file: "otto/tangent/tangent.md", area: "otto/tangent", kind: "area", title: "Tangent" },
-  ];
-  const projected = core.focusProjection(scene, records, { areas: ["neara"], only: true }, "neara/pgande/megabranch/viz-input");
-  assert.equal(projected.scene.elements.find((element) => element.id === "near").isDeleted, false);
-  assert.equal(projected.scene.elements.find((element) => element.id === "other").isDeleted, true);
-  assert.equal(projected.scene.elements.find((element) => element.id === "ink").isDeleted, false, "Focus never hides Julian-owned ink");
-  const restored = core.restoreFocusedElements(projected.scene, scene, projected.hiddenIds);
-  assert.deepEqual(restored.elements, scene.elements, "a Focus projection cannot enter the canonical scene");
-});
-
-test("location chooses an exact nested Area before its placed ancestor", () => {
-  const scene = core.createEmptyScene();
-  scene.elements.push(...core.createBlockElements({ id: "parent", kind: "area", ref: "neara/pgande/pgande.md" }));
-  scene.elements.push(...core.createBlockElements({ id: "deep", kind: "area", ref: "neara/pgande/megabranch/viz-input/viz-input.md" }));
-  assert.equal(core.locateAreaBlock(scene, "neara/pgande/megabranch/viz-input").element.id, "deep");
-  assert.equal(core.locateAreaBlock(scene, "neara/pgande/megabranch/other").element.id, "parent");
-});
-
 test("first spatial migration makes direct children regions, deeper Areas shortcuts, and keeps ink", () => {
   const records = [
     { file: "neara/pgande/pgande.md", area: "neara/pgande", kind: "area", title: "PG&E" },
@@ -48,100 +23,6 @@ test("first spatial migration makes direct children regions, deeper Areas shortc
   assert.equal(migrated.scene.elements.find((element) => element.id === "deep").customData.tangent.role, "shortcut");
   assert.equal(migrated.scene.elements.find((element) => element.id === "ink").text, "ask Toby");
   assert.equal(core.migrateAreaCardsToRegions(migrated.scene, "neara", records).changed, false, "the migration runs once");
-});
-
-test("child maps project through regions as locked read-only content and never enter a parent save", () => {
-  const parent = core.withBoundary(core.createEmptyScene(), "neara");
-  parent.elements.push(...core.createRegionElements({ id: "pgande", ref: "neara/pgande/pgande.md", x: 100, y: 100, width: 800, height: 600 }));
-  const child = core.withBoundary(core.createEmptyScene(), "neara/pgande");
-  child.elements.push(...core.createRegionElements({ id: "megabranch", ref: "neara/pgande/megabranch/megabranch.md", x: 120, y: 120 }));
-  const projection = core.projectSpatialChildren(parent, "neara", new Map([["neara/pgande", child]]));
-  const nested = projection.scene.elements.find((element) => element.id === "projection:neara/pgande:megabranch");
-  assert.equal(core.isAreaRegion(nested), true);
-  assert.equal(nested.locked, true);
-  assert.equal(nested.opacity, 70);
-  assert.equal(nested.frameId, "projection:neara/pgande:window", "projected children stay clipped by their one window frame");
-  assert.deepEqual(core.stripSpatialProjections(projection.scene).elements, parent.elements);
-  const collapsed = core.collapseSpatialRegions(projection.scene, ["pgande"]);
-  assert.equal(collapsed.elements.find((element) => element.id === nested.id).isDeleted, true);
-});
-
-test("region walls slide siblings apart but leave ordinary ink alone", () => {
-  const previous = core.withBoundary(core.createEmptyScene(), "neara");
-  previous.elements.push(...core.createRegionElements({ id: "pgande", ref: "neara/pgande/pgande.md", x: 100, y: 100, width: 300, height: 220 }));
-  previous.elements.push(...core.createRegionElements({ id: "portland", ref: "neara/portland/portland.md", x: 500, y: 100, width: 300, height: 220 }));
-  previous.elements.push(core.createTextElement({ id: "note", text: "priority", x: 900, y: 900 }));
-  const changed = structuredClone(previous);
-  changed.elements.find((element) => element.id === "portland").x = 200;
-  changed.elements.find((element) => element.id === "note").x = 1200;
-  const fenced = core.fenceRegionGeometry(changed, previous);
-  assert.equal(fenced.refused.reason, "sibling");
-  assert.equal(fenced.refused.wall, "neara/pgande");
-  assert.equal(fenced.scene.elements.find((element) => element.id === "portland").x, 400);
-  assert.equal(fenced.scene.elements.find((element) => element.id === "note").x, 1200, "Julian-owned ink is not fenced");
-});
-
-test("a block slides along a child region without changing semantic ownership", () => {
-  const previous = core.createEmptyScene();
-  previous.elements.push(...core.createRegionElements({ id: "standards", ref: "neara/delivery/standards/standards.md", x: 400, y: 100, width: 300, height: 260 }));
-  previous.elements.push(...core.createBlockElements({ id: "delivery-goal", kind: "goal", ref: "neara/delivery/goal-plan.md", x: 80, y: 140, width: 220, height: 100 }));
-  const changed = structuredClone(previous);
-  changed.elements.find((element) => element.id === "delivery-goal").x = 450;
-  changed.elements.find((element) => element.id === "delivery-goal-tangent-label").x = 450;
-  const fenced = core.fenceRegionGeometry(changed, previous);
-  assert.equal(fenced.refused.reason, "child");
-  assert.equal(fenced.refused.wall, "neara/delivery/standards");
-  assert.equal(fenced.scene.elements.find((element) => element.id === "delivery-goal").x, 180);
-  assert.equal(core.areaForBlock(fenced.scene.elements.find((element) => element.id === "delivery-goal")), "neara/delivery");
-});
-
-test("continuous child walls keep the drag's tangential movement", () => {
-  const previous = core.createEmptyScene();
-  previous.elements.push(...core.createRegionElements({ id: "standards", ref: "neara/delivery/standards/standards.md", x: 400, y: 100, width: 300, height: 260 }));
-  previous.elements.push(...core.createBlockElements({ id: "delivery-goal", kind: "goal", ref: "neara/delivery/goal-plan.md", x: 80, y: 140, width: 220, height: 100 }));
-  const changed = structuredClone(previous);
-  const block = changed.elements.find((element) => element.id === "delivery-goal");
-  block.x = 450; block.y = 210;
-  const fenced = core.fenceRegionGeometry(changed, previous);
-  assert.equal(fenced.scene.elements.find((element) => element.id === "delivery-goal").x, 180, "the entering axis stops at the wall");
-  assert.equal(fenced.scene.elements.find((element) => element.id === "delivery-goal").y, 210, "the other axis continues along the wall");
-});
-
-test("a nested content drag stretches every outline until an ancestor sibling stops it", () => {
-  const standards = core.withBoundary(core.createEmptyScene(), "neara/delivery/standards");
-  standards.elements.push(...core.createBlockElements({ id: "goal", kind: "goal", ref: "neara/delivery/standards/goal-a.md", x: 300, y: 100, width: 200, height: 100 }));
-  const delivery = core.withBoundary(core.createEmptyScene(), "neara/delivery");
-  delivery.elements.push(...core.createRegionElements({ id: "standards", ref: "neara/delivery/standards/standards.md", x: 100, y: 100, width: 600, height: 400 }));
-  const neara = core.withBoundary(core.createEmptyScene(), "neara");
-  neara.elements.push(...core.createRegionElements({ id: "delivery", ref: "neara/delivery/delivery.md", x: 100, y: 100, width: 900, height: 600 }));
-  neara.elements.push(...core.createRegionElements({ id: "hackathon", ref: "neara/hackathon/hackathon.md", x: 1100, y: 100, width: 500, height: 500 }));
-  const context = { ancestors: [
-    { area: "neara", boundary: { x: 0, y: 0, width: 1800, height: 1000 }, regionForChild: { x: 100, y: 100, width: 900, height: 600 }, elementId: "delivery", hash: "n", scene: neara, regions: [{ area: "neara/delivery", rect: { x: 100, y: 100, width: 900, height: 600 } }, { area: "neara/hackathon", rect: { x: 1100, y: 100, width: 500, height: 500 } }] },
-    { area: "neara/delivery", boundary: { x: 0, y: 0, width: 1200, height: 800 }, regionForChild: { x: 100, y: 100, width: 600, height: 400 }, elementId: "standards", hash: "d", scene: delivery, regions: [{ area: "neara/delivery/standards", rect: { x: 100, y: 100, width: 600, height: 400 } }] },
-  ] };
-  const changed = structuredClone(standards);
-  changed.elements.find((element) => element.id === "goal").x = 1400;
-  const fenced = core.fenceRegionGeometry(changed, standards, { area: "neara/delivery/standards", context });
-  assert.equal(fenced.refused.wall, "neara/hackathon");
-  assert.ok(Math.abs(fenced.scene.elements.find((element) => element.id === "goal").x - 500) < 0.01);
-  const frames = core.ancestryFrames("neara/delivery/standards", context, fenced.scene);
-  for (let index = 1; index < frames.length; index += 1) {
-    const parent = frames[index - 1].rect; const child = frames[index].rect;
-    assert.ok(parent.x <= child.x && parent.y <= child.y && parent.x + parent.width >= child.x + child.width && parent.y + parent.height >= child.y + child.height, `${frames[index - 1].area} contains ${frames[index].area}`);
-  }
-});
-
-test("own-scope outline geometry writes the authoritative parent region", () => {
-  const parent = core.withBoundary(core.createEmptyScene(), "neara/delivery");
-  parent.elements.push(...core.createRegionElements({ id: "standards", ref: "neara/delivery/standards/standards.md", x: 100, y: 120, width: 600, height: 400 }));
-  const previous = core.scopeScene(core.createEmptyScene(), "neara/delivery/standards", { ancestors: [{ regionForChild: { x: 100, y: 120, width: 600, height: 400 } }] });
-  const changed = structuredClone(previous); const boundary = changed.elements.find(core.isAreaBoundary);
-  boundary.x += 50; boundary.y += 30; boundary.width = 720; boundary.height = 480;
-  const write = core.scopeExtentGesture(changed, previous, "neara/delivery/standards", { ancestors: [{ area: "neara/delivery", hash: "parent-hash", elementId: "standards", scene: parent }] });
-  const region = write.canvas.elements.find((element) => element.id === "standards");
-  assert.deepEqual({ x: region.x, y: region.y, width: region.width, height: region.height }, { x: 150, y: 150, width: 720, height: 480 });
-  assert.equal(write.area, "neara/delivery");
-  assert.equal(core.sceneWithoutScopeBoundary(changed, true).elements.some(core.isAreaBoundary), false, "the retired child boundary cannot become a second authority");
 });
 
 test("creates connectable fact-backed blocks with one authoritative reference", () => {

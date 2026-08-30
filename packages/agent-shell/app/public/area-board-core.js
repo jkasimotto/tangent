@@ -3,12 +3,7 @@ const BLOCK_WIDTH = 280;
 const BLOCK_HEIGHT = 132;
 const REGION_SIZES = Object.freeze({ small: { width: 300, height: 220 }, medium: { width: 460, height: 320 }, large: { width: 680, height: 460 } });
 const BOUNDARY_MARGIN = 80;
-const DEFAULT_SCOPE_WIDTH = 1600;
-const DEFAULT_SCOPE_HEIGHT = 1000;
-const ANCESTRY_BAND = 140;
 const LABEL_BAND = 40;
-const REGION_MIN_CONTENT = 24;
-const CONTENT_MARGIN = 60;
 // Colours are stored the way Excalidraw stores them: for its light theme. The
 // editor's dark theme inverts them on the canvas, so the scene never stores
 // dark-theme colours; a scene that did would render inverted, with white ink
@@ -117,14 +112,6 @@ function areaForBlock(element, documents = []) {
   return documents.find((item) => item.file === file)?.area ?? file.replace(/\/[^/]+$/, "");
 }
 
-/** Finds the located Area block, or its deepest placed ancestor. */
-function locateAreaBlock(scene, area, documents = []) {
-  return (scene?.elements ?? []).filter((element) => !element.isDeleted && tangentOf(element) && !isAreaBoundary(element))
-    .map((element) => ({ element, area: areaForBlock(element, documents) }))
-    .filter((entry) => entry.area && (entry.area === area || String(area).startsWith(`${entry.area}/`)))
-    .sort((left, right) => right.area.length - left.area.length)[0] ?? null;
-}
-
 /** True when a block stays visible under the shared Work Focus switches. */
 function blockMatchesFocus(element, documents, focus = {}, locatedArea = "") {
   const area = areaForBlock(element, documents);
@@ -134,30 +121,6 @@ function blockMatchesFocus(element, documents, focus = {}, locatedArea = "") {
   const fact = factForBlock(element, documents);
   const active = !focus.activeOnly || Boolean(fact?.live);
   return onLocatedPath || starred && active;
-}
-
-/** Projects Focus as disposable Excalidraw deletions while leaving ink unchanged. */
-function focusProjection(scene, documents, focus = {}, locatedArea = "") {
-  const next = structuredClone(scene);
-  const hiddenIds = new Set();
-  for (const block of next.elements ?? []) {
-    if (!tangentOf(block) || block.isDeleted || blockMatchesFocus(block, documents, focus, locatedArea)) continue;
-    hiddenIds.add(block.id);
-    for (const binding of block.boundElements ?? []) if (binding.type === "text") hiddenIds.add(binding.id);
-  }
-  for (const element of next.elements ?? []) if (hiddenIds.has(element.id)) element.isDeleted = true;
-  return { scene: next, hiddenIds };
-}
-
-/** Removes disposable Focus deletions from an authored editor update. */
-function restoreFocusedElements(scene, canonical, hiddenIds = new Set()) {
-  if (!hiddenIds.size) return scene;
-  const next = structuredClone(scene);
-  const currentById = new Map((next.elements ?? []).map((element) => [element.id, element]));
-  for (const element of canonical?.elements ?? []) if (hiddenIds.has(element.id)) currentById.set(element.id, structuredClone(element));
-  next.elements = (canonical?.elements ?? []).map((element) => currentById.get(element.id)).filter(Boolean)
-    .concat((next.elements ?? []).filter((element) => !(canonical?.elements ?? []).some((old) => old.id === element.id)));
-  return next;
 }
 
 /** Packs pieces into lines of at most `columns` characters so a block label fits its block instead of being clipped. */
@@ -204,146 +167,6 @@ function createRegionElements({ id, ref, title = ref, status = "", x = 0, y = 0,
 /** Creates the one authored boundary for an Area file. */
 function createAreaBoundary(area, bounds = {}) {
   return createShapeElement({ id: `tangent-boundary-${seedFor(area)}`, type: "rectangle", x: bounds.x ?? 0, y: bounds.y ?? 0, width: bounds.width ?? 1200, height: bounds.height ?? 800, style: { backgroundColor: "transparent", strokeColor: "#868e96", strokeStyle: "dashed", strokeWidth: 1 }, customData: { tangent: { kind: "area", ref: `${area}/${area.split("/").pop()}.md`, role: "boundary" } } });
-}
-
-/** Creates the deterministic boundary projected for an Area that has no file. */
-function defaultScopeBoundary(area, bounds = {}) {
-  return createAreaBoundary(area, { x: bounds.x ?? 0, y: bounds.y ?? 0, width: bounds.width ?? DEFAULT_SCOPE_WIDTH, height: bounds.height ?? DEFAULT_SCOPE_HEIGHT });
-}
-
-/** Returns a plain rectangle for one Excalidraw element. */
-function rectOf(element) { return element ? { x: Number(element.x), y: Number(element.y), width: Number(element.width), height: Number(element.height) } : null; }
-
-/** Returns the smallest rectangle containing all supplied rectangles. */
-function unionRects(rectangles = []) {
-  const values = rectangles.filter((value) => value && [value.x, value.y, value.width, value.height].every(Number.isFinite));
-  if (!values.length) return null;
-  const x = Math.min(...values.map((value) => value.x));
-  const y = Math.min(...values.map((value) => value.y));
-  const right = Math.max(...values.map((value) => value.x + value.width));
-  const bottom = Math.max(...values.map((value) => value.y + value.height));
-  return { x, y, width: right - x, height: bottom - y };
-}
-
-/** Returns the content hull, with its breathing room, but no stored boundary. */
-function contentExtent(scene, { includeInk = true } = {}) {
-  const elements = (scene?.elements ?? []).filter((element) => !element.isDeleted && !element.customData?.tangentProjection);
-  const boundText = new Set(elements.filter((element) => element.containerId).map((element) => element.id));
-  const contents = elements.filter((element) => !isAreaBoundary(element) && !boundText.has(element.id) && (includeInk || tangentOf(element)));
-  const hull = unionRects(contents.map(rectOf));
-  return hull ? { x: hull.x - CONTENT_MARGIN, y: hull.y - CONTENT_MARGIN, width: hull.width + CONTENT_MARGIN * 2, height: hull.height + CONTENT_MARGIN * 2 } : null;
-}
-
-/** Expands one stored extent around the scene hull without changing the scene. */
-function containingExtent(scene, { includeInk = true, extent = null } = {}) {
-  const elements = (scene?.elements ?? []).filter((element) => !element.isDeleted && !element.customData?.tangentProjection);
-  const stored = extent ?? rectOf(elements.find(isAreaBoundary));
-  const padded = contentExtent(scene, { includeInk });
-  return unionRects([stored, padded]) ?? stored ?? { x: 0, y: 0, width: DEFAULT_SCOPE_WIDTH, height: DEFAULT_SCOPE_HEIGHT };
-}
-
-/** Creates the editable scope proxy from its authoritative region in the parent file. */
-function scopeScene(scene, area, context = {}, view = null) {
-  const next = structuredClone(scene ?? createEmptyScene());
-  const nearest = context.ancestors?.at(-1);
-  const authority = nearest?.regionForChild;
-  let boundary = next.elements.find((element) => !element.isDeleted && isAreaBoundary(element));
-  if (!boundary && authority) {
-    boundary = defaultScopeBoundary(area, { x: 0, y: 0, width: authority?.width, height: authority?.height });
-    next.elements.unshift(boundary);
-  } else if (authority) {
-    boundary.width = authority.width;
-    boundary.height = authority.height;
-  }
-  if (boundary && authority && Number.isFinite(view?.scopeProxy?.x) && Number.isFinite(view?.scopeProxy?.y)) {
-    boundary.x = view.scopeProxy.x; boundary.y = view.scopeProxy.y;
-  }
-  return next;
-}
-
-/** Builds the read-only ancestry frames around the opened Area. */
-function ancestryFrames(area, context = {}, canonicalScene = createEmptyScene()) {
-  const path = String(area).split("/").filter(Boolean);
-  const prepared = scopeScene(canonicalScene, area, context);
-  const authoredBoundary = (prepared.elements ?? []).find((element) => !element.isDeleted && isAreaBoundary(element));
-  const scopeBoundary = authoredBoundary ?? defaultScopeBoundary(area);
-  const scopeRect = containingExtent(prepared, { extent: rectOf(scopeBoundary) });
-  const frames = [{ area, depth: path.length - 1, role: "scope", rect: scopeRect, toArea: { scale: 1, offsetX: 0, offsetY: 0 }, source: authoredBoundary ? "authored" : "default", elementId: scopeBoundary.id, label: { name: path.at(-1) || area, status: "active" }, order: -1 }];
-  const ancestors = [...(context.ancestors ?? [])].reverse();
-  let defaultChain = false; let cumulativeX = 0; let cumulativeY = 0; let childFrame = frames[0];
-  for (let index = 0; index < ancestors.length; index += 1) {
-    const ancestor = ancestors[index]; const distance = index + 1;
-    const child = index === 0 ? { boundary: scopeRect } : ancestors[index - 1];
-    const canAuthor = !defaultChain && ancestor.boundary && ancestor.regionForChild && child.boundary;
-    let rect; let toArea;
-    if (canAuthor) {
-      const boundary = ancestor.boundary; const region = ancestor.regionForChild; const childBoundary = child.boundary;
-      cumulativeX += region.x - childBoundary.x;
-      cumulativeY += region.y + LABEL_BAND - childBoundary.y;
-      const originalIndex = (context.ancestors ?? []).findIndex((item) => item.area === ancestor.area);
-      const outerAuthority = originalIndex > 0 ? context.ancestors[originalIndex - 1]?.regionForChild : null;
-      const storedParentExtent = { x: boundary.x, y: boundary.y, width: outerAuthority?.width ?? boundary.width, height: outerAuthority?.height ?? boundary.height };
-      const parentExtent = containingExtent(ancestor.scene, { includeInk: false, extent: storedParentExtent });
-      const base = { x: parentExtent.x - cumulativeX, y: parentExtent.y - cumulativeY, width: parentExtent.width, height: parentExtent.height };
-      const childWithMargin = { x: childFrame.rect.x - CONTENT_MARGIN, y: childFrame.rect.y - CONTENT_MARGIN, width: childFrame.rect.width + CONTENT_MARGIN * 2, height: childFrame.rect.height + CONTENT_MARGIN * 2 };
-      rect = unionRects([base, childWithMargin]);
-      toArea = { scale: 1, offsetX: cumulativeX, offsetY: cumulativeY };
-    } else {
-      defaultChain = true;
-      rect = { x: childFrame.rect.x - ANCESTRY_BAND, y: childFrame.rect.y - ANCESTRY_BAND, width: childFrame.rect.width + ANCESTRY_BAND * 2, height: childFrame.rect.height + ANCESTRY_BAND * 2 };
-      toArea = { scale: 1, offsetX: cumulativeX, offsetY: cumulativeY };
-    }
-    childFrame = { area: ancestor.area, rect };
-    frames.unshift({ area: ancestor.area, depth: String(ancestor.area).split("/").length - 1, role: "ancestor", rect, toArea, source: canAuthor ? "authored" : "default", elementId: ancestor.elementId ?? null, label: { name: ancestor.name || String(ancestor.area).split("/").at(-1), status: ancestor.status || "active" }, order: -distance });
-  }
-  return frames;
-}
-
-/** Finds the first sibling touched by a stretched scope or ancestor outline. */
-function ancestorWall(scene, area, context = {}) {
-  const frames = ancestryFrames(area, context, scene);
-  const byArea = new Map(frames.map((frame) => [frame.area, frame]));
-  const ancestors = context.ancestors ?? [];
-  for (let index = ancestors.length - 1; index >= 0; index -= 1) {
-    const parent = ancestors[index];
-    const childArea = index === ancestors.length - 1 ? area : ancestors[index + 1].area;
-    const childFrame = byArea.get(childArea); const parentFrame = byArea.get(parent.area);
-    if (!childFrame || !parentFrame) continue;
-    for (const sibling of (parent.regions ?? []).filter((region) => region.area && region.area !== childArea)) {
-      const wall = { x: sibling.rect.x - parentFrame.toArea.offsetX, y: sibling.rect.y - parentFrame.toArea.offsetY, width: sibling.rect.width, height: sibling.rect.height };
-      if (childFrame.rect.x < wall.x + wall.width && wall.x < childFrame.rect.x + childFrame.rect.width && childFrame.rect.y < wall.y + wall.height && wall.y < childFrame.rect.y + childFrame.rect.height) return sibling;
-    }
-  }
-  return null;
-}
-
-/** Creates locked Excalidraw rectangles for the ancestry projection. */
-function ancestryProjection(frames = []) {
-  return frames.filter((frame) => frame.role === "ancestor").map((frame) => createShapeElement({ id: `ancestry:${frame.area}`, x: frame.rect.x, y: frame.rect.y, width: frame.rect.width, height: frame.rect.height, style: { backgroundColor: "transparent", strokeColor: "#868e96", strokeStyle: "dashed", strokeWidth: 1, opacity: 70, locked: true }, customData: { tangentProjection: { area: frame.area, role: "ancestor" } } }));
-}
-
-/** Finds the deepest visible Area rectangle containing a point. */
-function areaAtPoint(frames = [], point, zoom = 1, edgePx = 8) {
-  if (!point) return null;
-  const edge = edgePx / (Number(zoom) || 1);
-  return frames.filter((frame) => point.x >= frame.rect.x - edge && point.x <= frame.rect.x + frame.rect.width + edge && point.y >= frame.rect.y - edge && point.y <= frame.rect.y + frame.rect.height + edge)
-    .sort((left, right) => right.depth - left.depth || Number(right.order ?? 0) - Number(left.order ?? 0))[0] ?? null;
-}
-
-/** Chooses the exact spatial point used for Block placement. */
-function placementPoint(appState = {}, pointer = null, selection = [], scopeFrame = null) {
-  if (pointer && Number.isFinite(pointer.x) && Number.isFinite(pointer.y)) return pointer;
-  const selected = Array.isArray(selection) ? selection.find((element) => !element.isDeleted) : null;
-  if (selected) return { x: selected.x + selected.width / 2, y: selected.y + selected.height / 2 };
-  if (scopeFrame) return { x: scopeFrame.rect.x + scopeFrame.rect.width / 2, y: scopeFrame.rect.y + scopeFrame.rect.height / 2 };
-  return insertionPoint(appState, pointer);
-}
-
-/** Maps one scope-space point into the selected Area's own coordinates. */
-function toAreaSpace(point, frame) {
-  if (!frame || !point) return point;
-  const transform = frame.toArea ?? { scale: 1, offsetX: 0, offsetY: 0 };
-  return { x: point.x * transform.scale + transform.offsetX, y: point.y * transform.scale + transform.offsetY };
 }
 
 /** Resolves one Tangent block without treating its cached text as authority. */
@@ -492,214 +315,6 @@ function migrateAreaCardsToRegions(scene, area, documents = []) {
   return { scene: bounded, changed: changed || bounded !== next };
 }
 
-/**
- * Applies the map's walls to one Excalidraw change frame.
- *
- * A parent is deliberately not a wall: its drawn extent can grow around its
- * contents. Sibling regions wall each other, and child regions wall blocks
- * authored in the current file. The correction is made in the same change
- * frame, so pointer-up never produces a later snap-back.
- */
-function fenceRegionGeometry(candidate, previous, { area = "", context = {}, childScenes = new Map() } = {}) {
-  const next = structuredClone(candidate);
-  const previousById = new Map((previous?.elements ?? []).map((element) => [element.id, element]));
-  const boundary = next.elements.find(isAreaBoundary);
-  const oldBoundary = previousById.get(boundary?.id);
-  let refused = null;
-  /** Reports whether two rectangles visually overlap. */
-  const overlaps = (left, right) => left.x < right.x + right.width && right.x < left.x + left.width && left.y < right.y + right.height && right.y < left.y + left.height;
-  /** Slides a moved rectangle against a wall while preserving tangential motion. */
-  const slideAgainst = (element, old, walls) => {
-    const movingRight = element.x > old.x; const movingLeft = element.x < old.x;
-    const movingDown = element.y > old.y; const movingUp = element.y < old.y;
-    /** Reports collision at the candidate or anywhere along its entering edge. */
-    const crosses = (wall) => overlaps(element, wall)
-      || movingRight && old.x + old.width <= wall.x && element.x + element.width > wall.x && element.y < wall.y + wall.height && wall.y < element.y + element.height
-      || movingLeft && old.x >= wall.x + wall.width && element.x < wall.x + wall.width && element.y < wall.y + wall.height && wall.y < element.y + element.height
-      || movingDown && old.y + old.height <= wall.y && element.y + element.height > wall.y && element.x < wall.x + wall.width && wall.x < element.x + element.width
-      || movingUp && old.y >= wall.y + wall.height && element.y < wall.y + wall.height && element.x < wall.x + wall.width && wall.x < element.x + element.width;
-    const collisions = walls.filter(crosses);
-    if (!collisions.length) return null;
-    const resized = element.width !== old.width || element.height !== old.height;
-    if (resized) {
-      for (const wall of collisions) {
-        if (old.x + old.width <= wall.x) element.width = Math.min(element.width, wall.x - element.x);
-        else if (old.x >= wall.x + wall.width) { const right = element.x + element.width; element.x = Math.max(element.x, wall.x + wall.width); element.width = right - element.x; }
-        if (old.y + old.height <= wall.y) element.height = Math.min(element.height, wall.y - element.y);
-        else if (old.y >= wall.y + wall.height) { const bottom = element.y + element.height; element.y = Math.max(element.y, wall.y + wall.height); element.height = bottom - element.y; }
-      }
-      return collisions[0];
-    }
-    const dx = element.x - old.x; const dy = element.y - old.y;
-    const vertical = collisions.filter((wall) => element.y < wall.y + wall.height && wall.y < element.y + element.height);
-    const horizontal = collisions.filter((wall) => element.x < wall.x + wall.width && wall.x < element.x + element.width);
-    if (vertical.length && (Math.abs(dx) >= Math.abs(dy) || !horizontal.length)) {
-      if (dx > 0) element.x = Math.min(...vertical.map((wall) => wall.x - element.width));
-      else if (dx < 0) element.x = Math.max(...vertical.map((wall) => wall.x + wall.width));
-    } else if (horizontal.length && dy > 0) element.y = Math.min(...horizontal.map((wall) => wall.y - element.height));
-    else if (horizontal.length && dy < 0) element.y = Math.max(...horizontal.map((wall) => wall.y + wall.height));
-    return collisions[0];
-  };
-  for (const region of next.elements.filter((element) => !element.isDeleted && isAreaRegion(element))) {
-    const old = previousById.get(region.id);
-    if (!old) continue;
-    const rotated = Math.abs(Number(region.angle || 0)) > 0.0001;
-    const childArea = areaForBlock(region);
-    const child = childScenes instanceof Map ? childScenes.get(childArea) : childScenes?.[childArea];
-    const childHull = child ? contentExtent(child) : null;
-    const minimumWidth = Math.max(REGION_MIN_CONTENT, childHull?.width ?? 0);
-    const minimumHeight = Math.max(LABEL_BAND + REGION_MIN_CONTENT, childHull ? childHull.height + LABEL_BAND : 0);
-    const tooSmall = region.width < minimumWidth || region.height < minimumHeight;
-    const wall = slideAgainst(region, old, next.elements.filter((other) => other.id !== region.id && !other.isDeleted && isAreaRegion(other)));
-    if (!rotated && !tooSmall) {
-      if (wall) refused = { region: areaForBlock(region), wall: areaForBlock(wall), reason: "sibling" };
-      continue;
-    }
-    Object.assign(region, { x: old.x, y: old.y, width: old.width, height: old.height, angle: old.angle, version: Number(region.version || 0) + 1 });
-    const label = next.elements.find((element) => element.containerId === region.id);
-    const oldLabel = previousById.get(label?.id);
-    if (label && oldLabel) Object.assign(label, { x: oldLabel.x, y: oldLabel.y, width: oldLabel.width, height: oldLabel.height, version: Number(label.version || 0) + 1 });
-    refused = { region: areaForBlock(region), reason: rotated ? "rotate" : "min-size" };
-  }
-  const childWalls = next.elements.filter((element) => !element.isDeleted && isAreaRegion(element));
-  for (const block of next.elements.filter((element) => !element.isDeleted && tangentOf(element) && !isAreaRegion(element) && !isAreaBoundary(element))) {
-    const old = previousById.get(block.id);
-    if (!old) continue;
-    const wall = slideAgainst(block, old, childWalls);
-    if (!wall) continue;
-    const label = next.elements.find((element) => element.containerId === block.id);
-    const oldLabel = previousById.get(label?.id);
-    if (label && oldLabel) {
-      label.x += block.x - candidate.elements.find((element) => element.id === block.id).x;
-      label.y += block.y - candidate.elements.find((element) => element.id === block.id).y;
-    }
-    refused = { region: areaForBlock(block), wall: areaForBlock(wall), reason: "child" };
-  }
-  if (boundary && oldBoundary && ["x", "y", "width", "height", "angle"].some((field) => Number(boundary[field]) !== Number(oldBoundary[field])) && !boundary.isDeleted) {
-    const otherGeometryChanged = next.elements.some((element) => element.id !== boundary.id && element.containerId !== boundary.id && previousById.has(element.id) && ["x", "y", "width", "height"].some((field) => Number(element[field]) !== Number(previousById.get(element.id)[field])));
-    if (otherGeometryChanged || Math.abs(Number(boundary.angle || 0)) > 0.0001) {
-      Object.assign(boundary, { x: oldBoundary.x, y: oldBoundary.y, width: oldBoundary.width, height: oldBoundary.height, angle: oldBoundary.angle, version: Number(boundary.version || 0) + 1 });
-      refused ||= { region: areaForBlock(boundary), reason: Math.abs(Number(boundary.angle || 0)) > 0.0001 ? "rotate" : "contents-move" };
-    }
-  }
-  const hierarchyWall = area ? ancestorWall(next, area, context) : null;
-  if (hierarchyWall) {
-    const changed = next.elements.find((element) => {
-      const old = previousById.get(element.id);
-      return old && !element.containerId && !isAreaBoundary(element) && ["x", "y", "width", "height"].some((field) => Number(element[field]) !== Number(old[field]));
-    });
-    const old = changed && previousById.get(changed.id);
-    if (changed && old) {
-      const desired = rectOf(changed); const label = next.elements.find((element) => element.containerId === changed.id); const desiredLabel = label && rectOf(label); const oldLabel = label && previousById.get(label.id);
-      /** Tests one interpolation without allowing a stretched ancestor to cross its sibling. */
-      const validAt = (xFactor, yFactor = xFactor) => {
-        const trial = structuredClone(next); const item = trial.elements.find((element) => element.id === changed.id);
-        item.x = old.x + (desired.x - old.x) * xFactor; item.width = old.width + (desired.width - old.width) * xFactor;
-        item.y = old.y + (desired.y - old.y) * yFactor; item.height = old.height + (desired.height - old.height) * yFactor;
-        return !ancestorWall(trial, area, context);
-      };
-      let xFactor = validAt(1, 0) ? 1 : 0; let yFactor = validAt(xFactor, 1) ? 1 : 0;
-      /** Finds the last valid fraction of one gesture axis. */
-      const search = (axis) => { let low = 0; let high = 1; for (let step = 0; step < 20; step += 1) { const mid = (low + high) / 2; if (axis === "x" ? validAt(mid, yFactor) : validAt(xFactor, mid)) low = mid; else high = mid; } return low; };
-      if (!xFactor) xFactor = search("x");
-      if (!yFactor) yFactor = search("y");
-      changed.x = old.x + (desired.x - old.x) * xFactor; changed.width = old.width + (desired.width - old.width) * xFactor;
-      changed.y = old.y + (desired.y - old.y) * yFactor; changed.height = old.height + (desired.height - old.height) * yFactor;
-      if (label && oldLabel && desiredLabel) {
-        label.x = oldLabel.x + (desiredLabel.x - oldLabel.x) * xFactor; label.width = oldLabel.width + (desiredLabel.width - oldLabel.width) * xFactor;
-        label.y = oldLabel.y + (desiredLabel.y - oldLabel.y) * yFactor; label.height = oldLabel.height + (desiredLabel.height - oldLabel.height) * yFactor;
-      }
-    }
-    refused = { region: changed ? areaForBlock(changed) : area, wall: hierarchyWall.area, reason: "ancestor-sibling" };
-  }
-  return { scene: next, refused };
-}
-
-/** Routes a nested scope-outline edit to the region stored in its parent scene. */
-function scopeExtentGesture(candidate, previous, area, context = {}) {
-  const boundary = candidate?.elements?.find((element) => !element.isDeleted && isAreaBoundary(element));
-  const old = previous?.elements?.find((element) => element.id === boundary?.id);
-  const parent = context.ancestors?.at(-1);
-  if (!boundary || !old || !parent?.scene || !parent.elementId) return null;
-  if (!["x", "y", "width", "height"].some((field) => Number(boundary[field]) !== Number(old[field]))) return null;
-  const parentScene = structuredClone(parent.scene);
-  const region = parentScene.elements.find((element) => element.id === parent.elementId && !element.isDeleted && isAreaRegion(element));
-  if (!region) return null;
-  region.x += boundary.x - old.x; region.y += boundary.y - old.y; region.width = boundary.width; region.height = boundary.height; region.angle = 0;
-  const label = parentScene.elements.find((element) => element.containerId === region.id);
-  if (label) Object.assign(label, { x: region.x + 14, y: region.y + 8, width: Math.max(80, region.width - 28), height: LABEL_BAND - 8 });
-  return { area: parent.area, baseHash: parent.hash ?? null, canvas: parentScene, reason: `${area.split("/").at(-1)} extent` };
-}
-
-/** Drops the retired local boundary when a nested Area next saves its own file. */
-function sceneWithoutScopeBoundary(scene, nested = false) {
-  if (!nested) return structuredClone(scene);
-  const next = structuredClone(scene);
-  next.elements = (next.elements ?? []).filter((element) => !isAreaBoundary(element));
-  return next;
-}
-
-/** Projects child scenes through their parent regions without transferring file ownership. */
-function projectSpatialChildren(scene, area, childScenes = new Map()) {
-  const next = structuredClone(scene);
-  const projectedIds = new Set();
-  const sourceElements = [...next.elements];
-  for (const region of sourceElements.filter((element) => !element.isDeleted && isAreaRegion(element))) {
-    const childArea = areaForBlock(region);
-    const child = childScenes instanceof Map ? childScenes.get(childArea) : childScenes?.[childArea];
-    if (!child?.elements) continue;
-    const boundary = child.elements.find((element) => !element.isDeleted && isAreaBoundary(element)) ?? defaultScopeBoundary(childArea, { width: region.width, height: region.height });
-    const windowId = `projection:${childArea}:window`;
-    const offsetX = region.x - boundary.x;
-    const offsetY = region.y + LABEL_BAND - boundary.y;
-    const window = createShapeElement({ id: windowId, type: "frame", x: region.x, y: region.y + LABEL_BAND, width: region.width, height: Math.max(0, region.height - LABEL_BAND), name: "", style: { locked: true }, customData: { tangentProjection: { area: childArea, role: "window" } } });
-    next.elements.push(window); projectedIds.add(windowId);
-    if (window.height <= REGION_MIN_CONTENT) continue;
-    for (const element of child.elements) {
-      if (element.isDeleted || isAreaBoundary(element)) continue;
-      const clone = structuredClone(element);
-      const originalId = clone.id;
-      clone.id = `projection:${childArea}:${originalId}`;
-      clone.x += offsetX; clone.y += offsetY;
-      clone.frameId = windowId;
-      clone.opacity = Math.min(Number(clone.opacity ?? 100), 70);
-      clone.locked = true;
-      clone.customData = { ...(clone.customData ?? {}), tangentProjection: { area: childArea, sourceId: originalId } };
-      if (clone.containerId) clone.containerId = `projection:${childArea}:${clone.containerId}`;
-      if (clone.boundElements) clone.boundElements = clone.boundElements.map((binding) => ({ ...binding, id: `projection:${childArea}:${binding.id}` }));
-      if (clone.startBinding?.elementId) clone.startBinding.elementId = `projection:${childArea}:${clone.startBinding.elementId}`;
-      if (clone.endBinding?.elementId) clone.endBinding.elementId = `projection:${childArea}:${clone.endBinding.elementId}`;
-      projectedIds.add(clone.id);
-      next.elements.push(clone);
-    }
-    const outline = structuredClone(boundary);
-    outline.id = `projection:${childArea}:outline`; outline.x += offsetX; outline.y += offsetY; outline.frameId = windowId;
-    outline.locked = true; outline.opacity = 70; outline.strokeStyle = "dashed"; outline.backgroundColor = "transparent";
-    outline.customData = { tangentProjection: { area: childArea, role: "outline" } };
-    next.elements.push(outline); projectedIds.add(outline.id);
-  }
-  return { scene: next, projectedIds };
-}
-
-/** Removes read-only child projections before a save of the editing scope. */
-function stripSpatialProjections(scene) {
-  const next = structuredClone(scene);
-  next.elements = (next.elements ?? []).filter((element) => !element.customData?.tangentProjection);
-  return next;
-}
-
-/** Applies private collapsed state to regions and their read-only contents. */
-function collapseSpatialRegions(scene, collapsedIds = []) {
-  const next = structuredClone(scene);
-  const collapsed = new Set(collapsedIds);
-  const areas = new Set(next.elements.filter((element) => collapsed.has(element.id) && isAreaRegion(element)).map(areaForBlock));
-  for (const element of next.elements) {
-    if (collapsed.has(element.id) && isAreaRegion(element)) element.opacity = Math.min(Number(element.opacity ?? 100), 45);
-    if (areas.has(element.customData?.tangentProjection?.area)) element.isDeleted = true;
-  }
-  return next;
-}
-
 /** Finds a block reference in pasted or picker text. Plain prose returns null. */
 function referenceFromText(text, choices = []) {
   const value = String(text ?? "").trim();
@@ -760,7 +375,7 @@ function authoredFingerprint(elements) {
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, clean(item, name)]).filter(([, item]) => item !== undefined));
     return value;
   };
-  return JSON.stringify((elements ?? []).filter((element) => !element.customData?.tangentProjection).map((element) => clean(element)));
+  return JSON.stringify((elements ?? []).map((element) => clean(element)));
 }
 
 /** Converts an old auto-arranged scene while preserving authored positions and ink. */
@@ -911,8 +526,6 @@ function legacyCanvasToExcalidraw(canvas) {
   return scene;
 }
 
-const api = { addBlock, ancestorWall, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, collapseSpatialRegions, containingExtent, contentExtent, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, fenceRegionGeometry, focusProjection, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, locateAreaBlock, migrateAreaCardsToRegions, normalizeSceneColors, projectSpatialChildren, referenceFromText, refreshTangentFacts, regionSize, restoreFocusedElements, sceneForSave, sceneOutline, sceneWithoutScopeBoundary, scopeExtentGesture, scopeScene, scopedEntities, setBlockHidden, spatialRole, splitReference, stripSpatialProjections, tangentOf, viewFromAppState, withBoundary };
-export { addBlock, ancestorWall, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, collapseSpatialRegions, containingExtent, contentExtent, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, fenceRegionGeometry, focusProjection, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, locateAreaBlock, migrateAreaCardsToRegions, normalizeSceneColors, projectSpatialChildren, referenceFromText, refreshTangentFacts, regionSize, restoreFocusedElements, sceneForSave, sceneOutline, sceneWithoutScopeBoundary, scopeExtentGesture, scopeScene, scopedEntities, setBlockHidden, spatialRole, splitReference, stripSpatialProjections, tangentOf, viewFromAppState, withBoundary };
-Object.assign(api, { ancestryFrames, ancestryProjection, areaAtPoint, convertToBlankSlate, defaultScopeBoundary, placementPoint, toAreaSpace });
-export { ancestryFrames, ancestryProjection, areaAtPoint, convertToBlankSlate, defaultScopeBoundary, placementPoint, toAreaSpace };
+const api = { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, convertToBlankSlate, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, migrateAreaCardsToRegions, normalizeSceneColors, referenceFromText, refreshTangentFacts, regionSize, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, tangentOf, viewFromAppState, withBoundary };
+export { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, convertToBlankSlate, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, migrateAreaCardsToRegions, normalizeSceneColors, referenceFromText, refreshTangentFacts, regionSize, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, tangentOf, viewFromAppState, withBoundary };
 export default api;

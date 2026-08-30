@@ -183,9 +183,8 @@ export function provisionalRegions(areaKeys, stored = new Map()) {
   return regions;
 }
 
-/** Computes bottom-up stored, required, constraint, and drawn rectangles. */
-export function computeWorldGeometry({ areas, regions, blockHulls = new Map(), inkHulls = new Map() }) {
-  const result = new Map();
+/** Builds the immutable tree order that one geometry pass uses. */
+function prepareWorldGeometry(areas, regions) {
   const children = new Map();
   for (const [area, region] of regions) {
     const list = children.get(region.owner) ?? [];
@@ -193,6 +192,12 @@ export function computeWorldGeometry({ areas, regions, blockHulls = new Map(), i
   }
   for (const list of children.values()) list.sort();
   const ordered = [...areas].sort((a, b) => b.split("/").length - a.split("/").length || a.localeCompare(b));
+  return { children, ordered };
+}
+
+/** Computes geometry against one prepared immutable tree order. */
+function computePreparedWorldGeometry({ regions, blockHulls = new Map(), inkHulls = new Map() }, { children, ordered }) {
+  const result = new Map();
   for (const area of ordered) {
     const region = regions.get(area);
     const childRects = (children.get(area) ?? []).map((child) => result.get(child)?.constraint).filter(Boolean);
@@ -214,6 +219,14 @@ export function computeWorldGeometry({ areas, regions, blockHulls = new Map(), i
     result.set(area, { stored: rect(region.storedRect), required, constraint, drawn: unionRects([constraint, inflateRect(translatedInk)]) });
   }
   return result;
+}
+
+/** Computes bottom-up stored, required, constraint, and drawn rectangles. */
+export function computeWorldGeometry({ areas, regions, blockHulls = new Map(), inkHulls = new Map() }) {
+  return computePreparedWorldGeometry(
+    { regions, blockHulls, inkHulls },
+    prepareWorldGeometry(areas, regions),
+  );
 }
 
 /** Reports strict rectangle overlap. */
@@ -253,7 +266,8 @@ export function solveAreaMapGesture(baseline, intent) {
   const selected = new Set(intent.selectedAreas ?? []);
   const baseRegions = new Map(baseline.regions);
   const desired = { x: Number(intent.desiredWorldDelta?.x ?? 0), y: Number(intent.desiredWorldDelta?.y ?? 0) };
-  const baselineGeometry = computeWorldGeometry({ ...baseline, regions: baseRegions });
+  const preparedGeometry = prepareWorldGeometry(baseline.areas, baseRegions);
+  const baselineGeometry = computePreparedWorldGeometry({ ...baseline, regions: baseRegions }, preparedGeometry);
   const affected = new Set(selected);
   const siblings = new Map();
   for (const [area, region] of baseRegions) {
@@ -293,7 +307,7 @@ export function solveAreaMapGesture(baseline, intent) {
       }
       record.storedRect = rect(record.storedRect);
     }
-    const geometry = computeWorldGeometry({ ...baseline, regions });
+    const geometry = computePreparedWorldGeometry({ ...baseline, regions }, preparedGeometry);
     let wall = null;
     for (const area of affected) {
       const value = geometry.get(area); if (!value) continue;

@@ -6696,9 +6696,12 @@ const areaRoutesOperations = {
     if (await areaHasGitChanges({ treesRoot: TREES_ROOT, area: body.area, runGitCapture: captureVaultGit })) {
       throw new Error("Save or discard this area's pending vault edits before you move it.");
     }
-    const moved = await moveArea({ treesRoot: TREES_ROOT, area: body.area, parent: body.parent, name: body.name, runGit: runVaultGit });
+    const moved = await moveArea({
+      treesRoot: TREES_ROOT, area: body.area, parent: body.parent, name: body.name,
+      runGit: runVaultGit, runGitCapture: captureVaultGit, transaction: areaMapTransactions,
+      operationId: String(body.operationId ?? "").trim() || randomUUID(),
+    });
     await moveSessionBindings(moved);
-    await vaultCommit([...new Set([moved.source, moved.destination, ...(moved.mapChangedPaths ?? [])])], `update: ${moved.source} moves to ${moved.destination}`, moved.destination, null);
     return moved;
   },
 };

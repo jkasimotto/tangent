@@ -12,11 +12,31 @@ test("Codex numbered approval is a dialog and never an idle composer", () => {
   assert.equal(classifyWorkingComposer({ text, cursorX: 2, cursorY: 2, harness: "codex" }), null);
 });
 
-test("Claude quota and login walls are named", () => {
+test("a verified Claude quota line is named and retains complete evidence", () => {
   const quota = classifyStaticPane({ text: "You've reached your Fable 5 limit", harness: "claude" });
   assert.equal(quota.kind, "wall");
   assert.equal(quota.wall.model, "Fable 5");
-  assert.equal(classifyStaticPane({ text: "Authentication required. Run /login.", harness: "claude" }).wall.kind, "auth");
+  assert.deepEqual(quota.wall, { pattern: "claude-quota-reached-v1", kind: "quota", model: "Fable 5", text: "You've reached your Fable 5 limit", source: "screen" });
+});
+
+test("unverified authentication text, dependency warnings, prompts, and updates are not walls", () => {
+  const cases = [
+    { harness: "codex", text: "⚠ The Slack MCP server is not logged in. Run `codex mcp login Slack`." },
+    { harness: "codex", text: "Authentication required. Run codex login." },
+    { harness: "claude", text: "Authentication required. Run /login." },
+    { harness: "codex", text: "› Write a test for a user who is not logged in" },
+    { harness: "codex", text: "Update available! 0.50.0 -> 0.51.0" },
+    { harness: "codex", text: "› Explain quota states in the UI" },
+  ];
+  for (const item of cases) assert.notEqual(classifyStaticPane(item).kind, "wall", `${item.harness}: ${item.text}`);
+});
+
+test("wall signatures never cross harness families or match stale transcript text", () => {
+  const line = "You've reached your Opus limit";
+  assert.equal(classifyStaticPane({ text: line, harness: "claude-gw" }).kind, "waiting");
+  assert.equal(classifyStaticPane({ text: line, harness: "codex" }).kind, "waiting");
+  assert.equal(classifyStaticPane({ text: line, harness: "unknown" }).kind, "waiting");
+  assert.equal(classifyStaticPane({ text: `${line}\nnew worker output`, harness: "claude" }).kind, "waiting");
 });
 
 test("a pi prose line that says Do you want is not a dialog", () => {

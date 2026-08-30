@@ -56,11 +56,12 @@ export function deriveAttemptState({ assignment, observation: rawObservation, re
   if (observation.dialog) {
     return state("Needs your decision", timestamp(observation.at, now), "you", "screen", observation.dialog.question || "The harness shows a decision dialog.", "Open the agent and answer the dialog.");
   }
-  if (observation.wall) {
-    const suffix = observation.wall.model ? ` · ${observation.wall.model}` : "";
-    return ownedState(`Hit a wall${suffix}`, timestamp(observation.wall.since ?? observation.at, now), brain, repair, now, repairGraceMs, "screen", observation.wall.text || `The harness hit a ${observation.wall.kind} wall.`, "The organizer replaces or ends the attempt.");
-  }
   const outputAt = Number(observation.activity?.lastOutputAt) || Number(observation.transcript?.lastEventAt) || null;
+  if (observation.wall && observation.activity?.source === "none" && (!outputAt || outputAt <= (observation.wall.since ?? observation.at))) {
+    const suffix = observation.wall.model ? ` · ${observation.wall.model}` : "";
+    const details = [observation.wall.text, observation.wall.harness, observation.wall.kind, observation.wall.source, new Date(observation.wall.since ?? observation.at).toISOString()].filter(Boolean).join(" · ");
+    return ownedState(`Hit a wall${suffix}`, timestamp(observation.wall.since ?? observation.at, now), brain, repair, now, repairGraceMs, "screen", details || `The harness hit a ${observation.wall.kind} wall.`, "The organizer replaces or ends the attempt.");
+  }
   if (outputAt && now - outputAt < idleMs) {
     return state("Working", timestamp(outputAt, now), "worker", observation.activity?.source === "transcript" || observation.transcript ? "transcript" : "screen", "The worker produced fresh output.", "The worker continues.");
   }
@@ -87,14 +88,14 @@ export function deriveBrainState({ brain, observation: rawObservation, unread = 
     return state("Brain unknown", timestamp(observation.at, now), owner, "observation", `The last brain observation is ${age(now - observation.at)} old.`, owner === "you" ? "Open the brain to inspect it." : "Tangent waits for a fresh observation.");
   }
   if (observation?.dialog) return state("Brain needs a decision", timestamp(observation.at, now), "you", "screen", observation.dialog.question || "The brain shows a decision dialog.", "Open the brain and answer it.");
-  if (observation?.wall) return state("Brain hit a wall", timestamp(observation.wall.since ?? observation.at, now), "repair crew", "screen", observation.wall.text, "The repair crew handles waiting live work.");
+  const outputAt = Number(observation?.activity?.lastOutputAt) || Number(observation?.transcript?.lastEventAt) || null;
+  if (observation?.wall && observation.activity?.source === "none" && (!outputAt || outputAt <= (observation.wall.since ?? observation.at))) return state("Brain hit a wall", timestamp(observation.wall.since ?? observation.at, now), "repair crew", "screen", observation.wall.text, "The repair crew handles waiting live work.");
   if (observation?.process === "shell") return state("Brain has a problem", timestamp(observation.at, now), "tangent", "screen", "The brain harness exited to its shell.", "Tangent restarts it in place.");
   if (unread.length && observation?.composer !== "idle") {
     const since = timestamp(unread[0]?.createdAt, now);
     const owner = now - since >= 10 * 60_000 ? "you" : "brain";
     return state(`Brain has ${unread.length} notes`, since, owner, "queue", "The notes cannot enter the current composer.", owner === "you" ? "Open the brain and clear its composer." : "The brain reads the notes when its composer is clear.");
   }
-  const outputAt = Number(observation?.activity?.lastOutputAt) || Number(observation?.transcript?.lastEventAt) || null;
   if (outputAt && now - outputAt < 90_000) return state("Brain working", timestamp(outputAt, now), "brain", observation?.transcript ? "transcript" : "screen", "The brain produced fresh output.", "The brain continues.");
   return state("Brain idle", timestamp(outputAt ?? observation?.at ?? brain.updatedAt, now), "brain", observation ? "screen" : "brain record", "Nothing waits for the brain.", "Entering the brain will not help.");
 }

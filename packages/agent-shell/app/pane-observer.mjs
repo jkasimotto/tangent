@@ -69,8 +69,11 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
     const changed = !previous || previous.state === "shell" || nextHash !== previous.hash;
     const lastOutputAt = changed || state === "working" ? at : previous?.lastOutputAt ?? null;
     const classified = classifyStaticPane({ text, ...(await cursorOnce()), harness });
-    const wall = classified.kind === "wall" ? {
+    // A wall is terminal evidence. A repaint, busy marker, composer, or other
+    // active state clears it, including after the observer restarts.
+    const wall = state === "waiting" && detail === "wall" && classified.kind === "wall" ? {
       ...classified.wall,
+      harness,
       since: sameWall(previous?.observation?.wall, classified.wall) ? previous.observation.wall.since ?? previous.observation.at : at,
     } : null;
     const observation = observationOf({
@@ -122,7 +125,7 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
 
 /** Keeps the start time of one unchanged terminal wall across pane samples. */
 function sameWall(previous, current) {
-  return Boolean(previous && current && previous.kind === current.kind && previous.model === current.model && previous.text === current.text);
+  return Boolean(previous && current && previous.pattern === current.pattern && previous.kind === current.kind && previous.model === current.model && previous.text === current.text);
 }
 
 /** Converts one passive pane sample into the observation contract. */

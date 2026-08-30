@@ -59,6 +59,14 @@ test("Idle needs 90 seconds and an empty composer", () => {
   assert.equal(deriveAttemptState({ ...base, observation: { at: NOW, fresh: true, process: "harness", activity: { lastOutputAt: NOW - 91_000, source: "screen" }, composer: "idle", dialog: null, wall: null } }).word, "Idle");
 });
 
+test("fresh work beats a contradictory retained wall", () => {
+  const result = deriveAttemptState({
+    assignment: { status: "running" }, now: NOW,
+    observation: { at: NOW, fresh: true, process: "harness", activity: { lastOutputAt: NOW, source: "screen" }, composer: "none", dialog: null, wall: { kind: "auth", text: "old auth line", since: NOW - 1_000 } },
+  });
+  assert.equal(result.word, "Working");
+});
+
 test("a dialog under a live brain belongs to Julian", () => {
   const state = deriveAttemptState({
     assignment: { status: "running" },

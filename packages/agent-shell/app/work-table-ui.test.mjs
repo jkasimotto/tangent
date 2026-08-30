@@ -56,6 +56,18 @@ test("the work table states its rows and columns in the accessibility tree", asy
   assert.equal(row.children.length, columns.length, "a Goal row fills every column");
 });
 
+test("a wall status hover shows the complete server evidence", async () => {
+  const fixture = workTableFixture();
+  const step = fixture.pipelines.find((pipeline) => pipeline.goal.endsWith("goal-compact-table.md")).steps[0];
+  step.attemptState = {
+    word: "Hit a wall · Opus", since: fixture.now, owner: "brain", next: "The organizer replaces or ends the attempt.",
+    evidence: { source: "screen", text: "You've reached your Opus limit · claude · quota · screen · 2026-08-30T05:50:55.115Z" },
+  };
+  const { document } = await bootWorkTable(fixture);
+  const status = document.querySelector('[data-work-cursor="goal:otto/tangent/goal-compact-table.md"] .desk-state');
+  assert.match(status.title, /You've reached your Opus limit · claude · quota · screen · 2026-08-30T05:50:55.115Z/);
+});
+
 test("Area Map controls and m open the broad root map, then drill and return without losing the Work row", async () => {
   const fixture = workTableFixture();
   const rootGoal = { ...fixture.goals[0], area: "otto", file: "otto/goal-root.md", slug: "root", title: "Root work" };

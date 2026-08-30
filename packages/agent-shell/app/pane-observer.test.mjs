@@ -99,8 +99,48 @@ test("one unchanged quota wall keeps its original observation time", async () =>
   await observer.enrich([session]);
   at += 20;
   const first = (await observer.enrich([session]))[0];
-  assert.equal(first.observation.wall.since, 1_000);
+  assert.equal(first.observation.wall.since, 1_020);
+  assert.equal(first.observation.wall.harness, "claude-otto");
+  assert.equal(first.observation.wall.pattern, "claude-quota-reached-v1");
   at += 20;
   const second = (await observer.enrich([session]))[0];
-  assert.equal(second.observation.wall.since, 1_000);
+  assert.equal(second.observation.wall.since, 1_020);
+});
+
+test("active output clears wall text and an observer restart requires a new static sample", async () => {
+  let at = 1_000;
+  let text = "You've reached your Opus limit";
+  const options = {
+    /** Returns the mutable pane and its cursor. */
+    runTmux: async (args) => args[0] === "capture-pane" ? { stdout: text } : { stdout: "0 0" },
+    shellCommands: new Set(["zsh"]), minSampleMs: 10, waitStableMs: 0,
+    /** Returns the fixture clock. */
+    now: () => at,
+  };
+  const session = { name: "agent", command: "claude", kind: "goal", launchRef: "claude/opus" };
+  const observer = createPaneObserver(options);
+  await observer.enrich([session]);
+  at += 20;
+  assert.ok((await observer.enrich([session]))[0].observation.wall);
+  text += "\nnew output";
+  at += 20;
+  const active = (await observer.enrich([session]))[0];
+  assert.equal(active.state, "working");
+  assert.equal(active.observation.wall, null);
+  const restarted = createPaneObserver(options);
+  at += 20;
+  assert.equal((await restarted.enrich([session]))[0].observation.wall, null);
+});
+
+test("a shell exit wins over retained wall scrollback", async () => {
+  const observer = createPaneObserver({
+    /** Rejects a capture after the observer identifies the shell. */
+    runTmux: async () => { throw new Error("must not capture shell"); },
+    shellCommands: new Set(["zsh"]),
+    /** Returns a fixed fixture time. */
+    now: () => 1_000,
+  });
+  const result = (await observer.enrich([{ name: "agent", command: "zsh", kind: "goal", launchRef: "claude/opus" }]))[0];
+  assert.equal(result.state, "shell");
+  assert.equal(result.observation.wall, null);
 });

@@ -110,6 +110,7 @@ import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createAreaMapWorldRoutes } from "./area-map-world-routes.mjs";
 import { createAreaMapTransactionRepository } from "./area-map-transaction-repository.mjs";
 import { createAreaMapWorldViewStore } from "./area-map-world-view-store.mjs";
+import { workerWallNotice } from "./worker-wall-notice.mjs";
 import { projectWork } from "./work-projection.mjs";
 import { acknowledgeWorkerQuestion, answerWorkerQuestion, latestWorkerQuestion, openWorkerQuestion, transferWorkerQuestions, workerQuestionDelivery, workerQuestionPrompt, workerQuestionTarget } from "./worker-questions.mjs";
 
@@ -4220,11 +4221,8 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
         const recovered = await runAttemptRecovery(record, step, live, recoveryAction);
         changed = recovered.changed || changed;
       }
-      if (live.observation?.wall) {
-        const wall = live.observation.wall;
-        const source = createHash("sha256").update(`${wall.kind}\0${wall.model ?? ""}\0${wall.text}`).digest("hex").slice(0, 20);
-        await routeBrainNotice(record.area, `Goal ${record.slug}: assignment ${step.index} hit a wall${wall.model ? ` on ${wall.model}` : ""}: "${wall.text}". Replace the agent on another model, or end the assignment.`, { idempotencyKey: `worker-wall:${record.goal}:${step.id}:${source}` });
-      }
+      const wallNotice = workerWallNotice(record, step, live.observation);
+      if (wallNotice) await routeBrainNotice(record.area, wallNotice.text, { idempotencyKey: wallNotice.sourceId });
       const shellExit = latestAttemptReport(step) ? null : workerShellExitNotice(record, step, live);
       const resumeTried = liveAttempt?.recovery?.some((item) => item.kind === "resume-in-place") ?? false;
       if (shellExit && resumeTried && shellExitNoticed.get(key) !== shellExit.sourceId) {

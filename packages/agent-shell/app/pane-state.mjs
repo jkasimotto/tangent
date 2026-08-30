@@ -6,10 +6,9 @@
 // It never types a key, because one typed character can select a dialog
 // option ("1" answers a claude permission dialog).
 //
-// The patterns are data, keyed by harness family for maintenance, but the
-// classifier runs every set against every pane: pane_current_command does not
-// name the harness reliably (claude reports its version string), and the
-// prompt characters do not collide across harnesses.
+// The patterns are data, keyed by harness family for maintenance. Wall
+// evidence is different from composer evidence: it is trusted only for the
+// named launch family and only after a real harness capture proves it.
 
 /**
  * Screen signatures per harness family. Fixtures in fixtures/panes/ hold real
@@ -50,8 +49,7 @@ export const PANE_SIGNATURES = {
     // question plus an arrow-selected numbered option row.
     dialog: [/Do you want/i, /❯\s+\d+\./],
     wall: [
-      { kind: "quota", pattern: /(?:you(?:'|’)ve reached your|reached the)\s+([^\n]+?)\s+limit/i, model: 1 },
-      { kind: "auth", pattern: /(?:not logged in|authentication required|run\s+\/login)/i },
+      { id: "claude-quota-reached-v1", kind: "quota", pattern: /^You(?:'|’)ve reached your (.+?) limit\.?$/i, model: 1 },
     ],
     // The idle composer is a bare prompt line; a draft moves the cursor past
     // the home column.
@@ -69,10 +67,9 @@ export const PANE_SIGNATURES = {
   codex: {
     busy: [/esc to interrupt/i],
     dialog: [/\(y\/n\)/i, /press y to approve/i, /Would you like to run the following command\?/i, /›\s+\d+\.\s+(?:Yes|No)/i],
-    wall: [
-      { kind: "quota", pattern: /(?:usage limit|rate limit|quota)(?:[^\n]*?)([A-Za-z][A-Za-z0-9 ._-]+)?/i, model: 1 },
-      { kind: "auth", pattern: /(?:not logged in|authentication required|run\s+codex\s+login)/i },
-    ],
+    // No Codex wall capture is verified. In particular, an MCP login warning
+    // belongs to that dependency and is not evidence about Codex login.
+    wall: [],
     // Codex paints gray placeholder text after the prompt. Placeholder text
     // never moves the cursor, so "cursor at home column" still means empty.
     composer: { prompt: /^›(\s|$)/, homeColumn: 2 },
@@ -152,7 +149,7 @@ export function classifyStaticPane({ text, cursorX = 0, cursorY = 0, harness = n
     }
   }
   if (hasDialog(lines, signatures)) return { kind: "decision", question: dialogQuestion(lines) };
-  const wall = wallFromText(text, signatures);
+  const wall = wallFromText(text, wallSignatures(harness));
   if (wall) return { kind: "wall", wall };
   // After the dialog sweep, so a pane that asks a question while a shell of
   // its own runs still reads as an ask, not as work.
@@ -183,7 +180,7 @@ export function classifyStaticPane({ text, cursorX = 0, cursorY = 0, harness = n
 export function classifyWorkingComposer({ text, cursorX = 0, cursorY = 0, harness = null }) {
   const lines = String(text ?? "").split("\n");
   const signatures = orderedSignatures(harness);
-  if (hasDialog(lines, signatures) || wallFromText(text, signatures)) return null;
+  if (hasDialog(lines, signatures) || wallFromText(text, wallSignatures(harness))) return null;
   return composerKind(lines, cursorX, cursorY, signatures)?.kind ?? null;
 }
 
@@ -217,15 +214,18 @@ function composerKind(lines, cursorX, cursorY, signatures = Object.values(PANE_S
 
 /** Returns a captured wall fact, or null. */
 export function wallFromText(text, signatures = Object.values(PANE_SIGNATURES)) {
-  const value = String(text ?? "");
+  const lines = String(text ?? "").split("\n");
+  const terminalLine = [...lines].reverse().find((line) => line.trim())?.trim() ?? "";
   for (const signature of signatures) {
     for (const entry of signature.wall ?? []) {
-      const match = value.match(entry.pattern);
+      const match = terminalLine.match(entry.pattern);
       if (!match) continue;
       return {
+        pattern: entry.id,
         kind: entry.kind,
         model: entry.model && match[entry.model] ? String(match[entry.model]).trim() : null,
-        text: match[0].trim(),
+        text: terminalLine,
+        source: "screen",
       };
     }
   }
@@ -239,11 +239,17 @@ function orderedSignatures(harness) {
   return [PANE_SIGNATURES[family], PANE_SIGNATURES.generic];
 }
 
+/** Uses only wall evidence owned by the exact named launch family. */
+function wallSignatures(harness) {
+  const family = harnessFamily(harness);
+  return family && PANE_SIGNATURES[family] ? [PANE_SIGNATURES[family]] : [PANE_SIGNATURES.generic];
+}
+
 /** Maps registry harness names onto screen families. */
 function harnessFamily(harness) {
   const value = String(harness ?? "").toLowerCase();
-  if (value.startsWith("claude")) return "claude";
-  if (value.startsWith("codex")) return "codex";
+  if (value === "claude" || value === "claude-otto") return "claude";
+  if (value === "codex" || value === "codex-gw") return "codex";
   if (value === "pi" || value.startsWith("pi-code")) return "pi";
   return value || null;
 }

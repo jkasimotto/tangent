@@ -15,7 +15,7 @@ function generated(seed) {
   const areas = ["root"];
   let parent = "root";
   for (let level = 1; level <= depth; level += 1) {
-    const count = 1 + Math.floor(next() * 4);
+    const count = 1 + Math.floor(next() * 20);
     for (let sibling = 0; sibling < count; sibling += 1) areas.push(`${parent}/n${level}-${sibling}`);
     parent = `${parent}/n${level}-0`;
   }
@@ -64,8 +64,11 @@ test("seeded containment properties hold for mixed trees and large pointer jumps
   for (let seed = 1; seed <= 120; seed += 1) {
     try {
       const fixture = generated(seed);
-      const baseline = { areas: fixture.areas, regions: fixture.regions, blockHulls: new Map(), inkHulls: new Map() };
-      const intent = { selectedAreas: [fixture.selected], handle: null, desiredWorldDelta: { x: Math.round((fixture.next() - 0.2) * 4_000), y: Math.round((fixture.next() - 0.5) * 600) } };
+      const blockHulls = new Map(fixture.areas.filter((_area, index) => index % 3 === seed % 3).map((area) => [area, { x: 80, y: 80, width: 90, height: 60 }]));
+      const inkHulls = new Map(fixture.areas.filter((_area, index) => index % 5 === seed % 5).map((area) => [area, { x: -30, y: 40, width: 35, height: 25 }]));
+      const baseline = { areas: fixture.areas, regions: fixture.regions, blockHulls, inkHulls };
+      const handles = [null, null, "e", "s", "se", "w", "n"];
+      const intent = { selectedAreas: [fixture.selected], handle: handles[seed % handles.length], desiredWorldDelta: { x: Math.round((fixture.next() - 0.2) * 4_000), y: Math.round((fixture.next() - 0.5) * 600) } };
       const preview = solveAreaMapGesture(baseline, intent);
       assert.equal(preview.valid, true);
 
@@ -90,7 +93,13 @@ test("seeded containment properties hold for mixed trees and large pointer jumps
       const shuffledRegions = new Map([...fixture.regions].reverse());
       const shuffled = solveAreaMapGesture({ ...baseline, areas: shuffledAreas, regions: shuffledRegions }, intent);
       assert.deepEqual(normalized(shuffled), normalized(preview));
-      assert.deepEqual(normalized(solveAreaMapGesture(baseline, intent)), normalized(preview));
+      const repeated = solveAreaMapGesture(baseline, intent);
+      assert.deepEqual(normalized(repeated), normalized(preview), "the accepted pointer preview is idempotent against its immutable baseline");
+      const forward = new Map([...baseline.regions].map(([area, region]) => [area, structuredClone(region)]));
+      for (const [area, region] of preview.regions) forward.set(area, structuredClone(region));
+      const restored = new Map([...forward].map(([area, region]) => [area, structuredClone(region)]));
+      for (const [area, region] of baseline.regions) restored.set(area, structuredClone(region));
+      assert.deepEqual(restored, baseline.regions, "the command inverse restores the source snapshot");
     } catch (error) {
       console.error(`area-map property seed ${seed}`);
       throw error;
@@ -108,7 +117,7 @@ test("compose and split is lossless for unchanged authored elements", () => {
   assert.deepEqual(split, scene.elements);
 });
 
-test("a 500-Area preview stays inside one 16 ms frame after warm-up", () => {
+test("a 500-Area preview keeps p95 below 8 ms and every frame below 16 ms", () => {
   const areas = ["root", ...Array.from({ length: 499 }, (_value, index) => `root/n${index}`)];
   const stored = new Map([
     ["@root>root", { x: 0, y: 0, width: 400_000, height: 1_000 }],
@@ -116,11 +125,13 @@ test("a 500-Area preview stays inside one 16 ms frame after warm-up", () => {
   ]);
   const baseline = { areas, regions: provisionalRegions(areas, stored), blockHulls: new Map(), inkHulls: new Map() };
   const intent = { selectedAreas: ["root/n0"], handle: null, desiredWorldDelta: { x: 100, y: 20 } };
-  solveAreaMapGesture(baseline, intent);
+  for (let index = 0; index < 5; index += 1) solveAreaMapGesture(baseline, intent);
   const samples = [];
-  for (let index = 0; index < 7; index += 1) {
+  for (let index = 0; index < 21; index += 1) {
     const started = performance.now(); solveAreaMapGesture(baseline, intent); samples.push(performance.now() - started);
   }
   samples.sort((left, right) => left - right);
-  assert.ok(samples[5] < 16, `p95 preview ${samples[5].toFixed(2)} ms; samples ${samples.map((value) => value.toFixed(2)).join(", ")}`);
+  const p95 = samples[Math.floor(samples.length * 0.95)];
+  assert.ok(p95 < 8, `p95 preview ${p95.toFixed(2)} ms; samples ${samples.map((value) => value.toFixed(2)).join(", ")}`);
+  assert.ok(samples.at(-1) < 16, `max preview ${samples.at(-1).toFixed(2)} ms; samples ${samples.map((value) => value.toFixed(2)).join(", ")}`);
 });

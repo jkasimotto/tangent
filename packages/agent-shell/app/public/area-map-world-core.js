@@ -224,7 +224,7 @@ function storedSizeFloor(required) {
 /** Solves one gesture from its immutable pointer-down world snapshot. */
 export function solveAreaMapGesture(baseline, intent) {
   const selected = new Set(intent.selectedAreas ?? []);
-  const baseRegions = new Map([...baseline.regions].map(([key, value]) => [key, clone(value)]));
+  const baseRegions = new Map(baseline.regions);
   const desired = { x: Number(intent.desiredWorldDelta?.x ?? 0), y: Number(intent.desiredWorldDelta?.y ?? 0) };
   const baselineGeometry = computeWorldGeometry({ ...baseline, regions: baseRegions });
   const affected = new Set(selected);
@@ -240,10 +240,12 @@ export function solveAreaMapGesture(baseline, intent) {
   }
   /** Evaluates one requested pointer delta. */
   const evaluate = (delta) => {
-    const regions = new Map([...baseRegions].map(([key, value]) => [key, clone(value)]));
+    const regions = new Map(baseRegions);
     for (const area of selected) {
-      const record = regions.get(area); if (!record) continue;
-      const original = baseRegions.get(area).storedRect;
+      const originalRecord = baseRegions.get(area); if (!originalRecord) continue;
+      const record = clone(originalRecord);
+      regions.set(area, record);
+      const original = originalRecord.storedRect;
       if (intent.handle) {
         const floor = storedSizeFloor(baselineGeometry.get(area)?.required);
         if (intent.handle.includes("e")) record.storedRect.width = Math.max(floor.width, original.width + delta.x);

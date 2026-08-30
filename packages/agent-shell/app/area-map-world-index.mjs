@@ -91,6 +91,7 @@ function adaptShardSummary(raw, directChildren, baseline) {
   const structural = new Set(raw.boundaries.map((element) => element.id));
   const retired = new Set();
   const retiredCards = new Set();
+  const staleRegions = new Set();
   const stored = new Map();
   const legacy = new Map();
   /** Adds one region candidate to a child-keyed list. */
@@ -98,7 +99,12 @@ function adaptShardSummary(raw, directChildren, baseline) {
   for (const element of raw.regions) {
     structural.add(element.id); structural.add(labelId(element));
     const child = areaForBlock(element);
-    if (!direct.has(child)) continue;
+    if (!direct.has(child)) {
+      staleRegions.add(element.id);
+      const boundLabel = element.boundElements?.find((entry) => entry.type === "text")?.id;
+      if (boundLabel) staleRegions.add(boundLabel);
+      continue;
+    }
     push(stored, child, {
       sourceId: element.id,
       labelSourceId: labelId(element),
@@ -140,6 +146,7 @@ function adaptShardSummary(raw, directChildren, baseline) {
     blockCount: blockRoots.length,
     elementCount: visible.length,
     retiredIds: [...retired],
+    staleRegionIds: [...staleRegions],
     boundaryIds: raw.boundaries.map((element) => element.id),
     migration: { legacyBoundaries: raw.boundaries.length, legacyCards: raw.areaCards.filter((element) => direct.has(areaForBlock(element))).length, retiredCards: retiredCards.size },
   };
@@ -250,13 +257,135 @@ function composedIdentity(value, key = "") {
   return Boolean(value && typeof value === "object" && Object.entries(value).some(([name, item]) => composedIdentity(item, name)));
 }
 
+/** Reports whether a source element ID is safe at an authority boundary. */
+function safeSourceId(value) {
+  return typeof value === "string" && Boolean(value) && value.length <= 256 && !value.includes("\0") && !value.startsWith("tw-");
+}
+
+/** Validates one Tangent semantic reference without resolving outside the vault. */
+function tangentReferenceError(element) {
+  const tangent = tangentOf(element);
+  if (!tangent) return null;
+  const reference = tangent.ref;
+  if (!reference || reference.length > 8_000 || reference.includes("\0")) return `source element ${element.id} has an unsafe Tangent reference`;
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(reference)?.[1]?.toLowerCase();
+  if (scheme) {
+    if (!["http", "https", "mailto"].includes(scheme)) return `source element ${element.id} has an unsafe Tangent reference`;
+    try { new URL(reference); } catch { return `source element ${element.id} has an unsafe Tangent reference`; }
+    return null;
+  }
+  const hash = reference.indexOf("#");
+  const file = hash < 0 ? reference : reference.slice(0, hash);
+  const normalized = path.posix.normalize(file);
+  if (!file || path.posix.isAbsolute(file) || file.includes("\\") || normalized === "." || normalized === ".." || normalized.startsWith("../") || normalized.includes("/../") || normalized !== file) return `source element ${element.id} has an unsafe Tangent reference`;
+  return null;
+}
+
+/** Validates every persisted cross-Area endpoint pair in one element. */
+function endpointMetadataError(element, owners) {
+  /** Validates one pair or pair collection below an endpoint-named metadata key. */
+  function validateEndpoint(value, at) {
+    if (value === null || value === undefined) return null;
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const error = validateEndpoint(value[index], `${at}[${index}]`);
+        if (error) return error;
+      }
+      return null;
+    }
+    if (typeof value !== "object") return `${at} must be an endpoint {owner, sourceId}`;
+    const hasOwner = Object.hasOwn(value, "owner");
+    const hasSourceId = Object.hasOwn(value, "sourceId");
+    if (hasOwner || hasSourceId) {
+      if (!hasOwner || !hasSourceId) return `${at} must be an endpoint {owner, sourceId}`;
+      if (typeof value.owner !== "string" || !owners.has(value.owner)) return `${at} has an endpoint owner outside the current Area tree`;
+      if (!safeSourceId(value.sourceId)) return `${at} has an unsafe endpoint sourceId`;
+      return null;
+    }
+    for (const [key, child] of Object.entries(value)) {
+      const error = validateEndpoint(child, `${at}.${key}`);
+      if (error) return error;
+    }
+    return null;
+  }
+  /** Finds endpoint-named metadata without treating ordinary owner fields as endpoints. */
+  function visit(value, at) {
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const error = visit(value[index], `${at}[${index}]`);
+        if (error) return error;
+      }
+      return null;
+    }
+    if (!value || typeof value !== "object") return null;
+    for (const [key, child] of Object.entries(value)) {
+      const error = /endpoints?$/i.test(key) ? validateEndpoint(child, `${at}.${key}`) : visit(child, `${at}.${key}`);
+      if (error) return error;
+    }
+    return null;
+  }
+  return visit(element.customData, `source element ${element.id}.customData`);
+}
+
+/** Returns the source IDs that each owner will contain after one gesture. */
+function futureSourceIds(state, mutations) {
+  const result = new Map(state.owners.map((owner) => [owner, new Set((state.reads.get(owner)?.scene?.elements ?? []).map((element) => element.id).filter(safeSourceId))]));
+  for (const mutation of mutations) {
+    const ids = result.get(mutation?.owner);
+    if (!ids) continue;
+    for (const sourceId of Array.isArray(mutation.remove) ? mutation.remove : []) if (safeSourceId(sourceId)) ids.delete(sourceId);
+    for (const element of Array.isArray(mutation.put) ? mutation.put : []) if (safeSourceId(element?.id)) ids.add(element.id);
+  }
+  return result;
+}
+
+/** Rejects a source binding that resolves only inside another owner's shard. */
+function sourceBindingError(element, owner, idsByOwner) {
+  const bindings = [];
+  /** Records one nullable Excalidraw binding. */
+  function addBinding(value, field, idField = "elementId") {
+    if (value === null || value === undefined) return null;
+    if (!value || typeof value !== "object" || Array.isArray(value) || !safeSourceId(value[idField])) return `source element ${element.id} has an unsafe ${field}`;
+    bindings.push([field, value[idField]]);
+    return null;
+  }
+  for (const field of ["startBinding", "endBinding"]) {
+    const error = addBinding(element[field], field);
+    if (error) return error;
+  }
+  for (const field of ["containerId", "frameId"]) {
+    const sourceId = element[field];
+    if (sourceId === null || sourceId === undefined) continue;
+    if (!safeSourceId(sourceId)) return `source element ${element.id} has an unsafe ${field}`;
+    bindings.push([field, sourceId]);
+  }
+  if (element.boundElements !== null && element.boundElements !== undefined) {
+    if (!Array.isArray(element.boundElements)) return `source element ${element.id} has unsafe boundElements`;
+    for (const [index, binding] of element.boundElements.entries()) {
+      const error = addBinding(binding, `boundElements[${index}]`, "id");
+      if (error) return error;
+    }
+  }
+  const local = idsByOwner.get(owner) ?? new Set();
+  for (const [field, sourceId] of bindings) {
+    if (local.has(sourceId)) continue;
+    const foreign = [...idsByOwner].find(([candidate, ids]) => candidate !== owner && ids.has(sourceId));
+    if (foreign) return `source element ${element.id} ${field} binds across source owners to ${foreign[0]}:${sourceId}`;
+  }
+  return null;
+}
+
 /** Validates one complete source element at the mutation boundary. */
-function sourceElementError(element) {
+function sourceElementError(element, owners) {
   if (!element || typeof element !== "object" || Array.isArray(element)) return "put entries must be source elements";
   if (typeof element.id !== "string" || !element.id || element.id.length > 256 || element.id.includes("\0")) return "source element IDs must be safe non-empty strings";
   if (element.id.startsWith("tw-") || composedIdentity(element)) return "runtime IDs and composed metadata are not source mutations";
   if (["x", "y", "width", "height", "angle"].some((field) => typeof element[field] !== "number" || !Number.isFinite(element[field]))) return `source element ${element.id} has non-finite geometry`;
   if (element.width < 0 || element.height < 0) return `source element ${element.id} has negative geometry`;
+  const referenceError = tangentReferenceError(element);
+  if (referenceError) return referenceError;
+  const endpointError = endpointMetadataError(element, owners);
+  if (endpointError) return endpointError;
   return null;
 }
 
@@ -372,6 +501,8 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
     if (!Array.isArray(request.mutations) || !request.mutations.length) return { status: 422, error: "a gesture must contain source mutations" };
     const state = await readState();
     if (request.worldId !== state.world.worldId) return { status: 409, conflict: true, code: "world-conflict", error: "map world changed", worldId: state.world.worldId };
+    const ownerSet = new Set(state.owners);
+    const idsByOwner = futureSourceIds(state, request.mutations);
     const byOwner = new Set();
     const writes = [];
     for (const mutation of request.mutations) {
@@ -383,7 +514,8 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
       if (mutation.baseHash !== null && mutation.baseHash !== undefined && (typeof mutation.baseHash !== "string" || mutation.baseHash.includes("\0"))) return { status: 422, error: `source mutation ${owner} has an unsafe base hash` };
       const ids = new Set();
       for (const element of mutation.put) {
-        const error = sourceElementError(element); if (error) return { status: 422, error };
+        const error = sourceElementError(element, ownerSet); if (error) return { status: 422, error };
+        const bindingError = sourceBindingError(element, owner, idsByOwner); if (bindingError) return { status: 422, error: bindingError };
         if (ids.has(element.id)) return { status: 422, error: `source ID ${element.id} appears more than once for ${owner}` };
         ids.add(element.id);
         const authoritativeRegion = [...state.regions.values()].find((region) => region.owner === owner && region.sourceId === element.id);
@@ -405,7 +537,7 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
       if (current.ok === false) return { status: 409, conflict: true, error: `map file unreadable for ${owner}` };
       const scene = structuredClone(current.scene);
       const puts = new Map(mutation.put.map((element) => [element.id, structuredClone(element)]));
-      const removals = new Set([...mutation.remove, ...state.summaries.get(owner).boundaryIds, ...state.summaries.get(owner).retiredIds]);
+      const removals = new Set([...mutation.remove, ...state.summaries.get(owner).boundaryIds, ...state.summaries.get(owner).retiredIds, ...state.summaries.get(owner).staleRegionIds]);
       const existing = new Set(scene.elements.map((element) => element.id));
       scene.elements = scene.elements.flatMap((element) => removals.has(element.id) ? [] : puts.has(element.id) ? [puts.get(element.id)] : [element]);
       for (const [sourceId, element] of puts) if (!existing.has(sourceId)) scene.elements.push(element);

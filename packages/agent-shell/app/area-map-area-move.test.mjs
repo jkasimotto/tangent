@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { moveArea } from "./area-operations.mjs";
 import { parseAreaCanvas, serializeAreaCanvas } from "./area-canvas.mjs";
+import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createEmptyScene, createRegionElements, createTextElement } from "./public/area-board-core.js";
 import { provisionalRegions } from "./public/area-map-world-core.js";
 
@@ -69,4 +70,38 @@ test("an explicit Area move preserves source IDs and remaps every map owner and 
   assert.equal(regions.has("neara/source"), false, "the old Area key has no structural authority");
   assert.equal(regions.get("otto/renamed").owner, "otto", "the new parent supplies the structural region");
   assert.equal(regions.get("otto/renamed").source, "provisional");
+});
+
+test("the old parent's next authored mutation removes its stale moved-Area region", async () => {
+  const oldParent = createEmptyScene();
+  oldParent.elements.push(
+    ...createRegionElements({ id: "stale-region", ref: "root/new/moved/moved.md", title: "Moved" }),
+    createTextElement({ id: "kept", text: "Keep", x: 20, y: 30 }),
+  );
+  const scenes = new Map([
+    ["@root", createEmptyScene()],
+    ["root", createEmptyScene()],
+    ["root/old", oldParent],
+    ["root/new", createEmptyScene()],
+    ["root/new/moved", createEmptyScene()],
+  ]);
+  const index = createAreaMapWorldIndex({
+    root: "/vault",
+    /** Lists the tree after the Area move. */
+    async listAreas() { return ["root", "root/old", "root/new", "root/new/moved"]; },
+    repository: {
+      /** Reads one canonical source fixture. */
+      async read(area) { return { area, exists: true, ok: true, hash: `hash:${area}`, scene: scenes.get(area) }; },
+    },
+  });
+  const world = await index.snapshot("root/new/moved");
+  assert.equal(world.areas.find((entry) => entry.key === "root/new/moved").region.owner, "root/new");
+  let saved = null;
+  const authored = createTextElement({ id: "authored", text: "Authored", x: 80, y: 90 });
+  const result = await index.applyGesture({
+    schema: "area-map-gesture.v1", operationId: "clean-old-parent", worldId: world.worldId, treeRevision: world.treeRevision, reason: "edit old parent",
+    mutations: [{ owner: "root/old", baseHash: "hash:root/old", put: [authored], remove: [] }],
+  }, async (writes) => { saved = writes[0]; return { committed: true }; });
+  assert.equal(result.status, 200);
+  assert.deepEqual(saved.canvas.elements.map((element) => element.id), ["kept", "authored"]);
 });

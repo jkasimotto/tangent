@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createAreaMapWorldRoutes } from "./area-map-world-routes.mjs";
-import { createEmptyScene, createRegionElements, createTextElement } from "./public/area-board-core.js";
+import { createEmptyScene, createRegionElements, createShapeElement, createTextElement } from "./public/area-board-core.js";
 
 /** Creates a small Node response fixture. */
 function response() {
@@ -154,6 +154,52 @@ test("rejects runtime IDs and invalid direct-child regions", async () => {
   assert.equal(relationResult.status, 409);
   assert.equal(JSON.parse(relationResult.body).code, "tree-conflict");
   assert.equal(calls, 0);
+});
+
+test("rejects traversal references and unsafe cross-Area endpoint identities", async () => {
+  const { index } = mutationFixture();
+  const world = await index.snapshot("root/child");
+  let calls = 0;
+  /** Counts any unexpected transaction call. */
+  async function saveGesture() { calls += 1; return { committed: true }; }
+  const routes = createAreaMapWorldRoutes({ index, saveGesture });
+  const traversal = createTextElement({ id: "traversal", text: "Outside", x: 10, y: 20 });
+  traversal.customData = { tangent: { kind: "document", ref: "root/child/../../outside.md" } };
+  const traversalResult = response();
+  await routes.handle(jsonRequest(gesture(world, [{ owner: "root/child", baseHash: "child-hash", put: [traversal], remove: [] }])), traversalResult, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(traversalResult.status, 422);
+  assert.match(JSON.parse(traversalResult.body).error, /unsafe Tangent reference/);
+
+  const unsafeEndpoint = createShapeElement({ id: "unsafe-endpoint", type: "arrow", x: 20, y: 30, width: 80, height: 40 });
+  unsafeEndpoint.customData = { tangentWorldEndpoints: { end: { owner: "root/../outside", sourceId: "before" } } };
+  const endpointResult = response();
+  await routes.handle(jsonRequest(gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [unsafeEndpoint], remove: [] }])), endpointResult, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(endpointResult.status, 422);
+  assert.match(JSON.parse(endpointResult.body).error, /endpoint owner/);
+  assert.equal(calls, 0);
+});
+
+test("keeps cross-Area bindings in endpoint metadata instead of a foreign source shard", async () => {
+  const { index } = mutationFixture();
+  const world = await index.snapshot("root/child");
+  const saved = [];
+  /** Captures an accepted metadata-only endpoint. */
+  async function saveGesture(writes) { saved.push(writes); return { committed: true }; }
+  const routes = createAreaMapWorldRoutes({ index, saveGesture });
+  const arrow = createShapeElement({ id: "cross-arrow", type: "arrow", x: 20, y: 30, width: 80, height: 40 });
+  arrow.startBinding = { elementId: "before", focus: 0, gap: 1 };
+  arrow.customData = { tangentWorldEndpoints: { start: { owner: "root/child", sourceId: "before" } } };
+  const foreignBinding = response();
+  await routes.handle(jsonRequest(gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [arrow], remove: [] }])), foreignBinding, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(foreignBinding.status, 422);
+  assert.match(JSON.parse(foreignBinding.body).error, /binds across source owners/);
+
+  arrow.startBinding = null;
+  const metadataOnly = response();
+  await routes.handle(jsonRequest({ ...gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [arrow], remove: [] }]), operationId: "gesture-2" }), metadataOnly, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(metadataOnly.status, 200);
+  assert.equal(saved.length, 1);
+  assert.deepEqual(saved[0][0].canvas.elements.find((element) => element.id === "cross-arrow").customData.tangentWorldEndpoints.start, { owner: "root/child", sourceId: "before" });
 });
 
 test("rejects duplicate source owners and source IDs", async () => {

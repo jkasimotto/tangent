@@ -11,7 +11,7 @@ const PRESENTED_ROWS_PER_GOAL = 3;
 
 /** Creates the work desk from shell, launch, Area, and Program capabilities. */
 export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
-  const { state, api, post, paint, refresh, showToast, openModal, captureReturnPoint, saveDescribeSession, openSessionLayer } = shell;
+  const { state, api, post, paint, refresh, showToast, openModal, captureReturnPoint, saveDescribeSession, openSessionLayer, updateAreaMapFocus = null } = shell;
   const {
     launchSelection, launchRequestFields, syncLaunchDraft, preferredArea, launchOptionsFor, pipelineForGoal,
     pipelineRecordForGoal, launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
@@ -20,6 +20,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   const { programRowControls, programIsLive, programState, localMoment } = programs;
   const { shortcutKbd, whatHappenedOverlay } = chrome;
   const openingBrains = new Set();
+
+  /** Repaints Focus in place while the persistent Area-map world is mounted. */
+  function repaintFocus() {
+    if (!updateAreaMapFocus?.()) paint(true);
+  }
 
   /**
    * The Area note that Enter on an Area row opens: `neara/neara.md` for
@@ -193,7 +198,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     if (result.change === "removed" && state.areaFocusOnly) moveCursorOffArea(path);
     state.areaFocus = result.roots;
     persistAreaFocus();
-    paint(true);
+    repaintFocus();
     showToast(result.change === "added" ? `Starred ${areaLabel(path)}.` : `Unstarred ${areaLabel(path)}.`);
     return focusWorkCursor();
   }
@@ -205,7 +210,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const cursorArea = commandAreaOfCursor();
     if (state.areaFocusOnly && cursorArea && !isInAreaFocus(cursorArea, areaFocusRoots())) moveCursorOffArea(cursorArea);
     persistAreaFocus();
-    paint(true);
+    repaintFocus();
     return focusWorkCursor();
   }
 
@@ -221,7 +226,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const cursorArea = commandAreaOfCursor();
     if (state.activeOnly && cursorArea && !activeAreas().has(cursorArea)) moveCursorOffArea(cursorArea);
     try { localStorage.setItem("agent-shell.active-only", String(state.activeOnly)); } catch { /* the switch still works for this page */ }
-    paint(true);
+    repaintFocus();
     return focusWorkCursor();
   }
 

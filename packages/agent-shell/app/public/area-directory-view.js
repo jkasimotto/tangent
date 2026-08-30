@@ -1,5 +1,4 @@
 import areaMapCore from "./area-map-core.js";
-import areaMapView from "./area-map.js";
 import areaBoardView from "./area-board.js";
 import areaWorkCore from "./area-work-core.js";
 import whatHappenedCore from "./what-happened-core.js";
@@ -8,13 +7,15 @@ import { clip, escapeHtml } from "./text-format.js";
 /** Creates the Area directory from owned shell, Work, Document, and Program ports. */
 export function createAreaDirectoryView({ shell, documents, work, programs }) {
   const { state, api, post, paint, refresh, showToast, screen } = shell;
-  const { openDocument } = documents;
+  const { openDocument, openDocumentPeek = openDocument } = documents;
   const {
     selectGoal, allGoals, goalTrees, goalTreeState, goalTreeIsActive, goalByFile, goalNeedsYou, goalWorkFinished,
     sessionForGoal, brainForAreaCard, brainStateLabel, brainKind, humanName, areaLabel, areaPath, agentName, ageText,
     deskBrainButton, workCard, goalTreeCard,
   } = work;
   const { programRow, programKind, programIsLive } = programs;
+  let inlineAreaBoard = null;
+  let inlineAreaHost = null;
   /** Returns the Areas visible to the directory. */
   function areas() {
     return [...(state.vault?.areas ?? [])]
@@ -164,68 +165,49 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     return areaMapCore.orderGoals(trees.map((tree) => tree.root), goalAttention).map((root) => byRoot.get(root.file));
   }
 
-  /** Fetches the stored map state of one Area once; the map mounts again when it arrives. */
-  function loadMapState(area) {
-    if (state.mapStates.has(area)) return;
-    state.mapStates.set(area, "loading");
-    api(`/api/map-state?area=${encodeURIComponent(area)}`)
-      .then((payload) => state.mapStates.set(area, payload?.state ?? {}))
-      .catch(() => state.mapStates.set(area, {}))
-      .then(() => { const host = [...screen.querySelectorAll("[data-area-map]")].find((element) => element.dataset.areaMap === area); if (host) mountAreaMap(host); });
+  /** Releases the inline persistent world before its Area screen leaves. */
+  function disposeAreaMap() {
+    inlineAreaBoard?.flush?.(); inlineAreaBoard?.destroy?.();
+    inlineAreaBoard = null; inlineAreaHost = null;
   }
 
-  /**
-   * Mounts the Area map into its host after a repaint. The map keeps its own
-   * DOM, positions, and filters across repaints (see public/area-map.js); this
-   * only hands it the current facts and the shell's routes.
-   */
+  /** Refreshes facts and Focus without replacing the inline editor island. */
+  function refreshAreaMap(focus = {}) {
+    if (!inlineAreaBoard) return false;
+    inlineAreaBoard.refreshFacts?.(state.vault?.documents ?? [], focus);
+    return true;
+  }
+
+  /** Mounts one complete Area world into the current Area screen. */
   function mountAreaMap(host) {
-    const view = areaMapView;
     const area = host.dataset.areaMap;
-    if (!view || !area || !state.vault) return;
-    /** Opens an Area selected from the board canvas. */
-    const onSelectBoardArea = (path) => { state.areaSelection = path; localStorage.setItem("agent-shell.last-area", path); revealArea(path); paint(true); };
-    if (!host.dataset.boardChecked) {
-      host.dataset.boardChecked = "loading";
-      api(`/api/areas/canvas?area=${encodeURIComponent(area)}`).then((payload) => {
-        host.dataset.boardChecked = "board";
-        areaBoardView.mount(host, { area, payload, documents: state.vault.documents ?? [], api, onOpenDocument: openDocument, onSelectArea: onSelectBoardArea, narrow: host.clientWidth > 0 && host.clientWidth < 640 });
-      }).catch(() => { host.dataset.boardChecked = "legacy"; mountAreaMap(host); });
-      return;
-    }
-    if (host.dataset.boardChecked === "loading" || host.dataset.boardChecked === "board") return;
-    loadMapState(area);
-    const stored = state.mapStates.get(area);
-    const selectFile = state.mapSelectFile;
-    state.mapSelectFile = "";
-    /** The readable name of an Area path. */
-    const areaName = (path) => humanName(String(path).split("/").pop());
-    /** A short date for the card. */
-    const dateLabel = (at) => (at ? new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
-    /** The desk word for a Goal record. */
-    const attentionOf = (record) => goalAttention(goalByFile(record.file) ?? record);
-    /** Opens a Document in the reader. */
-    const onOpenDocument = (file) => openDocument(file);
-    /** Opens a Goal. */
-    const onSelectGoal = (file) => selectGoal(file);
-    /** Moves the map to another Area. */
-    /** Opens one Area selected from the map. */
-    const onSelectArea = (path) => { state.areaSelection = path; localStorage.setItem("agent-shell.last-area", path); revealArea(path); paint(true); };
-    /** Stores positions and filters for this Area outside the vault. */
-    const onSaveState = (mapState) => {
-      state.mapStates.set(area, mapState);
-      api("/api/map-state", { method: "POST", body: JSON.stringify({ area, state: mapState }) }).catch(() => {});
-    };
-    view.mount(host, {
-      scope: area,
-      records: state.vault.documents ?? [],
-      areaPaths: areas().map((item) => item.path),
-      now: Date.now(),
-      timezoneOffset: new Date().getTimezoneOffset(),
-      areaName, dateLabel, attentionOf,
-      mapState: stored === "loading" ? null : stored,
-      selectFile,
-      onOpenDocument, onSelectGoal, onSelectArea, onSaveState,
+    if (!area || !state.vault) return;
+    if (inlineAreaBoard && inlineAreaHost === host) return refreshAreaMap();
+    disposeAreaMap(); inlineAreaHost = host;
+    host.dataset.boardChecked = "loading";
+    host.innerHTML = `<div class="area-board-loading"><p>Loading the complete Area map…</p></div>`;
+    api(`/api/areas/map-world?located=${encodeURIComponent(area)}`).then((world) => {
+      if (!host.isConnected || inlineAreaHost !== host) return;
+      if (world?.schema !== "area-map-world.v1") throw new Error(world?.error || "The server did not return an Area-map world");
+      host.dataset.boardChecked = "world";
+      inlineAreaBoard = areaBoardView.mount(host, {
+        area, world, requireWorld: true, documents: state.vault.documents ?? [],
+        /** Returns current vault facts without remounting the map. */
+        getDocuments: () => state.vault?.documents ?? [], api,
+        focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly },
+        /** Routes one semantic map action through the existing shell surface. */
+        onEntityVerb(action) {
+          if (action.kind === "link") return window.open(action.ref, "_blank", "noopener");
+          const source = areaMapCore.splitReference?.(action.ref) ?? { file: String(action.ref ?? "").split("#")[0] };
+          if (action.kind === "area" && source.file) return inlineAreaBoard?.fitArea?.(source.file.replace(/\/[^/]+\.md$/, ""), { push: true, select: false });
+          if (source.file) openDocumentPeek(source.file, { origin: { kind: "area-map", area } });
+        },
+      });
+    }).catch((error) => {
+      if (inlineAreaHost !== host) return;
+      host.dataset.boardChecked = "error";
+      host.innerHTML = `<section class="area-board-empty" role="alert"><h2>The complete Area map did not load.</h2><p>${escapeHtml(String(error?.message ?? error))}</p><button type="button">Retry</button></section>`;
+      host.querySelector("button")?.addEventListener("click", () => { inlineAreaBoard = null; mountAreaMap(host); });
     });
   }
 
@@ -531,5 +513,5 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
 
   /** Returns one program by its stable UI identity. */
 
-  return { areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, processControl, selectedArea, areaParent, areaTreeRows, areaProgramMark, areaGoalRow, goalAttention, orderedGoalTrees, loadMapState, loadAreaJournal, mountAreaMap, areaContents, renderAreas, areaParentOptions, renderAreaEditor };
+  return { areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, processControl, selectedArea, areaParent, areaTreeRows, areaProgramMark, areaGoalRow, goalAttention, orderedGoalTrees, loadAreaJournal, mountAreaMap, refreshAreaMap, disposeAreaMap, areaContents, renderAreas, areaParentOptions, renderAreaEditor };
 }

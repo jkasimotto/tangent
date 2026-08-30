@@ -2860,6 +2860,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (handleGlobalShortcut(event)) return;
       if (handleCommandEnter(event)) return;
       if (event.key === "Escape") {
+        if (state.view === "map") return;
         event.preventDefault();
         leaveCurrentSurface();
       }

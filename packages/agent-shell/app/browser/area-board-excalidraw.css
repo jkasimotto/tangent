@@ -38,8 +38,20 @@
 .tangent-map-escape { position: absolute; z-index: 4; left: 12px; bottom: 16px; min-height: 32px; padding: 0 10px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-muted); box-shadow: var(--tangent-shadow); cursor: pointer; }
 .tangent-map-ancestry { position: absolute; z-index: 3; inset: 0; pointer-events: none; overflow: hidden; }
 .tangent-map-ancestry button { position: absolute; padding: 2px 6px; border: 0; border-radius: 4px; background: color-mix(in srgb, var(--tangent-island) 82%, transparent); color: var(--tangent-text); font: 14px Excalifont, Virgil, sans-serif; white-space: nowrap; pointer-events: auto; }
+.tangent-map-ancestry button:focus-visible { outline: 2px solid var(--tangent-accent); outline-offset: 1px; }
 .tangent-map-ancestry button strong { font-weight: 600; }
-.tangent-map-ancestry button span { color: var(--tangent-muted); font-size: 11px; }
+.tangent-map-ancestry button span { margin-left: 6px; color: var(--tangent-muted); font-size: 11px; }
+.tangent-map-location { position: absolute; z-index: 4; left: 50%; bottom: 62px; padding: 6px 9px; border-radius: 6px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font-size: 12px; pointer-events: none; transform: translateX(-50%); }
+.tangent-map-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.tangent-map-world-outline-button { position: absolute; z-index: 4; top: 12px; right: 12px; min-height: 36px; padding: 0 11px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); cursor: pointer; }
+.tangent-map-world-outline-button:focus-visible { outline: 2px solid var(--tangent-accent); outline-offset: 1px; }
+.tangent-map-draft-choice { position: absolute; z-index: 19; left: 50%; bottom: 64px; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid #e8a317; border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); transform: translateX(-50%); }
+.tangent-map-draft-choice button { min-height: 30px; border: 1px solid var(--tangent-border); border-radius: 6px; background: var(--tangent-island); color: var(--tangent-text); cursor: pointer; }
+.tangent-map-debug { position: absolute; z-index: 30; right: 12px; bottom: 62px; box-sizing: border-box; width: min(780px, calc(100% - 24px)); max-height: 42%; padding: 10px; overflow: auto; border: 1px solid #e8a317; border-radius: 8px; background: color-mix(in srgb, var(--tangent-island) 96%, transparent); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font: 11px ui-monospace, SFMono-Regular, monospace; }
+.tangent-map-debug h2, .tangent-map-debug p { margin: 0 0 7px; font-size: inherit; }
+.tangent-map-debug table { width: 100%; border-collapse: collapse; }
+.tangent-map-debug th, .tangent-map-debug td { padding: 3px 5px; border-top: 1px solid var(--tangent-border); text-align: left; white-space: nowrap; }
+.tangent-map-debug ul { margin: 5px 0 0; padding-left: 18px; }
 .tangent-map-brain { padding-left: 8px; border-left: 1px solid var(--tangent-border); color: var(--tangent-muted); }
 
 .tangent-map-inbox { position: absolute; z-index: 3; left: 50%; bottom: 16px; display: flex; align-items: stretch; gap: 7px; width: min(680px, calc(100% - 520px)); max-height: 74px; padding: 7px; overflow-x: auto; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); box-shadow: var(--tangent-shadow); transform: translateX(-50%); }
@@ -70,6 +82,7 @@
 .tangent-map-outline header strong { font-weight: 600; }
 .tangent-map-outline-close { min-height: 28px; padding: 0 8px; box-shadow: none; }
 .tangent-map-outline ol { flex: 1; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.tangent-map-outline ol ol { padding-left: 14px; overflow: visible; }
 .tangent-map-outline p { margin: 4px 9px 8px; color: var(--tangent-muted); }
 .tangent-map-outline li button { width: 100%; padding: 7px 9px; overflow: hidden; border: 0; border-radius: 6px; background: transparent; color: var(--tangent-text); cursor: pointer; font: inherit; text-align: left; white-space: nowrap; text-overflow: ellipsis; }
 .tangent-map-outline li button:hover, .tangent-map-outline li button:focus-visible { background: var(--tangent-hover); outline: none; }

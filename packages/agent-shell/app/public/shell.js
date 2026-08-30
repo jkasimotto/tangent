@@ -420,7 +420,7 @@ function forward(read) {
 }
 
 const workDeskView = createWorkDeskView({
-  shell: { state, api, post, paint, refresh, showToast, openModal: forward(() => openModal), captureReturnPoint, saveDescribeSession, openSessionLayer: forward(() => openSessionLayer) },
+  shell: { state, api, post, paint, refresh, showToast, openModal: forward(() => openModal), captureReturnPoint, saveDescribeSession, openSessionLayer: forward(() => openSessionLayer), updateAreaMapFocus: forward(() => refreshAreaMapFocus) },
   launch: {
     launchSelection: forward(() => launchSelection), launchRequestFields: forward(() => launchRequestFields),
     syncLaunchDraft: forward(() => syncLaunchDraft), preferredArea: forward(() => preferredArea),
@@ -457,7 +457,7 @@ const {
 
 const areaDirectoryView = createAreaDirectoryView({
   shell: { state, api, post, paint, refresh, showToast, screen },
-  documents: { openDocument: forward(() => openDocument) },
+  documents: { openDocument: forward(() => openDocument), openDocumentPeek: forward(() => openDocumentPeek) },
   work: {
     selectGoal: forward(() => selectGoal), allGoals, goalTrees, goalTreeState, goalTreeIsActive, goalByFile,
     goalNeedsYou, goalWorkFinished, sessionForGoal, brainForAreaCard, brainStateLabel, brainKind, humanName, areaLabel,
@@ -470,7 +470,7 @@ const areaDirectoryView = createAreaDirectoryView({
 });
 const {
   areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, processControl, selectedArea, areaParent, areaTreeRows, areaProgramMark,
-  areaGoalRow, goalAttention, orderedGoalTrees, loadMapState, loadAreaJournal, mountAreaMap, areaContents, renderAreas,
+  areaGoalRow, goalAttention, orderedGoalTrees, loadAreaJournal, mountAreaMap, refreshAreaMap: refreshInlineAreaMap, disposeAreaMap: disposeInlineAreaMap, areaContents, renderAreas,
   areaParentOptions, renderAreaEditor,
 } = areaDirectoryView;
 
@@ -850,6 +850,8 @@ function renderScreen() {
     state.view = "work";
   }
   if (!state.sessionPeek) disposeTerminal();
+  if (activeAreaBoard) disposeAreaMap();
+  disposeInlineAreaMap?.();
 
   screen.classList.remove("split-screen");
   screen.classList.remove("terminal-screen");
@@ -867,7 +869,7 @@ function renderScreen() {
   else if (state.view === "harnesses") screen.innerHTML = renderHarnessEditor();
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument() + launchPopover();
-  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header map-screen-header"><button type="button" data-map-back>${mapTrail.length ? "Back" : "Work"} <kbd>Esc</kbd></button><h1><span class="map-breadcrumb">${mapBreadcrumb()}</span><span> · Map</span></h1><div class="map-focus-controls"><button type="button" data-starred-only aria-pressed="${state.areaFocusOnly}">${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd></button><button type="button" data-active-only aria-pressed="${state.activeOnly}">${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd></button></div></header><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the map…</p></div></section>`;
+  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header map-screen-header"><button type="button" data-map-back>Work <kbd>Esc</kbd></button><h1><span class="map-breadcrumb">${mapBreadcrumb()}</span><span> · Map</span></h1><div class="map-focus-controls"><button type="button" data-starred-only aria-pressed="${state.areaFocusOnly}">${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd></button><button type="button" data-active-only aria-pressed="${state.activeOnly}">${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd></button></div></header><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the complete Area map…</p></div></section>`;
   else {
     state.view = "work";
     screen.innerHTML = renderWork();
@@ -1156,6 +1158,7 @@ function paint(force = false) {
   }
   const key = renderKey();
   if (!force && editingSurfaceOnScreen()) {
+    if (state.view === "map" || screen.querySelector("[data-area-map]")) refreshAreaMapFocus();
     updateHeader();
     return;
   }
@@ -1485,16 +1488,13 @@ function selectModelConcept(concept) {
 let shellBindings = null;
 let mapReturnCursor = "";
 let activeAreaBoard = null;
-let mapTrail = [];
 let mapLocatedArea = "";
-/** Returns the top-level Area that owns the broad map for one nested Area. */
-function rootMapArea(area) { return String(area ?? "").split("/").filter(Boolean)[0] ?? ""; }
 /** Prints the full launch path while keeping each Area segment actionable. */
 function mapBreadcrumb() {
   const parts = String(mapLocatedArea || state.mapArea || "").split("/").filter(Boolean);
   return parts.map((part, index) => {
     const area = parts.slice(0, index + 1).join("/");
-    const current = area === state.mapArea;
+    const current = area === (mapLocatedArea || state.mapArea);
     return `<button type="button" data-map-breadcrumb="${escapeHtml(area)}"${current ? " aria-current=\"page\"" : ""}>${escapeHtml(part)}</button>`;
   }).join("<span aria-hidden=\"true\"> / </span>");
 }
@@ -1519,6 +1519,24 @@ function disposeAreaMap() {
   activeAreaBoard?.destroy?.();
   activeAreaBoard = null;
 }
+/** Updates map navigation and Focus chrome without replacing the editor island. */
+function updateAreaMapChrome(navigation = null) {
+  const breadcrumb = screen.querySelector(".map-breadcrumb");
+  if (breadcrumb) breadcrumb.innerHTML = mapBreadcrumb();
+  const back = screen.querySelector("[data-map-back]");
+  if (back) back.innerHTML = `${navigation?.trail?.length ? "Back" : "Work"} <kbd>Esc</kbd>`;
+  const starred = screen.querySelector("[data-starred-only]");
+  if (starred) { starred.setAttribute("aria-pressed", String(state.areaFocusOnly)); starred.innerHTML = `${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd>`; }
+  const active = screen.querySelector("[data-active-only]");
+  if (active) { active.setAttribute("aria-pressed", String(state.activeOnly)); active.innerHTML = `${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd>`; }
+}
+/** Applies current Work Focus as a render mask in every mounted Area world. */
+function refreshAreaMapFocus() {
+  const value = { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly };
+  const changed = Boolean(activeAreaBoard?.refreshFacts?.(areaMapEntities(), value) || refreshInlineAreaMap?.(value));
+  if (changed) updateAreaMapChrome();
+  return changed;
+}
 /** Routes the Tangent verb row without letting cached block words become commands. */
 function areaMapEntityVerb(action) {
   const source = areaBoardCore.splitReference(action.ref);
@@ -1531,7 +1549,7 @@ function areaMapEntityVerb(action) {
   }
   if (action.kind === "link") { window.open(action.ref, "_blank", "noopener"); return; }
   if (action.kind === "area" && area) return drillAreaMap(area);
-  if (source.file) { disposeAreaMap(); return openDocument(source.file); }
+  if (source.file) return openDocumentPeek(source.file, { origin: { kind: "area-map", area: mapLocatedArea || state.mapArea } });
 }
 /** Opens an Area's living map and remembers the Work return row. */
 function openAreaMap(area, trigger) {
@@ -1539,35 +1557,19 @@ function openAreaMap(area, trigger) {
   const row = trigger?.closest?.("[data-work-cursor]");
   if (row?.dataset.workCursor) mapReturnCursor = row.dataset.workCursor;
   mapLocatedArea = area;
-  mapTrail = [];
   state.mapArea = area;
   state.view = "map";
   paint(true);
 }
-/** Narrows to an Area-owned file and keeps the prior map layer for Escape. */
+/** Fits the one persistent world to another Area without changing authority. */
 function drillAreaMap(area) {
-  if (!area || area === state.mapArea) return;
-  if (activeAreaBoard?.fitArea) {
-    mapLocatedArea = area;
-    activeAreaBoard.fitArea(area);
-    return;
-  }
-  disposeAreaMap();
-  mapTrail.push({ area: state.mapArea, locatedArea: mapLocatedArea });
-  state.mapArea = area;
+  if (!area) return;
   mapLocatedArea = area;
-  paint(true);
+  activeAreaBoard?.fitArea?.(area, { push: true, select: false });
+  updateAreaMapChrome();
 }
-/** Returns from a map to the exact Work row and its visible Map control. */
-function closeAreaMap() {
-  if (mapTrail.length) {
-    disposeAreaMap();
-    const previous = mapTrail.pop();
-    state.mapArea = previous.area;
-    mapLocatedArea = previous.locatedArea;
-    paint(true);
-    return;
-  }
+/** Leaves the world for the exact Work row after controller history is empty. */
+function leaveAreaMap() {
   disposeAreaMap();
   state.view = "work";
   paint(true);
@@ -1576,15 +1578,34 @@ function closeAreaMap() {
     row?.querySelector("[data-open-area-map]")?.focus?.({ preventScroll: true });
   }, 0);
 }
-/** Mounts the existing board on the dedicated map screen. */
+/** Runs the same selection, camera, then Work Escape order for pointer Back. */
+function closeAreaMap() {
+  if (activeAreaBoard) return activeAreaBoard.escape?.();
+  return leaveAreaMap();
+}
+/** Mounts the complete authoritative world on the dedicated map screen. */
 function mountDedicatedAreaMap() {
   const host = screen.querySelector("[data-dedicated-area-map]");
   if (!host || !state.mapArea || host.dataset.loaded) return;
   host.dataset.loaded = "loading";
-  Promise.all([api(`/api/areas/canvas?area=${encodeURIComponent(state.mapArea)}`), api(`/api/areas/map-context?area=${encodeURIComponent(state.mapArea)}`).catch(() => ({ area: state.mapArea, ancestors: [], legacyBaseline: null })), api(`/api/areas/map-world?located=${encodeURIComponent(state.mapArea)}`).catch(() => null)]).then(([payload, context, world]) => {
+  api(`/api/areas/map-world?located=${encodeURIComponent(state.mapArea)}`).then((world) => {
+    if (world?.schema !== "area-map-world.v1") throw new Error(world?.error || "The server did not return an Area-map world");
     host.dataset.loaded = "yes";
-    activeAreaBoard = areaBoardView.mount(host, { area: state.mapArea, payload, world: world?.schema === "area-map-world.v1" ? world : null, context, documents: areaMapEntities(), getDocuments: areaMapEntities, api, onOpenDocument: openDocument, onSelectArea: drillAreaMap, onEntityVerb: areaMapEntityVerb, onBack: closeAreaMap, backLabel: mapTrail.at(-1)?.area.split("/").at(-1) || "Work", locatedArea: mapLocatedArea, focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly }, onToggleAreaStar: toggleAreaStar, onToggleStarredOnly: toggleStarredOnly, onToggleActiveOnly: toggleActiveOnly, brainLive: Boolean(state.brains.find((brain) => brain.area === state.mapArea && brain.live)) });
-  }).catch(() => { host.dataset.loaded = "error"; host.innerHTML = `<section class="area-board-empty"><h2>Agent Shell did not answer.</h2><p>The map could not be loaded.</p><button type="button" data-map-retry>Retry</button></section>`; });
+    activeAreaBoard = areaBoardView.mount(host, {
+      area: state.mapArea,
+      world,
+      requireWorld: true,
+      documents: areaMapEntities(),
+      getDocuments: areaMapEntities,
+      api,
+      onEntityVerb: areaMapEntityVerb,
+      onBack: leaveAreaMap,
+      /** Keeps shell chrome aligned with the session-only located marker. */
+      onNavigation(navigation) { mapLocatedArea = navigation.area; updateAreaMapChrome(navigation); },
+      locatedArea: mapLocatedArea,
+      focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly },
+    });
+  }).catch((error) => { host.dataset.loaded = "error"; host.innerHTML = `<section class="area-board-empty" role="alert"><h2>The complete Area map did not load.</h2><p>${escapeHtml(String(error?.message ?? error))}</p><button type="button" data-map-retry>Retry</button></section>`; });
 }
 shellBindings = bindShellEvents({
   shell: { state, post, paint, refresh, showToast },

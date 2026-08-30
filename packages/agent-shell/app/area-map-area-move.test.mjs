@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { moveArea } from "./area-operations.mjs";
 import { parseAreaCanvas, serializeAreaCanvas } from "./area-canvas.mjs";
+import { rewriteAreaMapSceneForMove } from "./area-map-area-move.mjs";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createEmptyScene, createRegionElements, createTextElement } from "./public/area-board-core.js";
 import { provisionalRegions } from "./public/area-map-world-core.js";
@@ -22,6 +23,34 @@ async function readScene(root, area) {
   assert.equal(parsed.ok, true);
   return parsed.scene;
 }
+
+test("a cross-parent Area move clears persisted overlap intent", () => {
+  const scene = createEmptyScene();
+  scene.elements.push(...createRegionElements({
+    id: "peer-region", ref: "neara/peer/peer.md", title: "Peer",
+    layout: { schema: "area-placement.v1", priority: 4, overlapWith: ["neara/source"] },
+  }));
+
+  const moved = rewriteAreaMapSceneForMove(scene, [{ from: "neara/source", to: "otto/renamed" }]);
+
+  assert.deepEqual(moved.elements[0].customData.tangent.layout, {
+    schema: "area-placement.v1", priority: 4, overlapWith: [],
+  });
+});
+
+test("a same-parent Area rename retains and remaps persisted overlap intent", () => {
+  const scene = createEmptyScene();
+  scene.elements.push(...createRegionElements({
+    id: "peer-region", ref: "neara/peer/peer.md", title: "Peer",
+    layout: { schema: "area-placement.v1", priority: 4, overlapWith: ["neara/source"] },
+  }));
+
+  const moved = rewriteAreaMapSceneForMove(scene, [{ from: "neara/source", to: "neara/renamed" }]);
+
+  assert.deepEqual(moved.elements[0].customData.tangent.layout, {
+    schema: "area-placement.v1", priority: 4, overlapWith: ["neara/renamed"],
+  });
+});
 
 test("an explicit Area move preserves source IDs and remaps every map owner and reference", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-map-move-"));

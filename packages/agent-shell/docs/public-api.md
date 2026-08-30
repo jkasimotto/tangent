@@ -24,7 +24,7 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 
 `GET /api/areas/map-shard?area=<area>&worldRevision=<revision>` returns one deferred shard for that exact world revision.
 
-`POST /api/areas/map-gestures` accepts source-space mutations. It rejects runtime IDs and commits all affected source shards as one operation.
+`POST /api/areas/map-gestures` accepts source-space mutations. Region elements can include compatible `area-placement.v1` intent. The route rejects runtime IDs and commits all affected source shards as one operation.
 
 `GET` and `POST /api/areas/map-view` read or write private `area-map-view.v2` state by world ID. A world response also includes this state when it exists.
 

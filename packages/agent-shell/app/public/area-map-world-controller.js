@@ -9,6 +9,7 @@ const VIEW_SCHEMA = "area-map-view.v2";
 const DRAFT_SCHEMA = "area-map-draft.v1";
 const DETAIL_ENTER_PX = 96;
 const DETAIL_LEAVE_PX = 72;
+const AREA_RESIZE_HANDLES = new Set(["n", "s", "e", "w", "nw", "ne", "sw", "se"]);
 
 /** Makes an immutable controller-boundary copy. */
 const clone = (value) => structuredClone(value);
@@ -72,6 +73,25 @@ export function areaMapDeferredLoadPlan(world, composition, area, { includeDesce
 /** Selects source ownership for one new runtime element at an explicit command boundary. */
 export function ownerForNewAreaMapElement({ copiedOwner = null, pasteOwner = null, startOwner = null, pointOwner = null } = {}) {
   return pasteOwner ?? copiedOwner ?? startOwner ?? pointOwner;
+}
+
+/** Converts one Excalidraw pointer-down state into a structural Area command. */
+export function areaMapPointerCommand(pointerDownState = {}) {
+  const handle = pointerDownState?.resize?.handleType || null;
+  const resizing = Boolean(pointerDownState?.resize?.isResizing || handle);
+  if (!resizing) return { kind: "move", handle: null };
+  if (AREA_RESIZE_HANDLES.has(handle)) return { kind: "resize", handle };
+  return { kind: "ignore", handle };
+}
+
+/** Reports whether structural block extent changed enough to affect Area layout. */
+export function areaMapStructuralHullChanged(before, after) {
+  if (!before && !after) return false;
+  if (!before || !after) return true;
+  return ["x", "y", "width", "height"].some((field) => {
+    const left = Number(before[field]); const right = Number(after[field]);
+    return !Number.isFinite(left) || !Number.isFinite(right) || Math.abs(left - right) >= 0.01;
+  });
 }
 
 /** Reads one private browser record without making storage availability authoritative. */

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createAreaMapWorldRoutes } from "./area-map-world-routes.mjs";
+import { symmetricOverlapClosure } from "./public/area-board.js";
 import { createEmptyScene, createRegionElements, createShapeElement, createTextElement } from "./public/area-board-core.js";
+import { composeAreaMapWorld } from "./public/area-map-world-core.js";
 
 /** Creates a small Node response fixture. */
 function response() {
@@ -24,10 +26,10 @@ function jsonRequest(value) {
 }
 
 /** Creates a source-backed map index for mutation-route tests. */
-function mutationFixture() {
+function mutationFixture({ legacyOverlap = false } = {}) {
   const root = createEmptyScene();
   root.elements.push(...createRegionElements({ id: "child-region", ref: "root/child/child.md", title: "Child", x: 80, y: 90 }));
-  root.elements.push(...createRegionElements({ id: "peer-region", ref: "root/peer/peer.md", title: "Peer", x: 680, y: 90 }));
+  root.elements.push(...createRegionElements({ id: "peer-region", ref: "root/peer/peer.md", title: "Peer", x: legacyOverlap ? 180 : 680, y: 90 }));
   const child = createEmptyScene();
   child.elements.push(createTextElement({ id: "before", text: "Before", x: 10, y: 20, width: 90, height: 40 }));
   const scenes = new Map([["@root", createEmptyScene()], ["root", root], ["root/child", child], ["root/peer", createEmptyScene()]]);
@@ -38,7 +40,7 @@ function mutationFixture() {
     /** Reads one canonical source fixture. */
     async read(area) { return { area, file: `${area}/${area.split("/").at(-1)}.excalidraw`, exists: true, ok: true, hash: hashes.get(area), scene: scenes.get(area) }; },
   } });
-  return { index, scenes };
+  return { hashes, index, scenes };
 }
 
 /** Builds one valid source gesture. */
@@ -131,14 +133,15 @@ test("rejects a gesture from a stale Area tree revision", async () => {
   assert.equal(calls, 0);
 });
 
-test("rejects undersized and overlapping direct-child regions", async () => {
+test("rejects undersized regions and accepts an exact authored sibling overlap", async () => {
   const { index } = mutationFixture();
   const world = await index.snapshot("root/child");
   const child = world.areas.find((node) => node.key === "root/child");
   const peer = world.areas.find((node) => node.key === "root/peer");
   let calls = 0;
+  let saved = null;
   /** Counts any transaction that escaped structural geometry validation. */
-  async function saveGesture() { calls += 1; return { committed: true }; }
+  async function saveGesture(writes) { calls += 1; saved = writes; return { committed: true }; }
   const routes = createAreaMapWorldRoutes({ index, saveGesture });
 
   const [small] = createRegionElements({ id: child.region.sourceId, ref: "root/child/child.md", title: "Child", x: 80, y: 90, width: 299, height: 220 });
@@ -147,12 +150,78 @@ test("rejects undersized and overlapping direct-child regions", async () => {
   assert.equal(smallResult.status, 422);
   assert.match(JSON.parse(smallResult.body).error, /at least 300 by 220/);
 
-  const [crossing] = createRegionElements({ id: child.region.sourceId, ref: "root/child/child.md", title: "Child", ...peer.region.storedRect });
+  const layout = { schema: "area-placement.v1", priority: 12, overlapWith: ["root/peer"] };
+  const [crossing] = createRegionElements({ id: child.region.sourceId, ref: "root/child/child.md", title: "Child", ...peer.region.storedRect, layout });
+  const oneSidedResult = response();
+  await routes.handle(jsonRequest({ ...gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [crossing], remove: [] }]), operationId: "gesture-one-sided" }), oneSidedResult, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(oneSidedResult.status, 422);
+  assert.match(JSON.parse(oneSidedResult.body).error, /must be reciprocal in the final source scene/);
+
+  const peerLayout = { schema: "area-placement.v1", priority: 11, overlapWith: ["root/child"] };
+  const [crossingPeer] = createRegionElements({ id: peer.region.sourceId, ref: "root/peer/peer.md", title: "Peer", ...peer.region.storedRect, layout: peerLayout });
   const crossingResult = response();
-  await routes.handle(jsonRequest({ ...gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [crossing], remove: [] }]), operationId: "gesture-2" }), crossingResult, new URL("http://local/api/areas/map-gestures"));
-  assert.equal(crossingResult.status, 422);
-  assert.match(JSON.parse(crossingResult.body).error, /overlaps sibling/);
-  assert.equal(calls, 0);
+  await routes.handle(jsonRequest({ ...gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [crossing, crossingPeer], remove: [] }]), operationId: "gesture-2" }), crossingResult, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(crossingResult.status, 200);
+  assert.equal(calls, 1);
+  assert.deepEqual(saved[0].canvas.elements.find((element) => element.id === child.region.sourceId).customData.tangent.layout, layout, "the compatible source region keeps placement intent");
+  assert.deepEqual(saved[0].canvas.elements.find((element) => element.id === peer.region.sourceId).customData.tangent.layout, peerLayout, "the final source scene keeps the reciprocal peer intent");
+});
+
+test("a first edit to one legacy overlap writes the symmetric source closure and reloads exactly", async () => {
+  const { hashes, index, scenes } = mutationFixture({ legacyOverlap: true });
+  const world = await index.snapshot("root/child");
+  const next = structuredClone(world);
+  const child = next.areas.find((node) => node.key === "root/child");
+  const peer = next.areas.find((node) => node.key === "root/peer");
+  assert.deepEqual(child.region.layout.overlapWith, ["root/peer"], "read migration infers the legacy overlap");
+  assert.deepEqual(peer.region.layout.overlapWith, ["root/child"]);
+  child.region.storedRect.width += 120;
+  child.region.layout.priority += 1;
+  const expected = composeAreaMapWorld(next);
+  const changed = symmetricOverlapClosure(next, new Set([child.key]));
+  assert.deepEqual([...changed].sort(), ["root/child", "root/peer"], "the production persistence adapter closes the reciprocal pair");
+  const put = [...changed].flatMap((area) => {
+    const node = next.areas.find((candidate) => candidate.key === area);
+    return createRegionElements({
+      id: node.region.sourceId,
+      ref: `${area}/${area.split("/").at(-1)}.md`,
+      title: area.split("/").at(-1),
+      layout: node.region.layout,
+      ...node.region.storedRect,
+    });
+  });
+  /** Installs the accepted source transaction so the index acknowledgement and reload read real source bytes. */
+  async function saveGesture(writes, options) {
+    for (const write of writes) {
+      scenes.set(write.area, structuredClone(write.canvas));
+      hashes.set(write.area, `saved:${options.operationId}:${write.area}`);
+    }
+    return { committed: true, operationId: options.operationId, hashes: Object.fromEntries(writes.map((write) => [write.area, hashes.get(write.area)])) };
+  }
+  const routes = createAreaMapWorldRoutes({ index, saveGesture });
+  const result = response();
+  await routes.handle(jsonRequest({ ...gesture(world, [{ owner: "root", baseHash: "parent-hash", put, remove: [] }]), operationId: "legacy-overlap-closure" }), result, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(result.status, 200);
+  const sourceRegions = new Map(scenes.get("root").elements.filter((element) => element.customData?.tangent?.role === "region").map((element) => [element.customData.tangent.ref, element]));
+  assert.deepEqual(sourceRegions.get("root/child/child.md").customData.tangent.layout, child.region.layout);
+  assert.deepEqual(sourceRegions.get("root/peer/peer.md").customData.tangent.layout, peer.region.layout, "the unchanged peer receives the reciprocal metadata half");
+
+  const reloaded = composeAreaMapWorld(await index.snapshot("root/child"));
+  assert.deepEqual([...reloaded.regionRects], [...expected.regionRects], "reload derives the exact same solved regions from source");
+  assert.deepEqual([...reloaded.storedRegionRects], [...expected.storedRegionRects], "reload preserves the exact authored rectangles");
+});
+
+test("the symmetric source closure follows a reciprocal overlap chain only", () => {
+  /** Creates one minimal source-world node. */
+  const node = (key, overlapWith, parent = "root") => ({ key, parent, region: { layout: { overlapWith } } });
+  const world = { areas: [
+    node("root/a", ["root/b"]),
+    node("root/b", ["root/a", "root/c"]),
+    node("root/c", ["root/b", "root/d"]),
+    node("root/d", []),
+    node("other/e", ["root/a"], "other"),
+  ] };
+  assert.deepEqual([...symmetricOverlapClosure(world, ["root/a"])].sort(), ["root/a", "root/b", "root/c"], "transitive reciprocal peers close, while one-sided and foreign-parent edges do not");
 });
 
 test("writes a top-level region through the special root source shard", async () => {
@@ -195,6 +264,18 @@ test("rejects runtime IDs and invalid direct-child regions", async () => {
   await routes.handle(jsonRequest(gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [wrongRegion], remove: [] }])), relationResult, new URL("http://local/api/areas/map-gestures"));
   assert.equal(relationResult.status, 409);
   assert.equal(JSON.parse(relationResult.body).code, "tree-conflict");
+
+  const [invalidLayout] = createRegionElements({ id: "child-region", ref: "root/child/child.md", title: "Child", x: 80, y: 90, layout: { schema: "area-placement.v1", priority: -1, overlapWith: [] } });
+  const layoutResult = response();
+  await routes.handle(jsonRequest({ ...gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [invalidLayout], remove: [] }]), operationId: "gesture-layout" }), layoutResult, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(layoutResult.status, 422);
+  assert.match(JSON.parse(layoutResult.body).error, /layout must use area-placement\.v1/);
+
+  const [foreignOverlap] = createRegionElements({ id: "child-region", ref: "root/child/child.md", title: "Child", x: 80, y: 90, layout: { schema: "area-placement.v1", priority: 1, overlapWith: ["root/not-a-child"] } });
+  const overlapResult = response();
+  await routes.handle(jsonRequest({ ...gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [foreignOverlap], remove: [] }]), operationId: "gesture-overlap" }), overlapResult, new URL("http://local/api/areas/map-gestures"));
+  assert.equal(overlapResult.status, 422);
+  assert.match(JSON.parse(overlapResult.body).error, /only direct siblings/);
   assert.equal(calls, 0);
 });
 

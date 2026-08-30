@@ -126,6 +126,8 @@ export function mountAreaBoardEditor(host, options) {
     reload: null, keepMine: null, controller: null, setSaveState: null,
     /** Returns the supplied empty bootstrap until React installs the world bridge. */
     current: () => options.scene ?? { elements: [], appState: {}, files: {} },
+    /** Returns no runtime elements until Excalidraw installs its bridge. */
+    rendered: () => null,
     /** Returns no app state until Excalidraw installs its live bridge. */
     appState: () => null,
   };
@@ -134,6 +136,8 @@ export function mountAreaBoardEditor(host, options) {
   return {
     /** Returns the current complete-world scene. */
     current: () => bridge.current(),
+    /** Returns the elements held by the mounted Excalidraw runtime. */
+    rendered: () => bridge.rendered(),
     /** Returns the current Excalidraw application state. */
     appState: () => bridge.appState(),
     /** Fits one Area without replacing the mounted world. */

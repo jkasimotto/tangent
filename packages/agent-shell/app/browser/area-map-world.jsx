@@ -4,7 +4,7 @@ import boardCore from "../public/area-board-core.js";
 import worldCore from "../public/area-map-world-core.js";
 import pickerModel from "../public/area-board-picker.js";
 import { mapFindMatches } from "../public/area-map-find-core.js";
-import { createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "../public/area-map-world-controller.js";
+import { areaMapPointerCommand, areaMapStructuralHullChanged, createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "../public/area-map-world-controller.js";
 
 const EXCALIDRAW_UI_OPTIONS = Object.freeze({
   tools: { image: false },
@@ -22,7 +22,7 @@ const StableWorldCanvas = React.memo(function StableWorldCanvas({ initialData, h
     handleKeyboardGlobally={false}
     UIOptions={EXCALIDRAW_UI_OPTIONS}
     onPointerDown={(tool, pointerDownState) => handlers.current.onPointerDown(tool, pointerDownState)}
-    onPointerUp={() => handlers.current.onPointerUp()}
+    onPointerUp={(tool, pointerDownState) => handlers.current.onPointerUp(tool, pointerDownState)}
     onPointerUpdate={(value) => handlers.current.onPointerUpdate(value)}
     onScrollChange={(scrollX, scrollY, zoom) => handlers.current.onScrollChange(scrollX, scrollY, zoom)}
     onPaste={(data) => handlers.current.onPaste(data)}
@@ -81,23 +81,6 @@ function elementHull(elements) {
   return { x, y, width: right - x, height: bottom - y };
 }
 
-/** Infers Excalidraw's discrete transform handle from its pointer-down point. */
-function transformHandle(box, point, zoom = 1) {
-  if (!box || !point) return null;
-  const tolerance = 18 / Math.max(0.1, zoom); const middleX = box.x + box.width / 2; const middleY = box.y + box.height / 2;
-  /** Reports whether the pointer is near one handle point. */
-  const near = (x, y) => Math.hypot(point.x - x, point.y - y) <= tolerance;
-  if (near(box.x, box.y)) return "nw";
-  if (near(box.x + box.width, box.y)) return "ne";
-  if (near(box.x, box.y + box.height)) return "sw";
-  if (near(box.x + box.width, box.y + box.height)) return "se";
-  if (near(middleX, box.y)) return "n";
-  if (near(middleX, box.y + box.height)) return "s";
-  if (near(box.x, middleY)) return "w";
-  if (near(box.x + box.width, middleY)) return "e";
-  return null;
-}
-
 /** Reports whether one pointer starts on a selected element's hit rectangle. */
 function pointerHits(element, point, zoom = 1) {
   if (!element || !point) return false;
@@ -130,7 +113,9 @@ function solverBaseline(world) {
   const regions = new Map(world.areas.map((node) => [node.key, clone(node.region)]));
   const blockHulls = new Map(); const inkHulls = new Map();
   for (const node of world.areas) {
-    const hulls = worldCore.shardHulls(node.shard.scene);
+    const hulls = node.shard.scene
+      ? worldCore.shardHulls(node.shard.scene)
+      : { blocks: node.shard.ownBlockHull ?? null, ink: node.shard.ownInkHull ?? null };
     if (hulls.blocks) blockHulls.set(node.key, hulls.blocks);
     if (hulls.ink) inkHulls.set(node.key, hulls.ink);
   }
@@ -183,7 +168,6 @@ export function AreaMapWorld({ host, bridge, options }) {
   const pointerCurrentRef = useRef(null);
   const lastPointerRef = useRef(null);
   const pointerHandleRef = useRef(null);
-  const wallAnnouncedRef = useRef(false);
   const outlineProtectionAnnouncedRef = useRef(false);
   const pointerSelectedRef = useRef(new Set());
   const additiveSelectionRef = useRef(null);
@@ -191,10 +175,10 @@ export function AreaMapWorld({ host, bridge, options }) {
   const pointerSettlingRef = useRef(false);
   const pointerSettleTokenRef = useRef(0);
   const pointerSettleWaitersRef = useRef([]);
-  const pointerDomActiveRef = useRef(false);
   const pastePlacementRef = useRef(null);
   const pasteTimerRef = useRef(null);
   const nonPointerKindRef = useRef(null);
+  const nonPointerBaselineRef = useRef(null);
   const nonPointerSettleRef = useRef(0);
   const actionKindRef = useRef(null);
   const programmaticSelectionRef = useRef(null);
@@ -305,12 +289,6 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (!message) return;
     if (visible) setNotice(message);
     setAnnouncement((value) => ({ id: value.id + 1, text: message }));
-  }
-
-  /** Announces at most one sibling wall during the current command boundary. */
-  function announceWall(area) {
-    if (!area || wallAnnouncedRef.current) return;
-    wallAnnouncedRef.current = true; announce(`stopped at ${leaf(area)}`);
   }
 
   /** Changes one fold mask and announces the completed view action. */
@@ -516,7 +494,22 @@ export function AreaMapWorld({ host, bridge, options }) {
     const id = crypto.randomUUID();
     const canonical = controller.snapshot().composition.scene;
     const next = boardCore.addBlock(canonical, choice, point, id);
-    for (const element of next.elements.slice(canonical.elements.length)) {
+    const added = next.elements.slice(canonical.elements.length);
+    const block = added.find((element) => boardCore.tangentOf(element));
+    const occupied = canonical.elements.filter((element) => !element.isDeleted
+      && !ephemeral(element)
+      && element.customData?.tangentWorld?.owner === area);
+    if (block) {
+      const placed = worldCore.nearestFreeRectangle(
+        { x: block.x, y: block.y, width: block.width, height: block.height },
+        occupied,
+        { gap: worldCore.AREA_MAP_LAYOUT.spacing },
+      );
+      const dx = placed.x - block.x; const dy = placed.y - block.y;
+      const bound = new Set([block.id, ...(block.boundElements ?? []).map((binding) => binding.id)]);
+      for (const element of added) if (bound.has(element.id)) { element.x += dx; element.y += dy; }
+    }
+    for (const element of added) {
       element.customData = { ...(element.customData ?? {}), tangentWorld: { owner: area } };
     }
     publish(next.elements, api?.getAppState?.() ?? {});
@@ -544,14 +537,18 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Opens one non-pointer command and keeps later callbacks inside it. */
   function beginNonPointer(kind = "edit") {
     if (pointerBaselineRef.current) return;
-    if (!nonPointerKindRef.current) { controller.beginGesture(kind); nonPointerKindRef.current = kind; }
+    if (!nonPointerKindRef.current) {
+      nonPointerBaselineRef.current = controller.beginGesture(kind);
+      nonPointerKindRef.current = kind;
+    }
   }
 
   /** Closes the active non-pointer command exactly once. */
   function finishNonPointer() {
     nonPointerSettleRef.current += 1;
     if (!nonPointerKindRef.current) return;
-    const kind = nonPointerKindRef.current; nonPointerKindRef.current = null; controller.endGesture(kind);
+    const kind = nonPointerKindRef.current; nonPointerKindRef.current = null;
+    controller.endGesture(kind); nonPointerBaselineRef.current = null;
   }
 
   /** Closes a stable paste, duplicate, delete, nudge, style, or completed text edit. */
@@ -585,15 +582,16 @@ export function AreaMapWorld({ host, bridge, options }) {
     finishNonPointer(); pointerSettlingRef.current = false; programmaticSelectionRef.current = null;
     claimedRuntimeIdsRef.current = new Map();
     claimedOriginsRef.current = new Map();
-    wallAnnouncedRef.current = false; outlineProtectionAnnouncedRef.current = false;
+    outlineProtectionAnnouncedRef.current = false;
     pointerBaselineRef.current = controller.beginGesture("pointer");
     pointerSolverBaselineRef.current = solverBaseline(pointerBaselineRef.current);
     pointerCompositionRef.current = worldCore.composeAreaMapWorld(pointerBaselineRef.current);
-    pointerStateRef.current = { ...pointerDownState, origin }; pointerCurrentRef.current = origin;
+    const pointerCommand = areaMapPointerCommand(pointerDownState);
+    pointerStateRef.current = { ...pointerDownState, origin, command: pointerCommand }; pointerCurrentRef.current = origin;
     const liveSelection = controller.snapshot().selection;
     if (liveSelection.size) stableSelectionRef.current = new Set(liveSelection);
     const zoom = api?.getAppState?.().zoom?.value ?? 1;
-    const additive = Boolean(pointerDownState.shiftKey);
+    const additive = Boolean(pointerDownState.shiftKey || pointerDownState.hit?.wasAddedToSelection || pointerDownState.withCmdOrCtrl);
     const baselineElements = new Map(pointerCompositionRef.current.scene.elements.map((element) => [element.id, element]));
     const rawHitElement = additive ? [...pointerCompositionRef.current.scene.elements].reverse().find((element) => element.customData?.tangent?.role !== "area-region" && !ephemeral(element) && pointerHits(element, origin, zoom)) : null;
     const boundContainer = rawHitElement?.containerId ? baselineElements.get(rawHitElement.containerId) : null;
@@ -607,11 +605,18 @@ export function AreaMapWorld({ host, bridge, options }) {
     const selectedElements = pointerCompositionRef.current.scene.elements.filter((element) => stableSelectionRef.current.has(element.id));
     const hitBlock = selectedElements.some((element) => element.customData?.tangent?.role !== "area-region" && pointerHits(element, origin, zoom));
     const deepest = areaAtPoint(pointerCompositionRef.current, origin, null, state.scopedAreas);
-    const hitRegion = selectedElements.some((element) => element.customData?.tangent?.role === "area-region" && element.customData.tangent.area === deepest && pointerHits(element, origin, zoom));
-    pointerSelectedRef.current = hitBlock || hitRegion ? new Set(stableSelectionRef.current) : new Set();
-    const selectedRegion = pointerCompositionRef.current.scene.elements.find((element) => pointerSelectedRef.current.has(element.id) && element.customData?.tangent?.role === "area-region");
-    pointerHandleRef.current = selectedRegion ? transformHandle(selectedRegion, origin, zoom) : null;
-    controller.recordEvent("area_map_pointer_down", { selectedCount: pointerSelectedRef.current.size, selectedRegion: selectedRegion?.customData?.tangent?.area ?? null, deepestArea: deepest, handle: pointerHandleRef.current });
+    const selectedRegion = selectedElements.find((element) => element.customData?.tangent?.role === "area-region");
+    const hitRegion = Boolean(selectedRegion) && (pointerCommand.kind === "resize"
+      || selectedRegion.customData.tangent.area === deepest && pointerHits(selectedRegion, origin, zoom));
+    const rejectedAreaTransform = Boolean(selectedRegion) && pointerCommand.kind === "ignore";
+    pointerStateRef.current = { ...pointerStateRef.current, rejectedAreaTransform };
+    pointerSelectedRef.current = !rejectedAreaTransform && (hitBlock || hitRegion) ? new Set(stableSelectionRef.current) : new Set();
+    pointerHandleRef.current = selectedRegion && pointerCommand.kind === "resize" ? pointerCommand.handle : null;
+    if (rejectedAreaTransform) {
+      announce("Area outlines cannot rotate");
+      projectCanvas({ elements: controller.snapshot().scene.elements, captureUpdate: "NEVER" }, "area-transform-rejected");
+    }
+    controller.recordEvent("area_map_pointer_down", { selectedCount: pointerSelectedRef.current.size, selectedRegion: selectedRegion?.customData?.tangent?.area ?? null, deepestArea: deepest, handle: pointerCommand.handle, command: pointerCommand.kind });
   }
 
   /** Solves one region preview from the pointer-down world, independent of canvas hit mode. */
@@ -630,13 +635,15 @@ export function AreaMapWorld({ host, bridge, options }) {
     });
     controller.recordEvent("area_map_gesture_solved", { gestureKind: pointerHandleRef.current ? "region-resize" : "region-move", depth: Math.max(...[...selected].map((value) => value.split("/").length)), previewCount: selected.size, maximumTime: performance.now() - solveStarted, wallArea: preview.wall ?? null });
     if (!preview.valid) controller.recordEvent("area_map_invariant_failed", { gestureId: "pointer", invariantName: "finite-containment", affectedAreas: [...selected].sort() });
+    const changedAreas = new Set([...selected, ...(preview.changedAreas ?? [])]);
     const nextWorld = controller.world();
-    for (const area of selected) {
+    for (const area of changedAreas) {
       const node = nextWorld.areas.find((entry) => entry.key === area); const solved = preview.regions.get(area);
       if (node && solved) { node.region = clone(solved); node.region.source = "stored"; }
     }
-    controller.preview(nextWorld, { changedAreas: selected });
-    announceWall(preview.wall);
+    controller.preview(nextWorld, { changedAreas });
+    const snapshot = controller.snapshot();
+    projectCanvas({ elements: snapshot.scene.elements, captureUpdate: "NEVER" }, "area-pointer-preview");
   }
 
   /** Publishes the current Excalidraw pointer state inside the open command. */
@@ -711,15 +718,15 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Applies one corrected Excalidraw update to source-owned shards. */
   function publish(elements, appState) {
     if (!pointerBaselineRef.current && !nonPointerKindRef.current) {
-      wallAnnouncedRef.current = false; outlineProtectionAnnouncedRef.current = false;
+      outlineProtectionAnnouncedRef.current = false;
     }
-    const baselineWorld = pointerBaselineRef.current ?? controller.world();
+    const baselineWorld = pointerBaselineRef.current ?? nonPointerBaselineRef.current ?? controller.world();
     const baselineComposition = pointerCompositionRef.current ?? worldCore.composeAreaMapWorld(baselineWorld);
     let preparedSolverBaseline = pointerSolverBaselineRef.current;
     /** Returns one pointer-stable or command-local solver baseline. */
     const getSolverBaseline = () => preparedSolverBaseline ??= solverBaseline(baselineWorld);
     const nextWorld = pointerBaselineRef.current ? controller.world() : clone(baselineWorld);
-    const changedAreas = new Set(); const changedOwners = new Set();
+    const changedAreas = new Set(); const changedOwners = new Set(); const directlyChangedAreas = new Set();
     const incomingById = new Map(elements.map((element) => [element.id, element]));
     const protectedOutline = baselineComposition.scene.elements.some((element) => element.customData?.tangent?.role === "area-region" && (!incomingById.has(element.id) || incomingById.get(element.id)?.isDeleted));
     if (protectedOutline && !outlineProtectionAnnouncedRef.current) {
@@ -730,6 +737,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (changedRegions.length) {
       const selected = new Set(changedRegions.map((element) => element.customData.tangent.area));
       for (const area of [...selected]) for (const ancestor of selected) if (area !== ancestor && area.startsWith(`${ancestor}/`)) selected.delete(area);
+      for (const area of selected) directlyChangedAreas.add(area);
       const first = changedRegions.find((element) => selected.has(element.customData.tangent.area));
       const area = first.customData.tangent.area;
       const old = baselineComposition.regionRects.get(area);
@@ -749,13 +757,12 @@ export function AreaMapWorld({ host, bridge, options }) {
       const preview = worldCore.solveAreaMapGesture(getSolverBaseline(), { selectedAreas: [...selected], handle: handle || null, desiredWorldDelta });
       controller.recordEvent("area_map_gesture_solved", { gestureKind: handle ? "region-resize" : "region-move", depth: Math.max(...[...selected].map((value) => value.split("/").length)), previewCount: selected.size, maximumTime: performance.now() - solveStarted, wallArea: preview.wall ?? null });
       if (!preview.valid) controller.recordEvent("area_map_invariant_failed", { gestureId: "pointer", invariantName: "finite-containment", affectedAreas: [...selected].sort() });
-      for (const selectedArea of selected) {
-        const node = nextWorld.areas.find((entry) => entry.key === selectedArea);
-        const solved = preview.regions.get(selectedArea);
+      for (const changedArea of new Set([...selected, ...(preview.changedAreas ?? [])])) {
+        const node = nextWorld.areas.find((entry) => entry.key === changedArea);
+        const solved = preview.regions.get(changedArea);
         if (!node || !solved) continue;
-        node.region = clone(solved); node.region.source = "stored"; changedAreas.add(selectedArea);
+        node.region = clone(solved); node.region.source = "stored"; changedAreas.add(changedArea);
       }
-      announceWall(preview.wall);
     }
 
     const restored = restoreMaskedElements(elements, baselineComposition, state.hiddenIds);
@@ -929,7 +936,6 @@ export function AreaMapWorld({ host, bridge, options }) {
           if (bound) { bound.x += correction.x; bound.y += correction.y; }
         }
       }
-      announceWall(solved.wall);
     }
     const byOwner = worldCore.splitComposed(authoredRuntime, origins, nextComposition.offsets);
     for (const [owner, authored] of byOwner) {
@@ -950,6 +956,28 @@ export function AreaMapWorld({ host, bridge, options }) {
       node.shard.blockCount = authoredElements.filter((element) => boardCore.tangentOf(element)).length;
       node.shard.ownBlockHull = hulls.blocks; node.shard.ownInkHull = hulls.ink;
       changedOwners.add(owner);
+    }
+    const baselinePlacementPriority = baselineWorld.areas.reduce((maximum, entry) => {
+      const value = entry.region.layout?.priority;
+      return Number.isSafeInteger(value) && value >= 0 ? Math.max(maximum, value) : maximum;
+    }, 0);
+    const nextPlacementPriority = Math.min(Number.MAX_SAFE_INTEGER, baselinePlacementPriority + 1);
+    for (const owner of changedOwners) {
+      const node = nextWorld.areas.find((entry) => entry.key === owner);
+      const baselineNode = baselineWorld.areas.find((entry) => entry.key === owner);
+      if (!node || !baselineNode) continue;
+      const baselineHull = baselineNode.shard.scene
+        ? worldCore.shardHulls(baselineNode.shard.scene).blocks
+        : baselineNode.shard.ownBlockHull ?? null;
+      if (!areaMapStructuralHullChanged(baselineHull, node.shard.ownBlockHull)) continue;
+      // A lower-priority branch can be drawn away from its old authored
+      // rectangle. Absorb that resolved anchor before its content raises the
+      // branch priority, or the Area and edited block jump back to the old one.
+      const resolvedAnchor = directlyChangedAreas.has(owner)
+        ? node.region.storedRect
+        : baselineComposition.geometry.get(owner)?.resolvedStored;
+      node.region = worldCore.reprioritizeAreaPlacement(node.region, resolvedAnchor, nextPlacementPriority);
+      changedAreas.add(owner);
     }
     if (!changedAreas.size && !changedOwners.size) {
       // A new Excalidraw pointer command owns its live frames. Projecting the
@@ -1132,37 +1160,9 @@ export function AreaMapWorld({ host, bridge, options }) {
   }, [picker, helpOpen, outlineOpen]);
 
   useEffect(() => {
-    if (!api) return undefined;
-    /** Converts one browser pointer into the scene coordinates used by the solver. */
-    const scenePoint = (event) => {
-      const canvas = host.querySelector("canvas.interactive"); const box = canvas?.getBoundingClientRect(); const appState = api.getAppState?.();
-      if (!box || !appState) return null;
-      const zoom = Number(appState.zoom?.value ?? 1) || 1;
-      return { x: (event.clientX - box.left) / zoom - Number(appState.scrollX ?? 0), y: (event.clientY - box.top) / zoom - Number(appState.scrollY ?? 0) };
-    };
-    /** Starts one pointer command from the interactive canvas. */
-    const down = (event) => {
-      if (event.button !== 0 || !(event.target instanceof Element) || !event.target.matches("canvas.interactive")) return;
-      const point = scenePoint(event); if (!point) return;
-      pointerDomActiveRef.current = true; beginPointerGesture(point, { origin: point, shiftKey: event.shiftKey });
-    };
-    /** Previews the active pointer command in world coordinates. */
-    const move = (event) => {
-      if (!pointerDomActiveRef.current || !(event.buttons & 1)) return;
-      const point = scenePoint(event); if (point) previewPointerGesture(point);
-    };
-    /** Ends the active pointer command once. */
-    const up = () => {
-      if (!pointerDomActiveRef.current) return;
-      pointerDomActiveRef.current = false; endPointerGesture();
-    };
-    host.addEventListener("pointerdown", down, true); window.addEventListener("pointermove", move, true); window.addEventListener("pointerup", up, true);
-    return () => { host.removeEventListener("pointerdown", down, true); window.removeEventListener("pointermove", move, true); window.removeEventListener("pointerup", up, true); };
-  }, [api]);
-
-  useEffect(() => {
     bridge.setSaveState = null;
     bridge.current = () => controller.snapshot().composition.scene;
+    bridge.rendered = () => api?.getSceneElements?.() ?? null;
     bridge.appState = () => api?.getAppState?.() ?? null;
     bridge.fitArea = (area, settings) => scrollToArea(area, settings);
     bridge.selectArea = (area) => selectArea(area);
@@ -1177,7 +1177,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       const element = controller.fitArea(initial.locatedArea, { push: false, select: false });
       if (element) requestAnimationFrame(() => requestAnimationFrame(() => api.scrollToContent([element], { fitToContent: true, animate: false })));
     }
-    return () => { bridge.controller = null; };
+    return () => { bridge.controller = null; bridge.rendered = () => null; };
   }, [api]);
 
   useEffect(() => () => {
@@ -1239,6 +1239,9 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Captures one Excalidraw pointer command through the current world closure. */
   function handleCanvasPointerDown(_tool, pointerDownState) { beginPointerGesture(pointerDownState.origin, pointerDownState); }
 
+  /** Closes the same command with Excalidraw's original pointer-down state. */
+  function handleCanvasPointerUp(_tool, _pointerDownState) { endPointerGesture(); }
+
   /** Routes Excalidraw pointer previews through the current containment solver. */
   function handleCanvasPointerUpdate({ pointer }) { previewPointerGesture(pointer); }
 
@@ -1261,6 +1264,15 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Normalizes one Excalidraw callback into source-owned world authority. */
   function handleCanvasChange(elements, appState) {
     if (consumeExpectedProjection(elements, appState)) return;
+    if (pointerStateRef.current?.rejectedAreaTransform) {
+      const snapshot = controller.snapshot();
+      projectCanvas({
+        elements: snapshot.scene.elements,
+        appState: { selectedElementIds: Object.fromEntries([...stableSelectionRef.current].map((id) => [id, true])) },
+        captureUpdate: "NEVER",
+      }, "area-transform-rejected");
+      return;
+    }
     const pendingProjection = expectedProjectionsRef.current.find((token) => token.includesElements);
     const userCommand = pointerBaselineRef.current || nonPointerKindRef.current || textEditRef.current || actionKindRef.current;
     if (!userCommand && (pendingProjection || projectionFenceRef.current)) {
@@ -1326,7 +1338,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   canvasHandlersRef.current = {
     setApi,
     onPointerDown: handleCanvasPointerDown,
-    onPointerUp: endPointerGesture,
+    onPointerUp: handleCanvasPointerUp,
     onPointerUpdate: handleCanvasPointerUpdate,
     onScrollChange: handleCanvasScroll,
     onPaste: handleCanvasPaste,

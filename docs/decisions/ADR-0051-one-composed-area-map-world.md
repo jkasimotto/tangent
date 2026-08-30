@@ -28,7 +28,7 @@ The containment solver starts from the pointer-down source snapshot. It expands 
 
 Stored rectangles are size floors. Automatic ancestor growth does not write those rectangles.
 
-Sibling regions are walls. A parent region expands for its child until an unselected sibling blocks that expansion.
+ADR-0052 replaces the sibling-wall rule. One layout kernel reflows affected sibling branches and expands every ancestor.
 
 Camera, Focus, fold, and semantic zoom are view masks. These masks do not select source shards or remove structural authority.
 

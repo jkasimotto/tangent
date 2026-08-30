@@ -36,7 +36,10 @@ test("remaps every world identity through an explicit Area move table", () => {
     locatedArea: "neara/delivery/standards",
     areas: [{
       key: "neara/delivery/standards", parent: "neara/delivery", children: [],
-      region: { key: "neara/delivery>neara/delivery/standards", owner: "neara/delivery", child: "neara/delivery/standards" },
+      region: {
+        key: "neara/delivery>neara/delivery/standards", owner: "neara/delivery", child: "neara/delivery/standards",
+        layout: { schema: "area-placement.v1", priority: 1, overlapWith: ["neara/delivery/other"] },
+      },
       shard: { owner: "neara/delivery/standards", scene: { elements: [{ id: "arrow", customData: { tangentWorldEndpoint: { owner: "neara/delivery/standards", sourceId: "block" } } }] } },
     }],
   };
@@ -48,6 +51,7 @@ test("remaps every world identity through an explicit Area move table", () => {
   assert.equal(moved.areas[0].key, "neara/operations/standards");
   assert.equal(moved.areas[0].parent, "neara/operations");
   assert.equal(moved.areas[0].region.key, "neara/operations>neara/operations/standards");
+  assert.deepEqual(moved.areas[0].region.layout.overlapWith, ["neara/operations/other"]);
   assert.equal(moved.areas[0].shard.scene.elements[0].customData.tangentWorldEndpoint.owner, "neara/operations/standards");
 });
 

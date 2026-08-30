@@ -155,11 +155,12 @@ function createBlockElements({ id, kind, ref, title = ref, status = "", x = 0, y
   return [block, text];
 }
 
-/** Creates a direct-child Area region. Its geometry remains authored ink. */
-function createRegionElements({ id, ref, title = ref, status = "", x = 0, y = 0, width = REGION_SIZES.medium.width, height = REGION_SIZES.medium.height, style = {} }) {
+/** Creates a direct-child Area region with optional forward-compatible layout intent. */
+function createRegionElements({ id, ref, title = ref, status = "", x = 0, y = 0, width = REGION_SIZES.medium.width, height = REGION_SIZES.medium.height, style = {}, layout = null }) {
   const regionId = String(id);
   const textId = `${regionId}-tangent-label`;
-  const block = createShapeElement({ id: regionId, type: "rectangle", x, y, width, height, style: { backgroundColor: "transparent", strokeColor: "#4c6ef5", ...style }, customData: { tangent: { kind: "area", ref: String(ref), role: "region" } }, boundElements: [{ id: textId, type: "text" }] });
+  const tangent = { kind: "area", ref: String(ref), role: "region", ...(layout ? { layout: structuredClone(layout) } : {}) };
+  const block = createShapeElement({ id: regionId, type: "rectangle", x, y, width, height, style: { backgroundColor: "transparent", strokeColor: "#4c6ef5", ...style }, customData: { tangent }, boundElements: [{ id: textId, type: "text" }] });
   const text = createTextElement({ id: textId, text: regionLabel({ title, status }), x: x + 14, y: y + 8, width: Math.max(80, width - 28), height: LABEL_BAND - 8, containerId: regionId, style: { fontSize: 20, textAlign: "left", verticalAlign: "top", strokeColor: INK } });
   return [block, text];
 }

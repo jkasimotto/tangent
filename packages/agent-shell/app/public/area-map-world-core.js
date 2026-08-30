@@ -1,7 +1,18 @@
-const LABEL_BAND = 40;
-const CONTENT_MARGIN = 60;
-const MIN_WIDTH = 300;
-const MIN_HEIGHT = 220;
+import { isAreaBoundary, isAreaRegion, tangentOf } from "./area-board-core.js";
+
+export const AREA_MAP_LAYOUT = Object.freeze({
+  spacing: 60,
+  labelBand: 40,
+  minimumWidth: 300,
+  minimumHeight: 220,
+  placementSchema: "area-placement.v1",
+});
+
+const LABEL_BAND = AREA_MAP_LAYOUT.labelBand;
+const CONTENT_MARGIN = AREA_MAP_LAYOUT.spacing;
+const MIN_WIDTH = AREA_MAP_LAYOUT.minimumWidth;
+const MIN_HEIGHT = AREA_MAP_LAYOUT.minimumHeight;
+const PLACEMENT_SCHEMA = AREA_MAP_LAYOUT.placementSchema;
 
 /** Returns one deterministic URL-safe token. */
 function stableToken(value, length = 22) {
@@ -170,16 +181,25 @@ export function provisionalRegions(areaKeys, stored = new Map()) {
   }
   const regions = new Map();
   for (const parent of [...children.keys()].sort((left, right) => left.split("/").length - right.split("/").length || left.localeCompare(right))) {
-    const values = children.get(parent);
-    let x = 60; let y = 60; let rowHeight = 0;
-    for (const child of values.sort()) {
+    const values = children.get(parent).sort();
+    const occupied = [];
+    const placements = new Map();
+    for (const child of values) {
       const saved = stored.get(regionKey(parent, child));
-      const width = Math.max(MIN_WIDTH, Number(saved?.width ?? 460));
-      const height = Math.max(MIN_HEIGHT, Number(saved?.height ?? 320));
-      if (!saved && x > 60 && x + width > 1660) { x = 60; y += rowHeight + 60; rowHeight = 0; }
-      const storedRect = rect(saved ?? { x, y, width, height });
-      regions.set(child, { key: regionKey(parent, child), owner: parent, child, sourceId: regionId(parent, child), labelSourceId: `${regionId(parent, child)}-label`, source: saved ? "stored" : "provisional", storedRect });
-      if (!saved) { x += width + 60; rowHeight = Math.max(rowHeight, height); }
+      if (!finiteRect(saved) || saved.width <= 0 || saved.height <= 0) continue;
+      const storedRect = rect(saved);
+      placements.set(child, { source: "stored", storedRect });
+      occupied.push(storedRect);
+    }
+    for (const child of values) {
+      if (placements.has(child)) continue;
+      const storedRect = nearestFreeRectangle({ x: CONTENT_MARGIN, y: CONTENT_MARGIN, width: 460, height: 320 }, occupied, { gap: CONTENT_MARGIN });
+      placements.set(child, { source: "provisional", storedRect });
+      occupied.push(storedRect);
+    }
+    for (const child of values) {
+      const placement = placements.get(child);
+      regions.set(child, { key: regionKey(parent, child), owner: parent, child, sourceId: regionId(parent, child), labelSourceId: `${regionId(parent, child)}-label`, ...placement });
     }
   }
   return regions;
@@ -197,23 +217,117 @@ function prepareWorldGeometry(areas, regions) {
   return { children, ordered };
 }
 
-/** Computes one Area geometry record from its local required hull. */
-function computeAreaGeometry(region, required, inkHull) {
-  const minimum = { x: region.storedRect.x, y: region.storedRect.y, width: Math.max(MIN_WIDTH, region.storedRect.width), height: Math.max(MIN_HEIGHT, region.storedRect.height, LABEL_BAND) };
+/** Returns one region's authored placement priority. */
+function placementPriority(region) {
+  const value = Number(region?.layout?.priority ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+/** Returns one complete persistence-safe layout record. */
+function normalizedLayout(region, priority = placementPriority(region), overlapWith = region?.layout?.overlapWith ?? []) {
+  return {
+    schema: PLACEMENT_SCHEMA,
+    priority: Number.isSafeInteger(priority) && priority >= 0 ? priority : 0,
+    overlapWith: [...new Set(Array.isArray(overlapWith) ? overlapWith.filter((area) => typeof area === "string" && area) : [])].sort(),
+  };
+}
+
+/** Authors one Area's current resolved anchor before changing branch priority. */
+export function reprioritizeAreaPlacement(region, resolvedStored, priority) {
+  const next = clone(region);
+  if (finiteRect(resolvedStored)) next.storedRect = rect(resolvedStored);
+  next.layout = normalizedLayout(next, priority);
+  return next;
+}
+
+/** Reports whether an authored placement explicitly permits one sibling pair. */
+function permitsOverlap(regions, left, right) {
+  /** Reports whether one Area names the other half of the pair. */
+  const includes = (area, other) => Array.isArray(regions.get(area)?.layout?.overlapWith)
+    && regions.get(area).layout.overlapWith.includes(other);
+  return includes(left, right) && includes(right, left);
+}
+
+/** Computes one Area geometry record after its sibling placement is resolved. */
+function computeAreaGeometry(region, required, inkHull, resolvedStored = region.storedRect, branchPriority = placementPriority(region)) {
+  const preferred = rect(region.storedRect);
+  const resolved = rect(resolvedStored);
+  const minimum = { x: resolved.x, y: resolved.y, width: Math.max(MIN_WIDTH, preferred.width), height: Math.max(MIN_HEIGHT, preferred.height, LABEL_BAND) };
   const translatedRequired = required && {
-    x: region.storedRect.x + required.x,
-    y: region.storedRect.y + LABEL_BAND + required.y,
+    x: resolved.x + required.x,
+    y: resolved.y + LABEL_BAND + required.y,
     width: required.width,
     height: required.height,
   };
   const translatedInk = inkHull && {
-    x: region.storedRect.x + inkHull.x,
-    y: region.storedRect.y + LABEL_BAND + inkHull.y,
+    x: resolved.x + inkHull.x,
+    y: resolved.y + LABEL_BAND + inkHull.y,
     width: inkHull.width,
     height: inkHull.height,
   };
   const constraint = unionRects([minimum, inflateRect(translatedRequired)]);
-  return { stored: rect(region.storedRect), required, constraint, drawn: unionRects([constraint, inflateRect(translatedInk)]) };
+  return {
+    stored: preferred,
+    resolvedStored: resolved,
+    layoutOffset: { x: quantize(resolved.x - preferred.x), y: quantize(resolved.y - preferred.y) },
+    branchPriority,
+    required,
+    constraint,
+    drawn: unionRects([constraint, inflateRect(translatedInk)]),
+  };
+}
+
+/** Resolves direct siblings while leaving their authored rectangles unchanged. */
+function arrangeChildren(owner, children, regions, geometry, inkHulls) {
+  if (children.length < 2) return owner;
+  const ordered = [...children].sort((left, right) => {
+    const leftGeometry = geometry.get(left); const rightGeometry = geometry.get(right);
+    return rightGeometry.branchPriority - leftGeometry.branchPriority
+      || placementPriority(regions.get(right)) - placementPriority(regions.get(left))
+      || left.localeCompare(right);
+  });
+  const occupied = [];
+  const cells = new Map();
+  const cellSize = 1024;
+  /** Returns the spatial buckets touched by one rectangle and its clearance. */
+  const cellKeys = (value) => {
+    const left = Math.floor((value.x - CONTENT_MARGIN) / cellSize); const right = Math.floor((value.x + value.width + CONTENT_MARGIN) / cellSize);
+    const top = Math.floor((value.y - CONTENT_MARGIN) / cellSize); const bottom = Math.floor((value.y + value.height + CONTENT_MARGIN) / cellSize);
+    const keys = [];
+    for (let x = left; x <= right; x += 1) for (let y = top; y <= bottom; y += 1) keys.push(`${x}:${y}`);
+    return keys;
+  };
+  /** Adds one resolved branch to the local broad-phase index. */
+  const index = (entry) => {
+    for (const key of cellKeys(entry.constraint)) {
+      const values = cells.get(key) ?? []; values.push(entry); cells.set(key, values);
+    }
+  };
+  /** Returns each possibly colliding branch once. */
+  const nearby = (value) => {
+    const found = new Set(); const values = [];
+    for (const key of cellKeys(value)) for (const entry of cells.get(key) ?? []) {
+      if (found.has(entry.area)) continue;
+      found.add(entry.area); values.push(entry);
+    }
+    return values;
+  };
+  for (const area of ordered) {
+    const current = geometry.get(area); const region = regions.get(area);
+    const collision = nearby(current.constraint).some((entry) => !permitsOverlap(regions, area, entry.area)
+      && !separated(current.constraint, entry.constraint, CONTENT_MARGIN));
+    const blockerRects = collision
+      ? occupied.filter((entry) => !permitsOverlap(regions, area, entry.area)).map((entry) => entry.constraint)
+      : [];
+    const resolvedConstraint = collision ? nearestFreeRectangle(current.constraint, blockerRects, { gap: CONTENT_MARGIN }) : current.constraint;
+    const dx = resolvedConstraint.x - current.constraint.x; const dy = resolvedConstraint.y - current.constraint.y;
+    const resolvedStored = rect({ ...current.resolvedStored, x: current.resolvedStored.x + dx, y: current.resolvedStored.y + dy });
+    const resolved = computeAreaGeometry(region, current.required, inkHulls.get(area), resolvedStored, current.branchPriority);
+    geometry.set(area, resolved);
+    const entry = { area, constraint: resolved.constraint };
+    occupied.push(entry); index(entry);
+  }
+  return owner;
 }
 
 /** Computes geometry against one prepared immutable tree order. */
@@ -221,10 +335,13 @@ function computePreparedWorldGeometry({ regions, blockHulls = new Map(), inkHull
   const result = new Map();
   for (const area of ordered) {
     const region = regions.get(area);
+    arrangeChildren(area, children.get(area) ?? [], regions, result, inkHulls);
     const childRects = (children.get(area) ?? []).map((child) => result.get(child)?.constraint).filter(Boolean);
     const required = unionRects([blockHulls.get(area), ...childRects]);
-    result.set(area, computeAreaGeometry(region, required, inkHulls.get(area)));
+    const branchPriority = Math.max(placementPriority(region), ...(children.get(area) ?? []).map((child) => result.get(child)?.branchPriority ?? 0));
+    result.set(area, computeAreaGeometry(region, required, inkHulls.get(area), region.storedRect, branchPriority));
   }
+  arrangeChildren("@root", children.get("@root") ?? [], regions, result, inkHulls);
   return result;
 }
 
@@ -263,18 +380,79 @@ export function computeWorldGeometry({ areas, regions, blockHulls = new Map(), i
 }
 
 /** Reports strict rectangle overlap. */
-function overlaps(a, b) { return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y; }
+export function rectanglesOverlap(a, b) { return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y; }
+/** Reports whether two rectangles have the requested clear space. */
+function separated(a, b, gap = 0) {
+  return a.x + a.width + gap <= b.x || b.x + b.width + gap <= a.x
+    || a.y + a.height + gap <= b.y || b.y + b.height + gap <= a.y;
+}
 /** Reports complete rectangle containment. */
 function contains(parent, child) { return child.x >= parent.x && child.y >= parent.y && child.x + child.width <= parent.x + parent.width && child.y + child.height <= parent.y + parent.height; }
+
+/**
+ * Returns the nearest deterministic free position on one cardinal axis.
+ *
+ * The preferred size never changes. Candidates stay on the preferred row or
+ * column and sit immediately left, right, above, or below one occupied box.
+ */
+export function nearestFreeRectangle(preferred, occupied = [], { gap = 0 } = {}) {
+  const origin = rect(preferred);
+  const spacing = Math.max(0, Number(gap) || 0);
+  const walls = [...occupied]
+    .map((value) => value?.rect ?? value)
+    .filter(finiteRect)
+    .map(rect)
+    .sort((left, right) => left.x - right.x || left.y - right.y || left.width - right.width || left.height - right.height);
+  /** Reports whether one candidate keeps the requested gap from every wall. */
+  const clear = (candidate) => walls.every((wall) => separated(candidate, wall, spacing));
+  if (clear(origin)) return origin;
+
+  const candidates = [];
+  const seen = new Set();
+  /** Adds one clear candidate once, with deterministic tie-break metadata. */
+  const add = (candidate, direction) => {
+    const value = rect({ ...origin, ...candidate });
+    const key = `${value.x}\0${value.y}`;
+    if (seen.has(key) || !clear(value)) return;
+    seen.add(key);
+    const dx = value.x - origin.x; const dy = value.y - origin.y;
+    candidates.push({ value, direction, distance: dx * dx + dy * dy, travel: Math.abs(dx) + Math.abs(dy) });
+  };
+  for (const wall of walls) {
+    add({ x: wall.x - spacing - origin.width }, 0);
+    add({ x: wall.x + wall.width + spacing }, 1);
+    add({ y: wall.y - spacing - origin.height }, 2);
+    add({ y: wall.y + wall.height + spacing }, 3);
+  }
+  const hull = unionRects(walls);
+  add({ x: hull.x - spacing - origin.width }, 0);
+  add({ x: hull.x + hull.width + spacing }, 1);
+  add({ y: hull.y - spacing - origin.height }, 2);
+  add({ y: hull.y + hull.height + spacing }, 3);
+  candidates.sort((left, right) => left.distance - right.distance || left.travel - right.travel
+    || left.direction - right.direction || left.value.x - right.value.x || left.value.y - right.value.y);
+  return candidates[0].value;
+}
 
 /** Returns the local hulls that affect one Area's structural and drawn rectangles. */
 export function shardHulls(scene) {
   const blocks = [];
   const ink = [];
-  const regionIds = new Set((scene?.elements ?? []).filter((element) => element?.customData?.tangent?.role === "region").map((element) => element.id));
+  const visible = (scene?.elements ?? []).filter((element) => !element.isDeleted);
+  const structural = new Set(visible.filter((element) => isAreaBoundary(element) || isAreaRegion(element)).map((element) => element.id));
+  for (const region of visible.filter(isAreaRegion)) {
+    for (const binding of region.boundElements ?? []) if (binding.type === "text") structural.add(binding.id);
+  }
+  const blockRoots = visible.filter((element) => tangentOf(element)
+    && !["boundary", "region"].includes(element.customData?.tangent?.role));
+  const blockIds = new Set(blockRoots.map((element) => element.id));
+  const blockLabels = new Set(blockRoots.flatMap((element) => element.boundElements
+    ?.filter((entry) => entry.type === "text").map((entry) => entry.id) ?? []));
   for (const element of scene?.elements ?? []) {
-    if (element.isDeleted || ["boundary", "region", "area-region"].includes(element?.customData?.tangent?.role) || regionIds.has(element.containerId) || !finiteRect(element)) continue;
-    const target = element?.customData?.tangent?.ref ? blocks : ink;
+    if (element.isDeleted || structural.has(element.id) || structural.has(element.containerId)
+      || element?.customData?.tangent?.role === "area-region"
+      || blockLabels.has(element.id) || blockIds.has(element.containerId) || !finiteRect(element)) continue;
+    const target = tangentOf(element) ? blocks : ink;
     target.push(rectangleOf(element));
   }
   return { blocks: unionRects(blocks), ink: unionRects(ink) };
@@ -299,123 +477,89 @@ export function solveAreaMapGesture(baseline, intent) {
   const selected = new Set(intent.selectedAreas ?? []);
   const desired = { x: Number(intent.desiredWorldDelta?.x ?? 0), y: Number(intent.desiredWorldDelta?.y ?? 0) };
   const { baseRegions, preparedGeometry, baselineGeometry } = prepareGestureBaseline(baseline);
-  const affected = new Set(selected);
-  const siblings = preparedGeometry.children;
+  if (desired.x === 0 && desired.y === 0) {
+    return {
+      regions: baseRegions,
+      geometry: baselineGeometry,
+      changedAreas: new Set(),
+      wall: null,
+      appliedDelta: { x: 0, y: 0 },
+      valid: true,
+    };
+  }
+  const regions = new Map(baseRegions);
+  const priority = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, ...[...baseRegions.values()].map(placementPriority)) + 1);
+  const changedAreas = new Set();
   for (const area of selected) {
-    let owner = baseRegions.get(area)?.owner;
-    while (owner && owner !== "@root") { affected.add(owner); owner = baseRegions.get(owner)?.owner; }
-  }
-  const affectedOrder = preparedGeometry.ordered.filter((area) => affected.has(area));
-  const affectedChildren = new Map();
-  const staticRequired = new Map();
-  for (const area of affectedOrder) {
-    const changed = [];
-    const stable = [baseline.blockHulls?.get(area)];
-    for (const child of preparedGeometry.children.get(area) ?? []) {
-      if (affected.has(child)) changed.push(child);
-      else stable.push(baselineGeometry.get(child)?.constraint);
+    const originalRecord = baseRegions.get(area); const current = baselineGeometry.get(area);
+    if (!originalRecord || !current) continue;
+    // Absorb a derived reflow before direct manipulation so the selected Area
+    // never jumps back to an older preferred position at pointer-down.
+    const original = current.resolvedStored;
+    const visible = current.constraint;
+    const storedRect = { ...original };
+    if (intent.handle) {
+      const floor = storedSizeFloor(current.required);
+      if (intent.handle.includes("e")) storedRect.width = Math.max(floor.width, visible.x + visible.width + desired.x - original.x);
+      if (intent.handle.includes("s")) storedRect.height = Math.max(floor.height, visible.y + visible.height + desired.y - original.y);
+      if (intent.handle.includes("w")) {
+        const right = visible.x + visible.width;
+        storedRect.width = Math.max(floor.width, visible.width - desired.x);
+        storedRect.x = right - storedRect.width;
+      }
+      if (intent.handle.includes("n")) {
+        const bottom = visible.y + visible.height;
+        storedRect.height = Math.max(floor.height, visible.height - desired.y);
+        storedRect.y = bottom - storedRect.height;
+      }
+    } else {
+      storedRect.x = original.x + desired.x;
+      storedRect.y = original.y + desired.y;
     }
-    affectedChildren.set(area, changed);
-    staticRequired.set(area, unionRects(stable));
+    const region = clone(originalRecord);
+    region.storedRect = rect(storedRect);
+    region.layout = normalizedLayout(region, priority);
+    regions.set(area, region);
+    changedAreas.add(area);
   }
-  /** Expands one sparse candidate into the public complete map result. */
-  const materialize = (candidate) => {
-    const regions = new Map(baseRegions);
-    for (const [area, storedRect] of candidate.storedRects) {
-      const region = clone(baseRegions.get(area));
-      region.storedRect = storedRect;
-      regions.set(area, region);
-    }
-    const geometry = new Map(baselineGeometry);
-    for (const [area, value] of candidate.geometry) geometry.set(area, value);
-    return { regions, geometry, wall: candidate.wall };
-  };
-  const evaluations = new Map();
-  /** Evaluates one requested pointer delta. */
-  const evaluate = (delta) => {
-    const storedRects = new Map();
-    const cacheKey = [];
+
+  if (!intent.handle) {
+    // A direct move is the only command that authors structural overlap. Store
+    // the exact direct-sibling pairs hit at the requested final position.
+    const intended = new Map();
     for (const area of selected) {
-      const originalRecord = baseRegions.get(area); if (!originalRecord) continue;
-      const original = originalRecord.storedRect;
-      const visible = baselineGeometry.get(area)?.constraint ?? original;
-      const storedRect = { ...original };
-      if (intent.handle) {
-        const floor = storedSizeFloor(baselineGeometry.get(area)?.required);
-        if (intent.handle.includes("e")) storedRect.width = Math.max(floor.width, visible.x + visible.width + delta.x - original.x);
-        if (intent.handle.includes("s")) storedRect.height = Math.max(floor.height, visible.y + visible.height + delta.y - original.y);
-        if (intent.handle.includes("w")) {
-          const right = visible.x + visible.width;
-          storedRect.width = Math.max(floor.width, visible.width - delta.x);
-          storedRect.x = right - storedRect.width;
-        }
-        if (intent.handle.includes("n")) {
-          const bottom = visible.y + visible.height;
-          storedRect.height = Math.max(floor.height, visible.height - delta.y);
-          storedRect.y = bottom - storedRect.height;
-        }
-      } else {
-        storedRect.x = original.x + delta.x;
-        storedRect.y = original.y + delta.y;
+      const current = baselineGeometry.get(area); const region = regions.get(area);
+      if (!current || !region) continue;
+      intended.set(area, computeAreaGeometry(region, current.required, baseline.inkHulls?.get(area), region.storedRect, priority));
+    }
+    /** Adds or removes both authored halves of one exact overlap pair. */
+    const setPair = (area, sibling, enabled) => {
+      for (const [owner, other] of [[area, sibling], [sibling, area]]) {
+        const before = regions.get(owner); if (!before) continue;
+        const values = new Set(before.layout?.overlapWith ?? []);
+        const had = values.has(other);
+        if (enabled) values.add(other); else values.delete(other);
+        if (had === values.has(other)) continue;
+        const next = clone(before);
+        next.layout = normalizedLayout(next, placementPriority(next), [...values]);
+        regions.set(owner, next);
+        changedAreas.add(owner);
       }
-      const quantized = rect(storedRect);
-      storedRects.set(area, quantized);
-      cacheKey.push(area, ...[quantized.x, quantized.y, quantized.width, quantized.height].map((value) => Object.is(value, -0) ? "-0" : String(value)));
-    }
-    const fingerprint = cacheKey.join("\u0000");
-    const cached = evaluations.get(fingerprint);
-    if (cached) return cached;
-    const geometry = new Map();
-    for (const area of affectedOrder) {
-      const childRects = (affectedChildren.get(area) ?? []).map((child) => geometry.get(child)?.constraint ?? baselineGeometry.get(child)?.constraint);
-      const required = unionRects([staticRequired.get(area), ...childRects]);
-      const region = storedRects.has(area) ? { ...baseRegions.get(area), storedRect: storedRects.get(area) } : baseRegions.get(area);
-      geometry.set(area, computeAreaGeometry(region, required, baseline.inkHulls?.get(area)));
-    }
-    let wall = null;
-    for (const area of affected) {
-      const value = geometry.get(area) ?? baselineGeometry.get(area); if (!value) continue;
-      const owner = baseRegions.get(area)?.owner;
-      const swept = unionRects([baselineGeometry.get(area)?.constraint, value.constraint]);
-      for (const other of siblings.get(owner) ?? []) {
-        if (area === other || selected.has(other)) continue;
-        const otherValue = geometry.get(other) ?? baselineGeometry.get(other);
-        if (overlaps(swept, otherValue.constraint)) { wall = other; break; }
+    };
+    for (const area of selected) {
+      const region = regions.get(area); const candidate = intended.get(area); if (!region || !candidate) continue;
+      for (const sibling of preparedGeometry.children.get(region.owner) ?? []) {
+        if (sibling === area) continue;
+        const other = intended.get(sibling) ?? baselineGeometry.get(sibling);
+        setPair(area, sibling, Boolean(other && rectanglesOverlap(candidate.constraint, other.constraint)));
       }
-      if (wall) break;
     }
-    const candidate = { storedRects, geometry, wall };
-    evaluations.set(fingerprint, candidate);
-    return candidate;
-  };
-  // The full swept rectangle contains both axis-segment sweeps. Accept a clear
-  // request before the fallback solver checks its axis candidates.
-  const direct = evaluate(desired);
-  if (!direct.wall) {
-    const result = materialize(direct);
-    const valid = [...result.geometry.values()].every((value) => finiteRect(value.constraint) && value.stored.width >= MIN_WIDTH && value.stored.height >= MIN_HEIGHT);
-    return { ...result, appliedDelta: { x: quantize(desired.x), y: quantize(desired.y) }, valid };
   }
-  let applied = { x: 0, y: 0 };
-  let blockedBy = null;
-  const axes = Math.abs(desired.x) >= Math.abs(desired.y) ? ["x", "y"] : ["y", "x"];
-  for (const axis of axes) {
-    const target = { ...applied, [axis]: desired[axis] };
-    const full = evaluate(target);
-    if (!full.wall) { applied = target; continue; }
-    blockedBy ??= full.wall;
-    let low = 0; let high = 1;
-    for (let index = 0; index < 48; index += 1) {
-      const middle = (low + high) / 2;
-      const candidate = { ...applied, [axis]: desired[axis] * middle };
-      if (evaluate(candidate).wall) high = middle; else low = middle;
-    }
-    applied[axis] = desired[axis] * low;
-  }
-  const accepted = materialize(evaluate(applied));
-  accepted.wall = blockedBy;
-  const valid = [...accepted.geometry.values()].every((value) => finiteRect(value.constraint) && value.stored.width >= MIN_WIDTH && value.stored.height >= MIN_HEIGHT);
-  return { ...accepted, appliedDelta: { x: quantize(applied.x), y: quantize(applied.y) }, valid };
+
+  const geometry = computeWorldGeometry({ ...baseline, regions });
+  const valid = [...geometry.values()].every((value) => finiteRect(value.constraint) && finiteRect(value.drawn)
+    && finiteRect(value.resolvedStored) && value.stored.width >= MIN_WIDTH && value.stored.height >= MIN_HEIGHT);
+  return { regions, geometry, changedAreas, wall: null, appliedDelta: { x: quantize(desired.x), y: quantize(desired.y) }, valid };
 }
 
 /** Solves a block or free-ink move inside one owning shard. */
@@ -423,56 +567,13 @@ export function solveOwnedElementGesture(baseline, intent) {
   const desired = { x: Number(intent.desiredWorldDelta?.x ?? 0), y: Number(intent.desiredWorldDelta?.y ?? 0) };
   const start = rect(intent.rect);
   if (intent.kind === "ink") return { rect: rect({ ...start, x: start.x + desired.x, y: start.y + desired.y }), wall: null, valid: true };
-  const baselineGeometry = computeWorldGeometry(baseline);
-  const directWalls = [...baseline.regions].filter(([, region]) => region.owner === intent.owner).map(([area]) => [area, baselineGeometry.get(area).constraint]);
-  const siblings = new Map();
-  for (const [area, region] of baseline.regions) {
-    const list = siblings.get(region.owner) ?? [];
-    list.push(area); siblings.set(region.owner, list);
-  }
-  for (const list of siblings.values()) list.sort();
-  const affected = [];
-  let current = intent.owner;
-  while (current && current !== "@root") {
-    affected.push(current);
-    current = baseline.regions.get(current)?.owner;
-  }
-  /** Evaluates one desired block delta without relying on final overlap alone. */
-  const evaluate = (delta) => {
-    const value = rect({ ...start, x: start.x + delta.x, y: start.y + delta.y });
-    const sweptElement = unionRects([start, value]);
-    const directHit = directWalls.find(([, wall]) => overlaps(sweptElement, wall));
-    if (directHit) return { rect: value, wall: directHit[0], geometry: baselineGeometry };
-    const blockHulls = new Map(baseline.blockHulls ?? []);
-    const ownerHull = unionRects([intent.remainingBlockHull, value]);
-    if (ownerHull) blockHulls.set(intent.owner, ownerHull); else blockHulls.delete(intent.owner);
-    const geometry = computeWorldGeometry({ ...baseline, blockHulls });
-    for (const area of affected) {
-      const region = baseline.regions.get(area);
-      const sweptConstraint = unionRects([baselineGeometry.get(area)?.constraint, geometry.get(area)?.constraint]);
-      for (const sibling of siblings.get(region?.owner) ?? []) {
-        if (sibling === area) continue;
-        if (overlaps(sweptConstraint, baselineGeometry.get(sibling).constraint)) return { rect: value, wall: sibling, geometry };
-      }
-    }
-    return { rect: value, wall: null, geometry };
-  };
-  let applied = { x: 0, y: 0 };
-  let blockedBy = null;
-  const axes = Math.abs(desired.x) >= Math.abs(desired.y) ? ["x", "y"] : ["y", "x"];
-  for (const axis of axes) {
-    const target = { ...applied, [axis]: desired[axis] };
-    if (!evaluate(target).wall) { applied = target; continue; }
-    blockedBy ??= evaluate(target).wall;
-    let low = 0; let high = 1;
-    for (let index = 0; index < 48; index += 1) {
-      const middle = (low + high) / 2;
-      const candidate = { ...applied, [axis]: desired[axis] * middle };
-      if (evaluate(candidate).wall) high = middle; else low = middle;
-    }
-    applied[axis] = desired[axis] * low;
-  }
-  return { ...evaluate(applied), wall: blockedBy, appliedDelta: { x: quantize(applied.x), y: quantize(applied.y) }, valid: true };
+  const value = rect({ ...start, x: start.x + desired.x, y: start.y + desired.y });
+  const blockHulls = new Map(baseline.blockHulls ?? []);
+  const ownerHull = unionRects([intent.remainingBlockHull, value]);
+  if (ownerHull) blockHulls.set(intent.owner, ownerHull); else blockHulls.delete(intent.owner);
+  const geometry = computeWorldGeometry({ ...baseline, blockHulls });
+  const valid = [...geometry.values()].every((entry) => finiteRect(entry.constraint) && finiteRect(entry.resolvedStored));
+  return { rect: value, wall: null, geometry, appliedDelta: { x: quantize(desired.x), y: quantize(desired.y) }, valid };
 }
 
 /** Returns one Excalidraw rectangle for an Area tree node. */
@@ -574,8 +675,10 @@ export function composeAreaMapWorld(world) {
   const inkHulls = new Map();
   for (const node of world.areas) {
     const hulls = shardHulls(node.shard.scene);
-    if (hulls.blocks) blockHulls.set(node.key, hulls.blocks);
-    if (hulls.ink) inkHulls.set(node.key, hulls.ink);
+    const blocks = hulls.blocks ?? node.shard.ownBlockHull;
+    const ink = hulls.ink ?? node.shard.ownInkHull;
+    if (blocks) blockHulls.set(node.key, blocks);
+    if (ink) inkHulls.set(node.key, ink);
   }
   const geometry = computeWorldGeometry({ areas, regions, blockHulls, inkHulls });
   const nodes = new Map(world.areas.map((node) => [node.key, node]));
@@ -587,8 +690,9 @@ export function composeAreaMapWorld(world) {
     if (offsets.has(area)) return offsets.get(area);
     const node = nodes.get(area);
     const parentOffset = node.parent === "@root" ? { x: 0, y: 0 } : locate(node.parent);
-    const stored = node.region.storedRect;
-    const drawn = geometry.get(area).drawn;
+    const value = geometry.get(area);
+    const stored = value.resolvedStored;
+    const drawn = value.drawn;
     const regionRect = { x: parentOffset.x + drawn.x, y: parentOffset.y + drawn.y, width: drawn.width, height: drawn.height };
     regionRects.set(area, regionRect);
     storedRegionRects.set(area, { x: parentOffset.x + stored.x, y: parentOffset.y + stored.y, width: stored.width, height: stored.height });
@@ -604,6 +708,10 @@ export function composeAreaMapWorld(world) {
     const region = composeRegionElement(node, geometry.get(node.key), regionRects.get(node.key));
     elements.push(region);
     origins.set(region.id, region.customData.tangentWorld);
+  }
+  // Keep every transparent structural outline below authored content. A deep
+  // child region must not intercept a click on its ancestor's visible block.
+  for (const node of world.areas) {
     if (!node.shard.scene) continue;
     const composed = composeShard(node.key, node.shard.scene, offsets.get(node.key));
     elements.push(...composed.elements);
@@ -632,15 +740,27 @@ export function protectAreaRegions(canonicalElements, changedElements) {
 /** Rewrites Area-path identities after one explicit vault move. */
 export function remapAreaMapWorld(world, changedPaths) {
   const moved = clone(world);
-  /** Maps one exact Area path and leaves virtual owners unchanged. */
-  const remap = (value) => changedPaths.get(value) ?? value;
+  const orderedPaths = [...changedPaths].sort(([left], [right]) => right.length - left.length || left.localeCompare(right));
+  /** Maps one Area path, including descendants, and leaves virtual owners unchanged. */
+  const remap = (value) => {
+    if (typeof value !== "string") return value;
+    for (const [from, to] of orderedPaths) {
+      if (value === from) return to;
+      if (value.startsWith(`${from}/`)) return `${to}${value.slice(from.length)}`;
+    }
+    return value;
+  };
   moved.locatedArea = remap(moved.locatedArea);
   /** Rewrites nested endpoint metadata without treating ordinary authored words as paths. */
   function rewriteEndpoints(value) {
     if (Array.isArray(value)) return value.map(rewriteEndpoints);
     if (!value || typeof value !== "object") return value;
     const next = {};
-    for (const [key, item] of Object.entries(value)) next[key] = key === "owner" && typeof item === "string" ? remap(item) : rewriteEndpoints(item);
+    for (const [key, item] of Object.entries(value)) {
+      if (key === "owner" && typeof item === "string") next[key] = remap(item);
+      else if (key === "overlapWith" && Array.isArray(item)) next[key] = item.map(remap);
+      else next[key] = rewriteEndpoints(item);
+    }
     return next;
   }
   moved.areas = moved.areas.map((node) => {
@@ -657,4 +777,4 @@ export function remapAreaMapWorld(world, changedPaths) {
   return moved;
 }
 
-export default { composeAreaMapWorld, composeRegionElement, composeShard, computeWorldGeometry, elementKey, inflateRect, protectAreaRegions, provisionalRegions, regionId, regionKey, remapAreaMapWorld, runtimeId, shardHulls, solveAreaMapGesture, solveOwnedElementGesture, splitComposed, unionRects };
+export default { AREA_MAP_LAYOUT, composeAreaMapWorld, composeRegionElement, composeShard, computeWorldGeometry, elementKey, inflateRect, nearestFreeRectangle, protectAreaRegions, provisionalRegions, rectanglesOverlap, regionId, regionKey, remapAreaMapWorld, reprioritizeAreaPlacement, runtimeId, shardHulls, solveAreaMapGesture, solveOwnedElementGesture, splitComposed, unionRects };

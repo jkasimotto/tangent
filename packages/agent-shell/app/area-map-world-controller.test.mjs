@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 import test from "node:test";
 
 import core from "./public/area-board-core.js";
-import { areaMapProjectionUpdate, createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "./public/area-map-world-controller.js";
+import { areaMapPointerCommand, areaMapProjectionUpdate, areaMapStructuralHullChanged, createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "./public/area-map-world-controller.js";
 
 /** Creates one small complete world with source-owned content. */
 function fixtureWorld() {
@@ -75,6 +75,23 @@ test("duplicate, paste, and bound-arrow ownership use their explicit command bou
   assert.equal(ownerForNewAreaMapElement({ copiedOwner: "neara", pasteOwner: "neara/delivery", pointOwner: "neara" }), "neara/delivery");
   assert.equal(ownerForNewAreaMapElement({ startOwner: "neara/delivery", pointOwner: "neara" }), "neara/delivery");
   assert.equal(ownerForNewAreaMapElement({ pointOwner: "neara" }), "neara");
+});
+
+test("Excalidraw pointer state creates one exact structural command", () => {
+  for (const handle of ["n", "s", "e", "w", "nw", "ne", "sw", "se"]) {
+    assert.deepEqual(areaMapPointerCommand({ resize: { isResizing: true, handleType: handle } }), { kind: "resize", handle });
+  }
+  assert.deepEqual(areaMapPointerCommand({ resize: { isResizing: true, handleType: "rotation" } }), { kind: "ignore", handle: "rotation" });
+  assert.deepEqual(areaMapPointerCommand({ resize: { isResizing: false, handleType: false } }), { kind: "move", handle: null });
+  assert.deepEqual(areaMapPointerCommand({}), { kind: "move", handle: null });
+});
+
+test("only a structural block-hull change can reprioritize an Area branch", () => {
+  const hull = { x: 80, y: 90, width: 280, height: 132 };
+  assert.equal(areaMapStructuralHullChanged(null, null), false);
+  assert.equal(areaMapStructuralHullChanged(hull, { ...hull }), false, "style, text, and free ink can change without changing the block hull");
+  assert.equal(areaMapStructuralHullChanged(hull, { ...hull, x: 81 }), true, "moving a structural block changes the branch extent");
+  assert.equal(areaMapStructuralHullChanged(hull, null), true, "removing the final structural block changes the branch extent");
 });
 
 test("delayed hull projections never become stored Area moves", () => {

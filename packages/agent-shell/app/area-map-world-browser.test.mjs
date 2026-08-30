@@ -32,6 +32,7 @@ import core from "/area-board-core.js";
 const params = new URLSearchParams(location.search);
 const wallFixture = params.get("wall") === "1";
 const crossingFixture = params.get("crossing") === "1";
+const reflowAnchorFixture = params.get("reflow-anchor") === "1";
 const focusedFixture = params.get("focus") === "1";
 const deferredTargetFixture = params.get("deferred-target") === "1";
 const scene = () => core.createEmptyScene();
@@ -78,7 +79,7 @@ const completeRecords = [
   ["neara/delivery/standards", "neara/delivery", { x: 120, y: 120, width: 620, height: 420 }, "ready"],
   ["neara/delivery/standards/clearance", "neara/delivery/standards", { x: 80, y: 80, width: 300, height: 220 }, "ready"],
   ["neara/delivery/standards/clearance/rules", "neara/delivery/standards/clearance", { x: 60, y: 60, width: 300, height: 220 }, "ready"],
-  ["neara/hackathon", "neara", wallFixture ? { x: 1100, y: 100, width: 500, height: 500 } : { x: 600, y: 1050, width: 400, height: 300 }, "ready"],
+  ["neara/hackathon", "neara", reflowAnchorFixture ? { x: 100, y: 100, width: 500, height: 500 } : wallFixture ? { x: 1100, y: 100, width: 500, height: 500 } : { x: 600, y: 1050, width: 400, height: 300 }, "ready"],
   ["neara/essential", "neara", { x: 100, y: 1050, width: 400, height: 300 }, "deferred"],
   ["neara/portland", "neara", { x: 100, y: 1450, width: 400, height: 300 }, "unreadable"],
 ];
@@ -104,6 +105,9 @@ const nodes = records.map(([key, parent, storedRect, state]) => ({
     labelSourceId: "label-" + key.replaceAll("/", "-"),
     source: "stored",
     storedRect,
+    ...(reflowAnchorFixture && ["neara/delivery", "neara/hackathon"].includes(key) ? {
+      layout: { schema: "area-placement.v1", priority: key === "neara/delivery" ? 2 : 1, overlapWith: [] },
+    } : {}),
   },
   shard: {
     owner: key,
@@ -301,6 +305,29 @@ async function regions(page) {
     }])));
 }
 
+/** Returns all Area rectangles from the actual mounted Excalidraw scene. */
+async function renderedRegions(page) {
+  return page.evaluate(() => Object.fromEntries((window.editor.rendered?.() ?? [])
+    .filter((element) => !element.isDeleted && element.customData?.tangent?.role === "area-region")
+    .map((element) => [element.customData.tangent.area, {
+      id: element.id,
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
+      locked: element.locked,
+      deleted: element.isDeleted,
+    }])));
+}
+
+/** Returns one Area rectangle from the actual mounted Excalidraw scene. */
+async function renderedRegion(page, area) {
+  return page.evaluate((target) => {
+    const element = (window.editor.rendered?.() ?? []).find((candidate) => !candidate.isDeleted && candidate.customData?.tangent?.area === target);
+    return element && { id: element.id, x: element.x, y: element.y, width: element.width, height: element.height };
+  }, area);
+}
+
 /** Returns the currently selected Area key, when one region is selected. */
 async function selectedArea(page) {
   return page.evaluate(() => {
@@ -370,7 +397,8 @@ async function moveArea(page, area, delta) {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await selectArea(page, area);
   const before = (await regions(page))[area];
-  const grip = { x: before.x + before.width - 45, y: before.y + before.height * 0.3 };
+  const rendered = await renderedRegion(page, area);
+  const grip = { x: rendered.x + rendered.width - 45, y: rendered.y + rendered.height * 0.3 };
   const start = await viewportPoint(page, grip.x, grip.y);
   const end = await viewportPoint(page, grip.x + delta.x, grip.y + delta.y);
   const pointerDiagnostic = await page.evaluate(({ start, end }) => {
@@ -410,7 +438,8 @@ async function moveArea(page, area, delta) {
 async function moveAreaInPlace(page, area, delta) {
   await selectArea(page, area);
   const before = (await regions(page))[area];
-  const grip = { x: before.x + before.width - 45, y: before.y + before.height * 0.3 };
+  const rendered = await renderedRegion(page, area);
+  const grip = { x: rendered.x + rendered.width - 45, y: rendered.y + rendered.height * 0.3 };
   const start = await viewportPoint(page, grip.x, grip.y);
   const end = await viewportPoint(page, grip.x + delta.x, grip.y + delta.y);
   const priorEvents = await page.evaluate(() => window.worldEvents.length);
@@ -423,12 +452,13 @@ async function moveAreaInPlace(page, area, delta) {
   return { before, after: (await regions(page))[area] };
 }
 
-/** Starts a right-middle resize and leaves the pointer down for same-frame assertions. */
-async function beginRightResize(page, area, delta, steps = 4) {
+/** Starts a literal south-east corner resize and leaves the pointer down. */
+async function beginSouthEastResize(page, area, delta, steps = 4) {
   await selectArea(page, area);
   const before = (await regions(page))[area];
-  const start = await viewportPoint(page, before.x + before.width, before.y + before.height / 2);
-  const end = await viewportPoint(page, before.x + before.width + delta, before.y + before.height / 2);
+  const rendered = await renderedRegion(page, area);
+  const start = await viewportPoint(page, rendered.x + rendered.width, rendered.y + rendered.height);
+  const end = await viewportPoint(page, rendered.x + rendered.width + delta, rendered.y + rendered.height);
   await page.mouse.move(start.x, start.y);
   await page.waitForTimeout(80);
   const hit = await page.evaluate(({ x, y }) => {
@@ -442,11 +472,22 @@ async function beginRightResize(page, area, delta, steps = 4) {
 }
 
 /** Returns one canonical authored block by its source owner. */
-async function authoredBlock(page, owner) {
-  return page.evaluate((expectedOwner) => {
-    const element = window.editor.current().elements.find((item) => item.type === "rectangle" && item.customData?.tangentWorld?.owner === expectedOwner && item.customData?.tangent?.ref);
+async function authoredBlock(page, owner, { rendered = false } = {}) {
+  return page.evaluate(({ expectedOwner, fromRendered }) => {
+    const elements = fromRendered ? window.editor.rendered?.() ?? [] : window.editor.current().elements;
+    const element = elements.find((item) => !item.isDeleted && item.type === "rectangle" && item.customData?.tangentWorld?.owner === expectedOwner && item.customData?.tangent?.ref);
     return element ? { id: element.id, x: element.x, y: element.y, width: element.width, height: element.height, deleted: element.isDeleted } : null;
-  }, owner);
+  }, { expectedOwner: owner, fromRendered: rendered });
+}
+
+/** Returns every canonical authored block for one source owner. */
+async function authoredBlocks(page, owner, { rendered = false } = {}) {
+  return page.evaluate(({ expectedOwner, fromRendered }) => {
+    const elements = fromRendered ? window.editor.rendered?.() ?? [] : window.editor.current().elements;
+    return elements.filter((item) => !item.isDeleted && item.type === "rectangle" && item.customData?.tangentWorld?.owner === expectedOwner && item.customData?.tangent?.ref)
+      .map((element) => ({ id: element.id, sourceId: element.customData.tangentWorld.sourceId, ref: element.customData.tangent.ref, x: element.x, y: element.y, width: element.width, height: element.height, deleted: element.isDeleted }))
+      .sort((left, right) => left.sourceId.localeCompare(right.sourceId));
+  }, { expectedOwner: owner, fromRendered: rendered });
 }
 
 /** Returns source authority while normalizing private shard load state. */
@@ -494,22 +535,24 @@ test("visible descendants move and resize without changing the opening Only scop
   assert.notDeepEqual(labelAfterMove, labelBeforeMove, "the structural label follows its moved region");
   assert.equal(await page.evaluate(() => window.editor.controller().snapshot().restrictionArea), restriction, "direct manipulation does not retarget Only");
 
-  const beforeResize = await regions(page);
+  const beforeResize = await renderedRegions(page);
   const priorEvents = await page.evaluate(() => window.worldEvents.length);
-  await beginRightResize(page, "neara/delivery/standards/clearance", 180, 4);
-  const preview = await regions(page);
+  await beginSouthEastResize(page, "neara/delivery/standards/clearance", 180, 4);
+  const preview = await renderedRegions(page);
   assert.ok(preview["neara/delivery/standards/clearance"].width > beforeResize["neara/delivery/standards/clearance"].width + 140);
   assert.ok(preview["neara/delivery/standards"].width > beforeResize["neara/delivery/standards"].width, "the first preview frame expands the direct ancestor");
   assert.ok(preview["neara/delivery"].width > beforeResize["neara/delivery"].width, "the first preview frame expands every ancestor");
+  const currentPreview = await regions(page);
+  for (const area of ["neara/delivery/standards/clearance", "neara/delivery/standards", "neara/delivery", "neara"]) assert.deepEqual(currentPreview[area], preview[area], `${area} has one controller and rendered Only-scope geometry`);
   await page.mouse.up();
   await page.waitForFunction((count) => window.worldEvents.length > count, priorEvents);
   assert.equal(await page.evaluate(() => window.editor.controller().snapshot().restrictionArea), restriction);
 
-  const beforeParentResize = await regions(page);
+  const beforeParentResize = await renderedRegions(page);
   const childSourceBefore = await page.evaluate(() => structuredClone(window.editor.controller().world().areas.find((node) => node.key === "neara/delivery/standards/clearance").region.storedRect));
   const parentEvent = await page.evaluate(() => window.worldEvents.length);
-  await beginRightResize(page, "neara/delivery/standards", 100, 4);
-  const parentPreview = await regions(page);
+  await beginSouthEastResize(page, "neara/delivery/standards", 100, 4);
+  const parentPreview = await renderedRegions(page);
   assert.ok(parentPreview["neara/delivery/standards"].width > beforeParentResize["neara/delivery/standards"].width + 90, "the expanded parent starts at its visible handle");
   assert.ok(parentPreview["neara/delivery/standards"].x + parentPreview["neara/delivery/standards"].width + 60 <= parentPreview["neara/delivery"].x + parentPreview["neara/delivery"].width + 0.01);
   assert.ok(parentPreview["neara/delivery"].x + parentPreview["neara/delivery"].width + 60 <= parentPreview.neara.x + parentPreview.neara.width + 0.01);
@@ -597,10 +640,10 @@ test("resizing a child grows every ancestor in the same frame", { timeout: 90_00
   const page = await openWorld(context);
   const before = await regions(page);
   const priorEvents = await page.evaluate(() => window.worldEvents.length);
-  const drag = await beginRightResize(page, "neara/delivery/standards", 320, 4);
+  const drag = await beginSouthEastResize(page, "neara/delivery/standards", 320, 4);
   const preview = await regions(page);
   const sourcePreview = await page.evaluate(() => window.editor.controller().world().areas.find((node) => node.key === "neara/delivery/standards").region.storedRect);
-  assert.ok(preview["neara/delivery/standards"].width > before["neara/delivery/standards"].width + 250, `the right-middle handle did not resize Standards: ${JSON.stringify({ before: before["neara/delivery/standards"], preview: preview["neara/delivery/standards"], sourcePreview, drag })}`);
+  assert.ok(preview["neara/delivery/standards"].width > before["neara/delivery/standards"].width + 250, `the south-east handle did not resize Standards: ${JSON.stringify({ before: before["neara/delivery/standards"], preview: preview["neara/delivery/standards"], sourcePreview, drag })}`);
   assert.ok(preview["neara/delivery"].width > before["neara/delivery"].width);
   assert.ok(preview.neara.width > before.neara.width);
   assert.ok(preview["neara/delivery/standards"].x + preview["neara/delivery/standards"].width + 60 <= preview["neara/delivery"].x + preview["neara/delivery"].width + 0.01);
@@ -699,14 +742,22 @@ test("undo and redo cross-shard gestures through world history", { timeout: 90_0
   const page = await openWorld(context);
   await selectArea(page, "neara/delivery/standards");
   const beforeRegion = (await regions(page))["neara/delivery/standards"];
-  const beforeBlock = await authoredBlock(page, "neara/delivery/standards");
+  const beforeBlock = await authoredBlock(page, "neara/delivery/standards", { rendered: true });
   const blockCenter = await viewportPoint(page, beforeBlock.x + beforeBlock.width / 2, beforeBlock.y + beforeBlock.height / 2);
   await page.keyboard.down("Shift");
   await page.mouse.click(blockCenter.x, blockCenter.y);
   await page.keyboard.up("Shift");
-  const selected = await page.evaluate(() => ({ app: window.editor.appState().selectedElementIds, controller: [...window.editor.controller().snapshot().selection] }));
-  assert.equal(selected.app[beforeRegion.id], true, `the real Shift-click keeps the Standards region selected: ${JSON.stringify(selected)}`);
-  assert.equal(selected.app[beforeBlock.id], true, `the real Shift-click adds the Standards block: ${JSON.stringify(selected)}`);
+  const selected = await page.evaluate(() => {
+    const app = window.editor.appState().selectedElementIds;
+    return {
+      app,
+      controller: [...window.editor.controller().snapshot().selection],
+      elements: (window.editor.rendered?.() ?? []).filter((element) => app[element.id]).map((element) => ({ id: element.id, type: element.type, containerId: element.containerId, sourceId: element.customData?.tangentWorld?.sourceId })),
+    };
+  });
+  const selectionDiagnostic = { selected, beforeRegion, beforeBlock };
+  assert.equal(selected.app[beforeRegion.id], true, `the real Shift-click keeps the Standards region selected: ${JSON.stringify(selectionDiagnostic)}`);
+  assert.equal(selected.app[beforeBlock.id], true, `the real Shift-click adds the Standards block: ${JSON.stringify(selectionDiagnostic)}`);
   const end = await viewportPoint(page, beforeBlock.x + beforeBlock.width / 2 + 45, beforeBlock.y + beforeBlock.height / 2 + 35);
   const priorEvents = await page.evaluate(() => window.worldEvents.length);
   await page.mouse.move(blockCenter.x, blockCenter.y);
@@ -719,7 +770,7 @@ test("undo and redo cross-shard gestures through world history", { timeout: 90_0
   assert.deepEqual(gesture.owners, ["neara/delivery/standards"]);
   assert.deepEqual(gesture.sourceOwners.sort(), ["neara/delivery", "neara/delivery/standards"]);
   const movedRegion = (await regions(page))["neara/delivery/standards"];
-  const movedBlock = await authoredBlock(page, "neara/delivery/standards");
+  const movedBlock = await authoredBlock(page, "neara/delivery/standards", { rendered: true });
   assert.notDeepEqual({ x: movedRegion.x, y: movedRegion.y }, { x: beforeRegion.x, y: beforeRegion.y });
   assert.notDeepEqual({ x: movedBlock.x, y: movedBlock.y }, { x: beforeBlock.x, y: beforeBlock.y });
 
@@ -728,14 +779,14 @@ test("undo and redo cross-shard gestures through world history", { timeout: 90_0
     const element = window.editor.current().elements.find((item) => item.customData?.tangent?.area === "neara/delivery/standards");
     return Math.abs(element.x - x) < 0.01;
   }, beforeRegion.x);
-  assert.deepEqual(await authoredBlock(page, "neara/delivery/standards"), beforeBlock);
+  assert.deepEqual(await authoredBlock(page, "neara/delivery/standards", { rendered: true }), beforeBlock);
 
   await page.keyboard.press("Meta+Shift+z");
   await page.waitForFunction((x) => {
     const element = window.editor.current().elements.find((item) => item.customData?.tangent?.area === "neara/delivery/standards");
     return Math.abs(element.x - x) < 0.01;
   }, movedRegion.x);
-  assert.deepEqual(await authoredBlock(page, "neara/delivery/standards"), movedBlock);
+  assert.deepEqual(await authoredBlock(page, "neara/delivery/standards", { rendered: true }), movedBlock);
 });
 
 test("unreadable and deferred shards keep interactive boundaries", { timeout: 90_000 }, async (context) => {
@@ -811,7 +862,7 @@ test("keyboard outline selects and fits every Area", { timeout: 90_000 }, async 
 test("Standards never crosses Delivery while Delivery and Neara grow", { timeout: 90_000 }, async (context) => {
   const page = await openWorld(context, "?crossing=1");
   const before = await regions(page);
-  await beginRightResize(page, "neara/delivery/standards", 320, 4);
+  await beginSouthEastResize(page, "neara/delivery/standards", 320, 4);
   const crossing = await regions(page);
   const standards = crossing["neara/delivery/standards"];
   const delivery = crossing["neara/delivery"];
@@ -859,16 +910,88 @@ test("Standards never crosses Delivery while Delivery and Neara grow", { timeout
   }
 });
 
-test("Hackathon is a sibling wall for Delivery growth", { timeout: 90_000 }, async (context) => {
+test("Delivery growth reflows Hackathon instead of clipping the pointer", { timeout: 90_000 }, async (context) => {
   const page = await openWorld(context, "?wall=1", { width: 1800, height: 1100 });
   const before = await regions(page);
-  await beginRightResize(page, "neara/delivery/standards", 500, 8);
-  const wallAnnouncement = page.locator(".tangent-map-live", { hasText: "stopped at hackathon" });
-  await wallAnnouncement.waitFor();
-  assert.equal(await page.locator(".tangent-map-live").count(), 1, "one sibling wall command creates one assistive live message");
+  await beginSouthEastResize(page, "neara/delivery/standards", 500, 8);
   const preview = await regions(page);
-  assert.ok(preview["neara/delivery"].x + preview["neara/delivery"].width <= preview["neara/hackathon"].x + 0.01);
-  assert.deepEqual(preview["neara/hackathon"], before["neara/hackathon"], "the sibling wall never moves");
-  assert.ok(preview["neara/delivery/standards"].width < before["neara/delivery/standards"].width + 500);
+  assert.ok(preview["neara/delivery/standards"].width > before["neara/delivery/standards"].width + 450, "the selected resize keeps the complete pointer delta");
+  assert.ok(preview["neara/delivery"].width > before["neara/delivery"].width, "the direct parent expands");
+  assert.ok(preview["neara/hackathon"].x > before["neara/hackathon"].x, "the affected sibling branch moves out of the expanded path");
+  assert.ok(preview["neara/delivery"].x + preview["neara/delivery"].width <= preview["neara/hackathon"].x + 0.01, "the automatic reflow prevents overlap");
+  assert.equal(await page.locator(".tangent-map-live", { hasText: "stopped at hackathon" }).count(), 0, "automatic reflow does not announce a wall");
   await page.mouse.up();
+});
+
+test("a structural block insertion anchors its auto-reflowed Area across reload", { timeout: 90_000 }, async (context) => {
+  const page = await openWorld(context, "?reflow-anchor=1", { width: 1800, height: 1100 });
+  await page.evaluate(() => window.editor.fitArea("neara/hackathon", { push: false }));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const blocksBefore = await authoredBlocks(page, "neara/hackathon", { rendered: true });
+  const before = await page.evaluate(() => {
+    const snapshot = window.editor.controller().snapshot();
+    const node = snapshot.world.areas.find((entry) => entry.key === "neara/hackathon");
+    const delivery = snapshot.composition.geometry.get("neara/delivery");
+    const hackathon = snapshot.composition.geometry.get("neara/hackathon");
+    const drawn = snapshot.composition.regionRects.get("neara/hackathon");
+    return {
+      stored: structuredClone(node.region.storedRect),
+      resolved: structuredClone(hackathon.resolvedStored),
+      deliveryResolved: structuredClone(delivery.resolvedStored),
+      drawn: structuredClone(drawn),
+    };
+  });
+  assert.notDeepEqual(before.resolved, before.stored, "Hackathon starts at a lower-priority derived position");
+
+  const insertion = { x: before.drawn.x + before.drawn.width - 2, y: before.drawn.y + before.drawn.height - 2 };
+  const insertionViewport = await viewportPoint(page, insertion.x, insertion.y);
+  await page.mouse.move(insertionViewport.x, insertionViewport.y);
+  await page.waitForTimeout(80);
+  await page.keyboard.press("b");
+  const picker = page.getByRole("dialog", { name: "Place a Tangent block" });
+  await picker.getByRole("textbox").fill("https://example.com/reflow-anchor");
+  const priorEvents = await page.evaluate(() => window.worldEvents.length);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((count) => window.worldEvents.length > count, priorEvents);
+
+  const blocksAfter = await authoredBlocks(page, "neara/hackathon", { rendered: true });
+  const blockAfter = blocksAfter.find((block) => !blocksBefore.some((beforeBlock) => beforeBlock.sourceId === block.sourceId));
+  assert.ok(blockAfter, `the picker inserts one source-owned block: ${JSON.stringify({ blocksBefore, blocksAfter })}`);
+  const after = await page.evaluate(() => {
+    const snapshot = window.editor.controller().snapshot();
+    const event = window.worldEvents.at(-1);
+    const node = snapshot.world.areas.find((entry) => entry.key === "neara/hackathon");
+    return {
+      event: structuredClone(event),
+      stored: structuredClone(node.region.storedRect),
+      layout: structuredClone(node.region.layout),
+      resolved: structuredClone(snapshot.composition.geometry.get("neara/hackathon").resolvedStored),
+      deliveryResolved: structuredClone(snapshot.composition.geometry.get("neara/delivery").resolvedStored),
+      drawn: structuredClone(snapshot.composition.regionRects.get("neara/hackathon")),
+    };
+  });
+  assert.deepEqual(after.event.areas, ["neara/hackathon"]);
+  assert.deepEqual(after.event.owners, ["neara/hackathon"]);
+  assert.deepEqual(after.stored, before.resolved, "the visible derived position becomes the authored anchor");
+  assert.deepEqual(after.resolved, before.resolved, "reprioritizing does not teleport Hackathon");
+  assert.equal(after.layout.priority, 3);
+  assert.ok(Math.abs(blockAfter.x + blockAfter.width / 2 - insertion.x) < 1 && Math.abs(blockAfter.y + blockAfter.height / 2 - insertion.y) < 1, `the inserted block stays at the real pointer: ${JSON.stringify({ insertion, blockAfter })}`);
+  assert.deepEqual({ x: after.drawn.x, y: after.drawn.y }, { x: before.drawn.x, y: before.drawn.y }, "the Area stays under its edited block");
+  assert.notDeepEqual(after.deliveryResolved, before.deliveryResolved, "the lower-priority sibling moves instead");
+
+  await page.evaluate(async () => {
+    window.nextWorld = structuredClone(window.worldEvents.at(-1).world);
+    await window.editor.controller().reload();
+  });
+  const reloadedBlock = (await authoredBlocks(page, "neara/hackathon", { rendered: true })).find((block) => block.sourceId === blockAfter.sourceId);
+  const reloaded = await page.evaluate(() => {
+    const snapshot = window.editor.controller().snapshot();
+    return {
+      resolved: structuredClone(snapshot.composition.geometry.get("neara/hackathon").resolvedStored),
+      deliveryResolved: structuredClone(snapshot.composition.geometry.get("neara/delivery").resolvedStored),
+      drawn: structuredClone(snapshot.composition.regionRects.get("neara/hackathon")),
+    };
+  });
+  assert.deepEqual(reloaded, { resolved: after.resolved, deliveryResolved: after.deliveryResolved, drawn: after.drawn });
+  assert.deepEqual(reloadedBlock, blockAfter, "reload preserves the block and owner coordinates exactly");
 });

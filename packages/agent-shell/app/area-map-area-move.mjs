@@ -38,13 +38,35 @@ function remapReference(reference, changedPaths) {
 
 /** Rewrites only semantic Area owners and vault references in nested metadata. */
 function rewriteMetadata(value, changedPaths, key = "") {
-  if (Array.isArray(value)) return value.map((item) => rewriteMetadata(item, changedPaths));
+  if (Array.isArray(value)) return value.map((item) => key === "overlapWith" ? remapAreaPath(item, changedPaths) : rewriteMetadata(item, changedPaths));
   if (!value || typeof value !== "object") {
     if (AREA_KEYS.has(key)) return remapAreaPath(value, changedPaths);
     if (key === "ref") return remapReference(value, changedPaths);
     return value;
   }
   return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, rewriteMetadata(child, changedPaths, childKey)]));
+}
+
+/** Returns the Area key encoded by one canonical structural-region reference. */
+function regionChild(reference) {
+  if (typeof reference !== "string") return null;
+  const file = reference.split("#", 1)[0];
+  const extension = path.posix.extname(file);
+  if (![".md", ".excalidraw"].includes(extension)) return null;
+  const area = path.posix.dirname(file);
+  if (area === "." || path.posix.basename(file, extension) !== path.posix.basename(area)) return null;
+  return area;
+}
+
+/** Clears overlap permissions that no longer connect direct sibling Areas. */
+function retainSiblingOverlaps(customData) {
+  const tangent = customData?.tangent;
+  if (tangent?.kind !== "area" || tangent.role !== "region" || !Array.isArray(tangent.layout?.overlapWith)) return customData;
+  const child = regionChild(tangent.ref);
+  const owner = child && path.posix.dirname(child);
+  const overlapWith = tangent.layout.overlapWith.filter((peer) => typeof peer === "string"
+    && peer !== child && owner !== null && path.posix.dirname(peer) === owner);
+  return { ...customData, tangent: { ...tangent, layout: { ...tangent.layout, overlapWith } } };
 }
 
 /** Returns one moved file's destination, including canonical leaf-name changes. */
@@ -96,7 +118,7 @@ export function rewriteAreaMapSceneForMove(scene, changedPaths) {
     ...scene,
     elements: (scene.elements ?? []).map((element) => {
       const next = { ...element };
-      if (element.customData) next.customData = rewriteMetadata(element.customData, changedPaths);
+      if (element.customData) next.customData = retainSiblingOverlaps(rewriteMetadata(element.customData, changedPaths));
       return next;
     }),
   };

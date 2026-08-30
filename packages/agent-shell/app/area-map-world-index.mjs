@@ -3,15 +3,14 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { areaCanvasPath, parseAreaCanvas, validateAreaCanvas } from "./area-canvas.mjs";
 import { areaForBlock, isAreaBoundary, isAreaRegion, tangentOf } from "./public/area-board-core.js";
-import { regionId, regionKey, unionRects } from "./public/area-map-world-core.js";
+import { AREA_MAP_LAYOUT, nearestFreeRectangle, rectanglesOverlap, regionId, regionKey, shardHulls } from "./public/area-map-world-core.js";
 
-const LABEL_BAND = 40;
-const CONTENT_MARGIN = 60;
+const CONTENT_MARGIN = AREA_MAP_LAYOUT.spacing;
 const SLOT_WIDTH = 460;
 const SLOT_HEIGHT = 320;
-const TARGET_RIGHT = 1660;
-const MIN_REGION_WIDTH = 300;
-const MIN_REGION_HEIGHT = 220;
+const MIN_REGION_WIDTH = AREA_MAP_LAYOUT.minimumWidth;
+const MIN_REGION_HEIGHT = AREA_MAP_LAYOUT.minimumHeight;
+const PLACEMENT_SCHEMA = AREA_MAP_LAYOUT.placementSchema;
 const ROOT_OWNER = "@root";
 const CACHE_LIMIT = 256;
 
@@ -23,8 +22,14 @@ const parentFor = (area) => area.includes("/") ? area.slice(0, area.lastIndexOf(
 const rectangle = (element) => ({ x: Number(element.x), y: Number(element.y), width: Number(element.width), height: Number(element.height) });
 /** Reports whether one rectangle can participate in structural placement. */
 const validRectangle = (value) => value && [value.x, value.y, value.width, value.height].every(Number.isFinite) && value.width > 0 && value.height > 0;
-/** Reports strict overlap between two rectangles. */
-const overlaps = (left, right) => left.x < right.x + right.width && left.x + left.width > right.x && left.y < right.y + right.height && left.y + left.height > right.y;
+/** Returns normalized authored placement intent, or null for a legacy/invalid record. */
+function storedLayout(element) {
+  const value = element?.customData?.tangent?.layout;
+  if (!value || typeof value !== "object" || Array.isArray(value) || value.schema !== PLACEMENT_SCHEMA || !Number.isSafeInteger(value.priority) || value.priority < 0 || !Array.isArray(value.overlapWith) || value.overlapWith.some((area) => typeof area !== "string" || !area || area.includes("\0"))) return null;
+  return { schema: PLACEMENT_SCHEMA, priority: value.priority, overlapWith: [...new Set(value.overlapWith)].sort() };
+}
+/** Returns the in-memory placement intent used by the new layout authority. */
+const legacyLayout = () => ({ schema: PLACEMENT_SCHEMA, priority: 0, overlapWith: [] });
 /** Returns one bound text source ID, with a stable fallback. */
 const labelId = (element) => element.boundElements?.find((entry) => entry.type === "text")?.id ?? `${element.id}-tangent-label`;
 /** Returns one Area scene's revision token, including legacy in-memory reads. */
@@ -90,7 +95,6 @@ function rawShardSummary(owner, shard) {
 function adaptShardSummary(raw, directChildren, baseline) {
   const direct = new Set(directChildren);
   const ignored = new Set();
-  const structural = new Set(raw.boundaries.map((element) => element.id));
   const retired = new Set();
   const retiredCards = new Set();
   const staleRegions = new Set();
@@ -99,7 +103,6 @@ function adaptShardSummary(raw, directChildren, baseline) {
   /** Adds one region candidate to a child-keyed list. */
   const push = (target, child, value) => { const list = target.get(child) ?? []; list.push(value); target.set(child, list); };
   for (const element of raw.regions) {
-    structural.add(element.id); structural.add(labelId(element));
     const child = areaForBlock(element);
     if (!direct.has(child)) {
       staleRegions.add(element.id);
@@ -111,6 +114,8 @@ function adaptShardSummary(raw, directChildren, baseline) {
       sourceId: element.id,
       labelSourceId: labelId(element),
       storedRect: rectangle(element),
+      layout: storedLayout(element),
+      hasLayout: element.customData?.tangent?.layout !== undefined,
       version: Number(element.version ?? 0),
       updated: Number(element.updated ?? 0),
     });
@@ -133,20 +138,10 @@ function adaptShardSummary(raw, directChildren, baseline) {
   }
   const elements = (raw.scene.elements ?? []).filter((element) => !ignored.has(element.id));
   const scene = { ...raw.scene, elements };
-  const visible = elements.filter((element) => !element.isDeleted);
-  const blockRoots = visible.filter((element) => tangentOf(element) && !["boundary", "region"].includes(element.customData?.tangent?.role));
-  const blockIds = new Set(blockRoots.map((element) => element.id));
-  const blockLabels = new Set(blockRoots.flatMap((element) => element.boundElements?.filter((entry) => entry.type === "text").map((entry) => entry.id) ?? []));
-  const blocks = blockRoots.filter((element) => validRectangle(rectangle(element))).map(rectangle);
-  const ink = visible.filter((element) => !structural.has(element.id) && !structural.has(element.containerId) && !tangentOf(element) && !blockLabels.has(element.id) && !blockIds.has(element.containerId) && validRectangle(rectangle(element))).map(rectangle);
   return {
     scene,
     stored,
     legacy,
-    ownBlockHull: unionRects(blocks),
-    ownInkHull: unionRects(ink),
-    blockCount: blockRoots.length,
-    elementCount: visible.length,
     retiredIds: [...retired],
     staleRegionIds: [...staleRegions],
     boundaryIds: raw.boundaries.map((element) => element.id),
@@ -171,84 +166,74 @@ function projectedShardScene(owner, summary, regions) {
   }) };
 }
 
-/** Returns the computed structural size needed by one Area. */
-function areaRequirement(area, summaries, children, regions, requirements) {
-  const summary = summaries.get(area);
-  const own = [summary?.ownBlockHull].filter(Boolean);
-  const childRects = (children.get(area) ?? []).map((child) => {
-    const stored = regions.get(child)?.storedRect;
-    const needed = requirements.get(child) ?? { width: SLOT_WIDTH, height: SLOT_HEIGHT };
-    return stored && { x: stored.x, y: stored.y, width: Math.max(stored.width, needed.width), height: Math.max(stored.height, needed.height) };
-  }).filter(Boolean);
-  const content = unionRects([...own, ...childRects]);
-  if (!content) return { width: SLOT_WIDTH, height: SLOT_HEIGHT };
-  const horizontalSpan = Math.max(content.width + CONTENT_MARGIN * 2, content.x + content.width + CONTENT_MARGIN);
-  const verticalSpan = Math.max(content.height + CONTENT_MARGIN * 2 + LABEL_BAND, content.y + content.height + CONTENT_MARGIN + LABEL_BAND);
-  return { width: Math.max(SLOT_WIDTH, horizontalSpan), height: Math.max(SLOT_HEIGHT, verticalSpan) };
-}
-
-/** Finds the first deterministic free row position around occupied structural walls. */
-function firstFreePlacement(width, height, occupied) {
-  const rows = [...new Set([60, ...occupied.map((value) => value.y + value.height + CONTENT_MARGIN)])].sort((a, b) => a - b);
-  for (const y of rows) {
-    let x = 60;
-    for (let attempt = 0; attempt < occupied.length + 2; attempt += 1) {
-      const candidate = { x, y, width, height };
-      const blockers = occupied.filter((value) => overlaps(candidate, value)).sort((left, right) => left.x - right.x || left.y - right.y);
-      if (!blockers.length && (x + width <= TARGET_RIGHT || x === 60)) return candidate;
-      if (!blockers.length) break;
-      x = Math.max(...blockers.map((value) => value.x + value.width + CONTENT_MARGIN));
-    }
-  }
-  const y = occupied.length ? Math.max(...occupied.map((value) => value.y + value.height)) + CONTENT_MARGIN : 60;
-  return { x: 60, y, width, height };
+/** Returns layout facts from the exact scene that a deferred load will supply. */
+function projectedShardFacts(scene) {
+  const visible = (scene?.elements ?? []).filter((element) => !element.isDeleted);
+  const hulls = shardHulls(scene);
+  return {
+    ownBlockHull: hulls.blocks,
+    ownInkHull: hulls.ink,
+    blockCount: visible.filter((element) => tangentOf(element) && !["boundary", "region"].includes(element.customData?.tangent?.role)).length,
+    elementCount: visible.length,
+  };
 }
 
 /** Selects stored, recovered, legacy, or provisional records for every Area edge. */
 function buildRegionRecords(areaKeys, summaries, children) {
   const regions = new Map();
-  const requirements = new Map();
-  const owners = [...areaKeys].sort((left, right) => right.split("/").length - left.split("/").length || left.localeCompare(right));
-  owners.push(ROOT_OWNER);
+  const owners = [ROOT_OWNER, ...areaKeys];
   for (const owner of owners) {
     const direct = children.get(owner) ?? [];
     const occupied = [];
     const pending = [];
+    const legacyStored = new Set();
     for (const child of direct) {
       const summary = summaries.get(owner);
       const valid = [...(summary?.stored.get(child) ?? [])].filter((candidate) => validRectangle(candidate.storedRect)).sort(candidateOrder);
       const invalid = [...(summary?.stored.get(child) ?? [])].filter((candidate) => !validRectangle(candidate.storedRect)).sort(candidateOrder);
       const legacy = [...(summary?.legacy.get(child) ?? [])].filter((candidate) => validRectangle(candidate.storedRect)).sort(candidateOrder);
       const candidate = valid[0] ?? invalid[0] ?? legacy[0] ?? null;
-      const needed = requirements.get(child) ?? { width: SLOT_WIDTH, height: SLOT_HEIGHT };
+      const fromLegacyCard = candidate === legacy[0];
       const source = valid[0] ? "stored" : candidate ? "recovered" : "provisional";
-      const original = validRectangle(candidate?.storedRect) ? candidate.storedRect : { x: 60, y: 60, width: needed.width, height: needed.height };
-      const wall = { x: original.x, y: original.y, width: Math.max(original.width, needed.width), height: Math.max(original.height, needed.height) };
+      const original = validRectangle(candidate?.storedRect) ? candidate.storedRect : { x: CONTENT_MARGIN, y: CONTENT_MARGIN, width: SLOT_WIDTH, height: SLOT_HEIGHT };
       const record = {
         key: regionKey(owner, child), owner, child,
         sourceId: candidate?.sourceId ?? regionId(owner, child),
         labelSourceId: candidate?.labelSourceId ?? `${regionId(owner, child)}-label`,
         source,
         storedRect: { ...original },
+        layout: candidate?.layout ?? legacyLayout(),
       };
-      if (source === "stored" && !occupied.some((value) => overlaps(wall, value))) {
-        regions.set(child, record); occupied.push(wall);
-      } else pending.push({ child, record, wall, needed, reason: source === "provisional" ? null : valid[0] ? "overlap" : "invalid or legacy geometry" });
+      if (validRectangle(candidate?.storedRect) && !fromLegacyCard) {
+        regions.set(child, record); occupied.push(record.storedRect);
+        if (source === "stored" && !candidate.hasLayout) legacyStored.add(child);
+      } else pending.push({
+        child, record,
+        preferred: fromLegacyCard ? { x: original.x, y: original.y, width: Math.max(MIN_REGION_WIDTH, original.width), height: Math.max(MIN_REGION_HEIGHT, original.height) } : null,
+        reason: source === "provisional" ? null : fromLegacyCard ? "legacy Area card" : "invalid geometry",
+      });
     }
     for (const entry of pending) {
-      const placed = firstFreePlacement(entry.wall.width, entry.wall.height, occupied);
-      entry.record.storedRect = {
-        x: placed.x,
-        y: placed.y,
-        width: entry.record.source === "provisional" ? entry.needed.width : Math.max(300, Number(entry.record.storedRect.width) || entry.needed.width),
-        height: entry.record.source === "provisional" ? entry.needed.height : Math.max(220, Number(entry.record.storedRect.height) || entry.needed.height),
-      };
+      const width = Math.max(MIN_REGION_WIDTH, Number(entry.record.storedRect.width) || SLOT_WIDTH);
+      const height = Math.max(MIN_REGION_HEIGHT, Number(entry.record.storedRect.height) || SLOT_HEIGHT);
+      const preferred = entry.preferred ?? { x: CONTENT_MARGIN, y: CONTENT_MARGIN, width, height };
+      entry.record.storedRect = nearestFreeRectangle(preferred, occupied, { gap: CONTENT_MARGIN });
       if (entry.record.source !== "provisional") { entry.record.source = "recovered"; entry.record.recoveryReason = entry.reason; }
-      regions.set(entry.child, entry.record); occupied.push(placed);
+      regions.set(entry.child, entry.record); occupied.push(entry.record.storedRect);
     }
-    if (owner !== ROOT_OWNER) requirements.set(owner, areaRequirement(owner, summaries, children, regions, requirements));
+    for (let index = 0; index < direct.length; index += 1) {
+      const child = direct[index];
+      if (!legacyStored.has(child)) continue;
+      const region = regions.get(child);
+      for (const sibling of direct.slice(index + 1)) {
+        if (!legacyStored.has(sibling) || !rectanglesOverlap(region.storedRect, regions.get(sibling).storedRect)) continue;
+        region.layout.overlapWith.push(sibling);
+        regions.get(sibling).layout.overlapWith.push(child);
+      }
+    }
+    for (const child of legacyStored) regions.get(child).layout.overlapWith.sort();
   }
-  return { regions, requirements };
+  return { regions };
 }
 
 /** Reports a runtime/composed identity anywhere in one source element. */
@@ -371,20 +356,40 @@ function arrowOwnershipError(element, owner) {
   return `source arrow ${element.id} start endpoint owner ${start.owner} does not match mutation owner ${owner}`;
 }
 
-/** Validates final stored rectangles for direct children changed by one owner mutation. */
+/** Validates authored direct-child geometry and placement metadata without solving layout. */
 function directChildRegionGeometryError(state, owner, elements) {
-  const changed = new Map(elements.filter(isAreaRegion).map((element) => [areaForBlock(element), { sourceId: element.id, rect: rectangle(element) }]));
-  if (!changed.size) return null;
-  const siblings = new Map([...state.regions.values()]
-    .filter((region) => region.owner === owner)
-    .map((region) => [region.child, { sourceId: region.sourceId, rect: region.storedRect }]));
-  for (const [child, value] of changed) siblings.set(child, value);
-  for (const [child, value] of changed) {
+  for (const element of elements.filter(isAreaRegion)) {
+    const value = { sourceId: element.id, rect: rectangle(element) };
     if (value.rect.width < MIN_REGION_WIDTH || value.rect.height < MIN_REGION_HEIGHT) {
       return `Area region ${value.sourceId} must be at least ${MIN_REGION_WIDTH} by ${MIN_REGION_HEIGHT}`;
     }
-    for (const [sibling, other] of siblings) {
-      if (sibling !== child && overlaps(value.rect, other.rect)) return `Area region ${value.sourceId} overlaps sibling ${other.sourceId}`;
+    const layout = element.customData?.tangent?.layout;
+    if (layout === undefined) continue;
+    if (!storedLayout(element)) return `Area region ${value.sourceId} layout must use ${PLACEMENT_SCHEMA} with a non-negative integer priority and safe overlapWith array`;
+    const child = areaForBlock(element);
+    const direct = new Set(state.children.get(owner) ?? []);
+    const seen = new Set();
+    for (const sibling of layout.overlapWith) {
+      if (seen.has(sibling)) return `Area region ${value.sourceId} layout overlapWith must not contain duplicate siblings`;
+      seen.add(sibling);
+      if (sibling === child || !direct.has(sibling)) return `Area region ${value.sourceId} layout overlapWith must contain only direct siblings`;
+    }
+  }
+  return null;
+}
+
+/** Requires every explicit sibling-overlap edge in a final source scene to be reciprocal. */
+function directChildRegionOverlapError(state, owner, elements) {
+  const byId = new Map(elements.filter((element) => !element.isDeleted).map((element) => [element.id, element]));
+  const direct = state.children.get(owner) ?? [];
+  const overlaps = new Map(direct.map((child) => {
+    const sourceId = state.regions.get(child)?.sourceId;
+    return [child, new Set(storedLayout(byId.get(sourceId))?.overlapWith ?? [])];
+  }));
+  for (const child of direct) {
+    for (const sibling of direct) {
+      if (child >= sibling || overlaps.get(child).has(sibling) === overlaps.get(sibling).has(child)) continue;
+      return `Area region overlap between ${child} and ${sibling} must be reciprocal in the final source scene`;
     }
   }
   return null;
@@ -505,6 +510,7 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
       recoveredPlacements: [...regions.values()].filter((region) => region.source === "recovered").length,
     });
     const projectedScenes = new Map(owners.map((owner) => [owner, projectedShardScene(owner, summaries.get(owner), regions)]));
+    const projectedFacts = new Map(owners.map((owner) => [owner, projectedShardFacts(projectedScenes.get(owner))]));
     const treeRevision = digest(areaKeys.map((area) => `${area}>${relations.get(area)}`).join("\n"));
     const worldRevision = digest(`${treeRevision}\n${owners.map((owner) => `${owner}:${shardRevision(reads.get(owner))}`).join("\n")}`);
     const locatedDepth = locatedArea?.split("/").length ?? 0;
@@ -514,12 +520,12 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
     const inEagerSubtree = (area) => Boolean(locatedArea && (area === locatedArea || area.startsWith(`${locatedArea}/`) && area.split("/").length <= locatedDepth + 2));
     /** Projects one source shard into its public descriptor. */
     const descriptor = (owner, eager = false) => {
-      const shard = reads.get(owner); const summary = summaries.get(owner);
+      const shard = reads.get(owner); const summary = summaries.get(owner); const facts = projectedFacts.get(owner);
       const state = shard.ok === false ? "unreadable" : !shard.exists ? "missing" : eager ? "ready" : "deferred";
       return {
         owner, file: shard.file ?? null, hash: shard.hash ?? null, state,
-        elementCount: summary.elementCount, blockCount: summary.blockCount,
-        ownBlockHull: summary.ownBlockHull, ownInkHull: summary.ownInkHull,
+        elementCount: facts.elementCount, blockCount: facts.blockCount,
+        ownBlockHull: facts.ownBlockHull, ownInkHull: facts.ownInkHull,
         ...(eager && shard.ok !== false ? { scene: projectedScenes.get(owner) } : {}),
         ...(shard.errors?.length ? { errors: shard.errors } : {}),
         ...(summary.migration.legacyBoundaries || summary.migration.legacyCards ? { migration: summary.migration } : {}),
@@ -623,6 +629,8 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
       const existing = new Set(scene.elements.map((element) => element.id));
       scene.elements = scene.elements.flatMap((element) => removals.has(element.id) ? [] : puts.has(element.id) ? [puts.get(element.id)] : [element]);
       for (const [sourceId, element] of puts) if (!existing.has(sourceId)) scene.elements.push(element);
+      const overlapError = directChildRegionOverlapError(state, owner, scene.elements);
+      if (overlapError) return { status: 422, error: overlapError };
       const validation = validateAreaCanvas(scene);
       if (!validation.ok) return { status: 422, error: validation.errors.join("; ") };
       writes.push({ owner, area: owner, baseHash: mutation.baseHash ?? null, canvas: scene, reason: String(request.reason ?? "map gesture").slice(0, 120) });

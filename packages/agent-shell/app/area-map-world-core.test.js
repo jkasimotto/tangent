@@ -4,6 +4,12 @@ import { composeAreaMapWorld, computeWorldGeometry, protectAreaRegions, provisio
 
 const areas = ["neara", "neara/delivery", "neara/delivery/standards"];
 
+/** Reports whether two rectangles have the automatic layout clearance. */
+function separated(left, right, gap = 60) {
+  return left.x + left.width + gap <= right.x || right.x + right.width + gap <= left.x
+    || left.y + left.height + gap <= right.y || right.y + right.height + gap <= left.y;
+}
+
 test("builds one deterministic live region for every Area tree edge", () => {
   const regions = provisionalRegions([...areas].reverse());
   assert.equal(regions.size, 3);
@@ -12,6 +18,17 @@ test("builds one deterministic live region for every Area tree edge", () => {
     assert.equal(region.source, "provisional");
     assert.match(region.sourceId, /^tangent-region-/);
   }
+});
+
+test("provisional placement preserves stored rectangles and uses nearest 2D free space", () => {
+  const saved = { x: 60, y: 60, width: 460, height: 320 };
+  const regions = provisionalRegions(["root", "root/a", "root/b", "root/c"], new Map([["root>root/b", saved]]));
+  assert.deepEqual(regions.get("root/b").storedRect, saved);
+  assert.equal(regions.get("root/b").source, "stored");
+  assert.deepEqual(regions.get("root/a").storedRect, { x: 60, y: -320, width: 460, height: 320 });
+  assert.deepEqual(regions.get("root/c").storedRect, { x: 60, y: 440, width: 460, height: 320 });
+  assert.ok(separated(regions.get("root/a").storedRect, regions.get("root/b").storedRect));
+  assert.ok(separated(regions.get("root/b").storedRect, regions.get("root/c").storedRect));
 });
 
 test("Standards never crosses Delivery while Delivery and Neara grow", () => {
@@ -30,7 +47,7 @@ test("Standards never crosses Delivery while Delivery and Neara grow", () => {
   assert.equal(regions.get("neara/delivery").storedRect.width, 900, "computed growth does not mutate stored ancestors");
 });
 
-test("the solver uses the pointer baseline and prevents a large jump through a sibling", () => {
+test("the solver uses the pointer baseline and applies a large jump exactly", () => {
   const tree = ["root", "root/a", "root/b"];
   const stored = new Map([
     ["@root>root", { x: 0, y: 0, width: 1600, height: 1000 }],
@@ -40,12 +57,14 @@ test("the solver uses the pointer baseline and prevents a large jump through a s
   const regions = provisionalRegions(tree, stored);
   const baseline = { areas: tree, regions, blockHulls: new Map(), inkHulls: new Map() };
   const preview = solveAreaMapGesture(baseline, { selectedAreas: ["root/a"], handle: null, desiredWorldDelta: { x: 900, y: 0 } });
-  assert.equal(preview.wall, "root/b");
-  assert.ok(preview.regions.get("root/a").storedRect.x + 300 <= 500.01);
+  assert.equal(preview.wall, null);
+  assert.deepEqual(preview.appliedDelta, { x: 900, y: 0 });
+  assert.equal(preview.regions.get("root/a").storedRect.x, 900);
+  assert.ok(separated(preview.geometry.get("root/a").constraint, preview.geometry.get("root/b").constraint));
   assert.deepEqual(solveAreaMapGesture(baseline, { selectedAreas: ["root/a"], handle: null, desiredWorldDelta: { x: 900, y: 0 } }), preview);
 });
 
-test("an expanded ancestor stops at its sibling and preserves tangential motion", () => {
+test("an expanded ancestor reflows its lower-priority sibling", () => {
   const tree = ["root", "root/a", "root/a/child", "root/b"];
   const regions = provisionalRegions(tree, new Map([
     ["@root>root", { x: 0, y: 0, width: 1800, height: 1200 }],
@@ -54,14 +73,16 @@ test("an expanded ancestor stops at its sibling and preserves tangential motion"
     ["root>root/b", { x: 800, y: 0, width: 400, height: 500 }],
   ]));
   const preview = solveAreaMapGesture({ areas: tree, regions, blockHulls: new Map(), inkHulls: new Map() }, { selectedAreas: ["root/a/child"], handle: null, desiredWorldDelta: { x: 900, y: 150 } });
-  assert.equal(preview.wall, "root/b");
-  assert.ok(preview.geometry.get("root/a").constraint.x + preview.geometry.get("root/a").constraint.width <= 800.01);
+  assert.equal(preview.wall, null);
+  assert.deepEqual(preview.appliedDelta, { x: 900, y: 150 });
+  assert.ok(separated(preview.geometry.get("root/a").constraint, preview.geometry.get("root/b").constraint));
+  assert.notDeepEqual(preview.geometry.get("root/b").layoutOffset, { x: 0, y: 0 });
   assert.equal(preview.regions.get("root/a/child").storedRect.y, 230);
 });
 
 test("authored blocks expand containment while free ink expands only the drawn outline", () => {
   const scene = { elements: [
-    { id: "block", x: 500, y: 300, width: 200, height: 100, customData: { tangent: { ref: "goal-x" } } },
+    { id: "block", x: 500, y: 300, width: 200, height: 100, customData: { tangent: { kind: "goal", ref: "goal-x" } } },
     { id: "ink", x: -200, y: -100, width: 20, height: 20, customData: {} },
   ] };
   const hulls = shardHulls(scene);
@@ -75,12 +96,16 @@ test("authored blocks expand containment while free ink expands only the drawn o
 
 test("composes every ancestor and descendant as one unlocked interactive region", () => {
   const regions = provisionalRegions(areas);
-  const world = { locatedArea: areas.at(-1), areas: areas.map((key) => ({ key, parent: regions.get(key).owner, region: regions.get(key), shard: { state: "ready", scene: { elements: [], files: {} } } })) };
+  const world = { locatedArea: areas.at(-1), areas: areas.map((key) => ({
+    key, parent: regions.get(key).owner, region: regions.get(key),
+    shard: { state: "ready", scene: { elements: key === "neara" ? [{ id: "parent-block", type: "rectangle", x: 80, y: 80, width: 180, height: 100 }] : [], files: {} } },
+  })) };
   const composed = composeAreaMapWorld(world);
   const live = composed.scene.elements.filter((element) => element.customData?.tangent?.role === "area-region");
   assert.deepEqual(live.map((element) => element.customData.tangent.area), areas);
   assert.ok(live.every((element) => element.locked === false && element.isDeleted === false));
   assert.equal(new Set(live.map((element) => element.id)).size, areas.length);
+  assert.ok(composed.scene.elements.findIndex((element) => element.customData?.tangentWorld?.sourceId === "parent-block") > composed.scene.elements.findLastIndex((element) => element.customData?.tangent?.role === "area-region"), "authored content stays above every transparent structural outline");
 });
 
 test("places a drawn outline at the computed left and top overflow", () => {

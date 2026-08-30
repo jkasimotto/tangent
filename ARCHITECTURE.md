@@ -61,6 +61,8 @@ Agent Shell centers each Area on one logical brain. The vault owns Area knowledg
 
 Each Area can store one Excalidraw source scene at `<area>/<leaf>.excalidraw`. The Area tree supplies one live region for every Area. Agent Shell composes all source shards into one browser world. Source coordinates and membership stay local to the owning shard. Runtime IDs include the owner and source ID (ADR-0051).
 
+A framework-neutral layout kernel resolves nested requirements, automatic spacing, intentional overlap, and world transforms. React and Excalidraw project its immutable result but do not own Area geometry (ADR-0052).
+
 Agent Shell embeds Excalidraw as one persistent browser island. The world controller owns loading, selection, history, view masks, drafts, and conflicts. A durable coordinator commits all shards from one gesture in one exact Git commit. Fact refresh and camera changes do not change map authority (ADR-0049, ADR-0051).
 Area skills live at `<area>/.agents/skills/<name>/SKILL.md`. Tangent creates `<area>/.claude/skills` as a relative link, so Codex and Claude discover the same inherited files. Legacy `skill-<slug>.md` Documents remain readable during migration. See ADR-0045.
 Agent Shell derives inherited sources by path. It owns bounded runtime projections, Journal delivery, Requests, Goal queues, presented-document attention, and Operation health.

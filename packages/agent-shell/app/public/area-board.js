@@ -19,6 +19,24 @@ function loadEditorStyle() {
 /** Loads the test editor or the production Excalidraw browser bundle. */
 const editorLoader = () => globalThis.__TANGENT_AREA_EDITOR_LOADER__?.() ?? loadEditorStyle().then(() => import("/agent-shell-map.js"));
 
+/** Includes every reciprocal sibling-overlap peer needed for one atomic source write. */
+function symmetricOverlapClosure(world, changedAreas) {
+  const nodes = new Map((world?.areas ?? []).map((node) => [node.key, node]));
+  const closed = new Set(changedAreas ?? []);
+  const pending = [...closed];
+  while (pending.length) {
+    const area = pending.shift();
+    const node = nodes.get(area);
+    if (!node) continue;
+    for (const sibling of node.region?.layout?.overlapWith ?? []) {
+      const peer = nodes.get(sibling);
+      if (!peer || peer.parent !== node.parent || !(peer.region?.layout?.overlapWith ?? []).includes(area) || closed.has(sibling)) continue;
+      closed.add(sibling); pending.push(sibling);
+    }
+  }
+  return closed;
+}
+
 /** Replaces the host with one safe, visible world-authority error. */
 function showWorldError(host, error, retry = null) {
   const section = document.createElement("section"); section.className = "area-board-empty"; section.setAttribute("role", "alert");
@@ -57,10 +75,10 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
       for (const element of nextElements.values()) putElement(mutation, element);
       for (const element of oldScene?.elements ?? []) if (!element.isDeleted && !core.isAreaBoundary(element) && !nextElements.has(element.id) && !structural.has(element.id)) mutation.remove.add(element.id);
     }
-    for (const area of changedAreas) {
+    for (const area of symmetricOverlapClosure(nextWorld, changedAreas)) {
       const node = nextWorld.areas.find((entry) => entry.key === area); if (!node) continue;
       const mutation = mutationFor(node.parent); const ref = `${node.region.child}/${node.region.child.split("/").at(-1)}.md`;
-      const [region, label] = core.createRegionElements({ id: node.region.sourceId, ref, title: node.region.child.split("/").at(-1), ...node.region.storedRect });
+      const [region, label] = core.createRegionElements({ id: node.region.sourceId, ref, title: node.region.child.split("/").at(-1), layout: node.region.layout, ...node.region.storedRect });
       if (node.region.labelSourceId && label.id !== node.region.labelSourceId) {
         region.boundElements = [{ id: node.region.labelSourceId, type: "text" }]; label.id = node.region.labelSourceId; label.containerId = node.region.sourceId;
       }
@@ -124,6 +142,8 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
   return {
     /** Returns the live composed scene after the editor mounts. */
     current: () => editor?.current?.() ?? null,
+    /** Returns the elements held by the mounted Excalidraw runtime. */
+    rendered: () => editor?.rendered?.() ?? null,
     /** Flushes both editor and controller save queues. */
     async flush() {
       await ready.catch(() => null);
@@ -252,6 +272,8 @@ function mount(host, options) {
   return {
     /** Returns no scene when world authority is missing. */
     current: () => null,
+    /** Returns no rendered scene when world authority is missing. */
+    rendered: () => null,
     /** Has no persistence work when world authority is missing. */
     flush: async () => null,
     /** Cannot fit an Area without world authority. */
@@ -273,5 +295,5 @@ function mount(host, options) {
   };
 }
 
-export { loadAreaMapAuthority, mount, mountLegacy, mountWorld };
-export default { loadAreaMapAuthority, mount, mountLegacy, mountWorld };
+export { loadAreaMapAuthority, mount, mountLegacy, mountWorld, symmetricOverlapClosure };
+export default { loadAreaMapAuthority, mount, mountLegacy, mountWorld, symmetricOverlapClosure };

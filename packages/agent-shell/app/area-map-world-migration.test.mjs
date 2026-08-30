@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseAreaCanvas, serializeAreaCanvas } from "./area-canvas.mjs";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
-import { composeAreaMapWorld } from "./public/area-map-world-core.js";
+import { composeAreaMapWorld, shardHulls } from "./public/area-map-world-core.js";
 import { createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createTextElement } from "./public/area-board-core.js";
 import { areaMapWorldEnabled, loadAreaMapAuthority } from "./public/area-map-rollout.js";
 
@@ -22,7 +22,7 @@ function migrationFixture() {
 
   addRegion(scenes.get("@root"), { id: "root-neara", ref: "neara/neara.md", title: "Neara", x: 60, y: 60, width: 1120, height: 820 });
   addRegion(scenes.get("@root"), { id: "root-otto", ref: "otto/otto.md", title: "Otto", x: 60, y: 60, width: 980, height: 720 });
-  addRegion(scenes.get("neara"), { id: "delivery-region", ref: "neara/delivery/delivery.md", title: "Delivery", x: 100, y: 100, width: 900, height: 620 });
+  addRegion(scenes.get("neara"), { id: "delivery-region", ref: "neara/delivery/delivery.md", title: "Delivery", x: 100, y: 100, width: 900, height: 620, layout: { schema: "area-placement.v1", priority: 7, overlapWith: [] } });
   addRegion(scenes.get("neara"), { id: "hackathon-region", ref: "neara/hackathon/hackathon.md", title: "Hackathon", x: 1120, y: 100, width: 560, height: 400 });
   addRegion(scenes.get("neara/delivery"), { id: "standards-region", ref: "neara/delivery/standards/standards.md", title: "Standards", x: 120, y: 120, width: 620, height: 420 });
 
@@ -80,7 +80,13 @@ function overlaps(left, right) {
   return left.x < right.x + right.width && left.x + left.width > right.x && left.y < right.y + right.height && left.y + left.height > right.y;
 }
 
-test("migrates 41 Areas in memory with deterministic stored, recovered, and provisional regions", async () => {
+/** Reports whether automatic placement keeps the standard structural gap. */
+function separated(left, right, gap = 60) {
+  return left.x + left.width + gap <= right.x || right.x + right.width + gap <= left.x
+    || left.y + left.height + gap <= right.y || right.y + right.height + gap <= left.y;
+}
+
+test("migrates 41 Areas without relocating stored overlap and places provisional regions deterministically", async () => {
   const fixture = migrationFixture();
   const before = JSON.stringify([...fixture.scenes].map(([area, scene]) => [area, scene]));
   const world = await fixture.index.snapshot("otto/tangent");
@@ -93,13 +99,23 @@ test("migrates 41 Areas in memory with deterministic stored, recovered, and prov
   const untouched = world.areas.find((node) => node.key === "otto/area-02");
   assert.equal(moved.region.sourceId, "moved-card");
   assert.equal(moved.region.source, "recovered");
+  assert.deepEqual(moved.region.storedRect, { x: 520, y: 640, width: 300, height: 220 }, "a recovered legacy card reaches the writable region minimum");
   assert.match(untouched.region.sourceId, /^tangent-region-/);
   assert.equal(untouched.region.source, "provisional");
 
   const neara = world.areas.find((node) => node.key === "neara").region;
   const otto = world.areas.find((node) => node.key === "otto").region;
-  assert.equal(otto.source, "recovered", "an overlapping stored region stays visible at a recovered placement");
-  assert.equal(overlaps(neara.storedRect, otto.storedRect), false);
+  assert.equal(otto.source, "stored", "an overlapping valid region remains stored geometry");
+  assert.deepEqual(neara.storedRect, { x: 60, y: 60, width: 1120, height: 820 });
+  assert.deepEqual(otto.storedRect, { x: 60, y: 60, width: 980, height: 720 });
+  assert.equal(overlaps(neara.storedRect, otto.storedRect), true, "read migration preserves the authored overlap");
+  assert.deepEqual(neara.layout, { schema: "area-placement.v1", priority: 0, overlapWith: ["otto"] });
+  assert.deepEqual(otto.layout, { schema: "area-placement.v1", priority: 0, overlapWith: ["neara"] }, "legacy overlap becomes one exact in-memory pair");
+  assert.deepEqual(world.areas.find((node) => node.key === "neara/delivery").region.layout, { schema: "area-placement.v1", priority: 7, overlapWith: [] }, "authored layout metadata reaches the region record");
+  const ottoChildren = world.areas.filter((node) => node.parent === "otto");
+  for (const node of ottoChildren.filter((candidate) => candidate.region.source === "provisional")) {
+    assert.ok(ottoChildren.filter((candidate) => candidate !== node).every((candidate) => separated(node.region.storedRect, candidate.region.storedRect)), `${node.key} gets deterministic 2D placement with 60px clearance`);
+  }
   const proof = world.areas.find((node) => node.key === "neara/hackathon/proof");
   assert.equal(proof.region.sourceId, "proof-region", "last committed valid geometry keeps children of an unreadable shard");
   assert.equal(world.areas.find((node) => node.key === "neara/hackathon").shard.state, "unreadable");
@@ -116,6 +132,27 @@ test("migrates 41 Areas in memory with deterministic stored, recovered, and prov
   assert.equal(fixture.gitCalls.filter((args) => args[2] === "show" && args.at(-1).startsWith("first-otto:")).length, 1, "the baseline summary is cached by source hash");
   assert.equal(fixture.gitCalls.filter((args) => args[2] === "show" && args.at(-1).startsWith("valid-hackathon:")).length, 1, "the unreadable fallback is cached by source hash");
   assert.ok(fixture.gitCalls.every((args) => ["log", "show"].includes(args[2])), "read migration runs no Git write command");
+});
+
+test("a deferred shard reserves the same hull as its loaded duplicate-region projection", async () => {
+  const fixture = migrationFixture();
+  const locatedArea = "neara/delivery/standards";
+  const deferredWorld = await fixture.index.snapshot(locatedArea);
+  const otto = deferredWorld.areas.find((node) => node.key === "otto");
+  assert.equal(otto.shard.state, "deferred");
+  const loaded = await fixture.index.shard("otto", deferredWorld.worldRevision, locatedArea);
+  assert.equal(loaded.status, 200);
+  const loser = loaded.scene.elements.find((element) => element.id === "tangent-older");
+  assert.equal(loser.customData.tangent.role, "shortcut", "the duplicate loser becomes visible authored content");
+  assert.deepEqual(otto.shard.ownBlockHull, shardHulls(loaded.scene).blocks, "the deferred descriptor measures the final projected scene");
+  assert.equal(otto.shard.blockCount, 1, "the projected duplicate loser counts as one authored block");
+
+  const readyWorld = structuredClone(deferredWorld);
+  readyWorld.areas.find((node) => node.key === "otto").shard = { ...otto.shard, ...loaded };
+  const deferred = composeAreaMapWorld(deferredWorld);
+  const ready = composeAreaMapWorld(readyWorld);
+  assert.deepEqual([...ready.regionRects], [...deferred.regionRects], "loading the duplicate projection cannot reflow regions inside one world revision");
+  assert.deepEqual([...ready.storedRegionRects], [...deferred.storedRegionRects], "loading preserves every authored source rectangle");
 });
 
 test("first structural and content gestures write only their exact source owners", async () => {

@@ -130,6 +130,60 @@ test("one exact Area move preserves unrelated staged and worktree edits", async 
   assert.equal(String((await runGit(["-C", value.root, "rev-list", "--count", `${before}..HEAD`])).stdout).trim(), "1");
 });
 
+test("a world reads one externally moved map name and canonicalizes it in the next authored transaction", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-map-external-move-"));
+  await runGit(["-C", root, "init", "--quiet"]);
+  await runGit(["-C", root, "config", "user.email", "test@tangent.local"]);
+  await runGit(["-C", root, "config", "user.name", "Tangent Test"]);
+  for (const area of ["otto", "otto/renamed"]) await writeNote(root, area);
+  const scene = createEmptyScene(); scene.elements.push(createTextElement({ id: "kept", text: "Kept", x: 20, y: 30 }));
+  const oldFile = path.join(root, "otto", "renamed", "former-name.excalidraw");
+  const canonicalFile = path.join(root, "otto", "renamed", "renamed.excalidraw");
+  await writeFile(oldFile, serializeAreaCanvas(scene));
+  await runGit(["-C", root, "add", "."]);
+  await runGit(["-C", root, "commit", "--quiet", "-m", "external Area move"]);
+  const before = String((await runGit(["-C", root, "rev-parse", "HEAD"])).stdout).trim();
+  const repository = createAreaCanvasRepository({
+    root, runGit, transactionRoot: path.join(root, ".legacy-state"),
+    /** This fixture commits only through the exact world transaction authority. */
+    async commit() { throw new Error("unexpected legacy commit"); },
+  });
+  const transactions = createAreaMapTransactionRepository({
+    root, repository, vault: createVaultRepository({ root, runGit }), runGit,
+    transactionRoot: path.join(root, ".test-state", "transactions"), reportError: ignoreError,
+  });
+  const index = createAreaMapWorldIndex({
+    root, repository: transactions, runGit,
+    /** Lists the complete fixture Area hierarchy. */
+    async listAreas() { return ["otto", "otto/renamed"]; },
+  });
+
+  const opened = await index.snapshot("otto/renamed");
+  const renamed = opened.areas.find((entry) => entry.key === "otto/renamed");
+
+  assert.equal(renamed.shard.hash, null);
+  assert.equal(renamed.shard.scene.elements.some((element) => element.id === "kept"), true);
+  assert.equal(String((await runGit(["-C", root, "rev-parse", "HEAD"])).stdout).trim(), before);
+  assert.deepEqual(JSON.parse(await readFile(oldFile, "utf8")), scene);
+  await assert.rejects(readFile(canonicalFile, "utf8"), { code: "ENOENT" });
+
+  const changed = structuredClone(renamed.shard.scene.elements.find((element) => element.id === "kept"));
+  changed.x = 80;
+  const saved = await index.applyGesture({
+    schema: "area-map-gesture.v1", operationId: "author-after-external-move", worldId: opened.worldId,
+    treeRevision: opened.treeRevision, reason: "move kept note",
+    mutations: [{ owner: "otto/renamed", baseHash: null, put: [changed], remove: [] }],
+  }, (writes, options) => transactions.saveMany(writes, options));
+
+  assert.equal(saved.status, 200);
+  assert.equal(saved.committed, true);
+  assert.equal(String((await runGit(["-C", root, "rev-list", "--count", `${before}..HEAD`])).stdout).trim(), "1");
+  assert.equal((await readScene(root, "otto/renamed")).elements.find((element) => element.id === "kept").x, 80);
+  await assert.rejects(readFile(oldFile, "utf8"), { code: "ENOENT" });
+  await runGit(["-C", root, "cat-file", "-e", "HEAD:otto/renamed/renamed.excalidraw"]);
+  await assert.rejects(runGit(["-C", root, "cat-file", "-e", "HEAD:otto/renamed/former-name.excalidraw"]));
+});
+
 for (const phase of ["prepared", "ref-installed", "index-installed", "target-installed:0", "directory-cleaned:0", "verified", "result-recorded"]) {
   test(`Area move recovery completes the ${phase} crash without partial owners`, async () => {
     let crashed = false;

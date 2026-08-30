@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createAreaCanvasRepository } from "./area-canvas-repository.mjs";
-import { canvasHash } from "./area-canvas.mjs";
+import { canvasHash, serializeAreaCanvas } from "./area-canvas.mjs";
 import { createEmptyScene, createTextElement } from "./public/area-board-core.js";
 
 test("creates, stages, commits, and conflict-checks one canonical Excalidraw path", async () => {
@@ -51,6 +51,43 @@ test("legacy reads write nothing and the first authored save converts atomically
   assert.deepEqual(git[0].slice(-4), ["add", "--", "tangent/tangent.excalidraw", "tangent/tangent.canvas"]);
   assert.deepEqual(commits[0][0], ["tangent/tangent.excalidraw", "tangent/tangent.canvas"]);
   await assert.rejects(readFile(path.join(root, "tangent", "tangent.canvas"), "utf8"), { code: "ENOENT" });
+});
+
+test("an external Area move reads its one old Excalidraw name and migrates on the next authored save", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-canvas-area-move-"));
+  const directory = path.join(root, "otto", "renamed");
+  await mkdir(directory, { recursive: true });
+  const scene = createEmptyScene(); scene.elements.push(createTextElement({ id: "kept", text: "Kept", x: 14, y: 28 }));
+  const oldFile = path.join(directory, "former-name.excalidraw");
+  const canonicalFile = path.join(directory, "renamed.excalidraw");
+  await writeFile(oldFile, serializeAreaCanvas(scene));
+  const git = []; const commits = [];
+  const repository = createAreaCanvasRepository({
+    root,
+    /** Records exact migration staging without invoking Git. */
+    async runGit(args) { git.push(args); },
+    /** Records the scoped migration commit without writing a test repository. */
+    async commit(...args) { commits.push(args); return { committed: true }; },
+  });
+
+  const opened = await repository.read("otto/renamed");
+
+  assert.equal(opened.migrated, true);
+  assert.equal(opened.file, "otto/renamed/renamed.excalidraw");
+  assert.equal(opened.hash, null, "the absent canonical file keeps its null optimistic hash");
+  assert.equal(opened.legacy.file, "otto/renamed/former-name.excalidraw");
+  assert.deepEqual(opened.scene, scene);
+  assert.deepEqual(git, []); assert.deepEqual(commits, []);
+  assert.deepEqual(JSON.parse(await readFile(oldFile, "utf8")), scene);
+  await assert.rejects(readFile(canonicalFile, "utf8"), { code: "ENOENT" });
+
+  const saved = await repository.save("otto/renamed", opened.scene, { baseHash: opened.hash });
+
+  assert.equal(saved.committed, true);
+  assert.deepEqual(git[0].slice(-4), ["add", "--", "otto/renamed/renamed.excalidraw", "otto/renamed/former-name.excalidraw"]);
+  assert.deepEqual(commits[0][0], ["otto/renamed/renamed.excalidraw", "otto/renamed/former-name.excalidraw"]);
+  assert.deepEqual(JSON.parse(await readFile(canonicalFile, "utf8")), scene);
+  await assert.rejects(readFile(oldFile, "utf8"), { code: "ENOENT" });
 });
 
 test("rolls a file back when its vault commit fails so Retry has a trustworthy hash", async () => {

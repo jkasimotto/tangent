@@ -77,6 +77,33 @@ export function createAreaCanvasRepository({ root, runGit, commit, transactionRo
     }
   }
 
+  /** Reads one Excalidraw file left behind by an external Area move. */
+  async function readMovedScene(area) {
+    if (area === "@root") return null;
+    const file = areaCanvasPath(area);
+    const safe = file && safeCanvasPath(root, file);
+    if (!safe) throw new Error(`unsafe Area path: ${area}`);
+    let entries;
+    try { entries = await readdir(path.dirname(safe.absolute), { withFileTypes: true }); }
+    catch (error) { if (error.code === "ENOENT") return null; throw error; }
+    const candidates = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".excalidraw") && entry.name !== path.basename(safe.absolute))
+      .map((entry) => path.posix.join(path.posix.dirname(file), entry.name))
+      .filter((candidate) => safeCanvasPath(root, candidate))
+      .sort();
+    if (candidates.length !== 1) return null;
+    const sourceFile = candidates[0];
+    const source = safeCanvasPath(root, sourceFile);
+    const text = await readFile(source.absolute, "utf8");
+    const sourceHash = canvasHash(text);
+    const parsed = parsedScenes.get(sourceHash) ?? cacheParsed(sourceHash, parseCanvas(text));
+    if (!parsed.ok) return { area, file: sourceFile, exists: true, hash: sourceHash, text, ...parsed };
+    return {
+      area, file, exists: true, canonicalExists: false, hash: null, text, ...parsed, migrated: true,
+      legacy: { file: sourceFile, absolute: source.absolute, text },
+    };
+  }
+
   /** Reads the former .canvas for an in-memory preview without writing on open. */
   async function readLegacy(area) {
     const legacyFile = legacyAreaCanvasPath(area);
@@ -95,6 +122,8 @@ export function createAreaCanvasRepository({ root, runGit, commit, transactionRo
   async function read(area) {
     const current = await readScene(area);
     if (current) return current;
+    const moved = await readMovedScene(area);
+    if (moved) return moved;
     const converted = await readLegacy(area);
     if (converted) return converted;
     const file = areaCanvasPath(area);

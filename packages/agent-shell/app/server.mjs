@@ -3977,7 +3977,7 @@ async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
       launch: true,
       command: accepted.command,
       label: accepted.label,
-      ref: launchRef(options.launch),
+      ref: launchRef(accepted),
       path: assignment.path,
       extraSlugs,
       pipeline: { record, index: assignment.index, sessionName },
@@ -4001,7 +4001,11 @@ async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
     transitionAttemptReplacement(operation, "replacement-starting", {
       replacementAttemptId,
       replacementTarget,
-      resolvedLaunch: { ref: operation.launch, command: chosen.command, label: chosen.label },
+      resolvedLaunch: {
+        ref: { harness: accepted.harness, model: accepted.model, effort: accepted.effort },
+        command: accepted.command,
+        label: accepted.label,
+      },
     });
     await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
     releasePersisted();

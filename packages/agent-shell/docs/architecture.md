@@ -27,7 +27,7 @@ The browser refreshes through one compact `GET /api/work` read model. The model 
 
 `app/server.mjs` is the workflow-controller composition root. HTTP route modules parse transport input and map operation results. Stateful mechanisms live behind capability factories:
 
-- `launch-catalog.mjs`: harness registry, inherited Area launch policy, filtered choices, and policy writes;
+- `launch-catalog.mjs`: harness registry, inherited Area launch policy, filtered choices, policy writes, and scoped legacy-harness aliases. An alias canonicalizes a stored launch reference before policy validation; it does not expose the source harness as a new choice;
 - `launch-memory.mjs`: last successful Brain and Work launch per Area;
 - `brain-launch.mjs`: per-attempt Brain default or registry-choice resolution, stale-choice checks, and immutable launch snapshots;
 - `message-delivery.mjs`: cross-agent queue order, delivery, audit, retargeting, and brain-notice settlement;

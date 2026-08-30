@@ -1,5 +1,6 @@
 import core from "./area-board-core.js";
 import { createAreaMapWorldController } from "./area-map-world-controller.js";
+import { loadAreaMapAuthority } from "./area-map-rollout.js";
 
 /** Loads the editor's generated stylesheet only when the map opens. */
 function loadEditorStyle() {
@@ -140,9 +141,92 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
   };
 }
 
-/** Requires one complete world; no scope or locked-projection fallback exists. */
+/** Mounts one direct format-2 shard for the rollback window. */
+function mountLegacy(host, { area, payload, api, onBack = null }) {
+  host.replaceChildren();
+  const loader = document.createElement("div"); loader.className = "area-board-loading"; loader.innerHTML = "<p>Loading drawing tools…</p>"; host.append(loader);
+  let editor = null; let pending = null; let failed = null; let timer = null; let runner = null; let destroyed = false;
+  let baseHash = payload.hash ?? null;
+  const initial = structuredClone(payload.scene ?? payload.canvas ?? core.createEmptyScene());
+
+  /** Saves the latest direct shard without allowing a world mutation route. */
+  async function drain() {
+    if (runner) return runner;
+    runner = (async () => {
+      while (pending && !failed) {
+        const scene = pending; pending = null;
+        editor?.setSaveState?.({ state: "saving" });
+        try {
+          const result = await api("/api/areas/canvas", { method: "POST", body: JSON.stringify({ area, baseHash, canvas: scene, operationId: crypto.randomUUID() }) });
+          if (result?.error || Number(result?.status ?? 200) >= 400) throw Object.assign(new Error(result.error || "The legacy Area canvas did not save"), { result });
+          baseHash = result.hash ?? result.hashes?.[area] ?? baseHash;
+          editor?.setSaveState?.({ state: pending ? "dirty" : "saved" });
+        } catch (error) {
+          failed = { scene, error };
+          editor?.setSaveState?.({ state: Number(error?.status ?? error?.result?.status) === 409 ? "conflict" : "blocked", result: error?.result });
+        }
+      }
+    })().finally(() => { runner = null; });
+    return runner;
+  }
+
+  /** Coalesces live Excalidraw changes into an ordered direct-shard save. */
+  function queue(scene) {
+    if (destroyed) return;
+    pending = scene;
+    if (failed) { editor?.setSaveState?.({ state: "blocked", result: failed.error?.result }); return; }
+    editor?.setSaveState?.({ state: "dirty" });
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; void drain(); }, 250);
+  }
+
+  /** Retries the failed source scene while retaining any later local change. */
+  function retry() {
+    if (failed && !pending) pending = failed.scene;
+    failed = null;
+    return drain();
+  }
+
+  /** Flushes the pending format-2 scene through the transaction-backed canvas route. */
+  async function flushPending() {
+    if (timer !== null) { clearTimeout(timer); timer = null; }
+    await drain();
+  }
+
+  const ready = editorLoader().then((module) => {
+    loader.remove();
+    editor = module.mountAreaBoardEditor(host, {
+      legacy: true, area, scene: initial, onBack,
+      onSceneChange: queue, onSaveNow: flushPending, onRetry: retry,
+      initialSaveState: { state: "saved" },
+    });
+    return editor;
+  }).catch((error) => {
+    loader.remove(); showWorldError(host, error, () => mountLegacy(host, { area, payload, api, onBack })); throw error;
+  });
+
+  return {
+    /** Returns the direct source scene after the editor mounts. */
+    current: () => editor?.current?.() ?? initial,
+    /** Flushes only the direct format-2 source queue. */
+    async flush() { await ready.catch(() => null); await flushPending(); },
+    /** A rollback shard has no composed Area camera target. */
+    fitArea: () => null,
+    /** Leaves the rollback editor through its map-local boundary. */
+    escape() { return editor?.escape?.() ?? onBack?.(); },
+    /** Fact polling never replaces direct source authority. */
+    refreshFacts: () => false,
+    /** Focus is a complete-world render mask and does not mutate rollback authority. */
+    setFocus: () => false,
+    /** Releases the direct editor after its last local save starts. */
+    destroy() { void flushPending(); destroyed = true; editor?.destroy?.(); },
+  };
+}
+
+/** Mounts the rollout-selected authority without crossing between save routes. */
 function mount(host, options) {
   if (options.world?.schema === "area-map-world.v1") return mountWorld(host, options);
+  if (options.legacy === true && options.payload) return mountLegacy(host, options);
   showWorldError(host, "This view did not receive one authoritative world.");
   return {
     /** Returns no scene when world authority is missing. */
@@ -162,5 +246,5 @@ function mount(host, options) {
   };
 }
 
-export { mount, mountWorld };
-export default { mount, mountWorld };
+export { loadAreaMapAuthority, mount, mountLegacy, mountWorld };
+export default { loadAreaMapAuthority, mount, mountLegacy, mountWorld };

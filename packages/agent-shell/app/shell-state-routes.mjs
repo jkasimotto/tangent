@@ -26,7 +26,7 @@ export function createShellStateRoutes(operations) {
     }
     if (request.method === "GET" && url.pathname === "/config.js") {
       response.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-cache" });
-      response.end(`window.CHAT_SESSION = ${JSON.stringify(operations.chatSession)};\n`);
+      response.end(`window.CHAT_SESSION = ${JSON.stringify(operations.chatSession)};\nwindow.TANGENT_FEATURES = ${JSON.stringify(operations.features ?? { areaMapWorld: true })};\n`);
       return true;
     }
     return false;

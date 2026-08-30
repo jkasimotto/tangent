@@ -15,6 +15,7 @@ function response() {
 test("shell-state routes serve snapshots and the shared chat session", async () => {
   const routes = createShellStateRoutes({
     chatSession: "chat",
+    features: { areaMapWorld: false },
     /** Returns one snapshot. */
     async snapshot() { return { sessions: [] }; },
   });
@@ -24,6 +25,7 @@ test("shell-state routes serve snapshots and the shared chat session", async () 
   const config = response();
   await routes.handle({ method: "GET" }, config, new URL("http://shell/config.js"));
   assert.match(config.body, /window\.CHAT_SESSION = "chat"/);
+  assert.match(config.body, /window\.TANGENT_FEATURES = \{"areaMapWorld":false\}/);
   assert.equal(config.headers["content-type"], "text/javascript");
 });
 

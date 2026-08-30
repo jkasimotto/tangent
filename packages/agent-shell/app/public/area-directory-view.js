@@ -178,20 +178,19 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     return true;
   }
 
-  /** Mounts one complete Area world into the current Area screen. */
+  /** Mounts the rollout-selected Area map into the current Area screen. */
   function mountAreaMap(host) {
     const area = host.dataset.areaMap;
     if (!area || !state.vault) return;
     if (inlineAreaBoard && inlineAreaHost === host) return refreshAreaMap();
     disposeAreaMap(); inlineAreaHost = host;
     host.dataset.boardChecked = "loading";
-    host.innerHTML = `<div class="area-board-loading"><p>Loading the complete Area map…</p></div>`;
-    api(`/api/areas/map-world?located=${encodeURIComponent(area)}`).then((world) => {
+    host.innerHTML = `<div class="area-board-loading"><p>Loading the Area map…</p></div>`;
+    areaBoardView.loadAreaMapAuthority(api, area).then((authority) => {
       if (!host.isConnected || inlineAreaHost !== host) return;
-      if (world?.schema !== "area-map-world.v1") throw new Error(world?.error || "The server did not return an Area-map world");
-      host.dataset.boardChecked = "world";
+      host.dataset.boardChecked = authority.mode;
       inlineAreaBoard = areaBoardView.mount(host, {
-        area, world, requireWorld: true, documents: state.vault.documents ?? [],
+        area, ...authority, documents: state.vault.documents ?? [],
         /** Returns current vault facts without remounting the map. */
         getDocuments: () => state.vault?.documents ?? [], api,
         focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly },
@@ -206,7 +205,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     }).catch((error) => {
       if (inlineAreaHost !== host) return;
       host.dataset.boardChecked = "error";
-      host.innerHTML = `<section class="area-board-empty" role="alert"><h2>The complete Area map did not load.</h2><p>${escapeHtml(String(error?.message ?? error))}</p><button type="button">Retry</button></section>`;
+      host.innerHTML = `<section class="area-board-empty" role="alert"><h2>The Area map did not load.</h2><p>${escapeHtml(String(error?.message ?? error))}</p><button type="button">Retry</button></section>`;
       host.querySelector("button")?.addEventListener("click", () => { inlineAreaBoard = null; mountAreaMap(host); });
     });
   }

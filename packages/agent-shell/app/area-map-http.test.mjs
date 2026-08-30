@@ -82,7 +82,7 @@ test("the vault index carries kinds, git times, degrees, and Area children and s
       AGENT_SHELL_NO_OPEN: "1", AGENT_SHELL_TEST_NO_LAUNCH: "1",
       TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"), TANGENT_BRAINS_ROOT: path.join(root, "brains"),
       TANGENT_MAP_STATE_ROOT: path.join(root, "map-state"), AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
-      GROQ_API_KEY: "", CHAT_SESSION: `area-map-test-${process.pid}`,
+      TANGENT_AREA_MAP_WORLD: "0", GROQ_API_KEY: "", CHAT_SESSION: `area-map-test-${process.pid}`,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -93,6 +93,13 @@ test("the vault index carries kinds, git times, degrees, and Area children and s
   });
   const base = `http://127.0.0.1:${port}`;
   await waitForServer(base);
+
+  const config = await fetch(`${base}/config.js`).then((response) => response.text());
+  assert.match(config, /window\.TANGENT_FEATURES = \{"areaMapWorld":false\}/, "the browser receives the disabled rollout flag");
+  assert.equal((await fetch(`${base}/api/areas/map-world?located=neara%2Fhackathon`)).status, 404, "the disabled world read route is not an alternate authority");
+  assert.equal((await fetch(`${base}/api/areas/map-gestures`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 404, "the disabled world write route is not an alternate authority");
+  const legacyCanvas = await fetch(`${base}/api/areas/canvas?area=neara%2Fhackathon`).then((response) => response.json());
+  assert.equal(legacyCanvas.scene.type, "excalidraw", "the transaction-backed format-2 reader remains available");
 
   const vault = await fetch(`${base}/api/vault`).then((response) => response.json());
   const byFile = new Map(vault.documents.map((record) => [record.file, record]));

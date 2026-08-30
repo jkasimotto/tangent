@@ -1583,18 +1583,16 @@ function closeAreaMap() {
   if (activeAreaBoard) return activeAreaBoard.escape?.();
   return leaveAreaMap();
 }
-/** Mounts the complete authoritative world on the dedicated map screen. */
+/** Mounts the rollout-selected map authority on the dedicated map screen. */
 function mountDedicatedAreaMap() {
   const host = screen.querySelector("[data-dedicated-area-map]");
   if (!host || !state.mapArea || host.dataset.loaded) return;
   host.dataset.loaded = "loading";
-  api(`/api/areas/map-world?located=${encodeURIComponent(state.mapArea)}`).then((world) => {
-    if (world?.schema !== "area-map-world.v1") throw new Error(world?.error || "The server did not return an Area-map world");
-    host.dataset.loaded = "yes";
+  areaBoardView.loadAreaMapAuthority(api, state.mapArea).then((authority) => {
+    host.dataset.loaded = authority.mode;
     activeAreaBoard = areaBoardView.mount(host, {
       area: state.mapArea,
-      world,
-      requireWorld: true,
+      ...authority,
       documents: areaMapEntities(),
       getDocuments: areaMapEntities,
       api,
@@ -1605,7 +1603,7 @@ function mountDedicatedAreaMap() {
       locatedArea: mapLocatedArea,
       focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly },
     });
-  }).catch((error) => { host.dataset.loaded = "error"; host.innerHTML = `<section class="area-board-empty" role="alert"><h2>The complete Area map did not load.</h2><p>${escapeHtml(String(error?.message ?? error))}</p><button type="button" data-map-retry>Retry</button></section>`; });
+  }).catch((error) => { host.dataset.loaded = "error"; host.innerHTML = `<section class="area-board-empty" role="alert"><h2>The Area map did not load.</h2><p>${escapeHtml(String(error?.message ?? error))}</p><button type="button" data-map-retry>Retry</button></section>`; });
 }
 shellBindings = bindShellEvents({
   shell: { state, post, paint, refresh, showToast },

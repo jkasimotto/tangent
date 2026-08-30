@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAreaCanvas } from "./area-canvas.mjs";
+import { parseAreaCanvas, serializeAreaCanvas } from "./area-canvas.mjs";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { composeAreaMapWorld } from "./public/area-map-world-core.js";
 import { createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createTextElement } from "./public/area-board-core.js";
+import { areaMapWorldEnabled, loadAreaMapAuthority } from "./public/area-map-rollout.js";
 
 /** Adds one stored direct-child region to a source scene. */
 function addRegion(scene, options) {
@@ -146,4 +147,33 @@ test("first structural and content gestures write only their exact source owners
   assert.deepEqual({ id: document.id, x: document.x, y: document.y }, { id: "standards-document", x: 140, y: 160 });
   assert.equal(parseAreaCanvas(JSON.stringify(savedStandards)).ok, true, "the rollback-window format remains readable by the old parser");
   assert.equal(fixture.scenes.get("neara/delivery/standards").elements.some((element) => String(element.id).startsWith("tangent-boundary-")), true, "the index itself performs no source write");
+});
+
+test("disabling areaMapWorld lets the old format-2 reader parse every changed shard", async () => {
+  assert.equal(areaMapWorldEnabled(), true, "the composed world rollout defaults on");
+  assert.equal(areaMapWorldEnabled("0"), false);
+  const fixture = migrationFixture();
+  const world = await fixture.index.snapshot("neara/delivery/standards");
+  const delivery = structuredClone(fixture.scenes.get("neara/delivery"));
+  delivery.elements.find((element) => element.id === "standards-region").width = 740;
+  const standards = structuredClone(fixture.scenes.get("neara/delivery/standards"));
+  standards.elements.push(createTextElement({ id: "rollback-note", text: "Rollback reader", x: 420, y: 180, width: 180, height: 50 }));
+  const changed = new Map([["neara/delivery", delivery], ["neara/delivery/standards", standards]]);
+  const requests = [];
+
+  for (const [owner, canvas] of changed) {
+    const authority = await loadAreaMapAuthority(async (resource) => {
+      requests.push(resource);
+      const requested = new URL(resource, "http://tangent.local").searchParams.get("area");
+      assert.equal(requested, owner);
+      const parsed = parseAreaCanvas(serializeAreaCanvas(canvas));
+      assert.equal(parsed.ok, true, `${owner} remains readable as format 2`);
+      return { area: owner, exists: true, ok: parsed.ok, hash: world.areas.find((node) => node.key === owner).shard.hash, scene: parsed.scene, canvas: parsed.canvas };
+    }, owner, false);
+    assert.equal(authority.mode, "legacy");
+    assert.equal(authority.legacy, true);
+    assert.deepEqual(authority.payload.scene.elements.map((element) => element.id), canvas.elements.map((element) => element.id));
+  }
+
+  assert.ok(requests.every((resource) => resource.startsWith("/api/areas/canvas?")), "rollback never requests world authority");
 });

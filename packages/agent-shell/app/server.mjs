@@ -112,6 +112,7 @@ import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createAreaMapWorldRoutes } from "./area-map-world-routes.mjs";
 import { createAreaMapTransactionRepository } from "./area-map-transaction-repository.mjs";
 import { createAreaMapWorldViewStore } from "./area-map-world-view-store.mjs";
+import { areaMapWorldEnabled } from "./public/area-map-rollout.js";
 import { workerWallNotice } from "./worker-wall-notice.mjs";
 import { projectWork } from "./work-projection.mjs";
 
@@ -174,6 +175,7 @@ function traceOperation(name, fields = {}) {
 }
 
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
+const AREA_MAP_WORLD_ENABLED = areaMapWorldEnabled(process.env.TANGENT_AREA_MAP_WORLD);
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
 const INSTANCE_ID = agentShellInstanceId({
@@ -7067,6 +7069,7 @@ shellControlOperations.stopGoal = createGoalStopOperation({
 const shellControlRoutes = createShellControlRoutes(shellControlOperations);
 const shellStateRoutes = createShellStateRoutes({
   chatSession: CHAT_SESSION,
+  features: { areaMapWorld: AREA_MAP_WORLD_ENABLED },
   /** Returns one coherent live shell snapshot. */
   async snapshot() {
     const sessions = await listSessions();
@@ -7929,7 +7932,7 @@ const server = http.createServer(async (req, res) => {
     if (await agentRoutes.handle(req, res, url)) return;
     if (await areaRoutes.handle(req, res, url)) return;
     if (await areaCanvasRoutes.handle(req, res, url)) return;
-    if (await areaMapWorldRoutes.handle(req, res, url)) return;
+    if (AREA_MAP_WORLD_ENABLED && await areaMapWorldRoutes.handle(req, res, url)) return;
     if (await areaMapContextRoutes.handle(req, res, url)) return;
     if (await areaMapRoutes.handle(req, res, url)) return;
     if (await programRoutes.handle(req, res, url)) return;

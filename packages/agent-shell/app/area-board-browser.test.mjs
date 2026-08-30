@@ -32,6 +32,19 @@ let fail = true;
 mountAreaBoardEditor(document.querySelector("#map"), { area: "otto", scene, view: null, proposals: [], getDocuments: () => { if (fail) throw new Error("fixture render failed"); return []; }, onEditorError: () => { fail = false; }, onSceneChange: () => {}, onFactScene: () => {} });
 </script></body></html>`;
 
+const regionFixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/agent-shell-map.css"><style>html,body,#map{width:100%;height:100%;margin:0}</style></head><body><div id="map"></div><script type="module">
+import { mountAreaBoardEditor } from "/agent-shell-map.js";
+import core from "/area-board-core.js";
+const fresh = core.withBoundary(core.createEmptyScene(), "otto");
+fresh.elements.push(...core.createRegionElements({ id: "child-region", ref: "otto/child/child.md", title: "child", status: "active", x: 180, y: 160, width: 420, height: 300 }));
+fresh.elements.push(core.createShapeElement({ id: "parent-ink", type: "rectangle", x: 330, y: 330, width: 70, height: 50 }));
+const child = core.withBoundary(core.createEmptyScene(), "otto/child");
+child.elements.push(core.createTextElement({ id: "child-ink", text: "projected child", x: 80, y: 100 }));
+const scene = JSON.parse(sessionStorage.getItem("region-scene") || "null") || fresh;
+const documents = [{ file: "otto/child/child.md", kind: "area", area: "otto/child", title: "child", status: "active" }];
+window.editor = mountAreaBoardEditor(document.querySelector("#map"), { area: "otto", scene, childScenes: new Map([["otto/child", child]]), view: null, proposals: [], getDocuments: () => documents, onSceneChange: (next) => { window.lastScene = next; sessionStorage.setItem("region-scene", JSON.stringify(next)); }, onFactScene: () => {}, onEntityVerb: () => {}, onBack: () => {}, onSaveNow: () => {} });
+</script></body></html>`;
+
 test("an editor render failure explains the problem and retry mounts the canvas", { skip: !enabled, timeout: 90_000 }, async () => {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -159,6 +172,92 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
 
     const authored = await page.evaluate(() => window.editor.current());
     assert.deepEqual(validateAreaCanvas(authored).errors, [], "the server accepts the real editor scene");
+  } finally {
+    await browser?.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("pointer move and resize keep Area geometry coherent without transforming contained ink", { skip: !enabled, timeout: 90_000 }, async () => {
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    if (url.pathname === "/region-fixture") { response.writeHead(200, { "content-type": "text/html" }); response.end(regionFixture); return; }
+    if (url.pathname === "/area-board-core.js") { response.writeHead(200, { "content-type": "text/javascript" }); response.end(await import("node:fs/promises").then(({ readFile }) => readFile(path.join(here, "public", "area-board-core.js")))); return; }
+    await serveStaticAsset(url, response, here);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  let browser = null;
+  try {
+    browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath(), headless: true });
+    const page = await browser.newPage({ viewport: { width: 1200, height: 820 } });
+    await page.goto(`http://127.0.0.1:${server.address().port}/region-fixture`);
+    const canvas = page.locator(".excalidraw canvas.interactive");
+    await canvas.waitFor();
+    const box = await canvas.boundingBox();
+    assert.ok(box);
+    /** Reads the authored geometry that the mounted editor currently exposes. */
+    const geometry = async () => page.evaluate(() => {
+      const elements = window.editor.current().elements;
+      /** Selects the geometry fields that define one test element. */
+      const pick = (id) => { const { x, y, width, height } = elements.find((element) => element.id === id); return { x, y, width, height }; };
+      return { region: pick("child-region"), label: pick("child-region-tangent-label"), ink: pick("parent-ink"), boundary: pick("tangent-boundary-501755363") };
+    });
+    /** Converts one Excalidraw scene point to this browser viewport. */
+    const scenePoint = async (x, y) => {
+      const state = await page.evaluate(() => window.editor.appState());
+      return { x: box.x + (x + state.scrollX) * state.zoom.value, y: box.y + (y + state.scrollY) * state.zoom.value };
+    };
+    /** Performs an actual pointer drag between two scene points. */
+    const drag = async (from, to) => {
+      const start = await scenePoint(from.x, from.y); const end = await scenePoint(to.x, to.y);
+      await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(end.x, end.y, { steps: 12 }); await page.mouse.up(); await page.waitForTimeout(150);
+    };
+    const before = await geometry();
+    const labelOffset = { x: before.label.x - before.region.x, y: before.label.y - before.region.y };
+    /** Asserts that Excalidraw's bound-text padding keeps a label inside its region corner. */
+    const assertAttached = (state, message) => {
+      const offset = { x: state.label.x - state.region.x, y: state.label.y - state.region.y };
+      assert.ok(offset.x >= 0 && offset.x <= 20 && offset.y >= 0 && offset.y <= 20, `${message}: ${JSON.stringify(offset)}`);
+    };
+    await drag({ x: before.region.x + before.region.width - 25, y: before.region.y + 4 }, { x: before.region.x + before.region.width + 95, y: before.region.y + 64 });
+    const moved = await geometry();
+    assert.ok(moved.region.x > before.region.x + 100, "the actual pointer drag moves the Area region");
+    assert.deepEqual({ x: moved.label.x - moved.region.x, y: moved.label.y - moved.region.y }, labelOffset, "the bound label keeps its offset during the move");
+    assert.deepEqual(moved.ink, before.ink, "parent-file ink inside the region does not move with it");
+
+    await page.keyboard.press("Meta+z"); await page.waitForTimeout(150);
+    const undone = await geometry();
+    assert.deepEqual({ x: undone.region.x, y: undone.region.y }, { x: before.region.x, y: before.region.y }, "undo restores the complete region move");
+    assertAttached(undone, "the label remains attached after undo");
+    await page.keyboard.press("Meta+Shift+z"); await page.waitForTimeout(150);
+    const redone = await geometry();
+    assert.deepEqual({ x: redone.region.x, y: redone.region.y }, { x: moved.region.x, y: moved.region.y }, "redo restores the complete region move");
+    assertAttached(redone, "the label remains attached after redo");
+
+    await drag({ x: redone.region.x + redone.region.width, y: redone.region.y + redone.region.height }, { x: redone.region.x + redone.region.width + 90, y: redone.region.y + redone.region.height + 70 });
+    const resized = await geometry();
+    assert.ok(resized.region.width > moved.region.width + 70 && resized.region.height > moved.region.height + 50, "the resize handle changes the boundary extent");
+    assert.deepEqual({ x: resized.region.x, y: resized.region.y }, { x: moved.region.x, y: moved.region.y }, "resizing keeps the fixed corner in place");
+    assert.deepEqual(resized.ink, before.ink, "resizing does not scale or move parent-file ink");
+
+    const scopeLabel = await page.getByRole("button", { name: "otto, your scope" }).boundingBox();
+    assert.ok(scopeLabel);
+    const boundaryTop = await scenePoint(resized.boundary.x + resized.boundary.width / 2, resized.boundary.y);
+    const scopeOffset = { x: scopeLabel.x - boundaryTop.x, y: scopeLabel.y - boundaryTop.y };
+    await drag({ x: resized.boundary.x + resized.boundary.width / 2, y: resized.boundary.y }, { x: resized.boundary.x + resized.boundary.width / 2 + 140, y: resized.boundary.y });
+    const refused = await geometry();
+    const labelAfterRefusal = await page.getByRole("button", { name: "otto, your scope" }).boundingBox();
+    const boundaryTopAfter = await scenePoint(refused.boundary.x + refused.boundary.width / 2, refused.boundary.y);
+    assert.deepEqual(refused.boundary, resized.boundary, "a boundary-only move snaps back in the editor");
+    assert.deepEqual({ x: labelAfterRefusal.x - boundaryTopAfter.x, y: labelAfterRefusal.y - boundaryTopAfter.y }, scopeOffset, "the generated scope label cannot detach from a refused boundary move");
+
+    await page.reload();
+    await page.locator(".excalidraw canvas.interactive").waitFor();
+    await page.waitForFunction((expected) => { const region = window.editor.current().elements.find((element) => element.id === "child-region"); return Math.abs(region.x - expected.x) < 0.1 && Math.abs(region.width - expected.width) < 0.1; }, resized.region);
+    const reloaded = await geometry();
+    assert.deepEqual(reloaded.region, resized.region, "move and resize survive reload");
+    assertAttached(reloaded, "the label remains attached after reload");
+    assert.deepEqual(reloaded.ink, before.ink, "contained parent ink remains unchanged after reload");
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

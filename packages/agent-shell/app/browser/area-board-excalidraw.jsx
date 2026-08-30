@@ -34,7 +34,7 @@ class AreaMapErrorBoundary extends React.Component {
 /** Returns the selected Tangent block, when selection contains one. */
 function selectedBlock(api, scene) {
   const selected = api?.getAppState?.().selectedElementIds ?? {};
-  return scene.elements.find((element) => selected[element.id] && !element.isDeleted && core.tangentOf(element)) ?? null;
+  return scene.elements.find((element) => selected[element.id] && !element.isDeleted && core.tangentOf(element) && !core.isAreaBoundary(element)) ?? null;
 }
 
 /** Returns the selected unbound text element, when selection contains one. */
@@ -285,8 +285,9 @@ function TangentMap({ host, bridge, options }) {
         const authoredElements = core.stripSpatialProjections(core.sceneForSave(elements, appState));
         const fenced = core.fenceRegionGeometry(authoredElements, canonicalRef.current);
         const authored = fenced.scene;
+        const corrected = core.authoredFingerprint(authored.elements) !== core.authoredFingerprint(authoredElements.elements);
         const regionFingerprint = JSON.stringify(authoredElements.elements.filter(core.isAreaRegion).map((element) => [element.id, Math.round(element.x * 100) / 100, Math.round(element.y * 100) / 100, Math.round(element.width * 100) / 100, Math.round(element.height * 100) / 100, Math.round(element.angle * 100) / 100]));
-        if (regionFingerprint !== projectedRegionFingerprintRef.current) {
+        if (corrected || regionFingerprint !== projectedRegionFingerprintRef.current) {
           projectedRegionFingerprintRef.current = regionFingerprint;
           const projected = core.projectSpatialChildren(authored, options.area, options.childScenes);
           api?.updateScene({ elements: projected.scene.elements, captureUpdate: "NEVER" });

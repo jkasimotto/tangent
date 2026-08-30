@@ -306,14 +306,39 @@ export function solveOwnedElementGesture(baseline, intent) {
   const desired = { x: Number(intent.desiredWorldDelta?.x ?? 0), y: Number(intent.desiredWorldDelta?.y ?? 0) };
   const start = rect(intent.rect);
   if (intent.kind === "ink") return { rect: rect({ ...start, x: start.x + desired.x, y: start.y + desired.y }), wall: null, valid: true };
-  const geometry = computeWorldGeometry(baseline);
-  const walls = [...baseline.regions].filter(([, region]) => region.owner === intent.owner).map(([area]) => [area, geometry.get(area).constraint]);
+  const baselineGeometry = computeWorldGeometry(baseline);
+  const directWalls = [...baseline.regions].filter(([, region]) => region.owner === intent.owner).map(([area]) => [area, baselineGeometry.get(area).constraint]);
+  const siblings = new Map();
+  for (const [area, region] of baseline.regions) {
+    const list = siblings.get(region.owner) ?? [];
+    list.push(area); siblings.set(region.owner, list);
+  }
+  for (const list of siblings.values()) list.sort();
+  const affected = [];
+  let current = intent.owner;
+  while (current && current !== "@root") {
+    affected.push(current);
+    current = baseline.regions.get(current)?.owner;
+  }
   /** Evaluates one desired block delta without relying on final overlap alone. */
   const evaluate = (delta) => {
     const value = rect({ ...start, x: start.x + delta.x, y: start.y + delta.y });
-    const swept = unionRects([start, value]);
-    const hit = walls.find(([, wall]) => overlaps(swept, wall));
-    return { rect: value, wall: hit?.[0] ?? null };
+    const sweptElement = unionRects([start, value]);
+    const directHit = directWalls.find(([, wall]) => overlaps(sweptElement, wall));
+    if (directHit) return { rect: value, wall: directHit[0], geometry: baselineGeometry };
+    const blockHulls = new Map(baseline.blockHulls ?? []);
+    const ownerHull = unionRects([intent.remainingBlockHull, value]);
+    if (ownerHull) blockHulls.set(intent.owner, ownerHull); else blockHulls.delete(intent.owner);
+    const geometry = computeWorldGeometry({ ...baseline, blockHulls });
+    for (const area of affected) {
+      const region = baseline.regions.get(area);
+      const sweptConstraint = unionRects([baselineGeometry.get(area)?.constraint, geometry.get(area)?.constraint]);
+      for (const sibling of siblings.get(region?.owner) ?? []) {
+        if (sibling === area) continue;
+        if (overlaps(sweptConstraint, baselineGeometry.get(sibling).constraint)) return { rect: value, wall: sibling, geometry };
+      }
+    }
+    return { rect: value, wall: null, geometry };
   };
   let applied = { x: 0, y: 0 };
   let blockedBy = null;
@@ -330,7 +355,7 @@ export function solveOwnedElementGesture(baseline, intent) {
     }
     applied[axis] = desired[axis] * low;
   }
-  return { ...evaluate(applied), wall: blockedBy, valid: true };
+  return { ...evaluate(applied), wall: blockedBy, appliedDelta: { x: quantize(applied.x), y: quantize(applied.y) }, valid: true };
 }
 
 /** Returns one Excalidraw rectangle for an Area tree node. */

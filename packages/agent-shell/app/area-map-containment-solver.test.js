@@ -55,6 +55,23 @@ test("stops a parent block at its direct child but lets free ink cross every wal
   assert.deepEqual(ink.rect, { x: 900, y: 200, width: 180, height: 80 });
 });
 
+test("stops block-driven ancestor growth at every sibling level", () => {
+  const source = baseline(["root", "root/delivery", "root/hackathon"], [
+    ["@root>root", { x: 0, y: 0, width: 1600, height: 900 }],
+    ["root>root/delivery", { x: 0, y: 0, width: 500, height: 500 }],
+    ["root>root/hackathon", { x: 800, y: 0, width: 400, height: 500 }],
+  ]);
+  const preview = solveOwnedElementGesture(source, {
+    owner: "root/delivery", kind: "block",
+    rect: { x: 100, y: 120, width: 160, height: 80 },
+    remainingBlockHull: null,
+    desiredWorldDelta: { x: 1_500, y: 90 },
+  });
+  assert.equal(preview.wall, "root/hackathon");
+  assert.ok(preview.geometry.get("root/delivery").constraint.x + preview.geometry.get("root/delivery").constraint.width <= 800.01);
+  assert.equal(preview.rect.y, 210, "the block keeps motion along the sibling wall");
+});
+
 test("clamps direct shrink to blocks, children, the label band, and the minimum size", () => {
   const source = baseline(["root", "root/child"], [
     ["@root>root", { x: 0, y: 0, width: 900, height: 700 }],

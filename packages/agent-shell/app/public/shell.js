@@ -545,6 +545,7 @@ const {
   openDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading,
   leaveQuickPath,
   openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf,
+  bindDocumentPeekReader,
   readerSelection, readerCopyPayload, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine,
   openCommentComposer, setCommentScope, syncCommentDraft, cancelCommentComposer, noteInComposer,
   composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer,
@@ -1035,6 +1036,7 @@ function renderDocumentPeekLayer() {
   const restored = focusKey ? documentPeekLayer.querySelector(`[data-peek-key="${focusKey}"]`) : null;
   (restored ?? documentPeekLayer.querySelector(".document-peek-surface"))?.focus?.({ preventScroll: true });
   mountMermaidDiagrams(documentPeekLayer.querySelector(".document-content"));
+  bindDocumentPeekReader();
 }
 
 /**

@@ -66,7 +66,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
     return `${nav}<button class="reader-comment-action" type="button" data-comment-new aria-keyshortcuts="c" title="Comment on the selected words or this section (c)">Comment <kbd>c</kbd></button>`;
   }
 
-  /** Read-only comment movement and the visibly unavailable write action in the quick reader. */
+  /** The same comment movement and creation controls used by the quick reader. */
   function peekCommentControls(source) {
     const count = source?.comments?.length ?? 0;
     const nav = count
@@ -76,7 +76,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
           <button type="button" data-document-peek-comment-step="1" aria-label="Next comment" aria-keyshortcuts="n" title="Next comment (n)">›</button>
         </div>`
       : "";
-    return `${nav}<button class="quiet-button document-peek-comment-disabled" type="button" disabled aria-keyshortcuts="c" title="Comment is available in the full reader (c)">Comment <kbd>c</kbd></button>`;
+    return `${nav}${source?.repositoryFile ? "" : `<button class="reader-comment-action" type="button" data-comment-new aria-keyshortcuts="c" title="Comment on the selected words or this section (c)">Comment <kbd>c</kbd></button>`}`;
   }
 
   /** Renders the quiet wide-screen page outline. */
@@ -265,7 +265,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
           </div>
         </div>`
       : loaded
-        ? `<div class="document-peek-scroll" tabindex="-1" aria-label="Quick Document reading surface">${renderDocumentArticle(loaded, { readOnly: true })}</div>`
+        ? `<div class="document-peek-scroll" tabindex="-1" aria-label="Quick Document reading surface">${renderDocumentArticle(loaded, { readOnly: loaded.repositoryFile === true })}</div>`
         : `<div class="loading" role="status">Opening ${escapeHtml(title)}…</div>`;
     return `
       <section class="document-peek-surface" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}" tabindex="-1">

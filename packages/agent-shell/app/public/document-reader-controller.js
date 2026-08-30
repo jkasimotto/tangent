@@ -11,6 +11,24 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
   } = navigation;
   let cachedSelectionCommentAnchor = null;
   let selectionCommentPointerArmed = false;
+  let commentSaveSerial = 0;
+
+  /** The reader surface that currently owns comment interaction. */
+  function commentSurface() {
+    return state.commentComposer?.surface === "quick" || (!state.commentComposer && state.documentPeek) ? "quick" : "full";
+  }
+
+  /** The Document, DOM root, scroll owner, and repaint for the active reader. */
+  function commentReader() {
+    const quick = commentSurface() === "quick";
+    return {
+      quick,
+      source: quick ? state.documentPeek?.document : state.document,
+      root: quick ? documentPeekLayer : screen,
+      scroll: quick ? peekScroll() : screen.querySelector(".document-reader-scroll"),
+      repaint: quick ? paintPeek : () => paint(true),
+    };
+  }
   /** Stores the current reader position for later navigation. */
   function rememberDocumentPosition() {
     const scroll = screen.querySelector(".document-reader-scroll");
@@ -87,9 +105,8 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   // ---- The quick Document layer (design-quick-returnable-document-search) ----
   // Go to opens a Document above the screen or the session Julian is on, so
-  // nothing below it repaints, unmounts, or loses its selection. The layer is
-  // read-only: comments, agent actions, and writing need the full reader, and
-  // `Open full reader` is the one control that leaves the quick path.
+  // nothing below it repaints, unmounts, or loses its selection. Commenting is
+  // owned by the shared reader controller and therefore stays in this layer.
 
   // The request owner stays outside serializable state. Only the newest serial
   // may change the layer, so an out-of-order or late reply does nothing.
@@ -181,6 +198,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
   async function openDocumentPeek(file, { heading = "", trail = "push", trailIndex = -1, origin = null } = {}) {
     if (!file) return;
     const opening = !state.documentPeek;
+    if (!opening && state.commentComposer?.surface === "quick" && state.commentComposer.file !== file) state.commentComposer = null;
     if (!opening) rememberPeekPosition();
     const record = indexedDocument(file);
     peekSerial += 1;
@@ -251,6 +269,9 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     peekRequest?.abort();
     peekRequest = null;
     peekSerial += 1;
+    if (state.commentComposer?.surface === "quick") state.commentComposer = null;
+    cachedSelectionCommentAnchor = null;
+    selectionCommentPointerArmed = false;
     state.documentPeek = null;
     paintPeek();
     restorePeekFocus(peek);
@@ -399,6 +420,19 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     }
   }
 
+  /** Restores comment selection behavior and composer focus in the quick reader. */
+  function bindDocumentPeekReader() {
+    const scroll = peekScroll();
+    if (!scroll) return;
+    scroll.addEventListener("scroll", hideSelectionCommentButton, { passive: true });
+    documentPeekLayer.querySelector(".selection-comment-button")?.addEventListener("pointerdown", () => cacheSelectionCommentAnchor({ arm: true }));
+    const composerField = documentPeekLayer.querySelector("#comment-text");
+    if (composerField && document.activeElement !== composerField) {
+      composerField.focus({ preventScroll: true });
+      composerField.setSelectionRange(composerField.value.length, composerField.value.length);
+    }
+  }
+
   /** Reloads the visible Document after an agent changes its source file. */
   async function refreshDocument({ announce = false } = {}) {
     if (!state.document) return;
@@ -446,7 +480,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
   function readerSelection() {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
-    const content = screen.querySelector(".document-content");
+    const content = commentReader().root?.querySelector(".document-content");
     const range = selection.getRangeAt(0);
     const startBlock = readerBlockOf(range.startContainer);
     const endBlock = readerBlockOf(range.endContainer);
@@ -481,15 +515,16 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
    */
   function cacheSelectionCommentAnchor({ arm = false } = {}) {
     const selection = readerSelection();
-    if (!selection || !state.document?.file) return null;
-    cachedSelectionCommentAnchor = { ...selection, file: state.document.file };
+    const source = commentReader().source;
+    if (!selection || !source?.file) return null;
+    cachedSelectionCommentAnchor = { ...selection, file: source.file };
     if (arm) selectionCommentPointerArmed = true;
     return cachedSelectionCommentAnchor;
   }
 
   /** Shows the floating Comment button beside a live selection, or hides it. */
   function updateSelectionCommentButton() {
-    const button = screen.querySelector(".selection-comment-button");
+    const button = commentReader().root?.querySelector(".selection-comment-button");
     if (!button) return;
     const selection = state.commentComposer ? null : cacheSelectionCommentAnchor();
     if (!selection || !selection.rect.width) {
@@ -504,7 +539,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** Hides the floating Comment button without touching the selection. */
   function hideSelectionCommentButton() {
-    const button = screen.querySelector(".selection-comment-button");
+    const button = commentReader().root?.querySelector(".selection-comment-button");
     if (button) button.hidden = true;
     cachedSelectionCommentAnchor = null;
     selectionCommentPointerArmed = false;
@@ -512,13 +547,14 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** The outline heading whose section is in view, so a section comment lands there. */
   function readerSectionInView() {
-    const scroll = screen.querySelector(".document-reader-scroll");
-    const items = documentOutlineItems();
+    const { scroll, source, root } = commentReader();
+    const items = markdownHeadings(source?.text).filter((heading) => [2, 3].includes(heading.level));
     if (!scroll || !items.length) return null;
     let active = null;
     const top = scroll.getBoundingClientRect().top;
     for (const heading of items) {
-      const element = document.getElementById(heading.id);
+      const selector = String(heading.id).replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+      const element = root?.querySelector(`[id="${selector}"]`);
       if (element && element.getBoundingClientRect().top - top <= 150) active = heading;
     }
     return active;
@@ -526,7 +562,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** The file line of the Document title, where a whole-Document comment goes. */
   function documentTitleLine() {
-    return markdownHeadings(state.document?.text).find((heading) => heading.level === 1)?.line ?? -1;
+    return markdownHeadings(commentReader().source?.text).find((heading) => heading.level === 1)?.line ?? -1;
   }
 
   /**
@@ -534,19 +570,22 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
    * under the section in view with a switch to the whole Document.
    */
   function openCommentComposer({ useCachedSelection = false } = {}) {
-    if (state.view !== "document" || !state.document) return;
+    const reader = commentReader();
+    if (!reader.source || reader.source.repositoryFile) return;
     const liveSelection = readerSelection();
-    const cachedSelection = cachedSelectionCommentAnchor?.file === state.document.file
+    const cachedSelection = cachedSelectionCommentAnchor?.file === reader.source.file
       && (useCachedSelection || selectionCommentPointerArmed)
       ? cachedSelectionCommentAnchor
       : null;
     const selection = liveSelection ?? cachedSelection;
     cachedSelectionCommentAnchor = null;
     selectionCommentPointerArmed = false;
-    const headings = documentOutlineItems();
+    const headings = markdownHeadings(reader.source.text).filter((heading) => [2, 3].includes(heading.level));
     const selectedSection = selection ? [...headings].reverse().find((heading) => heading.line <= selection.line) ?? null : null;
     const section = selectedSection ?? readerSectionInView();
     const composer = {
+      surface: reader.quick ? "quick" : "full",
+      file: reader.source.file,
       text: "",
       notice: selection?.crossed ? "The selection crossed a paragraph. The comment goes on the first one." : "",
       editing: null,
@@ -558,7 +597,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     };
     state.commentComposer = composer;
     window.getSelection()?.removeAllRanges();
-    paint(true);
+    reader.repaint();
   }
 
   /** Switches a new comment between the section in view and the whole Document. */
@@ -568,7 +607,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     syncCommentDraft();
     composer.anchor = kind === "section" && composer.section ? { kind: "section", heading: composer.section.title } : { kind: "document" };
     composer.placeLine = composer.anchor.kind === "section" ? composer.section.line : documentTitleLine();
-    paint(true);
+    commentReader().repaint();
   }
 
   /** The semantic heading/selection anchor of one parsed existing comment. */
@@ -607,47 +646,51 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** Opens one existing comment in the composer. */
   function editComment(index) {
-    const comment = (state.document?.comments ?? [])[index];
+    const reader = commentReader();
+    const comment = (reader.source?.comments ?? [])[index];
     if (!comment) return;
     if (comment.author !== documentComments.AUTHOR) {
       showToast("Only Julian's comments can be edited.");
       return;
     }
     state.commentComposer = {
+      surface: reader.quick ? "quick" : "full", file: reader.source.file,
       text: comment.text,
       notice: "",
       editing: comment,
-      editingAnchor: existingCommentAnchor(state.document, comment),
+      editingAnchor: existingCommentAnchor(reader.source, comment),
       replying: null,
       returnIdentity: commentIdentity(comment),
       section: null,
       anchor: { kind: "edit" },
       placeLine: comment.line,
     };
-    paint(true);
+    reader.repaint();
   }
 
   /** Opens a new Julian comment beside one unchanged semantic comment. */
   function replyComment(index) {
-    const comment = (state.document?.comments ?? [])[index];
+    const reader = commentReader();
+    const comment = (reader.source?.comments ?? [])[index];
     if (!comment) return;
     state.commentComposer = {
+      surface: reader.quick ? "quick" : "full", file: reader.source.file,
       text: "",
       notice: "",
       editing: null,
       replying: comment,
-      replyingAnchor: existingCommentAnchor(state.document, comment),
+      replyingAnchor: existingCommentAnchor(reader.source, comment),
       returnIdentity: commentIdentity(comment),
       section: null,
-      anchor: replyInsertionAnchor(state.document, comment),
+      anchor: replyInsertionAnchor(reader.source, comment),
       placeLine: comment.line,
     };
-    paint(true);
+    reader.repaint();
   }
 
   /** Keeps the typed comment in state, so a repaint cannot lose it. */
   function syncCommentDraft() {
-    const field = screen.querySelector("#comment-text");
+    const field = commentReader().root?.querySelector("#comment-text");
     if (field && state.commentComposer) state.commentComposer.text = field.value;
   }
 
@@ -656,8 +699,9 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     if (!state.commentComposer) return;
     const returnIdentity = state.commentComposer.returnIdentity;
     state.commentComposer = null;
-    paint(true);
-    if (!returnIdentity || !focusCommentIdentity(returnIdentity)) screen.querySelector(".document-reader-scroll")?.focus?.({ preventScroll: true });
+    const reader = commentReader();
+    reader.repaint();
+    if (!returnIdentity || !focusCommentIdentity(returnIdentity)) reader.scroll?.focus?.({ preventScroll: true });
   }
 
   /** Shows one line of trouble inside the composer and keeps the draft. */
@@ -665,7 +709,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     if (!state.commentComposer) return;
     syncCommentDraft();
     state.commentComposer.notice = message;
-    paint(true);
+    commentReader().repaint();
   }
 
   /** Applies a comment at its requested anchor; a stale selection must never change scope. */
@@ -693,11 +737,12 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
   }
 
   /** One base-hash save of the whole Document text; returns the raw reply so a 409 can be handled. */
-  async function saveDocumentText(text, summary, baseHash = state.document?.hash) {
+  async function saveDocumentText(text, summary, baseHash) {
+    const source = commentReader().source;
     const response = await fetch("/api/document", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ file: state.document.file, text, baseHash, summary }),
+      body: JSON.stringify({ file: source.file, text, baseHash: baseHash ?? source.hash, summary }),
     });
     const data = await response.json().catch(() => ({}));
     return { ok: response.ok, status: response.status, data };
@@ -705,11 +750,19 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** Replaces the open Document with a saved copy without losing the reading place. */
   function adoptSavedDocument(document) {
-    rememberDocumentPosition();
-    state.document = document;
-    state.renderedKey = "";
-    paint(true);
-    restoreDocumentPosition();
+    const reader = commentReader();
+    if (reader.quick) {
+      rememberPeekPosition();
+      state.documentPeek.document = document;
+      paintPeek();
+      restorePeekPosition();
+    } else {
+      rememberDocumentPosition();
+      state.document = document;
+      state.renderedKey = "";
+      paint(true);
+      restoreDocumentPosition();
+    }
   }
 
   /** Puts an earlier text back, for Undo, unless the file moved on again. */
@@ -726,41 +779,52 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
    */
   async function submitCommentComposer() {
     const composer = state.commentComposer;
-    if (!composer || !state.document) return;
+    const reader = commentReader();
+    const source = reader.source;
+    if (!composer || !source || composer.file !== source.file) return;
+    const saveSerial = ++commentSaveSerial;
     syncCommentDraft();
     if (!composer.text.trim()) return noteInComposer("Write the comment first.");
     const summary = composer.editing ? "edited a comment" : composer.replying ? "replied to a comment" : "added a comment";
-    let attempt = composerResult(state.document, composer);
+    let attempt = composerResult(source, composer);
     if (attempt.error) return noteInComposer(attempt.error);
     let placementNotice = attempt.notice ?? "";
-    let previous = state.document.text;
-    let result = await saveDocumentText(attempt.text, summary);
+    let previous = source.text;
+    let result = await saveDocumentText(attempt.text, summary, source.hash);
     if (result.status === 409 && result.data.current) {
-      state.document = { ...state.document, ...result.data.current };
-      attempt = composerResult(state.document, composer);
+      if (reader.quick) state.documentPeek.document = { ...source, ...result.data.current };
+      else state.document = { ...source, ...result.data.current };
+      const current = commentReader().source;
+      attempt = composerResult(current, composer);
       if (attempt.error) return noteInComposer(attempt.error);
       placementNotice = attempt.notice ?? placementNotice;
-      previous = state.document.text;
-      result = await saveDocumentText(attempt.text, summary);
+      previous = current.text;
+      result = await saveDocumentText(attempt.text, summary, current.hash);
     }
     if (!result.ok) return noteInComposer(result.data.error || "The comment did not save.");
     const wasEditing = Boolean(composer.editing);
     const wasReplying = Boolean(composer.replying);
     const returnIdentity = composer.returnIdentity;
-    state.commentComposer = null;
+    // A save that returns after Julian opened another composer must update the
+    // Document but must not close or focus through the newer draft.
+    const stillOwnsComposer = state.commentComposer === composer && saveSerial === commentSaveSerial;
+    if (stillOwnsComposer) state.commentComposer = null;
     adoptSavedDocument(result.data);
+    if (!stillOwnsComposer) return showToast(placementNotice || (wasEditing ? "Comment updated." : wasReplying ? "Reply added." : "Comment added."));
+    const saved = commentReader();
+    const savedDocument = saved.source;
     if (wasEditing) {
       const editedAnchor = composer.editingAnchor;
-      const edited = (state.document.comments ?? []).find((comment) => comment.author === documentComments.AUTHOR
+      const edited = (savedDocument.comments ?? []).find((comment) => comment.author === documentComments.AUTHOR
         && comment.text === composer.text.trim()
-        && JSON.stringify(existingCommentAnchor(state.document, comment)) === JSON.stringify(editedAnchor));
-      if (!focusCommentIdentity(commentIdentity(edited))) screen.querySelector(".document-reader-scroll")?.focus?.({ preventScroll: true });
+        && JSON.stringify(existingCommentAnchor(savedDocument, comment)) === JSON.stringify(editedAnchor));
+      if (!focusCommentIdentity(commentIdentity(edited))) saved.scroll?.focus?.({ preventScroll: true });
     } else if (wasReplying) {
-      if (!focusCommentIdentity(returnIdentity)) screen.querySelector(".document-reader-scroll")?.focus?.({ preventScroll: true });
+      if (!focusCommentIdentity(returnIdentity)) saved.scroll?.focus?.({ preventScroll: true });
     } else {
-      const candidates = (state.document.comments ?? []).filter((comment) => comment.author === documentComments.AUTHOR && comment.text === composer.text.trim());
+      const candidates = (savedDocument.comments ?? []).filter((comment) => comment.author === documentComments.AUTHOR && comment.text === composer.text.trim());
       const added = candidates.find((comment) => comment.line === composer.placeLine) ?? (candidates.length === 1 ? candidates[0] : null);
-      if (!focusCommentIdentity(commentIdentity(added))) screen.querySelector(".document-reader-scroll")?.focus?.({ preventScroll: true });
+      if (!focusCommentIdentity(commentIdentity(added))) saved.scroll?.focus?.({ preventScroll: true });
     }
     showToast(placementNotice || (wasEditing ? "Comment updated." : wasReplying ? "Reply added." : "Comment added."), {
       label: "Undo",
@@ -797,7 +861,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** Finds one semantic comment reference in the open revision. */
   function commentIndexForIdentity(identity) {
-    return commentIndexInDocument(state.document, identity);
+    return commentIndexInDocument(commentReader().source, identity);
   }
 
   /** Synchronizes keyboard navigation after pointer focus without trusting an array index. */
@@ -805,7 +869,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     const index = commentIndexForIdentity(identity);
     if (index < 0) return false;
     state.commentCursor = index;
-    state.commentCursorIdentity = commentIdentity(state.document.comments[index]);
+    state.commentCursorIdentity = commentIdentity(commentReader().source.comments[index]);
     return true;
   }
 
@@ -813,14 +877,14 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
   function activeCommentRecord(identity = state.commentCursorIdentity) {
     const index = commentIndexForIdentity(identity);
     if (index < 0) return null;
-    const comment = state.document.comments[index];
+    const comment = commentReader().source.comments[index];
     return { index, comment, identity: commentIdentity(comment) };
   }
 
   /** Gives focus to one semantic comment after a repaint or mutation. */
   function focusCommentIdentity(identity, { scroll = false } = {}) {
     if (!syncCommentCursor(identity)) return false;
-    const element = document.getElementById(`document-comment-${state.commentCursor}`);
+    const element = commentReader().root?.querySelector(`#document-comment-${state.commentCursor}`);
     if (!element) return false;
     if (scroll) element.scrollIntoView?.({ block: "center", behavior: "smooth" });
     element.focus({ preventScroll: true });
@@ -856,7 +920,8 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     if (!changeNote) return { ok: false, error: "Write a short change note first." };
     const active = activeCommentRecord(identity);
     if (!active) return { ok: false, error: "That comment changed or disappeared. Your note is still here." };
-    const file = state.document.file;
+    const reader = commentReader();
+    const file = reader.source.file;
     let latest;
     try {
       latest = await api(`/api/document?file=${encodeURIComponent(file)}`);
@@ -895,14 +960,14 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** Moves to the next or previous comment, wrapping at the ends, and gives it focus. */
   function stepComment(direction) {
-    const comments = state.document?.comments ?? [];
+    const comments = commentReader().source?.comments ?? [];
     if (!comments.length) return;
     const count = comments.length;
     const semanticIndex = commentIndexForIdentity(state.commentCursorIdentity);
     const current = semanticIndex >= 0 ? semanticIndex : Number.isInteger(state.commentCursor) && state.commentCursor >= 0 && state.commentCursor < count ? state.commentCursor : -1;
     const next = current < 0 ? (direction < 0 ? count - 1 : 0) : ((current + direction) % count + count) % count;
     syncCommentCursor(commentIdentity(comments[next]));
-    const element = document.getElementById(`document-comment-${next}`);
+    const element = commentReader().root?.querySelector(`#document-comment-${next}`);
     if (!element) return;
     element.scrollIntoView({ block: "center", behavior: "smooth" });
     element.focus({ preventScroll: true });
@@ -941,5 +1006,5 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** Opens the explicit next-step decision page. */
 
-  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, openDocumentPeek, leaveQuickPath, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, readerCopyPayload, cacheSelectionCommentAnchor, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentScope, existingCommentAnchor, replyInsertionAnchor, editComment, replyComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, commentIdentity, commentIndexInDocument, syncCommentCursor, activeCommentRecord, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea, notifyDocumentComments };
+  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, openDocumentPeek, leaveQuickPath, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, bindDocumentPeekReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, readerCopyPayload, cacheSelectionCommentAnchor, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentScope, existingCommentAnchor, replyInsertionAnchor, editComment, replyComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, commentIdentity, commentIndexInDocument, syncCommentCursor, activeCommentRecord, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea, notifyDocumentComments };
 }

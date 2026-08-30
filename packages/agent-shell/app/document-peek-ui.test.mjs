@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, readFile, path, JSDOM, shellBundle, here, settle, click, peekDocumentViaGoTo, jsonResponse } from "./focus-shell-ui-fixture.mjs";
+import { assert, readFile, path, JSDOM, shellBundle, here, settle, click, peekDocumentViaGoTo, jsonResponse, documentComments } from "./focus-shell-ui-fixture.mjs";
 
 /** Creates one compact Goal fixture with a live worker session. */
 function goal(area, slug, title) {
@@ -73,6 +73,11 @@ async function bootShell({ projectionFailure = "", duplicateTitles = false } = {
   window.fetch = async (url, options = {}) => {
     const address = new URL(url, window.location.href);
     const pathname = address.pathname;
+    if (options.method === "POST" && pathname === "/api/document") {
+      const body = JSON.parse(options.body);
+      texts[body.file] = body.text;
+      return jsonResponse({ ...(body.file === design.file ? design : notes), text: body.text, hash: `${body.file}-saved`, comments: documentComments.parseComments(body.text) });
+    }
     if (options.method === "POST") return jsonResponse({ ok: true });
     if (pathname === "/api/sessions") {
       return jsonResponse({
@@ -413,7 +418,7 @@ test("Open full reader keeps the file and the reading position, and the layer is
   assert.equal(surface.getAttribute("aria-modal"), "true");
   assert.equal(surface.getAttribute("aria-label"), design.title);
   assert.equal(window.document.activeElement, surface, "the layer takes focus when it opens");
-  assert.equal(layer.querySelector("[data-comment-new]"), null, "the quick layer has no write controls");
+  assert.ok(layer.querySelector("[data-comment-new]"), "the quick layer owns the same write control");
   const stops = [...layer.querySelectorAll('button:not([disabled]), a[href], [tabindex="-1"].document-peek-surface')];
   stops.at(-1).focus();
   layer.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
@@ -432,7 +437,32 @@ test("Open full reader keeps the file and the reading position, and the layer is
   assert.ok(reader, "the full reader opened on the screen");
   assert.match(window.document.querySelector(".document-source").textContent, /design-search\.md/);
   assert.equal(reader.scrollTop, 210, "the reading position came with it");
-  assert.ok(window.document.querySelector("[data-comment-new]"), "the full reader owns the write controls");
+  assert.ok(window.document.querySelector("[data-comment-new]"), "the full reader keeps the write controls");
+});
+
+test("the quick reader opens, saves, and manages comments without changing reader mode", async () => {
+  const { window, design } = await bootShell();
+  await peekDocumentViaGoTo(window, design.title);
+  const layer = window.document.querySelector("#document-peek-layer");
+  const scroll = layer.querySelector(".document-peek-scroll");
+  scroll.scrollTop = 84;
+
+  click(window, "#document-peek-layer [data-comment-new]");
+  await settle(window);
+  const field = layer.querySelector("#comment-text");
+  assert.ok(field, "the shared inline composer opened in the quick reader");
+  assert.equal(window.document.activeElement, field, "the draft took focus without leaving the layer");
+  field.value = "Keep this explanation exact.";
+  field.dispatchEvent(new window.Event("input", { bubbles: true }));
+  field.closest("form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+  await settle(window);
+
+  assert.equal(layer.hidden, false, "save kept the quick reader open");
+  assert.equal(window.document.querySelector("#screen .document-reader"), null, "save did not promote to Full");
+  assert.match(layer.querySelector(".document-comment-text").textContent, /Keep this explanation exact/);
+  assert.match(layer.querySelector(".document-peek-comment-nav").textContent, /1/);
+  assert.equal(scroll.scrollTop, 84, "save restored the quick reader position");
+  assert.ok(layer.querySelector("[data-edit-comment]"), "the saved comment exposes the shared management actions");
 });
 
 test("the Area breadcrumb inside the quick layer opens that Area map and clears both layers", async () => {

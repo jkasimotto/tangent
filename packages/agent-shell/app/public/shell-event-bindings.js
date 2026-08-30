@@ -1336,7 +1336,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const comments = quick ? state.documentPeek?.document?.comments ?? [] : state.document?.comments ?? [];
     const comment = comments.find((item) => item.index === Number(element.dataset.commentIndex));
     if (!comment) return false;
-    if (quick) return syncPeekCommentCursor(comment);
+    if (quick) return syncCommentCursor(commentIdentity(comment));
     return syncCommentCursor(commentIdentity(comment));
   }
 
@@ -1344,10 +1344,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   function clearActiveDocumentComment(quick) {
     if (quick) {
       if (state.documentPeek) state.documentPeek.commentCursorIdentity = null;
-    } else {
-      state.commentCursor = -1;
-      state.commentCursorIdentity = null;
     }
+    state.commentCursor = -1;
+    state.commentCursorIdentity = null;
     documentReadingSurface(quick)?.focus?.({ preventScroll: true });
   }
 
@@ -1420,13 +1419,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       syncPointerComment(document.activeElement, false);
     }
     const activeComment = quick
-      ? peekCommentIndex() >= 0 || Boolean(document.activeElement?.closest?.("#document-peek-layer .document-comment"))
+      ? Boolean(state.commentCursorIdentity) || Boolean(document.activeElement?.closest?.("#document-peek-layer .document-comment"))
       : Boolean(state.commentCursorIdentity) || Boolean(document.activeElement?.closest?.(".document-reader .document-comment"));
     const command = matchDocumentReadingCommand(event, {
       pendingChord: chords.pendingFor(`reader:${surfaceKey}`),
       commentNavigation: true,
-      commentCreation: !quick,
-      commentLifecycle: !quick,
+      commentCreation: true,
+      commentLifecycle: true,
       hasSelection: readingSurfaceHasSelection(surface),
       activeComment,
       resumableAttempt: Boolean(readerResumeAttemptButton(quick)),
@@ -1460,11 +1459,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return true;
     }
     if (command === documentReadingCommands.previousComment) {
-      (quick ? stepPeekComment : stepComment)(-1);
+      stepComment(-1);
       return true;
     }
     if (command === documentReadingCommands.nextComment) {
-      (quick ? stepPeekComment : stepComment)(1);
+      stepComment(1);
       return true;
     }
     if (command === documentReadingCommands.createComment) {
@@ -1564,8 +1563,15 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: true });
     if (target.closest?.("[data-promote-document-peek]")) return promoteDocumentPeek();
     if (target.closest?.("[data-retry-document-peek]")) return retryDocumentPeek();
+    if (target.closest?.("[data-comment-new]")) return openCommentComposer();
     const commentStep = target.closest?.("[data-document-peek-comment-step]");
-    if (commentStep) return stepPeekComment(Number(commentStep.dataset.documentPeekCommentStep));
+    if (commentStep) return stepComment(Number(commentStep.dataset.documentPeekCommentStep));
+    const commentScope = target.closest?.("[data-comment-scope]");
+    if (commentScope) return setCommentScope(commentScope.dataset.commentScope);
+    if (target.closest?.("[data-cancel-comment]")) return cancelCommentComposer();
+    if (target.closest?.("[data-edit-comment]")) return editActiveComment();
+    if (target.closest?.("[data-reply-comment]")) return replyToActiveComment();
+    if (target.closest?.("[data-resolve-comment]")) return openResolveActiveComment();
     const history = target.closest?.("[data-document-peek-history]");
     if (history) return navigateDocumentPeekHistory(history.dataset.documentPeekHistory);
     const openArea = target.closest?.("[data-open-area]");
@@ -3156,7 +3162,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   }, { capture: true });
 
   document.addEventListener("selectionchange", () => {
-    if (state.view === "document") updateSelectionCommentButton();
+    if (state.documentPeek || state.view === "document") updateSelectionCommentButton();
     for (const name of ["full", "quick"]) if (!copyOperations[name].timer) resetCopyLabel(name);
   });
 

@@ -148,6 +148,32 @@ test("the floating Comment pointer caches the exact selection before the browser
   }
 });
 
+test("an in-flight save cannot close a newer composer", { concurrency: false }, async () => {
+  const fixture = readerFixture("# Design\n\nBody.\n");
+  try {
+    fixture.controller.openCommentComposer();
+    const first = fixture.state.commentComposer;
+    first.text = "First comment.";
+    let answer;
+    globalThis.fetch = () => new Promise((resolve) => { answer = resolve; });
+    const saving = fixture.controller.submitCommentComposer();
+
+    fixture.state.commentComposer = { ...first, text: "New draft.", notice: "" };
+    answer({ ok: true, status: 200,
+      /** Returns the completed save revision. */
+      async json() {
+      const text = "# Design\n\nBody.\n\n{>>Julian: First comment.<<}\n";
+      return { ...fixture.state.document, text, hash: "hash-2", comments: comments.parseComments(text) };
+      } });
+    await saving;
+
+    assert.equal(fixture.state.commentComposer.text, "New draft.");
+    assert.match(fixture.state.document.text, /First comment/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("editing refuses non-Julian comments", { concurrency: false }, () => {
   const fixture = readerFixture("# Design\n\n{>>Agent: Keep this evidence.<<}\n");
   try {

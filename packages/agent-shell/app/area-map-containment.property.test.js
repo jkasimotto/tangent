@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { composeAreaMapWorld, composeShard, provisionalRegions, solveAreaMapGesture, splitComposed } from "./public/area-map-world-core.js";
+import { composeAreaMapWorld, composeShard, computeWorldGeometry, provisionalRegions, solveAreaMapGesture, splitComposed } from "./public/area-map-world-core.js";
 
 /** Creates one repeatable unsigned pseudo-random stream. */
 function random(seed) {
@@ -117,13 +117,18 @@ test("compose and split is lossless for unchanged authored elements", () => {
   assert.deepEqual(split, scene.elements);
 });
 
-test("a 500-Area preview keeps p95 below 8 ms and every frame below 16 ms", () => {
+/** Returns one wide world for interactive frame-budget checks. */
+function largePreviewBaseline() {
   const areas = ["root", ...Array.from({ length: 499 }, (_value, index) => `root/n${index}`)];
   const stored = new Map([
     ["@root>root", { x: 0, y: 0, width: 400_000, height: 1_000 }],
     ...areas.slice(1).map((area, index) => [`root>${area}`, { x: index * 700, y: 60, width: 500, height: 300 }]),
   ]);
-  const baseline = { areas, regions: provisionalRegions(areas, stored), blockHulls: new Map(), inkHulls: new Map() };
+  return { areas, regions: provisionalRegions(areas, stored), blockHulls: new Map(), inkHulls: new Map() };
+}
+
+test("a 500-Area preview keeps p95 below 8 ms and every frame below 16 ms", () => {
+  const baseline = largePreviewBaseline();
   const intent = { selectedAreas: ["root/n0"], handle: null, desiredWorldDelta: { x: 100, y: 20 } };
   for (let index = 0; index < 5; index += 1) solveAreaMapGesture(baseline, intent);
   const samples = [];
@@ -134,4 +139,28 @@ test("a 500-Area preview keeps p95 below 8 ms and every frame below 16 ms", () =
   const p95 = samples[Math.floor(samples.length * 0.95)];
   assert.ok(p95 < 8, `p95 preview ${p95.toFixed(2)} ms; samples ${samples.map((value) => value.toFixed(2)).join(", ")}`);
   assert.ok(samples.at(-1) < 16, `max preview ${samples.at(-1).toFixed(2)} ms; samples ${samples.map((value) => value.toFixed(2)).join(", ")}`);
+});
+
+test("a blocked 500-Area preview keeps p95 below 8 ms and every frame below 16 ms", () => {
+  const baseline = largePreviewBaseline();
+  const intent = { selectedAreas: ["root/n0"], handle: null, desiredWorldDelta: { x: 1_000, y: 20 } };
+  const preview = solveAreaMapGesture(baseline, intent);
+  assert.equal(preview.wall, "root/n1");
+  assert.deepEqual(preview.appliedDelta, { x: 200, y: 20 });
+  for (let index = 0; index < 5; index += 1) solveAreaMapGesture(baseline, intent);
+  const samples = [];
+  for (let index = 0; index < 21; index += 1) {
+    const started = performance.now(); solveAreaMapGesture(baseline, intent); samples.push(performance.now() - started);
+  }
+  samples.sort((left, right) => left - right);
+  const p95 = samples[Math.floor(samples.length * 0.95)];
+  assert.ok(p95 < 8, `p95 blocked preview ${p95.toFixed(2)} ms; samples ${samples.map((value) => value.toFixed(2)).join(", ")}`);
+  assert.ok(samples.at(-1) < 16, `max blocked preview ${samples.at(-1).toFixed(2)} ms; samples ${samples.map((value) => value.toFixed(2)).join(", ")}`);
+});
+
+test("blocked dirty-cone geometry is byte-identical to a full recomputation", () => {
+  const baseline = largePreviewBaseline();
+  const preview = solveAreaMapGesture(baseline, { selectedAreas: ["root/n0"], handle: null, desiredWorldDelta: { x: 1_000, y: 20 } });
+  const recomputed = computeWorldGeometry({ ...baseline, regions: preview.regions });
+  assert.deepEqual(preview.geometry, recomputed);
 });

@@ -42,12 +42,14 @@ const rect = (value) => ({ x: quantize(value.x), y: quantize(value.y), width: qu
 
 /** Returns the smallest rectangle that contains all finite inputs. */
 export function unionRects(values = []) {
-  const valid = values.filter(finiteRect);
-  if (!valid.length) return null;
-  const x = Math.min(...valid.map((value) => value.x));
-  const y = Math.min(...valid.map((value) => value.y));
-  const right = Math.max(...valid.map((value) => value.x + value.width));
-  const bottom = Math.max(...valid.map((value) => value.y + value.height));
+  let x = Infinity; let y = Infinity; let right = -Infinity; let bottom = -Infinity; let count = 0;
+  for (const value of values) {
+    if (!finiteRect(value)) continue;
+    x = Math.min(x, value.x); y = Math.min(y, value.y);
+    right = Math.max(right, value.x + value.width); bottom = Math.max(bottom, value.y + value.height);
+    count += 1;
+  }
+  if (!count) return null;
   return rect({ x, y, width: right - x, height: bottom - y });
 }
 
@@ -195,6 +197,25 @@ function prepareWorldGeometry(areas, regions) {
   return { children, ordered };
 }
 
+/** Computes one Area geometry record from its local required hull. */
+function computeAreaGeometry(region, required, inkHull) {
+  const minimum = { x: region.storedRect.x, y: region.storedRect.y, width: Math.max(MIN_WIDTH, region.storedRect.width), height: Math.max(MIN_HEIGHT, region.storedRect.height, LABEL_BAND) };
+  const translatedRequired = required && {
+    x: region.storedRect.x + required.x,
+    y: region.storedRect.y + LABEL_BAND + required.y,
+    width: required.width,
+    height: required.height,
+  };
+  const translatedInk = inkHull && {
+    x: region.storedRect.x + inkHull.x,
+    y: region.storedRect.y + LABEL_BAND + inkHull.y,
+    width: inkHull.width,
+    height: inkHull.height,
+  };
+  const constraint = unionRects([minimum, inflateRect(translatedRequired)]);
+  return { stored: rect(region.storedRect), required, constraint, drawn: unionRects([constraint, inflateRect(translatedInk)]) };
+}
+
 /** Computes geometry against one prepared immutable tree order. */
 function computePreparedWorldGeometry({ regions, blockHulls = new Map(), inkHulls = new Map() }, { children, ordered }) {
   const result = new Map();
@@ -202,23 +223,35 @@ function computePreparedWorldGeometry({ regions, blockHulls = new Map(), inkHull
     const region = regions.get(area);
     const childRects = (children.get(area) ?? []).map((child) => result.get(child)?.constraint).filter(Boolean);
     const required = unionRects([blockHulls.get(area), ...childRects]);
-    const minimum = { x: region.storedRect.x, y: region.storedRect.y, width: Math.max(MIN_WIDTH, region.storedRect.width), height: Math.max(MIN_HEIGHT, region.storedRect.height, LABEL_BAND) };
-    const translatedRequired = required && {
-      x: region.storedRect.x + required.x,
-      y: region.storedRect.y + LABEL_BAND + required.y,
-      width: required.width,
-      height: required.height,
-    };
-    const translatedInk = inkHulls.get(area) && {
-      x: region.storedRect.x + inkHulls.get(area).x,
-      y: region.storedRect.y + LABEL_BAND + inkHulls.get(area).y,
-      width: inkHulls.get(area).width,
-      height: inkHulls.get(area).height,
-    };
-    const constraint = unionRects([minimum, inflateRect(translatedRequired)]);
-    result.set(area, { stored: rect(region.storedRect), required, constraint, drawn: unionRects([constraint, inflateRect(translatedInk)]) });
+    result.set(area, computeAreaGeometry(region, required, inkHulls.get(area)));
   }
   return result;
+}
+
+const gestureBaselines = new WeakMap();
+
+/** Prepares one immutable pointer-down snapshot for every preview frame. */
+function prepareGestureBaseline(baseline) {
+  const cached = gestureBaselines.get(baseline);
+  if (cached
+    && cached.areas === baseline.areas
+    && cached.regions === baseline.regions
+    && cached.blockHulls === baseline.blockHulls
+    && cached.inkHulls === baseline.inkHulls) return cached;
+  const baseRegions = new Map(baseline.regions);
+  const preparedGeometry = prepareWorldGeometry(baseline.areas, baseRegions);
+  const baselineGeometry = computePreparedWorldGeometry({ ...baseline, regions: baseRegions }, preparedGeometry);
+  const prepared = {
+    areas: baseline.areas,
+    regions: baseline.regions,
+    blockHulls: baseline.blockHulls,
+    inkHulls: baseline.inkHulls,
+    baseRegions,
+    preparedGeometry,
+    baselineGeometry,
+  };
+  gestureBaselines.set(baseline, prepared);
+  return prepared;
 }
 
 /** Computes bottom-up stored, required, constraint, and drawn rectangles. */
@@ -264,70 +297,103 @@ function storedSizeFloor(required) {
 /** Solves one gesture from its immutable pointer-down world snapshot. */
 export function solveAreaMapGesture(baseline, intent) {
   const selected = new Set(intent.selectedAreas ?? []);
-  const baseRegions = new Map(baseline.regions);
   const desired = { x: Number(intent.desiredWorldDelta?.x ?? 0), y: Number(intent.desiredWorldDelta?.y ?? 0) };
-  const preparedGeometry = prepareWorldGeometry(baseline.areas, baseRegions);
-  const baselineGeometry = computePreparedWorldGeometry({ ...baseline, regions: baseRegions }, preparedGeometry);
+  const { baseRegions, preparedGeometry, baselineGeometry } = prepareGestureBaseline(baseline);
   const affected = new Set(selected);
-  const siblings = new Map();
-  for (const [area, region] of baseRegions) {
-    const list = siblings.get(region.owner) ?? [];
-    list.push(area); siblings.set(region.owner, list);
-  }
-  for (const list of siblings.values()) list.sort();
+  const siblings = preparedGeometry.children;
   for (const area of selected) {
     let owner = baseRegions.get(area)?.owner;
     while (owner && owner !== "@root") { affected.add(owner); owner = baseRegions.get(owner)?.owner; }
   }
+  const affectedOrder = preparedGeometry.ordered.filter((area) => affected.has(area));
+  const affectedChildren = new Map();
+  const staticRequired = new Map();
+  for (const area of affectedOrder) {
+    const changed = [];
+    const stable = [baseline.blockHulls?.get(area)];
+    for (const child of preparedGeometry.children.get(area) ?? []) {
+      if (affected.has(child)) changed.push(child);
+      else stable.push(baselineGeometry.get(child)?.constraint);
+    }
+    affectedChildren.set(area, changed);
+    staticRequired.set(area, unionRects(stable));
+  }
+  /** Expands one sparse candidate into the public complete map result. */
+  const materialize = (candidate) => {
+    const regions = new Map(baseRegions);
+    for (const [area, storedRect] of candidate.storedRects) {
+      const region = clone(baseRegions.get(area));
+      region.storedRect = storedRect;
+      regions.set(area, region);
+    }
+    const geometry = new Map(baselineGeometry);
+    for (const [area, value] of candidate.geometry) geometry.set(area, value);
+    return { regions, geometry, wall: candidate.wall };
+  };
+  const evaluations = new Map();
   /** Evaluates one requested pointer delta. */
   const evaluate = (delta) => {
-    const regions = new Map(baseRegions);
+    const storedRects = new Map();
+    const cacheKey = [];
     for (const area of selected) {
       const originalRecord = baseRegions.get(area); if (!originalRecord) continue;
-      const record = clone(originalRecord);
-      regions.set(area, record);
       const original = originalRecord.storedRect;
+      const storedRect = { ...original };
       if (intent.handle) {
         const floor = storedSizeFloor(baselineGeometry.get(area)?.required);
-        if (intent.handle.includes("e")) record.storedRect.width = Math.max(floor.width, original.width + delta.x);
-        if (intent.handle.includes("s")) record.storedRect.height = Math.max(floor.height, original.height + delta.y);
+        if (intent.handle.includes("e")) storedRect.width = Math.max(floor.width, original.width + delta.x);
+        if (intent.handle.includes("s")) storedRect.height = Math.max(floor.height, original.height + delta.y);
         if (intent.handle.includes("w")) {
           const right = original.x + original.width;
-          record.storedRect.width = Math.max(floor.width, original.width - delta.x);
-          record.storedRect.x = right - record.storedRect.width;
+          storedRect.width = Math.max(floor.width, original.width - delta.x);
+          storedRect.x = right - storedRect.width;
         }
         if (intent.handle.includes("n")) {
           const bottom = original.y + original.height;
-          record.storedRect.height = Math.max(floor.height, original.height - delta.y);
-          record.storedRect.y = bottom - record.storedRect.height;
+          storedRect.height = Math.max(floor.height, original.height - delta.y);
+          storedRect.y = bottom - storedRect.height;
         }
       } else {
-        record.storedRect.x = original.x + delta.x;
-        record.storedRect.y = original.y + delta.y;
+        storedRect.x = original.x + delta.x;
+        storedRect.y = original.y + delta.y;
       }
-      record.storedRect = rect(record.storedRect);
+      const quantized = rect(storedRect);
+      storedRects.set(area, quantized);
+      cacheKey.push(area, ...[quantized.x, quantized.y, quantized.width, quantized.height].map((value) => Object.is(value, -0) ? "-0" : String(value)));
     }
-    const geometry = computePreparedWorldGeometry({ ...baseline, regions }, preparedGeometry);
+    const fingerprint = cacheKey.join("\u0000");
+    const cached = evaluations.get(fingerprint);
+    if (cached) return cached;
+    const geometry = new Map();
+    for (const area of affectedOrder) {
+      const childRects = (affectedChildren.get(area) ?? []).map((child) => geometry.get(child)?.constraint ?? baselineGeometry.get(child)?.constraint);
+      const required = unionRects([staticRequired.get(area), ...childRects]);
+      const region = storedRects.has(area) ? { ...baseRegions.get(area), storedRect: storedRects.get(area) } : baseRegions.get(area);
+      geometry.set(area, computeAreaGeometry(region, required, baseline.inkHulls?.get(area)));
+    }
     let wall = null;
     for (const area of affected) {
-      const value = geometry.get(area); if (!value) continue;
-      const owner = regions.get(area)?.owner;
+      const value = geometry.get(area) ?? baselineGeometry.get(area); if (!value) continue;
+      const owner = baseRegions.get(area)?.owner;
       const swept = unionRects([baselineGeometry.get(area)?.constraint, value.constraint]);
       for (const other of siblings.get(owner) ?? []) {
         if (area === other || selected.has(other)) continue;
-        const otherValue = geometry.get(other);
+        const otherValue = geometry.get(other) ?? baselineGeometry.get(other);
         if (overlaps(swept, otherValue.constraint)) { wall = other; break; }
       }
       if (wall) break;
     }
-    return { regions, geometry, wall };
+    const candidate = { storedRects, geometry, wall };
+    evaluations.set(fingerprint, candidate);
+    return candidate;
   };
   // The full swept rectangle contains both axis-segment sweeps. Accept a clear
-  // request before the fallback solver recomputes the complete world.
+  // request before the fallback solver checks its axis candidates.
   const direct = evaluate(desired);
   if (!direct.wall) {
-    const valid = [...direct.geometry.values()].every((value) => finiteRect(value.constraint) && value.stored.width >= MIN_WIDTH && value.stored.height >= MIN_HEIGHT);
-    return { ...direct, appliedDelta: { x: quantize(desired.x), y: quantize(desired.y) }, valid };
+    const result = materialize(direct);
+    const valid = [...result.geometry.values()].every((value) => finiteRect(value.constraint) && value.stored.width >= MIN_WIDTH && value.stored.height >= MIN_HEIGHT);
+    return { ...result, appliedDelta: { x: quantize(desired.x), y: quantize(desired.y) }, valid };
   }
   let applied = { x: 0, y: 0 };
   let blockedBy = null;
@@ -345,7 +411,7 @@ export function solveAreaMapGesture(baseline, intent) {
     }
     applied[axis] = desired[axis] * low;
   }
-  const accepted = evaluate(applied);
+  const accepted = materialize(evaluate(applied));
   accepted.wall = blockedBy;
   const valid = [...accepted.geometry.values()].every((value) => finiteRect(value.constraint) && value.stored.width >= MIN_WIDTH && value.stored.height >= MIN_HEIGHT);
   return { ...accepted, appliedDelta: { x: quantize(applied.x), y: quantize(applied.y) }, valid };

@@ -91,6 +91,8 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     await page.getByRole("dialog", { name: "Place a Tangent block" }).getByRole("textbox").fill("map");
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => window.editor.current().elements.some((element) => element.customData?.tangent?.kind === "goal"));
+    assert.equal(await page.getByRole("button", { name: /Ask brain/ }).count(), 0, "the map has no Journal-note Ask action");
+    assert.equal(await page.getByRole("button", { name: /^Correct/ }).count(), 0, "the map has no legacy Correct action");
 
     const canvas = page.locator(".excalidraw canvas.interactive");
     const box = await canvas.boundingBox();
@@ -239,7 +241,7 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
   let browser = null;
   try {
     browser = await chromium.launch({ executablePath, headless: true });
-    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
+    const page = await browser.newPage({ viewport: { width: 1400, height: 760 } });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     const row = page.locator('[data-work-cursor="area:otto/tangent"]');
     await row.dispatchEvent("click");
@@ -249,6 +251,29 @@ test("m opens the real Excalidraw island from Work", { skip: !enabled, timeout: 
     await page.getByRole("button", { name: "Otto, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
     await page.getByRole("button", { name: "Tangent, child of Otto, depth 2, unfolded, ready, 0 blocks" }).waitFor();
     assert.match(await page.locator(".map-screen h1").textContent(), /^otto \/ tangent · Map$/);
+    await page.locator(".excalidraw canvas.interactive").evaluate((canvas) => { canvas.dataset.companionIdentity = "original"; });
+    await page.keyboard.press("b");
+    const pane = page.locator("[data-map-brain-pane]");
+    await pane.waitFor();
+    assert.equal(await pane.isVisible(), true, "b docks the exact Area brain on a wide map");
+    assert.match(await pane.locator(":scope > header").textContent(), /Brain working/);
+    assert.equal(await pane.locator(".map-brain-terminal").getAttribute("data-session"), "otto-tangent--brain");
+    const widths = await page.evaluate(() => ({ pane: document.querySelector("[data-map-brain-pane]").getBoundingClientRect().width, map: document.querySelector("[data-map-column]").getBoundingClientRect().width }));
+    assert.ok(widths.pane >= 550 && widths.pane <= 570, `the dock starts at 560px: ${JSON.stringify(widths)}`);
+    assert.ok(widths.map >= 560, `the map keeps its usable minimum: ${JSON.stringify(widths)}`);
+    await page.locator("[data-map-column]").click({ position: { x: 20, y: 20 } });
+    assert.equal(await page.locator("[data-map-column]").getAttribute("class"), "map-column focused");
+    await page.keyboard.press("Control+l");
+    assert.match(await pane.getAttribute("class"), /focused/, "Control-L focuses the brain column");
+    await page.keyboard.press("Control+h");
+    assert.match(await page.locator("[data-map-column]").getAttribute("class"), /focused/, "Control-H returns focus to the map");
+    assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "focus changes never remount the canvas");
+    await pane.locator("[data-close-map-brain]").click();
+    assert.equal(await pane.isVisible(), false, "Close b hides only the pane");
+    await page.keyboard.press("b");
+    assert.equal(await pane.isVisible(), true, "b reopens the same companion");
+    assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "close and reopen keep the map island");
+    await pane.locator("[data-close-map-brain]").click();
     await page.getByRole("button", { name: "Outline", exact: true }).click();
     await page.getByRole("treeitem", { name: "Otto, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
     await page.getByRole("treeitem", { name: "Tangent, child of Otto, depth 2, unfolded, ready, 0 blocks" }).waitFor();

@@ -972,10 +972,10 @@ export function AreaMapWorld({ host, bridge, options }) {
         if (block) { stop(event); openBlock(block); }
         return;
       }
-      if (block && ["a", "b", "c", "o", "x"].includes(event.key.toLowerCase())) {
+      if (block && ["o", "x"].includes(event.key.toLowerCase())) {
         stop(event);
         if (event.key.toLowerCase() === "x") hideBlock(block);
-        else openBlock(block, { a: "ask", b: "enter", c: "correct", o: "read" }[event.key.toLowerCase()]);
+        else openBlock(block, "read");
         return;
       }
       if ((event.key === " " || event.code === "Space") && region) {
@@ -1198,7 +1198,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     <StableWorldCanvas initialData={initialDataRef.current} handlers={canvasHandlersRef} />
     <div className="tangent-map-top-right">
       <div className="tangent-map-toolbar-extra"><button type="button" onClick={openPicker} aria-keyshortcuts="b" title="Place a Tangent block (B)"><span aria-hidden="true">◈</span><span className="tangent-map-label">Block</span><kbd>B</kbd></button></div>
-      {currentBlock && <div className="tangent-map-verbs" role="group" aria-label="Tangent block actions"><button type="button" onClick={() => openBlock(currentBlock)}>Open <kbd>Enter</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "ask")}>Ask brain <kbd>A</kbd></button><button type="button" onClick={() => openBlock(currentBlock, "correct")}>Correct <kbd>C</kbd></button><button type="button" onClick={() => hideBlock(currentBlock)}>Hide <kbd>X</kbd></button></div>}
+      {currentBlock && <div className="tangent-map-verbs" role="group" aria-label="Tangent block actions"><button type="button" onClick={() => openBlock(currentBlock)}>Open <kbd>Enter</kbd></button><button type="button" onClick={() => hideBlock(currentBlock)}>Hide <kbd>X</kbd></button></div>}
       <button type="button" onClick={() => setOutlineOpen((value) => !value)} aria-expanded={outlineOpen} title="Outline"><span aria-hidden="true" className="tangent-map-glyph">≣</span><span className="tangent-map-label">Outline</span></button>
       <button type="button" onClick={() => setHelpOpen(true)} aria-keyshortcuts="?" title="Map keys (?)"><span aria-hidden="true" className="tangent-map-glyph">?</span><span className="tangent-map-label">Keys</span><kbd>?</kbd></button>
     </div>
@@ -1226,7 +1226,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       <ul role="listbox">{pickerChoices.slice(0, 30).map((choice) => <li key={`${choice.kind}:${choice.ref}`}><button type="button" onClick={() => placeBlock(choice)}><small>{choice.kind}</small><span>{choice.title}</span><em>{choice.status}</em></button></li>)}</ul>
       <p><kbd>Tab</kbd> {widePicker ? "return here" : "whole vault"} · <kbd>Enter</kbd> place · <kbd>⇧Enter</kbd> place another · <kbd>Esc</kbd> close</p>
     </section></div>}
-    {helpOpen && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p>Space-drag pans. Command-wheel zooms. Command-Z undoes. Escape prints and runs its next effect.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>A</kbd> asks the brain · <kbd>C</kbd> corrects · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelpOpen(false)}>Close</button></section></div>}
+    {helpOpen && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p>Space-drag pans. Command-wheel zooms. Command-Z undoes. Escape prints and runs its next effect.</p><p><kbd>b</kbd> brain beside · <kbd>Ctrl-L</kbd> / <kbd>Ctrl-H</kbd> switch columns.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelpOpen(false)}>Close</button></section></div>}
     {debug && <aside className="tangent-map-debug" aria-label="Area map diagnostics"><h2>Area map diagnostics</h2><p>dirty owners: {[...state.dirtyOwners].join(", ") || "none"}</p><table><thead><tr><th>owner</th><th>source</th><th>runtime</th><th>stored</th><th>constraint</th><th>load</th></tr></thead><tbody>{state.world.areas.map((node) => <tr key={node.key}><td>{node.parent}</td><td>{node.region.sourceId}</td><td>{worldCore.runtimeId(node.parent, node.region.sourceId)}</td><td>{rectWords(node.region.storedRect)}</td><td>{rectWords(state.composition.geometry.get(node.key)?.constraint)}</td><td>{node.shard.state}</td></tr>)}</tbody></table><details><summary>Authored identities</summary><ul>{[...state.composition.origins].filter(([, origin]) => !origin.regionKey).map(([runtime, origin]) => <li key={runtime}>{origin.owner} · {origin.sourceId} · {runtime}</li>)}</ul></details></aside>}
     {state.draft && !state.draft.restored && <section className="tangent-map-draft-choice"><strong>Draft from {new Date(state.draft.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong><button type="button" onClick={() => controller.restoreDraft()}>Restore</button><button type="button" onClick={() => controller.discardDraft()}>Discard</button></section>}
   </div>;

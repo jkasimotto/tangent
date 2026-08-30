@@ -1722,6 +1722,25 @@ body.work-search-open .screen { padding-bottom: 48px; }
 .map-screen > .screen-header h1 { margin: 0; font-size: 14px; font-weight: 650; }
 .map-screen > .screen-header button { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
 .dedicated-map { min-height: 0; height: 100%; }
+.map-companion { --map-brain-width: 560px; display: grid; grid-template-columns: minmax(0, 1fr) 6px var(--map-brain-width); min-height: 0; overflow: hidden; }
+.map-column { min-width: 0; min-height: 0; border-right: 2px solid var(--line); }
+.map-column.focused { border-right-color: var(--focus); }
+.map-brain-divider { cursor: col-resize; background: var(--line); }
+.map-brain-divider:hover { background: var(--line-strong); }
+.map-brain-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; border-left: 2px solid var(--line); background: var(--bg); }
+.map-brain-pane.focused { border-left-color: var(--focus); }
+.map-brain-pane > header { position: relative; z-index: 2; display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--bg); color: var(--muted); }
+.map-brain-pane.focused > header { color: var(--text); }
+.map-brain-pane > header strong { margin-right: auto; }
+.map-brain-pane > header button { border: 0; background: transparent; color: inherit; cursor: pointer; }
+.map-brain-content, .map-brain-terminal { position: relative; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
+.map-brain-terminal { inset: auto; box-sizing: border-box; width: 100%; padding: 14px 18px 18px; }
+.map-brain-start { height: 100%; overflow: auto; padding: 18px; }
+.map-brain-start .launch-picker { max-width: none; }
+.map-brain-state { padding: 20px; color: var(--muted); }
+.map-brain-pane[hidden], .map-brain-divider[hidden] { display: none; }
+.map-companion:has(.map-brain-pane[hidden]) { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1119px) { .map-companion { grid-template-columns: minmax(0, 1fr); } }
 .area-board-loading, .area-board-draft-choice { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 320px; color: var(--muted); }
 .area-board-draft-choice button { border: 1px solid var(--line-strong); border-radius: 7px; padding: 7px 10px; background: var(--surface-raised); color: var(--text); }
 .area-board-toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-bottom: 0; background: var(--surface-raised); }

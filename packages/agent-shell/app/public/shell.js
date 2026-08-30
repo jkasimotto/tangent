@@ -30,6 +30,7 @@ import { bindShellEvents } from "./shell-event-bindings.js";
 import { createTerminalController } from "./terminal-controller.js";
 import { createActionTelemetry } from "./action-telemetry.js";
 import { reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
+import { mapBrainCanDock, mapBrainMode, mapBrainWidth as clampMapBrainWidth } from "./map-brain-companion-core.js";
 import { ASK_DISMISSALS_KEY, readDismissedAskIds } from "./ask-dismissal-core.js";
 import { renderPromptBestiary } from "./prompt-bestiary.js";
 
@@ -899,7 +900,7 @@ function renderScreen() {
   else if (state.view === "harnesses") screen.innerHTML = renderHarnessEditor();
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument() + launchPopover();
-  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header map-screen-header"><button type="button" data-map-back>Work <kbd>Esc</kbd></button><h1><span class="map-breadcrumb">${mapBreadcrumb()}</span><span> · Map</span></h1><div class="map-focus-controls"><button type="button" data-starred-only aria-pressed="${state.areaFocusOnly}">${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd></button><button type="button" data-active-only aria-pressed="${state.activeOnly}">${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd></button></div></header><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the complete Area map…</p></div></section>`;
+  else if (state.view === "map") screen.innerHTML = `<section class="map-screen"><header class="screen-header map-screen-header"><button type="button" data-map-back>Work <kbd>Esc</kbd></button><h1><span class="map-breadcrumb">${mapBreadcrumb()}</span><span> · Map</span></h1><div class="map-focus-controls"><button type="button" data-map-brain>Brain <kbd>b</kbd></button><button type="button" data-starred-only aria-pressed="${state.areaFocusOnly}">${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd></button><button type="button" data-active-only aria-pressed="${state.activeOnly}">${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd></button></div></header><div class="map-companion"><div class="map-column focused" data-map-column tabindex="-1"><div class="area-map-host dedicated-map" data-dedicated-area-map="${escapeHtml(state.mapArea || "")}"><p>Loading the complete Area map…</p></div></div><div class="map-brain-divider" data-map-brain-divider hidden></div><aside class="map-brain-pane" data-map-brain-pane hidden></aside></div></section>`;
   else {
     state.view = "work";
     screen.innerHTML = renderWork();
@@ -925,6 +926,7 @@ function renderScreen() {
 /** Opens the one presentation used by every live session. */
 function openSessionLayer(session, kind = "agent", returnPoint = null) {
   if (!session?.name) return showToast("This row has nothing live to enter.");
+  if (kind === "brain" && openMapBrainSession(session)) return;
   state.sessionPeek = { session: session.name, kind, returnPoint: returnPoint ?? captureReturnPoint() };
   state.renderedKey = "";
   paint(true);
@@ -1189,6 +1191,7 @@ function paint(force = false) {
   const key = renderKey();
   if (!force && editingSurfaceOnScreen()) {
     if (state.view === "map" || screen.querySelector("[data-area-map]")) refreshAreaMapFocus();
+    if (state.view === "map" && mapBrainOpen) renderMapBrainPane();
     updateHeader();
     return;
   }
@@ -1519,6 +1522,10 @@ let shellBindings = null;
 let mapReturnCursor = "";
 let activeAreaBoard = null;
 let mapLocatedArea = "";
+let mapBrainOpen = false;
+let mapBrainFocus = "map";
+let mapBrainSession = "";
+let mapBrainWidth = clampMapBrainWidth(localStorage.getItem("agent-shell.map-brain-width"), window.innerWidth);
 /** Prints the full launch path while keeping each Area segment actionable. */
 function mapBreadcrumb() {
   const parts = String(mapLocatedArea || state.mapArea || "").split("/").filter(Boolean);
@@ -1572,7 +1579,6 @@ function areaMapEntityVerb(action) {
   const source = areaBoardCore.splitReference(action.ref);
   const entity = areaMapEntities().find((record) => record.file === source.file);
   const area = action.kind === "area" ? source.file?.replace(/\/[^/]+\.md$/, "") : entity?.area ?? source.file?.replace(/\/[^/]+$/, "");
-  if (action.verb === "ask" || action.verb === "correct") return openAreaCapture(area);
   if (action.verb === "enter") {
     if (action.kind === "goal" && source.file) { disposeAreaMap(); return openGoalRun(source.file); }
     if (action.kind === "area" && area) return openOrStartBrain(area);
@@ -1580,6 +1586,102 @@ function areaMapEntityVerb(action) {
   if (action.kind === "link") { window.open(action.ref, "_blank", "noopener"); return; }
   if (action.kind === "area" && area) return drillAreaMap(area);
   if (source.file) return openDocumentPeek(source.file, { origin: { kind: "area-map", area: mapLocatedArea || state.mapArea } });
+}
+
+/** Returns the exact Area currently located on the dedicated map. */
+function mapBrainArea() { return mapLocatedArea || state.mapArea || ""; }
+/** Finds only the located Area's live brain session. */
+function mapBrainLiveSession(area = mapBrainArea()) {
+  const brain = brainForAreaCard(area);
+  return brainSessions().find((session) => session.name === brain?.repair?.current?.session || (session.area === area && session.kind === "brain") || session.name === brain?.session) ?? null;
+}
+/** Moves keyboard ownership and the visible focus edge between columns. */
+function focusMapCompanion(side) {
+  if (!mapBrainOpen && side === "brain") return;
+  mapBrainFocus = side;
+  const map = screen.querySelector("[data-map-column]");
+  const pane = screen.querySelector("[data-map-brain-pane]");
+  map?.classList.toggle("focused", side === "map");
+  pane?.classList.toggle("focused", side === "brain");
+  if (side === "brain") (pane?.querySelector(".xterm-helper-textarea, input, textarea, select, button") ?? pane)?.focus?.({ preventScroll: true });
+  else screen.querySelector("[data-map-column]")?.focus?.({ preventScroll: true });
+}
+/** Reconciles the dock with existing brain lifecycle and terminal controls. */
+function renderMapBrainPane() {
+  const pane = screen.querySelector("[data-map-brain-pane]");
+  const divider = screen.querySelector("[data-map-brain-divider]");
+  if (!pane || !divider) return;
+  mapBrainWidth = clampMapBrainWidth(localStorage.getItem("agent-shell.map-brain-width") || mapBrainWidth, screen.querySelector(".map-companion")?.clientWidth || window.innerWidth);
+  pane.hidden = divider.hidden = !mapBrainOpen;
+  screen.querySelector(".map-companion")?.style.setProperty("--map-brain-width", `${mapBrainWidth}px`);
+  if (!mapBrainOpen) return;
+  const area = mapBrainArea();
+  const brain = brainForAreaCard(area);
+  const live = mapBrainLiveSession(area);
+  const label = brainStateLabel(brain);
+  const presentation = mapBrainMode(brain, live);
+  const mode = presentation.kind === "terminal" ? `live:${presentation.session}` : presentation.kind;
+  if (pane.dataset.mode === mode) {
+    const title = pane.querySelector(":scope > header strong");
+    if (title) title.textContent = label;
+    focusMapCompanion(mapBrainFocus);
+    return;
+  }
+  pane.dataset.mode = mode;
+  pane.innerHTML = `<header><strong>${escapeHtml(label)}</strong>${live ? `<button class="session-tag" type="button" data-copy-session-tag="${escapeHtml(live.name)}"><code>${escapeHtml(live.name)}</code></button>` : ""}<span>Map <kbd>Ctrl-H</kbd></span><button type="button" data-close-map-brain>Close <kbd>b</kbd></button></header><div class="map-brain-content"></div>`;
+  const content = pane.querySelector(".map-brain-content");
+  if (presentation.kind === "terminal") {
+    mapBrainSession = live.name;
+    content.innerHTML = `<div class="terminal-host map-brain-terminal" data-session="${escapeHtml(live.name)}"></div>`;
+    mountTerminal(content.firstElementChild, live.name);
+  } else if (presentation.kind === "resuming") {
+    content.innerHTML = `<p class="map-brain-state">Resuming brain…</p>`;
+    void openOrStartBrain(area, pane.querySelector("[data-close-map-brain]"));
+  } else {
+    mapBrainSession = "";
+    if (state.launchTarget !== BRAIN_LAUNCH_TARGET || state.brainDraft?.area !== area) {
+      seedMapBrainDraft(area);
+    }
+    content.innerHTML = `<div class="map-brain-start"><p>${escapeHtml(label)}</p>${launchPickerBlock()}</div>`;
+  }
+  focusMapCompanion(mapBrainFocus);
+}
+/** Seeds the existing brain start form inside the companion. */
+function seedMapBrainDraft(area) {
+  state.launchTarget = BRAIN_LAUNCH_TARGET;
+  launchOptionsFor(area);
+  state.launch.record = null; state.launch.steps = []; state.launch.active = 0; state.launch.command = ""; state.launch.editing = false; state.launch.instruction = ""; state.launch.choice = null;
+  state.brainDraft = { area, instruction: "" };
+  state.launchAnchor = null;
+}
+/** Hides the companion without stopping its tmux session or losing a draft. */
+function closeMapBrain() {
+  if (!mapBrainOpen) return;
+  mapBrainOpen = false; mapBrainFocus = "map"; mapBrainSession = "";
+  const pane = screen.querySelector("[data-map-brain-pane]");
+  if (pane?.dataset.mode?.startsWith("live:")) { disposeTerminal(); pane.dataset.mode = ""; }
+  renderMapBrainPane();
+  focusMapCompanion("map");
+}
+/** Opens the wide dock or the existing narrow-screen overlay fallback. */
+function toggleMapBrain() {
+  if (state.view !== "map") return;
+  if (mapBrainOpen) return closeMapBrain();
+  const companion = screen.querySelector(".map-companion");
+  if (!mapBrainCanDock(window.innerWidth, companion?.clientWidth || window.innerWidth, mapBrainWidth)) {
+    const live = mapBrainLiveSession();
+    return live ? openSessionLayer(live, "brain", captureReturnPoint()) : openOrStartBrain(mapBrainArea(), screen.querySelector("[data-map-brain]"));
+  }
+  mapBrainOpen = true; mapBrainFocus = "map";
+  renderMapBrainPane();
+}
+/** Mounts an exact Area brain in the dock when the map has enough width. */
+function openMapBrainSession(session) {
+  if (state.view !== "map" || session?.area !== mapBrainArea() || window.innerWidth < 1120) return false;
+  mapBrainOpen = true; mapBrainSession = session.name; mapBrainFocus = "brain";
+  state.sessionPeek = null;
+  renderMapBrainPane();
+  return true;
 }
 /** Opens an Area's living map and remembers the Work return row. */
 function openAreaMap(area, trigger) {
@@ -1594,12 +1696,15 @@ function openAreaMap(area, trigger) {
 /** Fits the one persistent world to another Area without changing authority. */
 function drillAreaMap(area) {
   if (!area) return;
+  closeMapBrain();
   mapLocatedArea = area;
   activeAreaBoard?.fitArea?.(area, { push: true, select: false });
   updateAreaMapChrome();
 }
 /** Leaves the world for the exact Work row after controller history is empty. */
 function leaveAreaMap() {
+  closeMapBrain();
+  if (state.launchTarget === BRAIN_LAUNCH_TARGET) { state.launchTarget = ""; state.brainDraft = null; state.launchAnchor = null; }
   disposeAreaMap();
   state.view = "work";
   paint(true);
@@ -1633,6 +1738,7 @@ function mountDedicatedAreaMap() {
       locatedArea: mapLocatedArea,
       focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly },
     });
+    if (mapBrainOpen) renderMapBrainPane();
   }).catch((error) => { host.dataset.loaded = "error"; host.innerHTML = `<section class="area-board-empty" role="alert"><h2>The Area map did not load.</h2><p>${escapeHtml(String(error?.message ?? error))}</p><button type="button" data-map-retry>Retry</button></section>`; });
 }
 shellBindings = bindShellEvents({
@@ -1642,7 +1748,7 @@ shellBindings = bindShellEvents({
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
     confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, restoreReturnPoint,
     showDecision, showDescribe, toggleAwake, openModal, closeModal, modalConfirm: getModalConfirm, openSessionLayer, closeSessionLayer,
-    openAreaMap, drillAreaMap, closeAreaMap,
+    openAreaMap, drillAreaMap, closeAreaMap, toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane,
   },
   prompts: {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,

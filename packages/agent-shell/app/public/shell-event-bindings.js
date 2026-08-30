@@ -14,6 +14,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
     showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap, drillAreaMap, closeAreaMap,
+    toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane,
   } = chrome;
   const {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
@@ -1585,6 +1586,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   document.addEventListener("click", async (event) => {
     const target = event.target;
+    if (target.closest?.("[data-map-brain]")) return toggleMapBrain();
+    if (target.closest?.("[data-close-map-brain]")) return closeMapBrain();
+    if (target.closest?.("[data-map-column]")) focusMapCompanion("map");
+    else if (target.closest?.("[data-map-brain-pane]")) focusMapCompanion("brain");
     if (state.documentPeek && documentPeekLayer.contains(target)) return handleDocumentPeekClick(event);
     const processControl = target.closest?.("[data-control-process]");
     if (processControl) return controlProcess(processControl);
@@ -2880,6 +2885,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     // shortcut may reinterpret its provisional key value.
     if (keyboardEventIsComposing(event)) return;
     const context = keyboardContext(event);
+    if (state.view === "map" && (event.metaKey !== event.ctrlKey) && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "h" && event.target.closest?.("[data-map-brain-pane]")) {
+      event.preventDefault(); event.stopPropagation(); focusMapCompanion("map"); return;
+    }
 
     if (context === "modal") {
       const focusedAction = event.target.closest?.("button:not([disabled]), a[href]");
@@ -2938,6 +2946,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     // Command-Shift-Enter leave action. This handler runs in capture so xterm never sees
     // that one shell command first.
     if (context === "session") {
+      if (state.view === "map" && (event.metaKey !== event.ctrlKey) && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "h") {
+        event.preventDefault(); event.stopPropagation();
+        if (state.sessionPeek) closeSessionLayer(); else focusMapCompanion("map");
+        return;
+      }
       if (shortcutMatches(event, KEYMAP.session) && state.sessionPeek) {
         event.preventDefault();
         event.stopPropagation();
@@ -2987,6 +3000,16 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (handleGlobalShortcut(event)) return;
     if (handleCommandEnter(event)) return;
+    if (state.view === "map" && (event.metaKey !== event.ctrlKey) && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "l") {
+      event.preventDefault(); event.stopPropagation();
+      const pane = screen.querySelector("[data-map-brain-pane]");
+      if (pane?.hidden !== false) toggleMapBrain();
+      focusMapCompanion("brain");
+      return;
+    }
+    if (state.view === "map" && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "b" && !event.target.closest?.("[data-map-brain-pane]")) {
+      event.preventDefault(); event.stopPropagation(); toggleMapBrain(); return;
+    }
     if (state.view === "map" && event.key === "Escape") {
       // Excalidraw owns Escape while its surface has a tool or selection. The
       // editor island calls closeAreaMap only after both are clear.
@@ -3090,6 +3113,23 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   window.addEventListener("resize", () => {
     try { terminalFit(); } catch {}
+  });
+
+  screen.addEventListener("pointerdown", (event) => {
+    if (!event.target.closest?.("[data-map-brain-divider]")) return;
+    event.preventDefault();
+    /** Applies one divider pointer position without moving column focus. */
+    const move = (next) => {
+      const companion = screen.querySelector(".map-companion");
+      const rect = companion?.getBoundingClientRect();
+      const width = Math.max(420, Math.min((rect?.width || window.innerWidth) / 2, (rect?.right || window.innerWidth) - next.clientX));
+      localStorage.setItem("agent-shell.map-brain-width", String(Math.round(width)));
+      companion?.style.setProperty("--map-brain-width", `${Math.round(width)}px`);
+      try { terminalFit(); } catch {}
+    };
+    /** Ends this one divider drag. */
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
   });
 
   document.addEventListener("pointerdown", (event) => {

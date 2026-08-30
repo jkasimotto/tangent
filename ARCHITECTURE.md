@@ -59,9 +59,9 @@ Raw, debug, and CI commands remain callable but hidden from default help.
 
 Agent Shell centers each Area on one logical brain. The vault owns Area knowledge, and each bound repository owns code-agent instructions.
 
-Each Area can store one Excalidraw scene at `<area>/<leaf>.excalidraw`. Plain-text notes own referenced facts. Julian owns scene geometry, style, and ink. Tangent entity blocks use `customData.tangent` only to address their authoritative source (ADR-0049).
+Each Area can store one Excalidraw source scene at `<area>/<leaf>.excalidraw`. The Area tree supplies one live region for every Area. Agent Shell composes all source shards into one browser world. Source coordinates and membership stay local to the owning shard. Runtime IDs include the owner and source ID (ADR-0051).
 
-Agent Shell embeds the upstream Excalidraw editor as a bundled browser island. It saves a complete scene through a hash-checked, path-limited repository boundary. Fact refresh changes only the displayed cache and does not dirty the scene. Runtime records hold brain pictures, proposals, and promotion progress (ADR-0049).
+Agent Shell embeds Excalidraw as one persistent browser island. The world controller owns loading, selection, history, view masks, drafts, and conflicts. A durable coordinator commits all shards from one gesture in one exact Git commit. Fact refresh and camera changes do not change map authority (ADR-0049, ADR-0051).
 Area skills live at `<area>/.agents/skills/<name>/SKILL.md`. Tangent creates `<area>/.claude/skills` as a relative link, so Codex and Claude discover the same inherited files. Legacy `skill-<slug>.md` Documents remain readable during migration. See ADR-0045.
 Agent Shell derives inherited sources by path. It owns bounded runtime projections, Journal delivery, Requests, Goal queues, presented-document attention, and Operation health.
 Each Area can declare allowed agent launches. Child policies intersect with parent policies. Agent Shell remembers the last successful Brain and Work launch separately.

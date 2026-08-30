@@ -50,6 +50,8 @@ function AreaMapWorld({ host, bridge, options }) {
   const fingerprintRef = useRef(core.authoredFingerprint(sceneRef.current.elements));
   const hiddenRef = useRef(new Set());
   const gestureBeforeRef = useRef(null);
+  const gestureCompositionRef = useRef(null);
+  const pendingGestureRef = useRef({ areas: new Set(), owners: new Set() });
   const historyRef = useRef({ undo: [], redo: [] });
 
   /** Restores one world snapshot and persists its inverse as one world action. */
@@ -119,31 +121,35 @@ function AreaMapWorld({ host, bridge, options }) {
   /** Applies edited region geometry to source records and recomposes every ancestor. */
   function publish(elements, appState) {
     const prior = compositionRef.current;
+    const gestureWorld = gestureBeforeRef.current;
+    const solverWorld = gestureWorld ?? worldRef.current;
+    const solverComposition = gestureCompositionRef.current ?? prior;
     const changedAreas = new Set();
     const changedOwners = new Set();
     for (const element of elements) {
       const area = element.customData?.tangent?.role === "area-region" && element.customData?.tangent?.area;
       if (!area) continue;
       const node = worldRef.current.areas.find((entry) => entry.key === area);
-      const old = prior.regionRects.get(area);
+      const old = solverComposition.regionRects.get(area);
       if (!node || !old) continue;
       if ([element.x, element.y, element.width, element.height].some((value) => !Number.isFinite(value))) continue;
       if (Math.abs(element.x - old.x) < 0.01 && Math.abs(element.y - old.y) < 0.01 && Math.abs(element.width - old.width) < 0.01 && Math.abs(element.height - old.height) < 0.01) continue;
       const parentOffset = node.parent === "@root" ? { x: 0, y: 0 } : prior.offsets.get(node.parent);
       const local = { x: element.x - parentOffset.x, y: element.y - parentOffset.y };
+      const baselineNode = solverWorld.areas.find((entry) => entry.key === area);
       let handle = null;
-      if (Math.abs(element.width - old.width) >= 0.01) handle = Math.abs(local.x - node.region.storedRect.x) >= 0.01 ? "w" : "e";
-      if (Math.abs(element.height - old.height) >= 0.01) handle = `${handle ?? ""}${Math.abs(local.y - node.region.storedRect.y) >= 0.01 ? "n" : "s"}`;
-      const regions = new Map(worldRef.current.areas.map((entry) => [entry.key, structuredClone(entry.region)]));
+      if (Math.abs(element.width - old.width) >= 0.01) handle = Math.abs(local.x - baselineNode.region.storedRect.x) >= 0.01 ? "w" : "e";
+      if (Math.abs(element.height - old.height) >= 0.01) handle = `${handle ?? ""}${Math.abs(local.y - baselineNode.region.storedRect.y) >= 0.01 ? "n" : "s"}`;
+      const regions = new Map(solverWorld.areas.map((entry) => [entry.key, structuredClone(entry.region)]));
       const blockHulls = new Map(); const inkHulls = new Map();
-      for (const entry of worldRef.current.areas) {
+      for (const entry of solverWorld.areas) {
         const hulls = worldCore.shardHulls(entry.shard.scene);
         if (hulls.blocks) blockHulls.set(entry.key, hulls.blocks);
         if (hulls.ink) inkHulls.set(entry.key, hulls.ink);
       }
-      const preview = worldCore.solveAreaMapGesture({ areas: worldRef.current.areas.map((entry) => entry.key), regions, blockHulls, inkHulls }, {
+      const preview = worldCore.solveAreaMapGesture({ areas: solverWorld.areas.map((entry) => entry.key), regions, blockHulls, inkHulls }, {
         selectedAreas: [area], handle,
-        desiredWorldDelta: handle ? { x: element.width - old.width + (handle.includes("w") ? local.x - node.region.storedRect.x : 0), y: element.height - old.height + (handle.includes("n") ? local.y - node.region.storedRect.y : 0) } : { x: local.x - node.region.storedRect.x, y: local.y - node.region.storedRect.y },
+        desiredWorldDelta: handle ? { x: element.width - old.width + (handle.includes("w") ? local.x - baselineNode.region.storedRect.x : 0), y: element.height - old.height + (handle.includes("n") ? local.y - baselineNode.region.storedRect.y : 0) } : { x: local.x - baselineNode.region.storedRect.x, y: local.y - baselineNode.region.storedRect.y },
       });
       node.region.storedRect = preview.regions.get(area).storedRect;
       node.region.source = "stored";
@@ -177,7 +183,10 @@ function AreaMapWorld({ host, bridge, options }) {
     applyingRef.current = true;
     api?.updateScene({ elements: projectView(next.scene).elements, captureUpdate: "NEVER" });
     requestAnimationFrame(() => { applyingRef.current = false; });
-    options.onWorldChange?.(worldRef.current, changedAreas, changedOwners);
+    if (gestureBeforeRef.current) {
+      for (const area of changedAreas) pendingGestureRef.current.areas.add(area);
+      for (const owner of changedOwners) pendingGestureRef.current.owners.add(owner);
+    } else options.onWorldChange?.(worldRef.current, changedAreas, changedOwners);
   }
 
   /** Fits the camera to one Area without changing map authority. */
@@ -244,11 +253,19 @@ function AreaMapWorld({ host, bridge, options }) {
       autoFocus
       handleKeyboardGlobally={false}
       UIOptions={{ tools: { image: false }, canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false } }}
-      onPointerDown={() => { gestureBeforeRef.current ??= structuredClone(worldRef.current); }}
+      onPointerDown={() => {
+        if (gestureBeforeRef.current) return;
+        gestureBeforeRef.current = structuredClone(worldRef.current);
+        gestureCompositionRef.current = compositionRef.current;
+        pendingGestureRef.current = { areas: new Set(), owners: new Set() };
+      }}
       onPointerUp={() => {
-        const before = gestureBeforeRef.current; gestureBeforeRef.current = null;
+        const before = gestureBeforeRef.current;
+        const pending = pendingGestureRef.current;
+        gestureBeforeRef.current = null; gestureCompositionRef.current = null;
         if (!before || JSON.stringify(before) === JSON.stringify(worldRef.current)) return;
         historyRef.current.undo.push(before); historyRef.current.redo = [];
+        options.onWorldChange?.(worldRef.current, pending.areas, pending.owners);
       }}
       onScrollChange={(scrollX, scrollY, zoom) => setCamera({ scrollX, scrollY, zoom: zoom?.value ?? zoom ?? 1 })}
       onChange={(elements, appState) => {

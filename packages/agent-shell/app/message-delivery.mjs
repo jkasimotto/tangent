@@ -23,7 +23,7 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
       text: stored.text,
       banner: stored.banner,
       queuedAt: stored.queuedAt,
-      ...(stored.notices?.length ? { notices: stored.notices, generation: stored.generation ?? null } : {}),
+      ...(stored.notices?.length ? { notices: stored.notices, generation: stored.generation ?? null, brainArea: stored.brainArea ?? null } : {}),
     });
     queues.set(stored.target, pending);
   }
@@ -50,7 +50,7 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
     await log({ event: arrived ? "delivered" : "not delivered", to: target, from: entry.from, area: entry.area, text: body, banner: entry.banner !== false, queuedAt: entry.queuedAt });
     // A notice that did not arrive stays queued and unread; the inbox marks
     // it read only after it was shown.
-    if (arrived && entry.notices?.length) await notices.delivered(entry.notices, target, entry.generation ?? null);
+    if (arrived && entry.notices?.length) await notices.delivered(entry.notices, target, entry.generation ?? null, entry.brainArea ?? null);
     return arrived;
   }
 
@@ -196,6 +196,14 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
           const durableIds = pending.filter((entry) => entry.durable).map((entry) => entry.deliveryId);
           if (durableIds.length) await store.remove(durableIds);
           queues.delete(target);
+          return;
+        }
+        const brainEntry = pending[0]?.notices?.length ? pending[0] : null;
+        if (brainEntry?.brainArea && (brainEntry.brainArea !== live.area || Number(brainEntry.generation) !== Number(live.generation))) {
+          await log({ event: "route fenced", sourceArea: brainEntry.notices[0]?.area ?? null, brainArea: brainEntry.brainArea ?? null, to: target, from: brainEntry.from, text: brainEntry.text, reason: "brain route identity changed before delivery" });
+          if (brainEntry.durable) await store.remove(brainEntry.deliveryId);
+          pending.shift();
+          if (!pending.length) queues.delete(target);
           return;
         }
         const decision = deliveryDecision(live);

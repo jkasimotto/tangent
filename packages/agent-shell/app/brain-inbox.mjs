@@ -78,10 +78,20 @@ export function appendNotice(record, text, now = new Date().toISOString(), sourc
     deliveredAt: null,
     deliveredTo: null,
     deliveredGeneration: null,
+    deliveredBrainArea: null,
     ...(stableSourceId ? { sourceId: stableSourceId } : {}),
   };
   record.notices = [...(record.notices ?? []), notice];
   return { ...notice, duplicate: false };
+}
+
+/** Rewrites one linked notice in place while preserving its identity and delivery evidence. */
+export function rewriteNotice(record, { id = null, sourceId = null, text } = {}) {
+  const notice = record.notices.find((item) => (id && item.id === id) || (sourceId && item.sourceId === sourceId));
+  const body = String(text ?? "").trim();
+  if (!notice || !body || notice.text === body) return false;
+  notice.text = body;
+  return true;
 }
 
 /** Every notice no brain generation has read yet, oldest first. */
@@ -94,7 +104,7 @@ export function unreadNotices(record) {
  * prunes the oldest delivered notices. Unknown ids are ignored: the caller
  * may hold ids from a record another pass already changed.
  */
-export function markDelivered(record, ids, { session = null, generation = null } = {}, now = new Date().toISOString()) {
+export function markDelivered(record, ids, { session = null, generation = null, brainArea = null } = {}, now = new Date().toISOString()) {
   const wanted = new Set(ids.map((id) => String(id)));
   let changed = 0;
   for (const notice of record.notices ?? []) {
@@ -102,6 +112,7 @@ export function markDelivered(record, ids, { session = null, generation = null }
     notice.deliveredAt = now;
     notice.deliveredTo = session;
     notice.deliveredGeneration = generation;
+    notice.deliveredBrainArea = brainArea;
     changed += 1;
   }
   pruneDelivered(record);

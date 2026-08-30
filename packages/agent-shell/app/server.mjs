@@ -75,6 +75,7 @@ import { createShellControlRoutes } from "./shell-control-routes.mjs";
 import { createGoalStopOperation } from "./goal-stop-operation.mjs";
 import { createShellStateRoutes } from "./shell-state-routes.mjs";
 import { createVoiceRoutes } from "./voice-routes.mjs";
+import { activeBrainRoute, brainRouteAreas } from "./brain-notice-route.mjs";
 import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
 import { filterGoalSummaries, goalQueryFilters, hasGoalQueryFilters } from "./goal-query-filters.mjs";
 import { changeGoalDependencies, dependencySlugs, projectGoalDependencies, writeDependencySlugs } from "./goal-dependencies.mjs";
@@ -3224,21 +3225,22 @@ async function settleWorkerHandoverNotice(record, receipt) {
       error: `The Goal queue recorded submission ${receipt.id}, but its exact-Area destination is inconsistent. Keep this worker open and ask the ${record.area} brain to repair the queue. Tangent sent no notice.`,
     };
   }
-  if (!receipt.notice.id) {
-    try {
-      const routed = await routeBrainNotice(receipt.destinationArea, receipt.notice.text, { idempotencyKey: receipt.notice.sourceId });
-      recordWorkerHandoverNotice(receipt, routed.notice);
+  let route = null;
+  try {
+      route = await routeBrainNotice(receipt.destinationArea, receipt.notice.text, { idempotencyKey: receipt.notice.sourceId });
+    if (!receipt.notice.id) {
+      recordWorkerHandoverNotice(receipt, route.notice);
       await writePipeline(PIPELINES_ROOT, record);
       receipt = storedReceipt();
-    } catch (error) {
+    }
+  } catch (error) {
       console.error("worker handover notice:", error?.message ?? error);
       return {
         status: 503,
         error: `The Goal queue recorded submission ${receipt.id}, but its exact-Area brain notice is not durable yet. Run the same tangent send brain command again, unchanged. Tangent will repair and deduplicate the notice.`,
       };
-    }
   }
-  return { status: 200, receipt };
+  return { status: 200, receipt, route };
 }
 
 /**
@@ -3285,7 +3287,7 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
     }
     const settled = await settleWorkerHandoverNotice(record, receipt);
     return settled.status === 200
-      ? { status: 200, state: "repeated", next: null, pipeline: record, receipt: settled.receipt, repeated: true }
+      ? { status: 200, state: "repeated", next: null, pipeline: record, receipt: settled.receipt, route: settled.route, repeated: true }
       : settled;
   }
 
@@ -3402,7 +3404,7 @@ async function completePipelineStep(record, step, text, source, report = null, i
     }).receipt;
     await writePipeline(PIPELINES_ROOT, record);
     const settled = await settleWorkerHandoverNotice(record, receipt);
-    return settled.status === 200 ? { status: 200, state: "noted", next: null, pipeline: record, receipt: settled.receipt } : settled;
+    return settled.status === 200 ? { status: 200, state: "noted", next: null, pipeline: record, receipt: settled.receipt, route: settled.route } : settled;
   }
   if (report) {
     try {
@@ -3444,7 +3446,7 @@ async function completePipelineStep(record, step, text, source, report = null, i
   const workerResponse = async (state, next = null) => {
     const settled = await settleWorkerHandoverNotice(record, receipt);
     return settled.status === 200
-      ? { status: 200, state, next, pipeline: record, receipt: settled.receipt }
+      ? { status: 200, state, next, pipeline: record, receipt: settled.receipt, route: settled.route }
       : settled;
   };
 
@@ -4342,13 +4344,30 @@ async function liveBrainForArea(area) {
   return exactLiveBrainForArea(area);
 }
 
-/** The active exact-Area brain whose recorded session is currently live. */
+/** The active exact-Area brain whose full generation identity is currently live. */
 async function exactLiveBrainForArea(area) {
   const records = await readAllBrains(BRAINS_ROOT);
-  const record = records.find((item) => item.area === String(area ?? "") && item.status === "active" && item.session);
+  const record = records.find((item) => item.area === String(area ?? ""));
   if (!record) return null;
-  const live = await sessionOwnership.inspect(record.session);
-  return live.state === "live" && live.instanceId === INSTANCE_ID ? record : null;
+  const ownership = await sessionOwnership.inspect(record.session);
+  const observed = (await listSessions()).find((item) => item.name === record.session);
+  const inspected = observed ? { ...observed, ...ownership } : ownership;
+  return activeBrainRoute(record, inspected, INSTANCE_ID)?.brain ?? null;
+}
+
+/** The closest authoritative live brain, walking only exact path ancestors. */
+async function nearestLiveBrainRoute(sourceArea) {
+  const records = await readAllBrains(BRAINS_ROOT);
+  const sessions = new Map((await listSessions()).map((item) => [item.name, item]));
+  for (const brainArea of brainRouteAreas(sourceArea)) {
+    const record = records.find((item) => item.area === brainArea);
+    if (!record?.session) continue;
+    const ownership = await sessionOwnership.inspect(record.session);
+    const observed = sessions.get(record.session);
+    const route = activeBrainRoute(record, observed ? { ...observed, ...ownership } : ownership, INSTANCE_ID);
+    if (route) return { ...route, sourceArea };
+  }
+  return null;
 }
 
 /** The live repair crew for one exact Area, fenced by its durable lease and target. */
@@ -4363,16 +4382,10 @@ async function liveRepairForArea(area, now = Date.now()) {
 
 /** The live addressee for one Area: its usable brain first, then its crew. */
 async function liveAddresseeForArea(area) {
-  const brain = await exactLiveBrainForArea(area);
-  if (brain) {
-    const session = (await listSessions()).find((item) => item.name === brain.session);
-    const word = deriveBrainState({ brain: { ...brain, live: Boolean(session) }, observation: session?.observation ?? session }).word;
-    if (!["Brain hit a wall", "Brain needs a decision", "Brain has a problem"].includes(word)) {
-      return { role: "brain", session: brain.session, generation: brain.generation ?? null, brain };
-    }
-  }
+  const brain = await nearestLiveBrainRoute(area);
+  if (brain) return brain;
   const crew = await liveRepairForArea(area);
-  return crew ? { role: "repair", session: crew.repair.session, generation: null, repair: crew.repair } : null;
+  return crew ? { role: "repair", sourceArea: area, brainArea: area, session: crew.repair.session, generation: null, instanceId: crew.repair.instanceId, target: crew.target, repair: crew.repair } : null;
 }
 
 /** Running brain records whose current sessions exist in this snapshot. */
@@ -4429,7 +4442,7 @@ async function unreadBrainNotices(area, records = null) {
 }
 
 /** Marks notices read by one brain session and generation. */
-async function markBrainNoticesDelivered(notices, session, generation) {
+async function markBrainNoticesDelivered(notices, session, generation, brainArea = null) {
   const byArea = new Map();
   for (const notice of notices) {
     const ids = byArea.get(notice.area) ?? [];
@@ -4437,7 +4450,7 @@ async function markBrainNoticesDelivered(notices, session, generation) {
     byArea.set(notice.area, ids);
   }
   for (const [area, ids] of byArea) {
-    await withInbox(area, (record) => markDelivered(record, ids, { session, generation }));
+    await withInbox(area, (record) => markDelivered(record, ids, { session, generation, brainArea }));
   }
 }
 
@@ -4470,8 +4483,8 @@ function noticesInFlight(records) {
  * Queues one brain notice text for a live brain session, durable until it
  * was shown. The inbox holds the words and marks them read on arrival.
  */
-async function queueBrainNotice(session, { from = "tangent", area = null, text, notices, generation = null }) {
-  return messages.queueDurable(session, { from, area, text: clipQueuedNotice(text), notices, generation, queuedAt: new Date().toISOString() });
+async function queueBrainNotice(session, { from = "tangent", area = null, text, notices, generation = null, brainArea = null }) {
+  return messages.queueDurable(session, { from, area, text: clipQueuedNotice(text), notices, generation, brainArea, queuedAt: new Date().toISOString() });
 }
 
 /** The queue store keeps one message under 4000 characters; a longer notice is cut, the inbox keeps every word. */
@@ -4496,19 +4509,14 @@ async function routeBrainNotice(area, text, { idempotencyKey = null, sender = nu
   const body = noticeMessage(text);
   const message = senderName ? noticeMessage(messageBanner(senderName, senderArea, body)) : body;
   const records = await readAllBrains(BRAINS_ROOT);
-  const owner = brainRecordForArea(records, area);
   const notice = await recordBrainNotice(area, message, idempotencyKey);
   if (notice.duplicate && (notice.deliveredAt || noticesInFlight(records).has(noticeKey({ area, id: notice.id })))) {
-    return { addressed: Boolean(owner), notice, session: notice.deliveredTo ?? owner?.session ?? null, generation: notice.deliveredGeneration ?? owner?.generation ?? null };
+    return { state: notice.deliveredAt ? "delivered" : "queued", addressed: true, notice, sourceArea: area, brainArea: notice.deliveredBrainArea ?? null, session: notice.deliveredTo ?? null, generation: notice.deliveredGeneration ?? null };
   }
   const addressee = await liveAddresseeForArea(area);
-  if (!owner && !addressee) {
-    await messages.log({ event: "kept", to: `${area} brain`, from: senderName || "tangent", area: senderArea, text: body, reason: "Area brain has not started yet" });
-    return { addressed: false, notice, session: null, generation: null };
-  }
   if (!addressee) {
-    await messages.log({ event: "kept", to: `${owner.area} brain`, from: senderName || "tangent", area: senderArea, text: body, reason: "no live brain; waits for the next generation" });
-    return { addressed: false, notice, session: null, generation: null };
+    await messages.log({ event: "route deferred", sourceArea: area, brainArea: null, from: senderName || "tangent", area: senderArea, text: body, reason: "no active brain in Area ancestry" });
+    return { state: "deferred", addressed: false, notice, sourceArea: area, brainArea: null, session: null, generation: null };
   }
   const notices = [{ area, id: notice.id }];
   await queueBrainNotice(addressee.session, {
@@ -4517,9 +4525,10 @@ async function routeBrainNotice(area, text, { idempotencyKey = null, sender = nu
     text: senderName ? body : message,
     notices,
     generation: addressee.generation,
+    brainArea: addressee.brainArea,
   });
-  await messages.log({ event: "sent", to: addressee.session, from: senderName || "tangent", area: senderArea, text: body, disposition: "queued", reason: addressee.role === "repair" ? "repair crew event" : "brain event" });
-  return { addressed: true, notice, session: addressee.session, generation: addressee.generation, role: addressee.role };
+  await messages.log({ event: "route queued", sourceArea: area, brainArea: addressee.brainArea, to: addressee.session, generation: addressee.generation, instanceId: addressee.instanceId, target: addressee.target, from: senderName || "tangent", area: senderArea, text: body, reason: addressee.role === "repair" ? "repair crew event" : "brain event" });
+  return { state: "queued", addressed: true, notice, sourceArea: area, brainArea: addressee.brainArea, session: addressee.session, generation: addressee.generation, instanceId: addressee.instanceId, target: addressee.target, role: addressee.role };
 }
 
 /**
@@ -5132,7 +5141,8 @@ async function reconcileRepairs(sessions) {
     const brainState = deriveBrainState({ brain: brain ? { ...brain, live: Boolean(brainSession) } : null, observation: brainSession?.observation ?? brainSession });
     let result = null;
     let reason = "";
-    if (["Brain working", "Brain idle"].includes(brainState.word)) result = "superseded";
+    const coveringBrain = await nearestLiveBrainRoute(repairRecord.area);
+    if (coveringBrain) result = "superseded";
     else if (Date.parse(repair.leaseUntil) <= now) result = "expired";
     else if (!session) result = "failed";
     else if ((process.env.AGENT_SHELL_TEST_NO_LAUNCH !== "1" && session.observation?.process === "shell") || session.observation?.wall) result = "failed";
@@ -5158,7 +5168,8 @@ async function reconcileRepairs(sessions) {
       await writeRepair(REPAIRS_ROOT, repairRecord);
     }
     if (!result) continue;
-    reason = result === "superseded" ? "the Area brain became live" : result === "expired" ? "the repair lease expired" : result === "settled" ? "nothing waits for the brain" : "the repair session stopped";
+    reason = result === "superseded" ? "an authoritative Area brain became live" : result === "expired" ? "the repair lease expired" : result === "settled" ? "nothing waits for the brain" : "the repair session stopped";
+    if (result === "superseded") await messages.log({ event: "repair superseded", sourceArea: repairRecord.area, brainArea: coveringBrain?.brainArea ?? null, session: coveringBrain?.session ?? null });
     await withBrainMutation(repairRecord.area, () => endRepairCrewUnlocked(repairRecord.area, result, reason));
   }
 
@@ -5167,6 +5178,7 @@ async function reconcileRepairs(sessions) {
   const areas = [...new Set([...flattenAreaPaths(tree), ...pipelines.map((record) => record.area)])]
     .sort((left, right) => oldestQueueFact(pipelines, left, now) - oldestQueueFact(pipelines, right, now));
   for (const area of areas) {
+    if (await nearestLiveBrainRoute(area)) continue;
     const brain = brains.find((item) => item.area === area) ?? null;
     const brainSession = brain?.session ? byName.get(brain.session) : null;
     const repairRecord = refreshedRepairs.find((item) => item.area === area) ?? await readRepair(REPAIRS_ROOT, area);
@@ -6609,11 +6621,11 @@ const agentRoutes = createAgentRoutes({
       await presentGoalDocument(PRESENTATIONS_ROOT, goal, document, { session: actor.session, role: "worker", assignmentId: actor.assignment?.id ?? null });
     }
     const area = result.receipt?.destinationArea ?? result.pipeline?.area ?? actor.area;
-    const brain = area ? await liveBrainForArea(area) : null;
+    const route = result.route ?? (area ? await routeBrainNotice(area, result.receipt?.notice?.text ?? text, { idempotencyKey: result.receipt?.notice?.sourceId ?? null }) : null);
     const question = kind === "question"
       ? latestWorkerQuestion(result.pipeline?.steps?.find((step) => step.session === session || step.attempts?.some((attempt) => attempt.session === session)))?.state ?? null
       : null;
-    return { status: 200, value: { status: "sent", to: brain?.session ?? area, kind: kind ?? "note", state: result.state, receipt: result.receipt ?? null, pipeline: result.pipeline, ...(question ? { question } : {}) } };
+    return { status: 200, value: { status: route?.state ?? "deferred", to: route?.session ?? null, brainArea: route?.brainArea ?? null, sourceArea: area, kind: kind ?? "note", state: result.state, receipt: result.receipt ?? null, pipeline: result.pipeline, ...(question ? { question } : {}) } };
   },
   /** Delivers or queues one normalized cross-agent message. */
   async send(body) {

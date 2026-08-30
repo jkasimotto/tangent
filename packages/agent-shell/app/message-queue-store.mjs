@@ -34,7 +34,11 @@ function noticeFields(value) {
     .map((notice) => ({ area: String(notice?.area ?? "").trim(), id: String(notice?.id ?? "").trim() }))
     .filter((notice) => notice.area && notice.id);
   if (!notices.length) return {};
-  return { notices, generation: Number.isInteger(value.generation) ? value.generation : null };
+  return {
+    notices,
+    generation: Number.isInteger(value.generation) ? value.generation : null,
+    brainArea: typeof value.brainArea === "string" && value.brainArea.trim() ? value.brainArea.trim() : null,
+  };
 }
 
 /** Normalizes a missing, malformed, or partially old queue without guessing recipients. */
@@ -90,6 +94,7 @@ export async function openMessageQueueStore({ file, now = () => new Date().toISO
       queuedAt: entry.queuedAt || now(),
       notices: entry.notices,
       generation: entry.generation,
+      brainArea: entry.brainArea,
     });
     if (!stored) throw new Error("a durable agent message needs an exact target and normalized text");
     await mutate((current) => ({ ...current, entries: [...current.entries, stored] }));

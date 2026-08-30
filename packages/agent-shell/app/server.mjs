@@ -108,6 +108,7 @@ import { createGoalPresentationRoutes } from "./goal-presentation-routes.mjs";
 import { createAreaMapContextRoutes } from "./area-map-context-routes.mjs";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createAreaMapWorldRoutes } from "./area-map-world-routes.mjs";
+import { createAreaMapTransactionRepository } from "./area-map-transaction-repository.mjs";
 import { projectWork } from "./work-projection.mjs";
 import { acknowledgeWorkerQuestion, answerWorkerQuestion, latestWorkerQuestion, openWorkerQuestion, transferWorkerQuestions, workerQuestionDelivery, workerQuestionPrompt, workerQuestionTarget } from "./worker-questions.mjs";
 
@@ -190,9 +191,17 @@ const sessionOwnership = createSessionOwnership({
   runTmux: (args) => execFileAsync("tmux", args),
 });
 /** Runs one Git command for the vault repository boundary. */
-const runRepositoryGit = (args) => execFileAsync("git", args);
+const runRepositoryGit = (args, options = {}) => execFileAsync("git", args, options);
 const vaultRepository = createVaultRepository({ root: TREES_ROOT, runGit: runRepositoryGit });
-const areaCanvasRepository = createAreaCanvasRepository({ root: TREES_ROOT, runGit: runRepositoryGit, commit: vaultRepository.commit });
+const MAP_STATE_ROOT = process.env.TANGENT_MAP_STATE_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "map-state");
+const areaCanvasRepository = createAreaCanvasRepository({
+  root: TREES_ROOT, runGit: runRepositoryGit, commit: vaultRepository.commit,
+  transactionRoot: path.join(MAP_STATE_ROOT, "legacy-transactions"),
+});
+const areaMapTransactions = createAreaMapTransactionRepository({
+  root: TREES_ROOT, repository: areaCanvasRepository, vault: vaultRepository, runGit: runRepositoryGit,
+  transactionRoot: path.join(MAP_STATE_ROOT, "transactions"),
+});
 const launchMemory = createLaunchMemory(process.env.TANGENT_LAUNCH_MEMORY ?? path.join(os.homedir(), ".tangent", "agent-shell", "launch-memory.json"));
 const launchCatalog = createLaunchCatalog({
   root: TREES_ROOT,
@@ -213,7 +222,6 @@ const vaultGit = createVaultGitReader(TREES_ROOT);
  * Where the Area map keeps node positions and filters per Area. Shell state,
  * not knowledge, so it lives outside the vault (design-area-map Decision 7).
  */
-const MAP_STATE_ROOT = process.env.TANGENT_MAP_STATE_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "map-state");
 // One JSON record per Goal with a pipeline: its steps, their sessions, and
 // the handovers between them. Ownership stays in the Goal file; this holds
 // only what neither the Goal nor tmux can.
@@ -224,20 +232,32 @@ const areaMapRecordStore = createAreaMapRecordStore({ root: PRESENTATIONS_ROOT }
 const areaPictures = createAreaPictures({ store: areaMapRecordStore });
 const areaMapProposals = createAreaMapProposals({ store: areaMapRecordStore });
 const areaMapPromotions = createAreaMapPromotions({ store: areaMapRecordStore });
-const areaCanvasRoutes = createAreaCanvasRoutes({ repository: areaCanvasRepository, proposals: areaMapProposals, view: readAreaBoardView,
+const rollbackCanvasRepository = {
+  /** Reads through the transaction barrier and recovery snapshot. */
+  read: (area) => areaMapTransactions.read(area),
+  /** Routes one rollback-client scene through the durable transaction authority. */
+  save: (area, canvas, options = {}) => areaMapTransactions.saveMany([{ area, canvas, baseHash: options.baseHash ?? null, reason: options.reason }], { ...options, operationId: options.operationId ?? randomUUID(), area, worldId: "legacy-canvas" }),
+  /** Routes one rollback-client batch through the durable transaction authority. */
+  saveMany: (writes, options = {}) => areaMapTransactions.saveMany(writes, { ...options, operationId: options.operationId ?? randomUUID(), worldId: "legacy-canvas" }),
+};
+const areaCanvasRoutes = createAreaCanvasRoutes({ repository: rollbackCanvasRepository, proposals: areaMapProposals, view: readAreaBoardView,
   /** Confirms that the route's derived Area has a vault directory. */
   areaExists: async (area) => Boolean(cleanAreaPath(area) && existsSync(areaDirectory(TREES_ROOT, area))),
 });
 /** Confirms that a map read targets an existing vault Area. */
 const mapAreaExists = async (area) => Boolean(cleanAreaPath(area) && existsSync(areaDirectory(TREES_ROOT, area)));
-const areaMapContextRoutes = createAreaMapContextRoutes({ root: TREES_ROOT, repository: areaCanvasRepository, runGit: runRepositoryGit,
+const areaMapContextRoutes = createAreaMapContextRoutes({ root: TREES_ROOT, repository: rollbackCanvasRepository, runGit: runRepositoryGit,
   areaExists: mapAreaExists,
 });
-const areaMapWorldIndex = createAreaMapWorldIndex({ root: TREES_ROOT, repository: areaCanvasRepository,
+const areaMapWorldIndex = createAreaMapWorldIndex({ root: TREES_ROOT, repository: areaMapTransactions,
+  runGit: runRepositoryGit,
   /** Lists the vault's complete Area hierarchy. */
   listAreas: async () => flattenAreaPaths(await readTree(TREES_ROOT)),
 });
-const areaMapWorldRoutes = createAreaMapWorldRoutes({ index: areaMapWorldIndex });
+const areaMapWorldRoutes = createAreaMapWorldRoutes({ index: areaMapWorldIndex,
+  /** Commits one validated source gesture through the durable transaction authority. */
+  saveGesture: (writes, options) => areaMapTransactions.saveMany(writes, options),
+});
 // One JSON record per Goal for a solo (non-pipeline) session's context
 // continuations: the same mechanism pipeline steps keep inline on the step
 // (design-worker-context-handover D6).
@@ -6713,7 +6733,7 @@ const areaRoutesOperations = {
     }
     const moved = await moveArea({ treesRoot: TREES_ROOT, area: body.area, parent: body.parent, name: body.name, runGit: runVaultGit });
     await moveSessionBindings(moved);
-    await vaultCommit([moved.source, moved.destination], `update: ${moved.source} moves to ${moved.destination}`, moved.destination, null);
+    await vaultCommit([...new Set([moved.source, moved.destination, ...(moved.mapChangedPaths ?? [])])], `update: ${moved.source} moves to ${moved.destination}`, moved.destination, null);
     return moved;
   },
 };

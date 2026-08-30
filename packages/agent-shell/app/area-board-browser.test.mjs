@@ -102,6 +102,7 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
 
     await tool("t");
     await page.mouse.click(point(170, 560).x, point(170, 560).y);
+    await page.waitForFunction(() => document.activeElement?.matches('textarea[data-type="wysiwyg"]'));
     await page.keyboard.type("plain text");
     await page.keyboard.press("Escape");
 
@@ -116,7 +117,7 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
       const controller = window.editor.controller();
       const origin = controller?.snapshot().composition.origins.get(rectangle?.id);
       return {
-        rectangle: rectangle && { id: rectangle.id, x: rectangle.x, sourceId: origin?.sourceId },
+        rectangle: rectangle && { id: rectangle.id, x: rectangle.x, width: rectangle.width, height: rectangle.height, sourceId: origin?.sourceId },
         appSelection: window.editor.appState().selectedElementIds,
         controllerSelection: controller ? [...controller.snapshot().selection] : null,
         active: { tag: document.activeElement?.tagName, className: String(document.activeElement?.className ?? "") },
@@ -141,11 +142,12 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     const afterNudge = await page.evaluate(() => {
       const rectangle = window.editor.current().elements.find((element) => element.type === "rectangle" && !element.customData?.tangent);
       const controller = window.editor.controller();
-      return { rectangle: rectangle && { id: rectangle.id, x: rectangle.x, sourceId: controller.snapshot().composition.origins.get(rectangle.id)?.sourceId }, appSelection: window.editor.appState().selectedElementIds, controllerSelection: [...controller.snapshot().selection] };
+      return { rectangle: rectangle && { id: rectangle.id, x: rectangle.x, width: rectangle.width, height: rectangle.height, sourceId: controller.snapshot().composition.origins.get(rectangle.id)?.sourceId }, appSelection: window.editor.appState().selectedElementIds, controllerSelection: [...controller.snapshot().selection] };
     });
     assert.equal(afterNudge.appSelection[afterNudge.rectangle.id], true, `the keyboard command restores selection to the claimed runtime ID: ${JSON.stringify({ beforeNudge, afterNudge })}`);
     assert.equal(afterNudge.controllerSelection.includes(afterNudge.rectangle.id), true, `world selection follows the claimed runtime ID: ${JSON.stringify({ beforeNudge, afterNudge })}`);
     assert.deepEqual({ id: afterNudge.rectangle.id, sourceId: afterNudge.rectangle.sourceId }, { id: beforeNudge.rectangle.id, sourceId: beforeNudge.rectangle.sourceId }, "rectangle source identity does not change across pointer settle and the next command");
+    assert.ok(afterNudge.rectangle.width > 100 && afterNudge.rectangle.height > 80, `the rectangle keeps the substantial geometry from every pointer frame: ${JSON.stringify(afterNudge.rectangle)}`);
 
     await tool("p");
     await page.mouse.move(point(120, 150).x, point(120, 150).y);
@@ -174,18 +176,27 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     });
 
     await page.waitForTimeout(250);
-    const summary = await page.evaluate(() => window.editor.current().elements.map((element) => ({ id: element.id, type: element.type, x: element.x, y: element.y, text: element.text, startBinding: element.startBinding, endBinding: element.endBinding, boundElements: element.boundElements, tangent: element.customData?.tangent?.kind, world: element.customData?.tangentWorld, endpoints: element.customData?.tangentWorldEndpoints })));
+    const summary = await page.evaluate(() => window.editor.current().elements.map((element) => ({ id: element.id, type: element.type, x: element.x, y: element.y, width: element.width, height: element.height, points: element.points, text: element.text, startBinding: element.startBinding, endBinding: element.endBinding, boundElements: element.boundElements, tangent: element.customData?.tangent?.kind, role: element.customData?.tangent?.role, world: element.customData?.tangentWorld, endpoints: element.customData?.tangentWorldEndpoints })));
     assert.ok(summary.some((element) => element.type === "text" && element.text === "plain text"), `typed text remains in its Area owner: ${JSON.stringify(summary)}`);
-    assert.ok(summary.some((element) => element.type === "freedraw"), `free ink remains in its Area owner: ${JSON.stringify(summary)}`);
-    assert.ok(summary.some((element) => element.type === "rectangle" && !element.tangent), `the authored rectangle remains in its Area owner: ${JSON.stringify(summary)}`);
+    assert.ok(summary.some((element) => element.type === "freedraw" && element.points?.length > 1), `free ink keeps more than one pointer point in its Area owner: ${JSON.stringify(summary)}`);
+    assert.ok(summary.some((element) => element.type === "rectangle" && !element.tangent && element.width > 100 && element.height > 80), `the authored rectangle keeps its full pointer geometry in its Area owner: ${JSON.stringify(summary)}`);
     assert.ok(summary.some((element) => element.tangent === "goal"), `the Tangent block remains in its Area owner: ${JSON.stringify(summary)}`);
-    assert.ok(summary.some((element) => element.type === "arrow" && element.startBinding?.elementId && element.endBinding?.elementId), `the arrow binds to both connectable endpoints: ${JSON.stringify(summary)}`);
     const settledArrow = summary.find((element) => element.type === "arrow");
+    assert.ok(settledArrow?.points?.length > 1, `the arrow keeps more than one pointer point: ${JSON.stringify(summary)}`);
+    assert.ok(settledArrow.startBinding?.elementId && settledArrow.endBinding?.elementId, `the arrow binds directly to both connectable endpoints: ${JSON.stringify(summary)}`);
+    const startTarget = summary.find((element) => element.id === settledArrow.startBinding.elementId);
+    const endTarget = summary.find((element) => element.id === settledArrow.endBinding.elementId);
+    assert.ok(startTarget?.boundElements?.some((binding) => binding.id === settledArrow.id && binding.type === "arrow"), `the start target keeps the reverse arrow binding: ${JSON.stringify(summary)}`);
+    assert.ok(endTarget?.boundElements?.some((binding) => binding.id === settledArrow.id && binding.type === "arrow"), `the end target keeps the reverse arrow binding: ${JSON.stringify(summary)}`);
     assert.deepEqual({ runtimeId: settledArrow.id, sourceId: settledArrow.world?.sourceId }, releasedArrowIdentity, "arrow source identity does not change during delayed pointer settle");
+    const authored = summary.filter((element) => element.role !== "area-region" && element.world?.sourceId);
+    assert.ok(authored.length >= 5, `the journey keeps every new source-owned element: ${JSON.stringify(summary)}`);
+    assert.ok(authored.every((element) => element.world.owner === "otto"), `every new element keeps the Area chosen at pointer start: ${JSON.stringify(authored)}`);
 
     const inkColor = await page.evaluate(() => window.editor.current().elements.find((element) => element.type === "text" && element.text === "plain text")?.strokeColor);
     assert.equal(inkColor, "#1e1e1e", "typed text uses Excalidraw's default ink, which the dark theme shows light on the dark canvas");
 
+    const changesBeforeOutline = await page.evaluate(() => window.changes.length);
     await page.getByRole("button", { name: "Outline", exact: true }).click();
     const areaOutline = page.getByRole("treeitem", { name: "Otto, child of map root, depth 1, unfolded, ready, 1 block" });
     await areaOutline.waitFor();
@@ -193,6 +204,8 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     await areaOutline.focus();
     await page.keyboard.press("Enter");
     assert.equal(await areaOutline.getAttribute("aria-selected"), "true", "the generic editor keeps the world Area outline interactive");
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.evaluate(() => window.changes.length), changesBeforeOutline, "programmatic Outline selection and camera fit never create a source mutation");
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

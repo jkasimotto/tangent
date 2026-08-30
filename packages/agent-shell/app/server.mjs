@@ -106,6 +106,8 @@ import { GoalExecutionTransitionError, attachLateSourceEvidence, parkCurrentGoal
 import { dismissGoalDocument, markGoalDocumentOpened, presentGoalDocument, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalDocument } from "./goal-presentations.mjs";
 import { createGoalPresentationRoutes } from "./goal-presentation-routes.mjs";
 import { createAreaMapContextRoutes } from "./area-map-context-routes.mjs";
+import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
+import { createAreaMapWorldRoutes } from "./area-map-world-routes.mjs";
 import { projectWork } from "./work-projection.mjs";
 import { acknowledgeWorkerQuestion, answerWorkerQuestion, latestWorkerQuestion, openWorkerQuestion, transferWorkerQuestions, workerQuestionDelivery, workerQuestionPrompt, workerQuestionTarget } from "./worker-questions.mjs";
 
@@ -231,6 +233,11 @@ const mapAreaExists = async (area) => Boolean(cleanAreaPath(area) && existsSync(
 const areaMapContextRoutes = createAreaMapContextRoutes({ root: TREES_ROOT, repository: areaCanvasRepository, runGit: runRepositoryGit,
   areaExists: mapAreaExists,
 });
+const areaMapWorldIndex = createAreaMapWorldIndex({ root: TREES_ROOT, repository: areaCanvasRepository,
+  /** Lists the vault's complete Area hierarchy. */
+  listAreas: async () => flattenAreaPaths(await readTree(TREES_ROOT)),
+});
+const areaMapWorldRoutes = createAreaMapWorldRoutes({ index: areaMapWorldIndex });
 // One JSON record per Goal for a solo (non-pipeline) session's context
 // continuations: the same mechanism pipeline steps keep inline on the step
 // (design-worker-context-handover D6).
@@ -7935,6 +7942,7 @@ const server = http.createServer(async (req, res) => {
     if (await agentRoutes.handle(req, res, url)) return;
     if (await areaRoutes.handle(req, res, url)) return;
     if (await areaCanvasRoutes.handle(req, res, url)) return;
+    if (await areaMapWorldRoutes.handle(req, res, url)) return;
     if (await areaMapContextRoutes.handle(req, res, url)) return;
     if (await areaMapRoutes.handle(req, res, url)) return;
     if (await programRoutes.handle(req, res, url)) return;

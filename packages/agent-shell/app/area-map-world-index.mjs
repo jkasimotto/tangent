@@ -390,12 +390,24 @@ function sourceElementError(element, owners) {
 }
 
 /** Builds complete structural world snapshots over the per-Area shard repository. */
-export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = null }) {
+export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = null, recordEvent = null }) {
   const summaryCache = new Map();
   const baselineCache = new Map();
   const fallbackCache = new Map();
   const revisionStates = new Map();
+  let lastMigrationSignature = "";
   const worldIdPromise = realpath(root).catch(() => path.resolve(root)).then((resolved) => digest(resolved));
+
+  /** Emits one coordinate-free migration summary without affecting a world read. */
+  function emitMigration(fields) {
+    const signature = JSON.stringify(fields);
+    if (signature === lastMigrationSignature) return;
+    lastMigrationSignature = signature;
+    try {
+      const result = recordEvent?.({ name: "area_map_migration_read", at: Date.now(), ...fields });
+      result?.catch?.(() => {});
+    } catch { /* Diagnostics never affect map authority. */ }
+  }
 
   /** Reads and summarizes the current complete tree under any outer read lease. */
   async function readStateUnlocked(locatedArea = null) {
@@ -435,6 +447,12 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
       summaries.set(owner, adaptShardSummary(raw, children.get(owner) ?? [], baseline));
     }
     const { regions } = buildRegionRecords(areaKeys, summaries, children);
+    emitMigration({
+      legacyCards: [...summaries.values()].reduce((total, summary) => total + summary.migration.legacyCards, 0),
+      boundaries: [...summaries.values()].reduce((total, summary) => total + summary.migration.legacyBoundaries, 0),
+      provisionalRegions: [...regions.values()].filter((region) => region.source === "provisional").length,
+      recoveredPlacements: [...regions.values()].filter((region) => region.source === "recovered").length,
+    });
     const projectedScenes = new Map(owners.map((owner) => [owner, projectedShardScene(owner, summaries.get(owner), regions)]));
     const treeRevision = digest(areaKeys.map((area) => `${area}>${relations.get(area)}`).join("\n"));
     const worldRevision = digest(`${treeRevision}\n${owners.map((owner) => `${owner}:${shardRevision(reads.get(owner))}`).join("\n")}`);

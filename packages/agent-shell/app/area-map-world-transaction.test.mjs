@@ -26,7 +26,7 @@ function scene(label, x = 0) {
 }
 
 /** Creates a real Git vault and both repositories used by map transactions. */
-async function fixture(name, { fault = null } = {}) {
+async function fixture(name, { fault = null, recordEvent = null } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), `area-map-transaction-${name}-`));
   await runGit(["-C", root, "init", "--quiet"]);
   await runGit(["-C", root, "config", "user.email", "test@tangent.local"]);
@@ -46,7 +46,7 @@ async function fixture(name, { fault = null } = {}) {
   });
   const vault = createVaultRepository({ root, runGit });
   const transactions = createAreaMapTransactionRepository({
-    root, repository, vault, runGit, transactionRoot, fault,
+    root, repository, vault, runGit, transactionRoot, fault, recordEvent,
     /** Keeps expected transaction failures quiet in tests. */
     reportError() {},
   });
@@ -61,7 +61,11 @@ async function manifest(transactionRoot) {
 }
 
 test("one gesture writes every source shard in one exact commit and preserves unrelated edits", async () => {
-  const value = await fixture("exact");
+  const events = [];
+  const value = await fixture("exact", {
+    /** Captures one transaction phase event. */
+    recordEvent: (event) => events.push(event),
+  });
   await writeFile(path.join(value.root, "unrelated-staged.md"), "user staged\n");
   await runGit(["-C", value.root, "add", "unrelated-staged.md"]);
   await writeFile(path.join(value.root, "unrelated-worktree.md"), "user worktree\n");
@@ -86,6 +90,10 @@ test("one gesture writes every source shard in one exact commit and preserves un
   assert.equal(await readFile(path.join(value.root, "unrelated-worktree.md"), "utf8"), "user worktree\n");
   assert.match(String((await runGit(["-C", value.root, "diff", "--cached", "--name-only"])).stdout), /unrelated-staged\.md/);
   assert.match(String((await runGit(["-C", value.root, "diff", "--name-only"])).stdout), /unrelated-worktree\.md/);
+  assert.deepEqual(events.filter((event) => event.name === "area_map_save_phase").map((event) => event.phase), [
+    "prepared", "ref-installed", "index-installed", "target-installed:0", "target-installed:1", "target-installed:2", "verified", "result-recorded",
+  ]);
+  assert.ok(events.filter((event) => event.name === "area_map_save_phase").every((event) => event.operationId === "gesture-1" && event.shardCount === 3 && event.duration >= 0));
 
   const head = String((await runGit(["-C", value.root, "rev-parse", "HEAD"])).stdout).trim();
   assert.equal((await value.transactions.saveMany(writes, { operationId: "gesture-1", worldId: "otto" })).idempotent, true);
@@ -109,15 +117,22 @@ for (const phase of ["prepared", "ref-installed", "index-installed", "target-ins
     ];
     await assert.rejects(value.transactions.saveMany(writes, { operationId: `crash-${phase}`, worldId: "otto" }), /crash at/);
 
+    const recoveryEvents = [];
     const restarted = createAreaMapTransactionRepository({
       root: value.root, repository: value.repository, vault: value.vault, runGit,
       transactionRoot: value.transactionRoot,
+      /** Captures recovery results from the restarted authority. */
+      recordEvent: (event) => recoveryEvents.push(event),
       /** Keeps expected transaction failures quiet in tests. */
       reportError() {},
     });
     await restarted.waitForReadable();
     for (const write of writes) assert.deepEqual((await value.repository.read(write.area)).scene, write.canvas);
     assert.equal((await manifest(value.transactionRoot)).state, "committed");
+    assert.deepEqual(recoveryEvents.filter((event) => event.name === "area_map_recovery").map(({ priorPhase, outcome }) => ({ priorPhase, outcome })), phase === "result-recorded" ? [] : [
+      { priorPhase: "prepared", outcome: "started" },
+      { priorPhase: "prepared", outcome: "completed" },
+    ], "a durable committed result needs no later recovery event");
   });
 }
 

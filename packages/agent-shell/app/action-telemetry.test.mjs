@@ -62,3 +62,38 @@ test("connection telemetry keeps bounded runtime evidence", () => {
     eventStream: "retrying",
   });
 });
+
+test("Area map telemetry keeps phases and migration counts without authored content", () => {
+  const entry = normalizeActionTelemetry({
+    kind: "area-map",
+    action: "area_map_recovery",
+    eventStream: "area-map",
+    operationId: "operation-4",
+    phase: "verified",
+    priorPhase: "prepared",
+    outcome: "completed",
+    shardCount: 3,
+    legacyCards: 2,
+    boundaries: 1,
+    provisionalRegions: 4,
+    recoveredPlacements: 1,
+    coordinates: { x: 100, y: 200 },
+    text: "private authored text",
+  }, () => new Date("2026-08-30T00:00:00.000Z"));
+  assert.deepEqual(entry, {
+    schema: "agent-shell-action.v1",
+    at: "2026-08-30T00:00:00.000Z",
+    kind: "area-map",
+    action: "area_map_recovery",
+    operationId: "operation-4",
+    eventStream: "area-map",
+    phase: "verified",
+    priorPhase: "prepared",
+    outcome: "completed",
+    shardCount: 3,
+    legacyCards: 2,
+    boundaries: 1,
+    provisionalRegions: 4,
+    recoveredPlacements: 1,
+  });
+});

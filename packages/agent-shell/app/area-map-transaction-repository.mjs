@@ -28,7 +28,7 @@ function targetBytes(target, side) {
 const contentHash = (value) => value === null ? null : canvasHash(value);
 
 /** Creates the crash-recoverable multi-shard Area-map write authority. */
-export function createAreaMapTransactionRepository({ root, repository, vault, runGit, transactionRoot, reportError = console.error, fault = null }) {
+export function createAreaMapTransactionRepository({ root, repository, vault, runGit, transactionRoot, reportError = console.error, recordEvent = null, fault = null }) {
   const lockDirectory = path.join(transactionRoot, ".vault-map.lock");
   let recoveryPromise = null;
   let recoveryRequired = null;
@@ -56,8 +56,28 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
   /** Returns the transaction directory for one world and operation. */
   function operationDirectory(worldId, operationId) { return path.join(transactionRoot, digest(worldId).slice(0, 24), digest(operationId)); }
 
-  /** Runs one injected crash checkpoint. */
-  async function checkpoint(phase, detail = {}) { if (fault) await fault(phase, detail); }
+  /** Emits one coordinate-free transaction event without affecting map authority. */
+  function emitEvent(name, fields = {}) {
+    try {
+      const result = recordEvent?.({ name, at: Date.now(), ...fields });
+      result?.catch?.(() => {});
+    } catch { /* Diagnostics never affect a transaction. */ }
+  }
+
+  /** Runs one observable injected crash checkpoint. */
+  async function checkpoint(phase, detail = {}) {
+    emitEvent("area_map_save_phase", { ...detail, phase });
+    if (fault) await fault(phase, detail);
+  }
+
+  /** Returns coordinate-free phase fields for one journaled transaction. */
+  function phaseFields(manifest) {
+    return {
+      operationId: manifest.operationId,
+      shardCount: Number(manifest.shardCount ?? 0),
+      duration: Math.max(0, Date.now() - Date.parse(manifest.preparedAt)),
+    };
+  }
 
   /** Sleeps briefly without blocking the event loop. */
   const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -265,6 +285,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
 
   /** Finishes index and worktree installation for one prepared commit. */
   async function finishPrepared(manifest, manifestFile, { installRef, recheckTargets = false }) {
+    const phase = phaseFields(manifest);
     await blockReaders();
     try {
       if (installRef) {
@@ -274,17 +295,17 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
           await rejectChangedDirectoryGuards(manifest, manifestFile);
         }
         await vault.installPreparedCommit(manifest.prepared);
-        await checkpoint("ref-installed", { operationId: manifest.operationId });
+        await checkpoint("ref-installed", phase);
       }
       await vault.updatePreparedIndex(manifest.prepared);
-      await checkpoint("index-installed", { operationId: manifest.operationId });
+      await checkpoint("index-installed", phase);
       for (const [index, target] of manifest.targets.entries()) {
         await installTarget(target);
-        await checkpoint(`target-installed:${index}`, { operationId: manifest.operationId, target: target.file });
+        await checkpoint(`target-installed:${index}`, phase);
       }
       for (const [index, directory] of (manifest.cleanupDirectories ?? []).entries()) {
         await cleanupDirectory(directory);
-        await checkpoint(`directory-cleaned:${index}`, { operationId: manifest.operationId, directory });
+        await checkpoint(`directory-cleaned:${index}`, phase);
       }
       if (!await gitHasPreparedFiles(manifest.prepared)) throw new Error("prepared map commit does not contain every target");
       for (const target of manifest.targets) {
@@ -292,10 +313,10 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         const hash = contentHash(text);
         if (hash !== target.newHash) throw new Error(`map worktree verification failed for ${target.file}`);
       }
-      await checkpoint("verified", { operationId: manifest.operationId });
+      await checkpoint("verified", phase);
       const committed = { ...manifest, state: "committed", committedAt: new Date().toISOString() };
       await writeManifest(manifestFile, committed);
-      await checkpoint("result-recorded", { operationId: manifest.operationId });
+      await checkpoint("result-recorded", phase);
       return committed;
     } finally { unblockReaders(); }
   }
@@ -313,6 +334,8 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         let manifest;
         try { manifest = JSON.parse(await readFile(manifestFile, "utf8")); } catch { continue; }
         if (manifest.state !== "prepared") continue;
+        const recovery = { operationId: manifest.operationId, priorPhase: manifest.state };
+        emitEvent("area_map_recovery", { ...recovery, outcome: "started" });
         const hashes = await Promise.all(manifest.targets.map(async (target) => {
           const text = await readTarget(target.file); return contentHash(text);
         }));
@@ -320,6 +343,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         if (!recognized) {
           recoveryRequired = { operationId: manifest.operationId, reason: "a map target contains unrelated bytes" };
           await writeManifest(manifestFile, { ...manifest, state: "recovery-required", recoveryRequired, failedAt: new Date().toISOString() });
+          emitEvent("area_map_recovery", { ...recovery, outcome: "recovery-required" });
           continue;
         }
         const head = await currentHead();
@@ -327,9 +351,16 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         if (!committed && head !== manifest.prepared.expectedHead) {
           recoveryRequired = { operationId: manifest.operationId, reason: "the vault branch changed before map recovery" };
           await writeManifest(manifestFile, { ...manifest, state: "recovery-required", recoveryRequired, failedAt: new Date().toISOString() });
+          emitEvent("area_map_recovery", { ...recovery, outcome: "recovery-required" });
           continue;
         }
-        await finishPrepared(manifest, manifestFile, { installRef: !committed });
+        try {
+          await finishPrepared(manifest, manifestFile, { installRef: !committed });
+          emitEvent("area_map_recovery", { ...recovery, outcome: "completed" });
+        } catch (error) {
+          emitEvent("area_map_recovery", { ...recovery, outcome: "failed" });
+          throw error;
+        }
       }
     }
   }
@@ -403,9 +434,9 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         hashes: Object.fromEntries(preparedWrites.map((entry) => [entry.write.area, entry.newHash])),
         committed: true, operationId, idempotent: false,
       };
-      const manifest = { schema: "area-map-transaction.v2", operationId, worldId, digest: requestDigest, state: "prepared", preparedAt: new Date().toISOString(), prepared, targets, result };
+      const manifest = { schema: "area-map-transaction.v2", operationId, worldId, digest: requestDigest, state: "prepared", preparedAt: new Date().toISOString(), shardCount: changed.length, prepared, targets, result };
       await writeManifest(manifestFile, manifest);
-      await checkpoint("prepared", { operationId });
+      await checkpoint("prepared", phaseFields(manifest));
       const committed = await finishPrepared(manifest, manifestFile, { installRef: true, recheckTargets: true });
       const primary = changed.find((entry) => entry.write.area === area) ?? changed[0];
       const metadata = await stat(safeCanvasPath(root, primary.current.file).absolute);
@@ -414,6 +445,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       return committed.result;
     }).catch((error) => {
       if (error?.simulatedCrash) throw error;
+      emitEvent("area_map_save_phase", { operationId, phase: "failed", shardCount: writes.length, duration: 0 });
       reportError(`Area map transaction failed: ${error.message}`);
       return {
         status: Number(error?.status ?? 503), committed: false, saved: false, operationId, error: error.message,
@@ -475,15 +507,16 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       const result = { ...(plan.result ?? {}), committed: true, operationId, idempotent: false };
       const manifest = {
         schema: "area-map-transaction.v3", operationId, worldId, digest: requestDigest, state: "prepared", exactClean: true,
-        preparedAt: new Date().toISOString(), prepared, targets, cleanupDirectories,
+        preparedAt: new Date().toISOString(), shardCount: targets.filter((target) => target.file.endsWith(".excalidraw")).length, prepared, targets, cleanupDirectories,
         directoryGuards: plan.directoryGuards ?? [], result,
       };
       await writeManifest(manifestFile, manifest);
-      await checkpoint("prepared", { operationId });
+      await checkpoint("prepared", phaseFields(manifest));
       const committed = await finishPrepared(manifest, manifestFile, { installRef: true, recheckTargets: true });
       return committed.result;
     }).catch((error) => {
       if (error?.simulatedCrash) throw error;
+      emitEvent("area_map_save_phase", { operationId, phase: "failed", shardCount: 0, duration: 0 });
       reportError(`Exact vault transaction failed: ${error.message}`);
       return {
         status: Number(error?.status ?? 503), committed: false, operationId, error: error.message,

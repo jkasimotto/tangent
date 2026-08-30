@@ -21,6 +21,13 @@ export function normalizeActionTelemetry(body, now = () => new Date()) {
   const controllerBoot = field(body?.controllerBoot, 128);
   const operationId = field(body?.operationId, 128);
   const eventStream = field(body?.eventStream, 40);
+  const phase = field(body?.phase, 40);
+  const priorPhase = field(body?.priorPhase, 40);
+  const outcome = field(body?.outcome, 40);
+  const counts = Object.fromEntries(["shardCount", "legacyCards", "boundaries", "provisionalRegions", "recoveredPlacements"].flatMap((name) => {
+    const value = Number(body?.[name]);
+    return Number.isInteger(value) && value >= 0 ? [[name, value]] : [];
+  }));
   return {
     schema: ACTION_TELEMETRY_SCHEMA,
     at: now().toISOString(),
@@ -36,6 +43,10 @@ export function normalizeActionTelemetry(body, now = () => new Date()) {
     ...(controllerBoot ? { controllerBoot } : {}),
     ...(operationId ? { operationId } : {}),
     ...(eventStream ? { eventStream } : {}),
+    ...(phase ? { phase } : {}),
+    ...(priorPhase ? { priorPhase } : {}),
+    ...(outcome ? { outcome } : {}),
+    ...counts,
   };
 }
 

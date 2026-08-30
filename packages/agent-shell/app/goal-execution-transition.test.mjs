@@ -12,7 +12,8 @@ import { newPipeline } from "./pipeline-record.mjs";
 import { latestWorkerQuestion, openWorkerQuestion } from "./worker-questions.mjs";
 
 const oldLaunch = { harness: "claude", model: "sonnet-5", effort: "medium" };
-const newLaunch = { harness: "codex", model: "sol", effort: "high" };
+const newLaunch = { harness: "codex-otto", model: "sol", effort: "high" };
+const newCommand = "codex --approve-for-me --model sol --effort high";
 
 /** One live assignment followed by an untouched pending suffix. */
 function queueFixture() {
@@ -111,7 +112,7 @@ test("a ready replacement atomically becomes current without rewriting assignmen
   transitionAttemptReplacement(operation, "replacement-starting", {
     replacementAttemptId: "attempt-new",
     replacementTarget: { ...sourceTarget, attemptId: "attempt-new", session: "ship-new", target: "$9", generation: 2 },
-    resolvedLaunch: { ref: newLaunch, command: "codex --model sol --effort high", label: "Codex · Sol · High" },
+    resolvedLaunch: { ref: newLaunch, command: newCommand, label: "Codex · Otto · Sol · High" },
     startedAt: "2026-08-27T09:01:00.000Z",
   }, "2026-08-27T09:01:00.000Z");
   transitionAttemptReplacement(operation, "replacement-ready", {
@@ -172,7 +173,7 @@ test("replacement promotion transfers an open worker question", () => {
   transitionAttemptReplacement(operation, "replacement-starting", {
     replacementAttemptId: "attempt-new",
     replacementTarget: { ...sourceTarget, attemptId: "attempt-new", session: "ship-new", target: "$9" },
-    resolvedLaunch: { ref: newLaunch, command: "codex --model sol --effort high" },
+    resolvedLaunch: { ref: newLaunch, command: newCommand },
   });
   transitionAttemptReplacement(operation, "replacement-ready", { readiness: { kind: "prompt-receipt" } });
   promoteReadyReplacement(queue, operation, "2026-08-27T09:03:00.000Z");
@@ -195,7 +196,7 @@ test("late source evidence stays on replaced history and cannot advance the curr
   transitionAttemptReplacement(operation, "replacement-starting", {
     replacementAttemptId: "attempt-new",
     replacementTarget: { ...sourceTarget, attemptId: "attempt-new", session: "ship-new", target: "$9" },
-    resolvedLaunch: { ref: newLaunch, command: "codex --model sol --effort high" },
+    resolvedLaunch: { ref: newLaunch, command: newCommand },
   });
   transitionAttemptReplacement(operation, "replacement-ready", { readiness: { kind: "julian-confirmed" } });
   promoteReadyReplacement(queue, operation);

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  areaLaunchPolicy, harnessEfforts, harnessModels, launchMatches, launchRef, modelEfforts, parseEnvironmentBlock, parseHarnessRegistry, parseLaunch, resolveLaunch, updateEnvironmentPolicy, upsertHarnessRegistry,
+  applyLaunchAliases, areaLaunchPolicy, harnessEfforts, harnessModels, launchMatches, launchRef, modelEfforts, parseEnvironmentBlock, parseHarnessRegistry, parseLaunch, resolveLaunch, updateEnvironmentPolicy, upsertHarnessRegistry,
   validateHarnessRegistry,
 } from "./launch-environment.mjs";
 
@@ -26,7 +26,9 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
   async function allowed(area, ref) {
     const policy = await policyFor(area);
     if (policy.error) return policy;
-    const resolved = resolveLaunch(await registry(), ref);
+    const canonical = applyLaunchAliases(ref, policy.aliases);
+    if (canonical.error) return canonical;
+    const resolved = resolveLaunch(await registry(), canonical);
     if (resolved.error) return resolved;
     if (policy.launches.some((entry) => launchRef(entry) === launchRef(resolved))) return { ...resolved, policy };
     return { error: `launch ${launchRef(ref)} is not allowed in ${area}`, code: "launch-not-allowed", launch: launchRef(ref), area, allowed: policy.allow.map(launchRef) };

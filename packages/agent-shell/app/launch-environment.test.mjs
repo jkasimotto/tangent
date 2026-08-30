@@ -11,6 +11,7 @@ import {
   parseEnvironmentBlock,
   parseHarnessRegistry,
   resolveLaunch,
+  applyLaunchAliases,
   updateEnvironmentDefault,
   upsertEnvironmentLaunch,
   upsertHarnessRegistry,
@@ -234,6 +235,22 @@ const EFFORT_REGISTRY = {
   ],
 };
 
+const OTTO_CODEX_REGISTRY = {
+  ...EFFORT_REGISTRY,
+  harnesses: [
+    ...EFFORT_REGISTRY.harnesses,
+    {
+      id: "codex-otto",
+      label: "Codex · Otto",
+      command: "codex --approve-for-me",
+      modelSet: "codex",
+      effortSet: "codex",
+      resume: "{command} resume {id}",
+      transcripts: "~/.codex/sessions",
+    },
+  ],
+};
+
 test("effort is a third axis: harness command, model args, then effort args", () => {
   const resolved = resolveLaunch(EFFORT_REGISTRY, { harness: "codex", model: "sol", effort: "max" });
   assert.equal(resolved.command, "codex --model gpt-5.6-sol -c model_reasoning_effort=max");
@@ -242,6 +259,19 @@ test("effort is a third axis: harness command, model args, then effort args", ()
   const noEffort = resolveLaunch(EFFORT_REGISTRY, { harness: "codex", model: "sol" });
   assert.equal(noEffort.command, "codex --model gpt-5.6-sol");
   assert.equal(noEffort.effort, null);
+});
+
+test("the Otto Codex harness composes automatic review before model and effort", () => {
+  const resolved = resolveLaunch(OTTO_CODEX_REGISTRY, { harness: "codex-otto", model: "sol", effort: "max" });
+  assert.equal(resolved.command, "codex --approve-for-me --model gpt-5.6-sol -c model_reasoning_effort=max");
+  assert.equal(resolved.label, "Codex · Otto · Sol · Max");
+  assert.equal(validateHarnessRegistry(OTTO_CODEX_REGISTRY), null);
+  assert.equal(resolveLaunch(OTTO_CODEX_REGISTRY, { harness: "codex", model: "sol", effort: "max" }).command, "codex --model gpt-5.6-sol -c model_reasoning_effort=max", "the ordinary Codex harness stays unchanged");
+});
+
+test("Area aliases migrate a legacy harness ref and reject cycles", () => {
+  assert.deepEqual(applyLaunchAliases({ harness: "codex", model: "sol", effort: "max" }, { codex: "codex-otto" }), { harness: "codex-otto", model: "sol", effort: "max" });
+  assert.match(applyLaunchAliases({ harness: "a" }, { a: "b", b: "a" }).error, /alias cycle/);
 });
 
 test("an effort a harness does not offer is an error that names it", () => {

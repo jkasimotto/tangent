@@ -35,7 +35,9 @@ test("a blocked crew escalates without starting the second crew", () => {
 });
 
 test("commands extend a bounded lease and ending is idempotent", () => {
-  const repair = newRepair({ area: "otto/tangent", stop: { since: new Date(NOW).toISOString(), cause: "inactive" }, trigger: { goals: [], reports: [], notices: [], oldestSince: new Date(NOW).toISOString() }, ordinal: 1, instanceId: "one", cwd: "/tmp", resolvedLaunch: { ref: { harness: "codex" }, command: "codex" }, now: NOW });
+  const resolvedLaunch = { ref: { harness: "codex-otto", model: "sol", effort: "high" }, command: "codex --approve-for-me --model gpt-5.6-sol -c model_reasoning_effort=high" };
+  const repair = newRepair({ area: "otto/tangent", stop: { since: new Date(NOW).toISOString(), cause: "inactive" }, trigger: { goals: [], reports: [], notices: [], oldestSince: new Date(NOW).toISOString() }, ordinal: 1, instanceId: "one", cwd: "/tmp", resolvedLaunch, now: NOW });
+  assert.deepEqual(repair.resolvedLaunch, resolvedLaunch, "repair launches keep the Area-resolved automatic-review command");
   const record = { current: repair, history: [] };
   assert.equal(extendRepairLease(repair, NOW), true);
   assert.equal(repair.commands, 1);

@@ -96,7 +96,11 @@ export function parseEnvironmentBlock(text) {
     if (parsed.version !== 2 || !Array.isArray(parsed.allow)) return { error: "environment policy needs version 2 and an allow list" };
     const allow = parsed.allow.map(parseLaunch);
     if (allow.some((entry) => !entry)) return { error: "each allowed launch must be harness[/model[/effort]]" };
-    return { ...parsed, allow };
+    const aliases = parsed.aliases ?? {};
+    if (!aliases || typeof aliases !== "object" || Array.isArray(aliases) || Object.entries(aliases).some(([from, to]) => !from.trim() || typeof to !== "string" || !to.trim() || to.includes("/"))) {
+      return { error: "environment aliases must map harness ids to harness ids" };
+    }
+    return { ...parsed, allow, aliases };
   } catch (error) {
     return { error: `environment block is not valid JSON: ${error.message}` };
   }
@@ -135,7 +139,7 @@ export async function areaLaunchPolicy(area, readAreaNote, registry) {
   for (const candidate of areaAncestors(area)) {
     const environment = parseEnvironmentBlock(await readAreaNote(candidate));
     if (environment?.error) return { error: `${candidate}: ${environment.error}` };
-    if (environment) declarations.push({ area: candidate, allow: environment.allow });
+    if (environment) declarations.push({ area: candidate, allow: environment.allow, aliases: environment.aliases });
   }
   const all = registeredLaunches(registry);
   const launches = declarations.length
@@ -149,9 +153,22 @@ export async function areaLaunchPolicy(area, readAreaNote, registry) {
     area,
     allow: declarations[0]?.allow ?? [],
     declaredBy: declarations.map((entry) => entry.area),
+    aliases: Object.assign({}, ...declarations.slice().reverse().map((entry) => entry.aliases)),
     unrestricted: declarations.length === 0,
     launches,
   };
+}
+
+/** Rewrites a legacy harness id through one Area policy without changing model or effort. */
+export function applyLaunchAliases(ref, aliases = {}) {
+  let harness = String(ref?.harness ?? "");
+  const seen = new Set();
+  while (aliases[harness]) {
+    if (seen.has(harness)) return { error: `launch alias cycle at "${harness}"` };
+    seen.add(harness);
+    harness = aliases[harness];
+  }
+  return { ...ref, harness };
 }
 
 /** The model options one harness offers, in registry order. */
@@ -294,7 +311,12 @@ export function updateEnvironmentPolicy(text, allow) {
   const existing = fencedBlock(current, ENVIRONMENT_TAG);
   const refs = (allow ?? []).map((entry) => typeof entry === "string" ? entry : launchRef(entry));
   if (!refs.length) return existing === null ? current : current.replace(/```tangent\.environment\.v2\s*\n[\s\S]*?\n```\s*/, "");
-  const block = `\`\`\`${ENVIRONMENT_TAG}\n${JSON.stringify({ version: 2, allow: refs }, null, 2)}\n\`\`\``;
+  let environment = {};
+  if (existing !== null) {
+    try { environment = JSON.parse(existing); }
+    catch (error) { throw new Error(`environment block is not valid JSON: ${error.message}`); }
+  }
+  const block = `\`\`\`${ENVIRONMENT_TAG}\n${JSON.stringify({ ...environment, version: 2, allow: refs }, null, 2)}\n\`\`\``;
   if (existing !== null) return current.replace(/```tangent\.environment\.v2\s*\n[\s\S]*?\n```/, block);
   return `${current.trimEnd()}\n\n## Development environment\n\nAllowed launches in this Area subtree.\n\n${block}\n`;
 }

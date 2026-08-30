@@ -9,6 +9,7 @@ import { expandHome, findCodexRollouts, launchWithConversation, newConversation,
 const claude = { id: "claude-otto", command: "claude-otto", resume: "{command} --resume {id}", sessionIdArg: "--session-id {id}" };
 const pi = { id: "pi-code", command: "pi-code", resume: "{command} --session {id}", sessionIdArg: "--session-id {id}" };
 const codex = { id: "codex", command: "codex", resume: "codex resume {id}", transcripts: "~/.codex/sessions" };
+const codexOtto = { id: "codex-otto", command: "codex --approve-for-me", resume: "{command} resume {id}", transcripts: "~/.codex/sessions" };
 const agy = { id: "agy", command: "agy" };
 
 test("claude and pi get a fresh uuid at launch, codex does not", () => {
@@ -27,6 +28,7 @@ test("claude and pi get a fresh uuid at launch, codex does not", () => {
 test("the resume command keeps the launch line and the harness syntax", () => {
   assert.equal(resumeCommand(claude, { command: "claude-otto --model claude-opus-5 --effort high", id: "abc" }), "claude-otto --model claude-opus-5 --effort high --resume abc");
   assert.equal(resumeCommand(codex, { command: "codex --model gpt-5.6-sol", id: "abc" }), "codex resume abc");
+  assert.equal(resumeCommand(codexOtto, { command: "codex --approve-for-me --model gpt-5.6-sol -c model_reasoning_effort=high", id: "abc" }), "codex --approve-for-me --model gpt-5.6-sol -c model_reasoning_effort=high resume abc");
   assert.equal(resumeCommand(pi, { command: "pi-code", id: "abc" }), "pi-code --session abc");
   assert.equal(resumeCommand(agy, { command: "agy", id: "abc" }), null, "a harness without resume has no Resume verb");
   assert.equal(resumeCommand(claude, { command: "claude-otto", id: "" }), null, "no id, no command");

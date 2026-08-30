@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { applyAreaMoveToMaps } from "./area-map-area-move.mjs";
 import { areaNoteTemplate } from "./area-note-links.mjs";
 
 const RESERVED = new Set(["shared", ".git", ".obsidian", "node_modules"]);
@@ -110,6 +111,7 @@ export async function moveArea({ treesRoot, area, parent, name, runGit }) {
       });
     }
   }
+  preview.mapChangedPaths = await applyAreaMoveToMaps({ treesRoot, changedPaths: preview.changedPaths, runGit });
   return preview;
 }
 

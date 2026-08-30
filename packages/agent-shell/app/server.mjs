@@ -6617,7 +6617,7 @@ const areaRoutesOperations = {
     const text = await areaNote(area);
     const workFolder = await areaWorkFolder(area);
     const resolved = await describeAreaResources(TREES_ROOT, area);
-    const canvas = await areaCanvasRepository.read(area);
+    const canvas = await areaMapTransactions.read(area);
     const openProposals = await areaMapProposals.list(area, { openOnly: true });
     const mapSummary = canvas.ok ? areaCanvasSummary(canvas.scene) : null;
     return {

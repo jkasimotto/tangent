@@ -199,13 +199,21 @@ const sessionOwnership = createSessionOwnership({
 const runRepositoryGit = (args, options = {}) => execFileAsync("git", args, options);
 const vaultRepository = createVaultRepository({ root: TREES_ROOT, runGit: runRepositoryGit });
 const MAP_STATE_ROOT = process.env.TANGENT_MAP_STATE_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "map-state");
+/** Persists coordinate-free Area-map operations in the bounded action log. */
+const recordAreaMapEvent = (event) => recordActionTelemetry(ACTION_TELEMETRY_LOG, {
+  kind: "area-map", action: event.name, eventStream: "area-map",
+  operationId: event.operationId, durationMs: event.duration,
+  phase: event.phase, priorPhase: event.priorPhase, outcome: event.outcome,
+  shardCount: event.shardCount, legacyCards: event.legacyCards, boundaries: event.boundaries,
+  provisionalRegions: event.provisionalRegions, recoveredPlacements: event.recoveredPlacements,
+}).catch(() => false);
 const areaCanvasRepository = createAreaCanvasRepository({
   root: TREES_ROOT, runGit: runRepositoryGit, commit: vaultRepository.commit,
   transactionRoot: path.join(MAP_STATE_ROOT, "legacy-transactions"),
 });
 const areaMapTransactions = createAreaMapTransactionRepository({
   root: TREES_ROOT, repository: areaCanvasRepository, vault: vaultRepository, runGit: runRepositoryGit,
-  transactionRoot: path.join(MAP_STATE_ROOT, "transactions"),
+  transactionRoot: path.join(MAP_STATE_ROOT, "transactions"), recordEvent: recordAreaMapEvent,
 });
 const areaMapWorldViews = createAreaMapWorldViewStore({ root: MAP_STATE_ROOT });
 const launchMemory = createLaunchMemory(process.env.TANGENT_LAUNCH_MEMORY ?? path.join(os.homedir(), ".tangent", "agent-shell", "launch-memory.json"));
@@ -256,7 +264,7 @@ const areaMapContextRoutes = createAreaMapContextRoutes({ root: TREES_ROOT, repo
   areaExists: mapAreaExists,
 });
 const areaMapWorldIndex = createAreaMapWorldIndex({ root: TREES_ROOT, repository: areaMapTransactions,
-  runGit: runRepositoryGit,
+  runGit: runRepositoryGit, recordEvent: recordAreaMapEvent,
   /** Lists the vault's complete Area hierarchy. */
   listAreas: async () => flattenAreaPaths(await readTree(TREES_ROOT)),
 });

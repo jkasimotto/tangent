@@ -35,10 +35,13 @@ test("workers have no self-replacement implementation", async () => {
   assert.doesNotMatch(source, /continueWorkerSession|continueWorker:/);
 });
 
-test("the server keeps its shared asynchronous delay primitive", async () => {
+test("the server keeps its shared session activation primitives", async () => {
   const source = await readFile(path.join(here, "server.mjs"), "utf8");
   assert.match(source, /const sleep = \(ms\) => new Promise\(\(resolve\) => setTimeout\(resolve, ms\)\)/);
-  assert.match(source, /async function startBrain[\s\S]*?await sleep\(700\)/);
+  assert.match(source, /async function typeInto\(session, text, submit\)/);
+  assert.match(source, /for \(const chunk of typeChunks\(text\)\)/);
+  assert.match(source, /async function spawnBrainSession[\s\S]*?await sleep\(700\)/);
+  assert.match(source, /async function spawnBrainSession[\s\S]*?await typeInto\(name,/);
 });
 
 test("the server refuses every Tangent mutation from a worker session through one gate", async () => {

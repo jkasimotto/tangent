@@ -352,6 +352,17 @@ if (!existsSync(WORKSPACE)) mkdirSync(WORKSPACE, { recursive: true });
 /** Awaitable pause shared by session boot and prompt-delivery paths. */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Types literal text into an exact session pane and optionally submits it. */
+async function typeInto(session, text, submit) {
+  for (const chunk of typeChunks(text)) {
+    await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "-l", "--", chunk]);
+  }
+  if (submit) {
+    await sleep(150);
+    await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
+  }
+}
+
 const legacyWorkflowClaims = new Set();
 
 /** Claims pre-marker live work only when its durable record and tmux tags agree. */

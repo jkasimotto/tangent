@@ -3030,7 +3030,7 @@ async function discloseAssignmentLaunch(record, step, folder = null) {
  * delivered into an earlier step's live session when the step continues it.
  * The Goal binds to whichever session now works it.
  */
-async function startPipelineStep(record, index, trace = null) {
+async function startPipelineStep(record, index, trace = null, options = {}) {
   if (record.migrationProblem || record.status === "paused") return { status: 409, error: record.migrationProblem ?? "the Goal queue is paused" };
   let step = record.steps[index - 1];
   if (!step) return { status: 404, error: `no step ${index}` };
@@ -3064,18 +3064,34 @@ async function startPipelineStep(record, index, trace = null) {
     ? { cwd: continuedSession.cwd ?? "", source: source.attempts?.at(-1)?.cwdSource ?? "session", branch: null }
     : await stepWorkFolder(record.area, step);
   if (!folder) return { status: 409, error: `goal ${record.slug}: ${unboundAreaMessage(TREES_ROOT, record.area)}` };
+  const operationId = String(options.idempotencyKey ?? step.startOperation?.id ?? "").trim();
+  if (step.startOperation?.id && operationId && step.startOperation.id !== operationId) {
+    return { status: 409, code: "operation-conflict", error: `assignment ${step.id} still has start operation ${step.startOperation.id}` };
+  }
+  const preparedSessionName = continuedSession
+    ? source.session
+    : step.startOperation?.session ?? pipelineStepSessionName(record, index, liveNames);
+  const attemptId = step.startOperation?.attemptId ?? randomUUID();
+  if (operationId && !step.startOperation) {
+    step.startOperation = {
+      id: operationId,
+      attemptId,
+      session: preparedSessionName,
+      preparedAt: new Date().toISOString(),
+    };
+  }
   await discloseAssignmentLaunch(record, step, folder);
   // writePipeline canonicalizes assignments in place. Reacquire the stored
   // assignment before recording runtime state, or later writes mutate the
   // detached pre-canonicalization object and leave the queue pending.
   step = record.steps[index - 1];
   trace?.mark("step launch disclosed", { launch: step.launchDisclosure.launch });
-  const attemptId = randomUUID();
   // The conversation id is chosen here, before the session exists, for a
   // harness that takes one at launch (ADR-0042). A continued session keeps
   // the conversation it already has.
   const stepHarness = await registryHarness(step.launch?.harness);
   const conversation = continuedSession ? source.attempts?.at(-1)?.providerSession ?? null : newConversation(stepHarness);
+  const launchCommand = launchWithConversation(stepHarness, step.command, conversation);
   let immutableTarget = null;
   if (continuedSession) {
     const goals = await readAreaGoals(record.area);
@@ -3099,23 +3115,72 @@ async function startPipelineStep(record, index, trace = null) {
       step.continueFromAssignmentId = null;
       step.continueFrom = null;
     }
-    const sessionName = pipelineStepSessionName(record, index, liveNames);
-    const result = await spawnGoalSession(record.area, record.slug, {
-      approved: true,
-      launch: true,
-      command: launchWithConversation(stepHarness, step.command, conversation),
-      label: step.label,
-      ref: launchRef(step.launch),
-      path: step.path,
-      workFolder: folder,
-      extraSlugs,
-      pipeline: { record, index, sessionName },
-      attemptId,
-      trace,
-    });
-    if (result.status !== 200) return result;
-    step.session = result.session;
-    immutableTarget = result.target ?? null;
+    const preparedLive = step.startOperation ? sessions.find((item) => item.name === preparedSessionName) : null;
+    if (preparedLive) {
+      const expected = {
+        area: record.area,
+        goal: record.goal,
+        pipeline: record.goal,
+        assignment: step.id,
+        attempt: attemptId,
+      };
+      const mismatch = Object.entries(expected).find(([field, value]) => preparedLive[field] && String(preparedLive[field]) !== String(value));
+      if (mismatch) return { status: 409, code: "target-mismatch", error: `${preparedSessionName} has ${mismatch[0]} ${mismatch[1]}, not ${expected[mismatch[0]]}` };
+      const inspected = await sessionOwnership.inspect(preparedSessionName);
+      if (inspected.state !== "live" || inspected.instanceId !== INSTANCE_ID) {
+        return { status: 409, code: "target-mismatch", error: terminationError(preparedSessionName, inspected) };
+      }
+      /** Completes metadata that a crash may have interrupted after tmux creation. */
+      const set = (name, value) => execFileAsync("tmux", ["set-option", "-t", inspected.target, name, String(value)]);
+      await set("@tangent_area", record.area);
+      await set("@tangent_cwd", folder.cwd);
+      await set("@tangent_goal", record.goal);
+      await set("@tangent_kind", "goal");
+      await set("@tangent_phase", "execute");
+      await set("@tangent_launch_command", launchCommand);
+      if (step.label) await set("@tangent_launch", step.label);
+      if (step.launch) await set("@tangent_launch_ref", launchRef(step.launch));
+      await set("@tangent_pipeline", record.goal);
+      await set("@tangent_step", index);
+      await set("@tangent_assignment", step.id);
+      await set("@tangent_attempt", attemptId);
+      if (SHELL_CMDS.has(preparedLive.command)) {
+        // A crash can leave the launch command partially typed. Replace the
+        // shell line before re-arming it, rather than appending a duplicate.
+        await execFileAsync("tmux", ["send-keys", "-t", inspected.target, "C-u"]);
+        const prompt = await pipelineStepPrompt(record.area, o, record, index, [], preparedSessionName, trace, folder);
+        await primeGoalSession(preparedSessionName, {
+          launch: process.env.AGENT_SHELL_TEST_NO_LAUNCH !== "1",
+          command: launchCommand,
+          extraFiles: record.extraFiles ?? [],
+          prompt,
+        });
+      }
+      if (o.status !== "active" || o.session !== preparedSessionName) {
+        await writeGoalBinding(o.file, { status: "active", session: preparedSessionName });
+        await vaultCommit([o.file], `update: ${record.area} goal ${record.slug} active`, record.area, preparedSessionName);
+      }
+      step.session = preparedSessionName;
+      immutableTarget = inspected.target;
+      if (step.launch) await launchCatalog.saveMemory(record.area, "work", parseLaunch(launchRef(step.launch)));
+    } else {
+      const result = await spawnGoalSession(record.area, record.slug, {
+        approved: true,
+        launch: true,
+        command: launchCommand,
+        label: step.label,
+        ref: launchRef(step.launch),
+        path: step.path,
+        workFolder: folder,
+        extraSlugs,
+        pipeline: { record, index, sessionName: preparedSessionName },
+        attemptId,
+        trace,
+      });
+      if (result.status !== 200) return result;
+      step.session = result.session;
+      immutableTarget = result.target ?? null;
+    }
   }
   step.status = "running";
   step.startedAt = new Date().toISOString();
@@ -3140,6 +3205,7 @@ async function startPipelineStep(record, index, trace = null) {
     endedAt: null,
     report: null,
   }];
+  delete step.startOperation;
   delete step.nextAttemptKind;
   record.currentAssignmentId = step.id;
   record.revision = Math.max(1, Number(record.revision) || 1) + 1;
@@ -3609,14 +3675,14 @@ function withGoalQueueMutation(goalFile, mutation) {
 }
 
 /** Rejects stale queue mutations and makes exact retries harmless. */
-function queueMutationGuard(record, options = {}, { allowPaused = false } = {}) {
+function queueMutationGuard(record, options = {}, { allowPaused = false, resumableIdempotencyKey = "" } = {}) {
   if (!allowPaused && (record.migrationProblem || record.status === "paused")) return { status: 409, error: record.migrationProblem ?? "the Goal queue is paused" };
   const key = String(options.idempotencyKey ?? "").trim();
-  if (key && record.idempotencyKeys?.includes(key)) return { status: 200, state: "repeated", pipeline: record, repeated: true };
+  if (key && record.idempotencyKeys?.includes(key) && key !== resumableIdempotencyKey) return { status: 200, state: "repeated", pipeline: record, repeated: true };
   if (options.expectedRevision !== undefined && Number(options.expectedRevision) !== record.revision) {
     return { status: 409, error: `stale-revision:${record.revision}` };
   }
-  if (key) record.idempotencyKeys = [...(record.idempotencyKeys ?? []), key];
+  if (key && !record.idempotencyKeys?.includes(key)) record.idempotencyKeys = [...(record.idempotencyKeys ?? []), key];
   return null;
 }
 
@@ -3642,14 +3708,15 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
   trace?.mark("pipeline read");
   if (!record) return { status: 404, error: "no pipeline on this goal" };
-  const guarded = queueMutationGuard(record, options, { allowPaused: action === "end" });
+  const step = record.steps[Number(index) - 1] ?? (action === "end" ? record.steps.find((item) => item.id === record.currentAssignmentId) ?? record.steps.find((item) => !["complete", "skipped", "ended"].includes(item.status)) : null);
+  const resumableIdempotencyKey = action === "advance" && step?.status === "pending" ? String(step.startOperation?.id ?? "") : "";
+  const guarded = queueMutationGuard(record, options, { allowPaused: action === "end", resumableIdempotencyKey });
   if (guarded) {
     if (guarded.repeated && action === "advance") {
       await recordCommittedCommand({ operation: "goal-advance", actorSession: options.caller, targetArea: record.area, goal: record.slug, operationId: options.idempotencyKey });
     }
     return guarded;
   }
-  const step = record.steps[Number(index) - 1] ?? (action === "end" ? record.steps.find((item) => item.id === record.currentAssignmentId) ?? record.steps.find((item) => !["complete", "skipped", "ended"].includes(item.status)) : null);
   if (!step && action !== "end") return { status: 404, error: `no step ${index}` };
   const allSessions = await listAllSessions({ fresh: true });
   const sessions = allSessions.filter((session) => session.owned);
@@ -3693,7 +3760,7 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
       await recordRuntimeEvent("job.assignment.accepted", { operationId: options.idempotencyKey, address: record.goal, run: record.run, revision: record.revision, actorSession: options.caller, assignmentId: current.id, outcome: "plain-note-accepted" });
     }
     if (step.status !== "pending") return { status: 409, error: `step ${step.index} is ${step.status}; advance needs a pending or stopped step` };
-    const started = await startPipelineStep(record, step.index, trace);
+    const started = await startPipelineStep(record, step.index, trace, { idempotencyKey: options.idempotencyKey });
     if (started.status === 200) {
       await recordCommittedCommand({ operation: "goal-advance", actorSession: options.caller, targetArea: record.area, goal: record.slug, operationId: options.idempotencyKey });
     }

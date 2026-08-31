@@ -28,7 +28,7 @@ async function post(base, pathname, body) {
   return { status: response.status, body: await response.json() };
 }
 
-test("auto-start founds the exact Area Brain and the accepted command creates one linked Job", async (context) => {
+test("auto-start founds the exact Area Brain, creates one linked Job, and recovers every durable phase", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "process-auto-start-"));
   const trees = path.join(root, "trees");
   const workspace = path.join(root, "workspace");
@@ -103,4 +103,60 @@ test("auto-start founds the exact Area Brain and the accepted command creates on
   const recoveredJob = JSON.parse(await readFile(path.join(pipelines, "otto", "scheduled", `${path.basename(started.body.goalFile, ".md").replace(/^goal-/, "")}.json`), "utf8"));
   assert.equal(recoveredJob.runs.length, 1);
   assert.equal(recoveredJob.runs[0].assignments[0].attempts.length, 1);
+
+  // Replay each later durable Process phase as a lost checkpoint. The exact
+  // command must keep returning the same Goal, Job, Attempt, and Agent.
+  for (const phase of ["goal-created", "job-created"]) {
+    const phaseState = JSON.parse(await readFile(stateFile, "utf8"));
+    const phaseAttempt = phaseState.currentEvent.attempts.find((item) => item.id === phaseState.currentEvent.currentAttemptId);
+    phaseAttempt.status = phase;
+    phaseState.currentEvent.status = "starting";
+    if (phase === "goal-created") phaseState.currentEvent.job = null;
+    await writeFile(stateFile, `${JSON.stringify(phaseState, null, 2)}\n`, "utf8");
+    const phaseReplay = await post(base, "/api/processes/start", { file: "otto/scheduled/process-auto.md", caller: brain.session });
+    assert.equal(phaseReplay.status, 200, `${phase}: ${JSON.stringify(phaseReplay.body)}`);
+    assert.equal(phaseReplay.body.session, started.body.session, `${phase} recovery reused the exact Agent`);
+  }
+
+  // Simulate the narrow crash after tmux creation but before the Job Attempt
+  // write. The durable prepared receipt must adopt that exact live target.
+  const jobPath = path.join(pipelines, "otto", "scheduled", `${path.basename(started.body.goalFile, ".md").replace(/^goal-/, "")}.json`);
+  const spawnedJob = JSON.parse(await readFile(jobPath, "utf8"));
+  const spawnedRun = spawnedJob.runs[0];
+  const spawnedAssignment = spawnedRun.assignments[0];
+  const spawnedAttempt = spawnedAssignment.attempts[0];
+  const startOperationId = spawnedRun.idempotencyKeys.at(-1);
+  spawnedRun.revision -= 1;
+  spawnedRun.currentAssignmentId = null;
+  spawnedAssignment.status = "pending";
+  spawnedAssignment.session = null;
+  spawnedAssignment.startedAt = null;
+  spawnedAssignment.attempts = [];
+  spawnedAssignment.startOperation = {
+    id: startOperationId,
+    attemptId: spawnedAttempt.id,
+    session: spawnedAttempt.session,
+    preparedAt: spawnedAttempt.startedAt,
+  };
+  await writeFile(jobPath, `${JSON.stringify(spawnedJob, null, 2)}\n`, "utf8");
+  const spawnedState = JSON.parse(await readFile(stateFile, "utf8"));
+  const processAttempt = spawnedState.currentEvent.attempts.find((item) => item.id === spawnedState.currentEvent.currentAttemptId);
+  processAttempt.status = "job-created";
+  spawnedState.currentEvent.status = "starting";
+  spawnedState.currentEvent.job = {
+    run: spawnedRun.run,
+    revision: spawnedRun.revision,
+    assignmentId: spawnedAssignment.id,
+    agentSession: null,
+    status: "open",
+  };
+  await writeFile(stateFile, `${JSON.stringify(spawnedState, null, 2)}\n`, "utf8");
+  const spawnReplay = await post(base, "/api/processes/start", { file: "otto/scheduled/process-auto.md", caller: brain.session });
+  assert.equal(spawnReplay.status, 200, JSON.stringify(spawnReplay.body));
+  assert.equal(spawnReplay.body.session, started.body.session, "Agent-spawn recovery adopted the exact live target");
+  const adoptedJob = JSON.parse(await readFile(jobPath, "utf8"));
+  assert.equal(adoptedJob.runs[0].assignments[0].attempts.length, 1);
+  assert.equal(adoptedJob.runs[0].assignments[0].attempts[0].id, spawnedAttempt.id);
+  assert.equal(adoptedJob.runs[0].assignments[0].attempts[0].session, started.body.session);
+  assert.equal(adoptedJob.runs[0].assignments[0].startOperation, undefined);
 });

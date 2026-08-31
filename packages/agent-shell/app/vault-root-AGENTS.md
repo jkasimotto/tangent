@@ -6,6 +6,8 @@ Your job: keep your Area's notes in order and organise worker agents to get its 
 
 Start with `tangent goal list <area>` and `tangent area show <area>`. Information lives in the vault and in Tangent commands, not in your memory.
 
+Before you start a worker, run `tangent harness list --area <area>`. Each Area's `harnesses.md` is its explicit inherited launch contract. If the command reports a missing, stale, or invalid contract, do not guess a launch; repair all contracts with `tangent shell migrate-launch-policy` (use `--dry-run` first).
+
 ## Commands
 
 `tangent help` lists every command. `tangent <command> --help` gives its current syntax. Run them instead of guessing. The ones you use most:
@@ -18,6 +20,7 @@ Start with `tangent goal list <area>` and `tangent area show <area>`. Informatio
 - `tangent goal done <slug>`, `tangent goal wont-do <slug> --reason "<r>"`, `tangent goal park <slug>`: finish or park a Goal after a worker's done note. A Goal Julian flagged `verify` waits for him instead.
 - `tangent send <session|area> "<text>"`: message a worker or another Area's brain.
 - `tangent area show <area>`: the Area's note, skills, and processes.
+- `tangent harness list --area <area>`: allowed launches, launch memory, contract sources, and contract health.
 
 ## Repair crew
 

@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { doneCascade } from "./goal-cascade.mjs";
 import { describeAreaResources, resolveWorkFolder, unboundAreaMessage } from "./area-resources.mjs";
-import { launchRef, migrateEnvironmentV1, parseLaunch, resolveLaunch } from "./launch-environment.mjs";
+import { launchRef, parseLaunch, resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createLaunchMemory } from "./launch-memory.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
@@ -812,9 +812,12 @@ async function sweepAreaNoteLinks() {
   }
   for (const area of flattenAreaPaths(await readTree(TREES_ROOT))) {
     const changed = await ensureAreaNoteLinks({ treesRoot: TREES_ROOT, area });
-    if (!changed.length) continue;
-    await runVaultGit(["add", "-f", "--", ...changed]);
-    await vaultCommit(changed, `add: ${area} AGENTS.md links`, area, null);
+    if (changed.length) {
+      await runVaultGit(["add", "-f", "--", ...changed]);
+      await vaultCommit(changed, `add: ${area} AGENTS.md links`, area, null);
+    }
+    const repaired = await launchCatalog.repairContract(area);
+    if (repaired.error) console.error(`area harness contract: ${repaired.error}`);
   }
 }
 
@@ -6227,6 +6230,9 @@ const areaRoutesOperations = {
   async create(body) {
     const created = await createArea({ treesRoot: TREES_ROOT, parent: body.parent, name: body.name });
     created.changedPaths.push(...await ensureAreaNoteLinks({ treesRoot: TREES_ROOT, area: created.area }));
+    const contract = await launchCatalog.repairContract(created.area, { commitChange: false });
+    if (contract.error) throw new Error(contract.error);
+    if (contract.changed) created.changedPaths.push(contract.file);
     await runVaultGit(["add", "-f", "--", ...created.changedPaths]);
     await vaultCommit(created.changedPaths, `add: ${created.area} Area`, created.area, null);
     await recordCommittedCommand({ operation: "area-create", actorSession: body.caller, targetArea: created.area });
@@ -6644,38 +6650,25 @@ const shellControlOperations = {
     if (process.env.TANGENT_VERIFY_READONLY) return { status: 403, value: { error: "Rebuild is disabled in the verification harness." } };
     return rebuildOperations.start();
   },
-  /** Replaces all v1 defaults with the confirmed top-level Area policies. */
+  /** Creates or refreshes every explicit per-Area harness contract. */
   async migrateLaunchPolicy({ apply = false } = {}) {
-    const policies = { otto: ["codex", "claude-otto"], neara: ["claude-gw", "codex-gw", "pi-code", "opencode"] };
     const areas = flattenAreaPaths(await readTree(TREES_ROOT));
-    const changes = [];
-    const seeds = [];
+    const files = [];
     for (const area of areas) {
-      const file = areaNoteFile(area);
-      const original = await readFile(path.join(TREES_ROOT, file), "utf8").catch(() => "");
-      let migrated;
-      try { migrated = migrateEnvironmentV1(original, policies[area] ?? []); }
-      catch (error) { return { status: 400, error: `${area}: ${error.message}` }; }
-      if (migrated.text !== original) changes.push({ area, file, text: migrated.text, allow: policies[area] ?? [] });
-      const work = migrated.defaults?.launch;
-      const brain = migrated.defaults?.brain === "work" ? work : migrated.defaults?.brain;
-      if (work?.harness) seeds.push({ area, kind: "work", ref: work });
-      if (brain?.harness) seeds.push({ area, kind: "brain", ref: brain });
+      const policy = await launchCatalog.policyFor(area);
+      if (policy.error && policy.code !== "harness-contract-invalid") return { status: 400, error: policy.error };
+      const local = await launchCatalog.declarations(area);
+      files.push({ area, file: `${area}/harnesses.md`, state: local.error ? "invalid" : local.contract, allow: (local.allow ?? []).map(launchRef) });
     }
-    const preview = { policies, files: changes.map(({ area, file, allow }) => ({ area, file, allow })), memory: seeds };
+    const preview = { files };
     if (!apply) return { status: 200, value: { dryRun: true, ...preview } };
-    if (!changes.length) return { status: 200, value: { dryRun: false, changed: false, ...preview } };
-    for (const change of changes) {
-      await vaultRepository.writeMarkdown(change.file, change.text);
-      await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", change.file]);
+    const repaired = [];
+    for (const area of areas) {
+      const result = await launchCatalog.repairContract(area, { force: true });
+      if (result.error) return { status: 400, error: result.error };
+      if (result.changed) repaired.push(result.file);
     }
-    await vaultCommit(changes.map((change) => change.file), "update: launch policy replaces defaults", "machine", null);
-    const stored = [];
-    for (const seed of seeds) {
-      const saved = await launchCatalog.saveMemory(seed.area, seed.kind, seed.ref);
-      if (!saved.error) stored.push(seed);
-    }
-    return { status: 200, value: { dryRun: false, changed: true, ...preview, memory: stored } };
+    return { status: 200, value: { dryRun: false, changed: repaired.length > 0, repaired, ...preview } };
   },
   /** Changes the orchestrator command and stops its old session. */
   async agent(command) {

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createLaunchMemory } from "./launch-memory.mjs";
 import { resolveBrainAttemptLaunch } from "./brain-launch.mjs";
-import { migrateEnvironmentV1, parseEnvironmentBlock } from "./launch-environment.mjs";
+import { areaHarnessContractText, migrateEnvironmentV1, parseAreaHarnessContract, parseEnvironmentBlock } from "./launch-environment.mjs";
 
 const registry = {
   version: 2,
@@ -70,6 +70,52 @@ test("unrestricted Areas do not invent a first-use choice", async () => {
   assert.equal(await catalog.remembered("fresh", "brain"), null);
 });
 
+test("explicit Area harness contracts expose valid, stale, missing, and invalid state", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-harness-contract-health-"));
+  await mkdir(path.join(root, "otto", "valid"), { recursive: true });
+  await mkdir(path.join(root, "otto", "stale"), { recursive: true });
+  await mkdir(path.join(root, "otto", "invalid"), { recursive: true });
+  await writeFile(path.join(root, "harnesses.md"), `\`\`\`tangent.harnesses.v2\n${JSON.stringify(registry)}\n\`\`\``);
+  await writeFile(path.join(root, "otto", "harnesses.md"), areaHarnessContractText({ allow: ["codex", "claude-otto"], registry }));
+  await writeFile(path.join(root, "otto", "valid", "harnesses.md"), areaHarnessContractText({ registry }));
+  await writeFile(path.join(root, "otto", "stale", "harnesses.md"), areaHarnessContractText({ registry: { ...registry, harnesses: registry.harnesses.slice(0, 1) } }));
+  await writeFile(path.join(root, "otto", "invalid", "harnesses.md"), "```tangent.area-harnesses.v1\n{bad}\n```\n");
+  /** Supplies no legacy declaration to the contract-health fixture. */
+  const readAreaNote = async () => "";
+  const catalog = createLaunchCatalog({ root, readAreaNote });
+  assert.equal((await catalog.policyFor("otto/valid")).health, "valid");
+  assert.equal((await catalog.policyFor("otto/stale")).health, "stale");
+  assert.equal((await catalog.policyFor("otto/missing")).health, "missing");
+  assert.equal((await catalog.policyFor("otto/invalid")).code, "harness-contract-invalid");
+});
+
+test("repair creates a child contract and migrates legacy allow and aliases without widening it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-harness-contract-repair-"));
+  await mkdir(path.join(root, "otto"), { recursive: true });
+  await writeFile(path.join(root, "harnesses.md"), `\`\`\`tangent.harnesses.v2\n${JSON.stringify(registry)}\n\`\`\``);
+  const legacy = note(["codex-otto"], { codex: "codex-otto" });
+  /** Supplies the legacy declaration being repaired. */
+  const readAreaNote = async () => legacy;
+  const repository = {
+    /** Persists the generated fixture contract. */
+    async writeMarkdown(file, text) { await writeFile(path.join(root, file), text); },
+  };
+  /** Accepts the fixture's synthetic vault commit. */
+  const commit = async () => {};
+  const catalog = createLaunchCatalog({
+    root,
+    readAreaNote,
+    repository,
+    commit,
+  });
+  const repaired = await catalog.repairContract("otto");
+  assert.equal(repaired.changed, true);
+  const parsed = parseAreaHarnessContract(await readFile(path.join(root, "otto", "harnesses.md"), "utf8"), registry);
+  assert.deepEqual(parsed.allow.map((entry) => entry.harness), ["codex-otto"]);
+  assert.deepEqual(parsed.aliases, { codex: "codex-otto" });
+  assert.equal((await catalog.allowed("otto", { harness: "codex", model: "sol" })).harness, "codex-otto");
+});
+
 test("brain launch resolution returns a clear cross-scope refusal", async () => {
   const catalog = await fixture({ neara: note(["claude-gw"]) });
   const result = await resolveBrainAttemptLaunch({ area: "neara", choice: { harness: "claude-otto", model: "opus" }, launchCatalog: catalog });
@@ -117,6 +163,7 @@ test("policy writes preserve a scoped compatibility alias", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-launch-alias-write-"));
   await writeFile(path.join(root, "harnesses.md"), `\`\`\`tangent.harnesses.v2\n${JSON.stringify(registry)}\n\`\`\``);
   const notes = { otto: note(["codex-otto", "claude-otto"], { codex: "codex-otto" }) };
+  let contractText = "";
   await writeFile(path.join(root, "otto.md"), notes.otto);
   const catalog = createLaunchCatalog({
     root,
@@ -124,7 +171,7 @@ test("policy writes preserve a scoped compatibility alias", async () => {
     readAreaNote: async (area) => notes[area] ?? "",
     repository: {
       /** Stores the proposed policy note. */
-      async writeMarkdown(_file, text) { notes.otto = text; },
+      async writeMarkdown(_file, text) { contractText = text; },
     },
     /** Accepts a fixture commit. */
     commit: async () => {},
@@ -139,5 +186,5 @@ test("policy writes preserve a scoped compatibility alias", async () => {
   });
   const saved = await catalog.savePolicy("otto", ["codex-otto"]);
   assert.equal(saved.error, undefined);
-  assert.deepEqual(parseEnvironmentBlock(notes.otto).aliases, { codex: "codex-otto" });
+  assert.deepEqual(parseAreaHarnessContract(contractText, registry).aliases, { codex: "codex-otto" });
 });

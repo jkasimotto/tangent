@@ -24,7 +24,7 @@ export async function runShellCli(argv = process.argv.slice(2)): Promise<void> {
   throw new Error(`Unknown shell command: ${subcommand}. Try "tangent shell --help".`);
 }
 
-/** Previews or applies the one-time v1 default migration. */
+/** Previews or repairs every explicit per-Area harness contract. */
 async function migrateLaunchPolicyCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const dryRun = booleanArg(args["dry-run"]);

@@ -142,7 +142,7 @@ export const shellCommandSpec: CliCommandSpec = {
     },
     {
       name: "migrate-launch-policy",
-      description: "Replace retired Area launch defaults with confirmed Area policies and seed launch memory.",
+      description: "Create or refresh explicit per-Area harnesses.md contracts without changing effective policy.",
       options: [serverOption, { name: "dry-run", description: "Print the proposed policy and memory changes without writing them" }]
     }
   ]

@@ -3,6 +3,7 @@
 Start here when changing architecture, package boundaries, or agent workflow.
 
 Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `packages/agent-shell/app/`. A stable gateway owns the UI and terminal edge while a supervised controller owns workflows (ADR-0032). Gateway and controller share one runtime identity. They can attach to or stop only tmux sessions with that identity (ADR-0036). Each exact Area has one logical brain and durable inbox. Every assignment records the organizing brain's Area path. A worker sends only a plain note to that path; delivery does not mutate the Goal queue and never reroutes through Area ancestry. Everything starts through an Area brain, which runs until the user restarts it and reads its Area note chain as its instruction (ADR-0041). Each attempt records its harness conversation so it can be resumed (ADR-0042).
+The root harness registry and explicit per-Area `harnesses.md` contracts jointly resolve brain and worker launches. Area contracts inherit by intersection, retain compatibility aliases, expose health, and are repaired through the shell migration path (ADR-0054).
 
 Human CLI defaults are `setup`, `status`, `service`, `usage`, `rollup`, `search`, `eval`, `doctor`, and `completion`.
 `tangent service` runs servers and watchers from inherited, ignored `.processes.json` files in Tangent Areas. Services use Area-bound tmux sessions so they remain visible and inspectable in the hierarchy. `tangent process start|stop|restart|close` still reach it for one release with a hint.
@@ -37,6 +38,7 @@ Decisions:
 - decisions/ADR-0037-brain-attempt-launch-override.md
 - decisions/ADR-0038-agent-shell-keyboard-ownership.md
 - decisions/ADR-0039-durable-generic-agent-message-queue.md
+- decisions/ADR-0054-explicit-area-harness-contracts.md
 - decisions/ADR-0030-area-triggers.md (amended by ADR-0043)
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md

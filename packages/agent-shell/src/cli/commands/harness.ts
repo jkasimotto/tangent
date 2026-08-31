@@ -20,7 +20,7 @@ type HarnessCatalog = {
   source: string;
   area?: string;
   remembered?: Launch & { source?: string | null };
-  policy?: { declaredBy?: string[]; unrestricted?: boolean; allow?: Array<{ harness: string; model?: string; effort?: string }> };
+  policy?: { declaredBy?: string[]; unrestricted?: boolean; health?: string; contracts?: Array<{ area: string; state: string }>; allow?: Array<{ harness: string; model?: string; effort?: string }> };
   harnesses: Harness[];
 };
 
@@ -49,6 +49,7 @@ function printCatalog(catalog: HarnessCatalog): void {
   if (catalog.area) {
     console.log(`policy: ${catalog.policy?.unrestricted ? "unrestricted" : (catalog.policy?.allow ?? []).map((ref) => [ref.harness, ref.model, ref.effort].filter(Boolean).join("/")).join(", ")}`);
     console.log(`declared by: ${catalog.policy?.declaredBy?.join(", ") || "none"}`);
+    console.log(`contract: ${catalog.policy?.health ?? "unknown"}${catalog.policy?.contracts?.length ? ` (${catalog.policy.contracts.map((item) => `${item.area}: ${item.state}`).join(", ")})` : ""}`);
     console.log(`remembered: ${launchLine(catalog.remembered)}${catalog.remembered?.source ? ` from ${catalog.remembered.source}` : ""}`);
   }
   for (const harness of catalog.harnesses) {

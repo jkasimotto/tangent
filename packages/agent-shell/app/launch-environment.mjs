@@ -4,6 +4,7 @@
 // with exact arguments. The composed command is authoritative: this module
 // joins strings and never parses, translates, or rebuilds them.
 
+import { createHash } from "node:crypto";
 import { areaAncestors } from "./area-agent-command.mjs";
 
 /** Extracts the JSON payload of one fenced ```<tag> block, or null. */
@@ -76,6 +77,40 @@ export function parseHarnessRegistry(text) {
 }
 
 export const ENVIRONMENT_TAG = "tangent.environment.v2";
+export const AREA_HARNESSES_TAG = "tangent.area-harnesses.v1";
+
+/** Stable identity of the registry snapshot an Area contract was checked against. */
+export function harnessRegistryRevision(registry) {
+  return createHash("sha256").update(JSON.stringify({
+    modelSets: registry?.modelSets ?? {}, effortSets: registry?.effortSets ?? {}, harnesses: registry?.harnesses ?? [],
+  })).digest("hex");
+}
+
+/** Parses one explicit per-Area harness contract. */
+export function parseAreaHarnessContract(text, registry = null) {
+  const raw = fencedBlock(text, AREA_HARNESSES_TAG);
+  if (raw === null) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed.version !== 1 || parsed.inherits !== true || !Array.isArray(parsed.allow)) return { error: "Area harness contract needs version 1, inherits true, and an allow list" };
+    const allow = parsed.allow.map(parseLaunch);
+    if (allow.some((entry) => !entry)) return { error: "each allowed launch must be harness[/model[/effort]]" };
+    const aliases = parsed.aliases ?? {};
+    if (!aliases || typeof aliases !== "object" || Array.isArray(aliases) || Object.entries(aliases).some(([from, to]) => !from.trim() || typeof to !== "string" || !to.trim() || to.includes("/"))) {
+      return { error: "Area harness aliases must map harness ids to harness ids" };
+    }
+    const expected = registry ? harnessRegistryRevision(registry) : null;
+    return { version: 1, inherits: true, allow, aliases, registry: String(parsed.registry ?? ""), stale: Boolean(expected && parsed.registry !== expected) };
+  } catch (error) {
+    return { error: `Area harness contract is not valid JSON: ${error.message}` };
+  }
+}
+
+/** Generates the complete maintainable contract file for one Area. */
+export function areaHarnessContractText({ allow = [], aliases = {}, registry }) {
+  const value = { version: 1, inherits: true, registry: harnessRegistryRevision(registry), allow: allow.map((entry) => typeof entry === "string" ? entry : launchRef(entry)), ...(Object.keys(aliases).length ? { aliases } : {}) };
+  return `# Harness contract\n\nThis generated contract narrows the launches inherited from parent Areas. Repair it with \`tangent shell migrate-launch-policy\`.\n\n\`\`\`${AREA_HARNESSES_TAG}\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
+}
 
 /** Parses `harness[/model[/effort]]` without guessing omitted axes. */
 export function parseLaunch(value) {
@@ -134,12 +169,17 @@ export function registeredLaunches(registry) {
 }
 
 /** Resolves the intersection of every policy declared on an Area chain. */
-export async function areaLaunchPolicy(area, readAreaNote, registry) {
+export async function areaLaunchPolicy(area, readAreaNote, registry, readAreaHarness = null) {
   const declarations = [];
+  const contracts = [];
   for (const candidate of areaAncestors(area)) {
-    const environment = parseEnvironmentBlock(await readAreaNote(candidate));
+    const contract = readAreaHarness ? parseAreaHarnessContract(await readAreaHarness(candidate), registry) : null;
+    if (contract?.error) return { error: `${candidate}/harnesses.md: ${contract.error}`, code: "harness-contract-invalid" };
+    const environment = contract ?? parseEnvironmentBlock(await readAreaNote(candidate));
     if (environment?.error) return { error: `${candidate}: ${environment.error}` };
-    if (environment) declarations.push({ area: candidate, allow: environment.allow, aliases: environment.aliases });
+    if (contract) contracts.push({ area: candidate, state: contract.stale ? "stale" : "valid", registry: contract.registry });
+    else contracts.push({ area: candidate, state: environment ? "legacy" : "missing" });
+    if (environment && environment.allow.length) declarations.push({ area: candidate, allow: environment.allow, aliases: environment.aliases });
   }
   const all = registeredLaunches(registry);
   const launches = declarations.length
@@ -154,6 +194,8 @@ export async function areaLaunchPolicy(area, readAreaNote, registry) {
     allow: declarations[0]?.allow ?? [],
     declaredBy: declarations.map((entry) => entry.area),
     aliases: Object.assign({}, ...declarations.slice().reverse().map((entry) => entry.aliases)),
+    contracts,
+    health: contracts.some((entry) => entry.state === "stale") ? "stale" : contracts.some((entry) => entry.state === "missing") ? "missing" : contracts.some((entry) => entry.state === "legacy") ? "legacy" : "valid",
     unrestricted: declarations.length === 0,
     launches,
   };

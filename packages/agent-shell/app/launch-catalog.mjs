@@ -1,12 +1,16 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  applyLaunchAliases, areaLaunchPolicy, harnessEfforts, harnessModels, launchMatches, launchRef, modelEfforts, parseEnvironmentBlock, parseHarnessRegistry, parseLaunch, resolveLaunch, updateEnvironmentPolicy, upsertHarnessRegistry,
+  applyLaunchAliases, areaHarnessContractText, areaLaunchPolicy, harnessEfforts, harnessModels, launchMatches, launchRef, modelEfforts, parseAreaHarnessContract, parseEnvironmentBlock, parseHarnessRegistry, parseLaunch, resolveLaunch, upsertHarnessRegistry,
   validateHarnessRegistry,
 } from "./launch-environment.mjs";
 
 /** Owns launch registry reads and Area/per-run launch resolution. */
 export function createLaunchCatalog({ root, readAreaNote, repository = null, commit = null, stage = null, areaFile = null, emptyAreaNote = null, memory = null, listAreas = null }) {
+  /** Reads one explicit Area contract; absence is distinct from an empty contract. */
+  async function readAreaHarness(area) {
+    return readFile(path.join(root, area, "harnesses.md"), "utf8").catch((error) => error.code === "ENOENT" ? "" : Promise.reject(error));
+  }
   /** Reads the machine-wide registry; an absent block is an empty registry. */
   async function registry() {
     const text = await readFile(path.join(root, "harnesses.md"), "utf8").catch(() => "");
@@ -19,7 +23,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
   /** Resolves the effective inherited policy for one Area. */
   async function policyFor(area) {
     const current = await registry();
-    return current.error ? current : areaLaunchPolicy(area, readAreaNote, current);
+    return current.error ? current : areaLaunchPolicy(area, readAreaNote, current, readAreaHarness);
   }
 
   /** Resolves a registered launch and checks it against one Area. */
@@ -81,9 +85,12 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
   /** Returns the defaults declared directly on one Area. */
   async function declarations(area) {
     if (!area) return { work: { mode: "inherit" }, brain: { mode: "inherit" } };
-    const environment = parseEnvironmentBlock(await readAreaNote(area));
+    const current = await registry();
+    const contract = parseAreaHarnessContract(await readAreaHarness(area), current);
+    if (contract?.error) return { error: `${area}/harnesses.md: ${contract.error}` };
+    const environment = contract ?? parseEnvironmentBlock(await readAreaNote(area));
     if (environment?.error) return { error: `${area}: ${environment.error}` };
-    return { allow: environment?.allow ?? [] };
+    return { allow: environment?.allow ?? [], aliases: environment?.aliases ?? {}, contract: contract ? (contract.stale ? "stale" : "valid") : environment ? "legacy" : "missing" };
   }
 
   /** Returns one registry snapshot with exact commands and the requested Area defaults. */
@@ -131,7 +138,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
       ...(area ? { area } : {}),
       harnesses,
       ...(kind === "all" ? { declarations: local, remembered: rememberedChoice, brainRemembered: await remembered(area, "brain") } : { remembered: rememberedChoice }),
-      policy: { allow: policy.allow ?? [], declaredBy: policy.declaredBy ?? [], unrestricted: policy.unrestricted },
+      policy: { allow: policy.allow ?? [], declaredBy: policy.declaredBy ?? [], unrestricted: policy.unrestricted, health: policy.health, contracts: policy.contracts },
     };
   }
 
@@ -150,7 +157,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
 
   /** Validates and writes one Area's local allow patterns. */
   async function savePolicy(area, allow) {
-    if (!repository || !commit || !areaFile || !emptyAreaNote) throw new Error("launch catalog is read-only");
+    if (!repository || !commit) throw new Error("launch catalog is read-only");
     if (!area) return { error: "an area is required", code: "invalid-area" };
     const current = await registry();
     const patterns = (allow ?? []).map(parseLaunch);
@@ -166,22 +173,44 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
       const proposed = concrete.filter((launch) => patterns.some((pattern) => launchMatches(pattern, launch)));
       if (!parentPolicy.unrestricted && proposed.some((launch) => !parentPolicy.launches.some((entry) => launchRef(entry) === launchRef(launch)))) return { error: `${area} policy widens ${parent}`, code: "policy-widens" };
     }
-    const file = areaFile(area);
-    const text = await readFile(path.join(root, file), "utf8").catch(() => emptyAreaNote(area));
-    let next;
-    try { next = updateEnvironmentPolicy(text, patterns); } catch (error) { return { error: error.message }; }
-    /** Reads the proposed note at the target and durable notes elsewhere. */
-    const nextReader = (candidate) => candidate === area ? next : readAreaNote(candidate);
+    const file = `${area}/harnesses.md`;
+    const existing = parseAreaHarnessContract(await readAreaHarness(area), current);
+    if (existing?.error) return { error: `${area}/harnesses.md: ${existing.error}`, code: "harness-contract-invalid" };
+    const legacy = parseEnvironmentBlock(await readAreaNote(area));
+    const aliases = existing?.aliases ?? legacy?.aliases ?? {};
+    const next = areaHarnessContractText({ allow: patterns, aliases, registry: current });
+    /** Reads the proposed contract at the target and durable contracts elsewhere. */
+    const nextHarnessReader = (candidate) => candidate === area ? next : readAreaHarness(candidate);
     for (const descendant of await listAreas?.() ?? [area]) {
       if (descendant !== area && !descendant.startsWith(`${area}/`)) continue;
-      const proposed = await areaLaunchPolicy(descendant, nextReader, current);
+      const proposed = await areaLaunchPolicy(descendant, readAreaNote, current, nextHarnessReader);
       if (proposed.error) return proposed;
       if (!proposed.launches.length) return { error: `policy would leave ${descendant} with no allowed launch`, code: "policy-empties-child", area: descendant };
     }
     await repository.writeMarkdown(file, next);
     await stage?.(file);
     await commit([file], `update: ${area} allowed launches ${patterns.map(launchRef).join(", ") || "inherit"}`, area, null);
-    return { policy: await areaLaunchPolicy(area, nextReader, current) };
+    return { policy: await areaLaunchPolicy(area, readAreaNote, current, nextHarnessReader) };
+  }
+
+  /** Creates or refreshes one Area contract without changing its effective policy. */
+  async function repairContract(area, { force = false, commitChange = true } = {}) {
+    if (!repository) throw new Error("launch catalog is read-only");
+    const current = await registry();
+    if (current.error) return current;
+    const text = await readAreaHarness(area);
+    const contract = parseAreaHarnessContract(text, current);
+    if (contract?.error && !force) return { error: `${area}/harnesses.md: ${contract.error}`, code: "harness-contract-invalid" };
+    if (contract && !contract.stale) return { changed: false, state: "valid", file: `${area}/harnesses.md` };
+    const legacy = parseEnvironmentBlock(await readAreaNote(area));
+    if (legacy?.error) return { error: `${area}: ${legacy.error}` };
+    const allow = contract?.allow ?? legacy?.allow ?? [];
+    const aliases = contract?.aliases ?? legacy?.aliases ?? {};
+    const file = `${area}/harnesses.md`;
+    await repository.writeMarkdown(file, areaHarnessContractText({ allow, aliases, registry: current }));
+    await stage?.(file);
+    if (commitChange && commit) await commit([file], `update: ${area} harness contract`, area, null);
+    return { changed: true, state: contract ? "stale" : legacy ? "legacy" : "missing", file, allow: allow.map(launchRef), aliases };
   }
 
   /** Validates and writes the complete machine registry through the vault owner. */
@@ -202,5 +231,5 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     return { registry: next };
   }
 
-  return { allowed, commandForArea, declarations, forArea, forBrain, options, policyFor, registry, remembered, requested, saveMemory, savePolicy, saveRegistry };
+  return { allowed, commandForArea, declarations, forArea, forBrain, options, policyFor, registry, remembered, repairContract, requested, saveMemory, savePolicy, saveRegistry };
 }

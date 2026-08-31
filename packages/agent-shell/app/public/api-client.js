@@ -67,6 +67,7 @@ export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), t
     }
     if (data && typeof data === "object") {
       Object.defineProperty(data, "transport", {
+        configurable: true,
         enumerable: false,
         value: {
           gatewayBoot: response.headers?.get?.("x-tangent-gateway-boot") ?? "",
@@ -84,9 +85,10 @@ export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), t
 
   /** Posts one JSON object. */
   function post(path, body) {
+    const operationId = String(body?.operationId ?? "").trim();
     return api(path, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(operationId ? { "x-tangent-operation-id": operationId } : {}) },
       body: JSON.stringify(body),
     });
   }

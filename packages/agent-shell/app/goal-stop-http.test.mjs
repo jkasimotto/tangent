@@ -134,7 +134,7 @@ test("Work Stop terminates the exact Hedno target and reconciles stale targets w
   const stop = (body) => fetch(`${base}/api/goals/stop`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  const exactResponse = await stop({ goal: exactGoal, expectedSession: exactName, expectedTarget: exactTarget });
+  const exactResponse = await stop({ goal: exactGoal, expectedSession: exactName, expectedTarget: exactTarget, operationId: "exact-stop" });
   assert.equal(exactResponse.status, 200, await exactResponse.text());
   await assert.rejects(tmux(["has-session", "-t", exactTarget]), /can't find session|no server running/);
   const endedExact = JSON.parse(await readFile(exactQueue, "utf8"));
@@ -143,7 +143,7 @@ test("Work Stop terminates the exact Hedno target and reconciles stale targets w
   assert.ok(endedExact.assignments[0].attempts[0].endedAt);
   assert.equal(endedExact.assignments[0].attempts[0].result.type, "canceled");
 
-  const staleResponse = await stop({ goal: replacementGoal, expectedSession: replacementName, expectedTarget: staleTarget });
+  const staleResponse = await stop({ goal: replacementGoal, expectedSession: replacementName, expectedTarget: staleTarget, operationId: "stale-stop" });
   assert.equal(staleResponse.status, 200, await staleResponse.text());
   await tmux(["has-session", "-t", replacementTarget]);
   const endedStale = JSON.parse(await readFile(staleQueue, "utf8"));

@@ -490,6 +490,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** The desk word for a brain's logical lifecycle and separate runtime health. */
   function brainStateLabel(brain) {
     if (!brain) return "No brain";
+    if (brain.pendingStop) return "Stopping";
     if (brain.agentState?.word) return brain.agentState.word;
     if (brain.status === "inactive") return "Brain stopped";
     if (brain.live) {
@@ -1419,6 +1420,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * none, and keeps its verb.
    */
   function deskSessionAction(session, idle) {
+    if (session.pendingStop) return { state: "Stopping", action: `Open ${agentName(session)}`, launch: launchRefText(session.launchRef), kind: "waiting", route: "run" };
     const launch = launchRefText(session.launchRef);
     if (session.state === "working") return { state: "Working", action: `Open ${agentName(session)}`, launch, kind: "working", route: "run" };
     if (session.state === "waiting") return { state: waitingLabel(session), action: `Open ${agentName(session)}`, launch, kind: idle, route: "run" };
@@ -1468,6 +1470,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const step = currentPipelineStep(pipeline);
     if (!step) return deskGoalAction(goal);
     const idle = goalCoveredByBrain(goal) ? "fact" : "waiting";
+    const liveSession = sessionForGoal(goal);
+    if (liveSession?.pendingStop) return { ...deskStepLine(step, steps.length), fill: deskFillLabel(liveSession.context), ...deskSessionAction(liveSession, idle) };
     const projected = { ...deskStepLine(step, steps.length), ...deskStepAction(step, idle) };
     if (projected.action) return projected;
     // No step offers a route. A record can still lag a session that is alive:
@@ -2114,7 +2118,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** One temporary attention row for a Document that an agent presented. */
   function workPresentedDocumentRow(goal, item) {
     const cursor = `document:${goal.file}:${item.file}`;
-    return `<tr class="desk-document work-row presented-document${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(goal.area)}" data-presentation-goal="${escapeHtml(goal.file)}" data-presentation-file="${escapeHtml(item.file)}" data-search-text="${escapeHtml(`${item.title} ${item.file}`)}">
+    return `<tr class="desk-document work-row presented-document${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(goal.area)}" data-presentation-goal="${escapeHtml(goal.file)}" data-presentation-file="${escapeHtml(item.file)}" data-presentation-hash="${escapeHtml(item.presentedHash ?? "")}" data-search-text="${escapeHtml(`${item.title} ${item.file}`)}">
       <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<span class="work-goal-copy"><span class="work-goal-primary"><button type="button" class="work-row-title" data-work-row-title data-open-document="${escapeHtml(item.file)}" data-document-root="${escapeHtml(item.root ?? "vault")}" title="${escapeHtml(item.file)}">↳ Read · ${escapeHtml(item.title)}</button></span></span></span></th>
       <td><small>${escapeHtml(item.note || item.presentedBy?.session || "Presented")}</small></td><td></td>
       <td><span class="work-row-controls"><button type="button" data-presentation-full="${escapeHtml(item.file)}" title="Open full reader">o full</button><button type="button" data-withdraw-presentation="${escapeHtml(item.file)}" title="Dismiss presentation">x dismiss</button></span></td>
@@ -2127,7 +2131,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const rows = items.slice(0, PRESENTED_ROWS_PER_GOAL).map((item) => {
       const cursor = `area-document:${area.path}:${item.file}`;
       const presenter = item.presentedBy?.session || "brain";
-      return `<tr class="desk-document work-row presented-document${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}" data-presentation-area="${escapeHtml(area.path)}" data-presentation-file="${escapeHtml(item.file)}" data-search-text="${escapeHtml(`${item.title} ${item.file}`)}">
+      return `<tr class="desk-document work-row presented-document${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}" data-presentation-area="${escapeHtml(area.path)}" data-presentation-file="${escapeHtml(item.file)}" data-presentation-hash="${escapeHtml(item.presentedHash ?? "")}" data-search-text="${escapeHtml(`${item.title} ${item.file}`)}">
         <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<span class="work-goal-copy"><span class="work-goal-primary"><button type="button" class="work-row-title" data-work-row-title data-open-document="${escapeHtml(item.file)}" data-document-root="vault" aria-label="${escapeHtml(`Read ${item.title}, in ${area.path}, presented by ${presenter}`)}" title="${escapeHtml(item.file)}">↳ Read · ${escapeHtml(item.title)}</button></span></span></span></th>
         <td><small>${escapeHtml(item.note || presenter)}</small></td><td></td>
         <td><span class="work-row-controls"><button type="button" data-presentation-full="${escapeHtml(item.file)}" title="Open full reader">o full</button><button type="button" data-withdraw-presentation="${escapeHtml(item.file)}" title="Dismiss presentation">x dismiss</button></span></td>

@@ -26,7 +26,7 @@ export function createVaultRepository({ root, runGit, reportError = console.erro
    * Commits exactly the supplied paths with Tangent provenance trailers, and
    * reports the outcome. A failed commit still logs and never throws, because
    * the file edit already happened; the result lets a caller that must not act
-   * on an uncommitted file, such as Journal capture, stop instead.
+   * on an uncommitted file stop instead.
    */
   async function commit(paths, message, area, session = null) {
     const trailers = [`Tangent-Area: ${area}`, session ? `Tangent-Tmux: ${session}` : null].filter(Boolean);
@@ -98,5 +98,13 @@ export function createVaultRepository({ root, runGit, reportError = console.erro
     }
   }
 
-  return { commit, installPreparedCommit, prepareExactCommit, updatePreparedIndex, writeAndCommit, writeMarkdown };
+  /** Restores one path in the shared index to the blob already committed at HEAD. */
+  async function synchronizeIndexToHead(file) {
+    const line = await gitText(["ls-tree", "HEAD", "--", file]);
+    const match = line.match(/^(\d+)\s+blob\s+([0-9a-f]+)\t/);
+    if (!match) throw new Error(`HEAD has no blob for ${file}`);
+    await runGit(["-C", root, "update-index", "--add", "--cacheinfo", match[1], match[2], file]);
+  }
+
+  return { commit, installPreparedCommit, prepareExactCommit, synchronizeIndexToHead, updatePreparedIndex, writeAndCommit, writeMarkdown };
 }

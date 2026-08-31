@@ -51,6 +51,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
       phase: "online", gatewayBoot: "", controllerBoot: "", lastSuccessAt: 0, lastFailureAt: null,
       retryAttempt: 0, nextRetryAt: null, eventStream: "unavailable", lastError: null,
     },
+    workOperations: null,
     updateAvailable: false, pendingCommits: [], deployedCommit: "", currentCommit: "", loading: true, error: "", renderedKey: "",
     promptInspector: { loading: false, title: "", text: "", error: "", file: "", area: "" },
     bestiarySelection: { mode: "model", concept: "area", lifecycle: "plan", transition: "work" },

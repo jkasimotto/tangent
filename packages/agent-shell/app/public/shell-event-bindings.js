@@ -8,7 +8,7 @@ import { activeBrainForArea, nearestActiveBrain } from "./brain-ownership.js";
 
 /** Binds browser events through capability-owned feature ports. */
 export function bindShellEvents({ shell, chrome, prompts, work, areas, programs, launch, documents }) {
-  const { state, post, paint, refresh, showToast } = shell;
+  const { state, post, actionTelemetry, paint, refresh, showToast } = shell;
   const {
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
@@ -96,6 +96,41 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   function announceWork(text) {
     const region = document.querySelector("#filter-count");
     if (region) region.textContent = String(text ?? "");
+  }
+
+  /** Removes one Work row in the current task and moves focus by semantic row order. */
+  function optimisticallyRemoveWorkRow(row, operation, announcement) {
+    const rows = visibleCursorRows();
+    const index = rows.indexOf(row);
+    const survivor = rows[index + 1] ?? rows[index - 1] ?? null;
+    operation.detail.originalCursor = row.dataset.workCursor;
+    operation.detail.survivorCursor = survivor?.dataset.workCursor ?? "";
+    row.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+    if (state.workCursor === row.dataset.workCursor && survivor?.dataset.workCursor) {
+      state.workCursor = survivor.dataset.workCursor;
+      localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+    }
+    row.remove();
+    survivor?.classList.add("cursor");
+    survivor?.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus({ preventScroll: true });
+    announceWork(announcement);
+    (window.requestAnimationFrame ?? window.setTimeout)(() => actionTelemetry?.record?.("work-mutation", "pending-paint", {
+      operationId: operation.operationId, phase: operation.kind, durationMs: performance.now() - operation.startedAt,
+    }));
+    return survivor;
+  }
+
+  /** Rolls a removed row back without stealing focus after Julian moved elsewhere. */
+  function rollbackRemovedWorkRow(operation, error) {
+    const activeCursor = document.activeElement?.closest?.("[data-work-cursor]")?.dataset.workCursor ?? "";
+    const restoreFocus = Boolean(operation.detail.originalCursor && activeCursor === operation.detail.survivorCursor);
+    state.workOperations.rollback(operation, error);
+    if (restoreFocus) {
+      state.workCursor = operation.detail.originalCursor;
+      localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+    }
+    paint(true);
+    if (restoreFocus) window.setTimeout(() => [...screen.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === state.workCursor)?.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus({ preventScroll: true }), 0);
   }
 
   /**
@@ -681,13 +716,29 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         /** Parks after an optional note and exact-attempt confirmation on the server. */
         const parkGoal = async () => {
           const reason = modalLayer.querySelector("[data-modal-input]")?.value.trim() || "";
+          const started = state.workOperations.begin("park", goal.file);
+          if (started.repeated) return false;
+          const operation = started.operation;
+          const confirm = modalLayer.querySelector("[data-modal-confirm]");
+          if (confirm) confirm.disabled = true;
+          closeModal({ restoreFocus: false });
+          const row = [...screen.querySelectorAll("[data-goal-anchor]")].find((item) => item.dataset.goalAnchor === goal.file);
+          if (row) {
+            optimisticallyRemoveWorkRow(row, operation, "Parking");
+            for (const child of screen.querySelectorAll("[data-presentation-goal], [data-card-goal]")) {
+              if (child.dataset.presentationGoal === goal.file || child.dataset.cardGoal === goal.file) child.remove();
+            }
+          } else announceWork("Parking");
           try {
-            await post("/api/goals/edit", { file: goal.file, status: "parked", ...(reason ? { reason } : {}) });
-            await refresh();
-            paint(true);
-            showToast("The Goal is parked. Its history is unchanged.");
-            return true;
+            const result = await post("/api/goals/edit", { file: goal.file, status: "parked", operationId: operation.operationId, ...(reason ? { reason } : {}) });
+            state.workOperations.committed(operation, result);
+            announceWork(result.state === "cleanup-pending" ? "Goal parked. Exact agent cleanup is still running." : "Goal parked");
+            showToast(result.state === "cleanup-pending" ? "The Goal is parked. Agent cleanup will retry safely." : "The Goal is parked. Its history is unchanged.");
+            void refresh({ trigger: "mutation-verify" });
+            return false;
           } catch (error) {
+            rollbackRemovedWorkRow(operation, error);
+            announceWork(`Parking failed. ${error.message}`);
             showToast(error.message);
             return false;
           }
@@ -752,16 +803,23 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   async function dismissPresentedDocument(row, file = row?.dataset.presentationFile) {
     const dismissal = presentedDocumentDismissal(row, file);
     if (!dismissal) return false;
-    const rows = visibleCursorRows();
-    const index = rows.indexOf(row);
-    const survivor = rows[index + 1] ?? rows[index - 1] ?? null;
-    await post(dismissal.path, dismissal.body);
-    if (state.workCursor === row.dataset.workCursor && survivor?.dataset.workCursor) {
-      state.workCursor = survivor.dataset.workCursor;
-      localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+    const owner = dismissal.body.goal ?? dismissal.body.area;
+    const started = state.workOperations.begin("dismiss", `${owner}\0${file}`);
+    if (started.repeated) return false;
+    const operation = started.operation;
+    optimisticallyRemoveWorkRow(row, operation, "Dismissing");
+    try {
+      const result = await post(dismissal.path, { ...dismissal.body, operationId: operation.operationId, presentedHash: row.dataset.presentationHash || undefined });
+      state.workOperations.committed(operation, result);
+      announceWork("Dismissed");
+      void refresh({ trigger: "mutation-verify" });
+      return true;
+    } catch (error) {
+      rollbackRemovedWorkRow(operation, error);
+      announceWork(`Dismiss failed. ${error.message}`);
+      showToast(error.message);
+      return false;
     }
-    await refresh();
-    return true;
   }
 
   /** Resolves the Goal and card painted on one Work row. */

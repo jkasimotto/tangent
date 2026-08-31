@@ -76,7 +76,7 @@ export function createBrainRoutes(operations) {
       operationId: String(body.operationId ?? ""),
     });
     sendJson(response, result.status, result.status === 200
-      ? { state: result.state, brain: result.brain }
+      ? { operationId: String(body.operationId ?? ""), target: { kind: "brain", id: String(body.area ?? ""), attemptId: String(body.expectedAttemptId ?? ""), tmuxTarget: expectedTarget || null }, state: "committed", effect: { sessionState: "absent", brainState: result.brain?.status ?? "inactive" }, retryable: false, brain: result.brain }
       : { error: result.error, ...(result.code ? { code: result.code } : {}) });
   }
 

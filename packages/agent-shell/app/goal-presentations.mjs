@@ -31,6 +31,7 @@ export async function presentGoalCard(root, goal, card, presenter, now = new Dat
   return { record, card: entry, changed: true };
 }
 
+/** Withdraws one named Goal card. */
 export async function withdrawGoalCard(root, goal, title) {
   const record = await readGoalPresentations(root, goal.area, goal.slug);
   const before = (record.cards ?? []).length;
@@ -40,6 +41,7 @@ export async function withdrawGoalCard(root, goal, title) {
   return { record, changed: true };
 }
 
+/** Dismisses one exact Goal card revision idempotently. */
 export async function dismissGoalCard(root, goal, id, now = new Date().toISOString()) {
   const record = await readGoalPresentations(root, goal.area, goal.slug);
   const card = (record.cards ?? []).find((entry) => entry.id === id);
@@ -50,6 +52,7 @@ export async function dismissGoalCard(root, goal, id, now = new Date().toISOStri
   return { record, card, changed: true };
 }
 
+/** Returns all currently active Goal cards. */
 export function projectCards(record) {
   return [...(record.cards ?? [])].filter((card) => card.dismissedAt === null || card.dismissedHash !== card.fieldsHash).sort((a, b) => a.presentedAt.localeCompare(b.presentedAt));
 }
@@ -98,10 +101,12 @@ export async function withdrawGoalDocument(root, goal, file, now = new Date().to
 }
 
 /** Records that Julian dismissed one presentation. It stays hidden until the content changes. */
-export async function dismissGoalDocument(root, goal, file, now = new Date().toISOString()) {
+export async function dismissGoalDocument(root, goal, file, now = new Date().toISOString(), expectedHash = "") {
   const record = await readGoalPresentations(root, goal.area, goal.slug);
-  const item = record.items.find((entry) => entry.file === file && entry.withdrawnAt === null && !entry.dismissedAt);
+  const item = record.items.find((entry) => entry.file === file && entry.withdrawnAt === null);
   if (!item) return { record, item: null, changed: false };
+  if (expectedHash && item.presentedHash !== expectedHash) return { record, item, changed: false, conflict: true };
+  if (item.dismissedAt && item.dismissedHash === item.presentedHash) return { record, item, changed: false, repeated: true };
   item.dismissedAt = now;
   item.dismissedHash = item.presentedHash;
   await save(root, record);

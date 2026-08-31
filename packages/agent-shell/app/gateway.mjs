@@ -316,7 +316,7 @@ function proxyController(request, response, operationId) {
           settled = true;
           clearTimeout(deadline);
           releaseAdmission();
-          if (request.method === "POST" && pathname !== "/api/telemetry/action" && (incoming.statusCode ?? 500) < 400) stateEvents.changed(pathname);
+          if (request.method === "POST" && pathname !== "/api/telemetry/action" && (incoming.statusCode ?? 500) < 400 && incoming.headers["x-tangent-state-event"] !== "1") stateEvents.changed(pathname);
         });
         return;
       }

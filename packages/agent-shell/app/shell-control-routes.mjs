@@ -62,7 +62,7 @@ export function createShellControlRoutes(operations) {
   /** Stops the exact live session that the selected Goal displayed. */
   async function stopGoal(request, response) {
     const result = await operations.stopGoal(await readJson(request));
-    sendJson(response, result.status, result.status === 200 ? result.value : { error: result.error });
+    sendJson(response, result.status, result.status === 200 ? result.value : { error: result.error, ...(result.code ? { code: result.code } : {}) });
   }
 
   /** Kills one exact tmux session. */

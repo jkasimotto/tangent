@@ -82,11 +82,18 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   row().querySelector("[data-work-row-title]").dispatchEvent(new window.KeyboardEvent("keydown", { key: "s", bubbles: true, cancelable: true }));
   assert.match(window.document.querySelector("#modal-title").textContent, /Stop Agent/);
   click(window, "[data-modal-confirm]");
+  assert.equal(window.document.querySelector("#modal-layer").hidden, true, "keyboard confirmation closes the modal in the input task");
+  assert.equal(row().querySelector(".desk-state").textContent, "Stopping", "the live row shows the safe pending state immediately");
   await settle(window);
-  assert.deepEqual(posts.at(-1), {
-    pathname: "/api/goals/stop",
-    body: { goal: goal.file, expectedSession: "viz-branch-graphics-s2", expectedTarget: "$viz" },
-  }, "s fences the stop to the authoritative current pipeline session");
+  assert.deepEqual(posts.at(-1), { pathname: "/api/goals/stop", body: {
+    goal: goal.file, expectedSession: "viz-branch-graphics-s2", expectedTarget: "$viz", operationId: posts.at(-1).body.operationId,
+  } }, "s fences the stop to the authoritative current pipeline session");
+  assert.match(posts.at(-1).body.operationId, /^[0-9a-f-]{36}$/);
+
+  sessions = [];
+  click(window, "#menu-refresh");
+  await settle(window);
+  sessions = [{ name: "viz-branch-graphics-s2", target: "$viz-new", goal: goal.file, area: goal.area, kind: "goal", state: "working", command: "pi-code", pipeline: goal.file, step: 2 }];
 
   // The For you row must not ask about step 1 either: the work moved past it.
   assert.equal(

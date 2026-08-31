@@ -29,6 +29,7 @@ import { createShellCoordinator } from "./shell-coordinator.js";
 import { bindShellEvents } from "./shell-event-bindings.js";
 import { createTerminalController } from "./terminal-controller.js";
 import { createActionTelemetry } from "./action-telemetry.js";
+import { createWorkMutationOperations } from "./work-mutation-operations.js";
 import { reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
 import { mapBrainCanDock, mapBrainMode, mapBrainWidth as clampMapBrainWidth } from "./map-brain-companion-core.js";
 import { ASK_DISMISSALS_KEY, readDismissedAskIds } from "./ask-dismissal-core.js";
@@ -51,6 +52,15 @@ const {
   "work-search": workSearch, "work-search-input": workSearchInput, "work-search-count": workSearchCount, "work-search-keys": workSearchKeys,
   "document-peek-layer": documentPeekLayer,
 } = shellDom();
+state.workOperations = createWorkMutationOperations({
+  record: actionTelemetry.record,
+  /** Presents a pending-operation warning in the Work live region. */
+  onWarning(operation) {
+    const region = document.querySelector("#filter-count");
+    if (region) region.textContent = operation.warning;
+    showToast(operation.warning);
+  },
+});
 
 /**
  * The global shortcuts. The keydown handler and every printed label read this
@@ -1306,8 +1316,9 @@ async function diagnoseConnection(error, trigger) {
 async function performRefresh({ initial = false, trigger = initial ? "initial" : "direct" } = {}) {
   try {
     const [vault, sessionPayload, programs] = await readProjection(api);
-    state.vault = vault;
-    state.sessions = sessionPayload.sessions || [];
+    const merged = state.workOperations.merge(vault, sessionPayload.sessions || []);
+    state.vault = merged.vault;
+    state.sessions = merged.sessions;
     state.pipelines = sessionPayload.pipelines || [];
     state.brains = sessionPayload.brains || [];
     forgetVerdictLines();

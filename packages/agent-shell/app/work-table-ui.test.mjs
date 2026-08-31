@@ -138,7 +138,9 @@ test("presented Documents are capped child rows whose visible dismiss control us
   assert.deepEqual(posts.at(-1).body, {
     goal: "otto/onboarding/goal-walkthrough.md",
     file: "otto/onboarding/design-1.md",
+    operationId: posts.at(-1).body.operationId,
   }, "the pointer dismisses only its own Goal presentation");
+  assert.match(posts.at(-1).body.operationId, /^[0-9a-f-]{36}$/);
 });
 
 test("brain cards share the child-row cap, expose accessible actions, copy, open, and dismiss without Goal mutation", async () => {
@@ -213,6 +215,7 @@ test("presented Documents stay on Work after Enter opens one, o is the full-read
   assert.deepEqual(dismiss.body, {
     goal: "otto/onboarding/goal-walkthrough.md",
     file: "otto/onboarding/design-1.md",
+    operationId: dismiss.body.operationId,
   }, "x sends the same exact Goal presentation as its visible dismiss control");
   assert.equal(posts.some((post) => post.path === "/api/goals/withdraw-presentation"), false);
 });
@@ -233,7 +236,7 @@ test("Area presentations use the Document readers and Area routes without a Goal
   assert.equal(document.querySelectorAll("[data-presentation-area='otto/tangent']").length, 1, "opening keeps the Area presentation");
   row.querySelector("[data-withdraw-presentation]").click();
   await settle(window);
-  assert.deepEqual(posts.at(-1), { path: "/api/areas/dismiss-presentation", body: { area: "otto/tangent", file: "otto/tangent/design-area.md" } });
+  assert.deepEqual(posts.at(-1), { path: "/api/areas/dismiss-presentation", body: { area: "otto/tangent", file: "otto/tangent/design-area.md", operationId: posts.at(-1).body.operationId } });
 });
 
 test("Area presentation keys preserve owner scope and restore focus after dismissal", async () => {
@@ -255,7 +258,7 @@ test("Area presentation keys preserve owner scope and restore focus after dismis
   await settle(window);
   press(window, "x");
   await settle(window);
-  assert.deepEqual(posts.at(-1), { path: "/api/areas/dismiss-presentation", body: { area: area.path, file: "otto/tangent/design-area-keyboard.md" } });
+  assert.deepEqual(posts.at(-1), { path: "/api/areas/dismiss-presentation", body: { area: area.path, file: "otto/tangent/design-area-keyboard.md", operationId: posts.at(-1).body.operationId } });
   assert.ok(document.activeElement.closest("[data-work-cursor]"), "dismissal restores focus to surviving Work");
 });
 
@@ -303,7 +306,7 @@ test("duplicate presented files keep owner-scoped selection for keyboard and poi
   await settle(window);
   press(window, "x");
   await settle(window);
-  assert.deepEqual(posts.at(-1), { path: "/api/goals/dismiss-presentation", body: { goal: secondGoal.file, file } });
+  assert.deepEqual(posts.at(-1), { path: "/api/goals/dismiss-presentation", body: { goal: secondGoal.file, file, operationId: posts.at(-1).body.operationId } });
   assert.ok(document.querySelector(selector(firstGoal.file)), "the duplicate under the other Goal remains");
   assert.ok(document.querySelector(`[data-presentation-area='${area.path}'][data-presentation-file='${file}']`), "the duplicate under the Area remains");
   assert.equal(document.querySelector(selector(secondGoal.file)), null, "only the selected Goal presentation leaves");
@@ -312,7 +315,7 @@ test("duplicate presented files keep owner-scoped selection for keyboard and poi
   row = document.querySelector(`[data-presentation-area='${area.path}'][data-presentation-file='${file}']`);
   row.querySelector("[data-withdraw-presentation]").click();
   await settle(window);
-  assert.deepEqual(posts.at(-1), { path: "/api/areas/dismiss-presentation", body: { area: area.path, file } });
+  assert.deepEqual(posts.at(-1), { path: "/api/areas/dismiss-presentation", body: { area: area.path, file, operationId: posts.at(-1).body.operationId } });
   assert.ok(document.querySelector(selector(firstGoal.file)), "the visible Area control leaves the Goal-owned duplicate alone");
 });
 

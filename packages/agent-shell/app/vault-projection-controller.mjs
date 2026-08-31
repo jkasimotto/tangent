@@ -39,7 +39,10 @@ export function createVaultProjectionController({ fingerprint, build, timeoutMs 
   async function get() {
     const key = await fingerprint();
     if (!current) return refresh(key);
-    if (current.revision !== revision) return refresh(key);
+    if (current.revision !== revision) {
+      if (!inFlight) void refresh(key).catch(() => {});
+      return current.value;
+    }
     if (current.key !== key && !inFlight) void refresh(key).catch(() => {});
     return current.value;
   }
@@ -57,6 +60,8 @@ export function createVaultProjectionController({ fingerprint, build, timeoutMs 
       invalidated: Boolean(current && current.revision !== revision),
       building: Boolean(inFlight),
       observedAt: current?.observedAt ?? null,
+      revision,
+      publishedRevision: current?.revision ?? null,
       error: lastError?.message ?? null,
       errorAt: lastError?.at ?? null,
     };

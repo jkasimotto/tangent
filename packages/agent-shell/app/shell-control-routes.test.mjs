@@ -38,7 +38,7 @@ test("shell controls route exact and prefix endpoints", async () => {
   assert.equal(killed.status, 400);
   assert.equal(killed.body.error, "refuse chat");
   const stopped = response();
-  await routes.handle(request("POST", { goal: "otto/tangent/goal-one.md", expectedSession: "agent-one", expectedTarget: "$1916" }), stopped, new URL("http://shell/api/goals/stop"));
+  await routes.handle(request("POST", { goal: "otto/tangent/goal-one.md", expectedSession: "agent-one", expectedTarget: "$1916", operationId: "stop-one" }), stopped, new URL("http://shell/api/goals/stop"));
   assert.deepEqual(stopped.body, { target: "agent-one", goal: "otto/tangent/goal-one.md" });
-  assert.deepEqual(goalStops, [{ goal: "otto/tangent/goal-one.md", expectedSession: "agent-one", expectedTarget: "$1916" }]);
+  assert.deepEqual(goalStops, [{ goal: "otto/tangent/goal-one.md", expectedSession: "agent-one", expectedTarget: "$1916", operationId: "stop-one" }]);
 });

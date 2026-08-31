@@ -635,19 +635,39 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     /** Stops the resolved session and leaves its durable work intact. */
     const stopSelectedSession = async () => {
       actionTelemetry.record("stop", `confirm:${session.name}`);
+      const started = state.workOperations.begin("stop", `${session.name}\0${session.target ?? ""}`);
+      if (started.repeated) return false;
+      const operation = started.operation;
+      modalActions.querySelector("[data-modal-confirm]")?.setAttribute("disabled", "");
+      closeModal({ restoreFocus: false });
+      session.pendingStop = true;
+      const pendingBrain = brain ? state.brains.find((item) => item.area === (session.brain || session.area)) : null;
+      if (pendingBrain) pendingBrain.pendingStop = true;
+      if (!describing) {
+        state.view = "work";
+        paint(true);
+        window.setTimeout(() => [...screen.querySelectorAll("[data-goal-anchor]")].find((item) => item.dataset.goalAnchor === (goal?.file ?? ""))?.querySelector("[data-work-row-title]")?.focus({ preventScroll: true }), 0);
+      }
+      (window.requestAnimationFrame ?? window.setTimeout)(() => actionTelemetry.record("work-mutation", "pending-paint", { operationId: operation.operationId, phase: "stop", durationMs: performance.now() - operation.startedAt }));
       try {
         if (brain) {
-          await post("/api/brains/stop", {
+          const result = await post("/api/brains/stop", {
             area: session.brain || session.area,
             expectedAttemptId: session.name,
             expectedTarget: session.target,
-            operationId: crypto.randomUUID(),
+            operationId: operation.operationId,
           });
+          state.workOperations.committed(operation, result);
         } else {
-          await post("/api/goals/stop", { goal: goal.file, expectedSession: session.name, expectedTarget: session.target });
+          const result = await post("/api/goals/stop", { goal: goal.file, expectedSession: session.name, expectedTarget: session.target, operationId: operation.operationId });
+          state.workOperations.committed(operation, result);
         }
         actionTelemetry.record("stop", `kill-succeeded:${session.name}`);
       } catch (error) {
+        state.workOperations.rollback(operation, error);
+        session.pendingStop = false;
+        if (pendingBrain) pendingBrain.pendingStop = false;
+        paint(true);
         actionTelemetry.record("stop", `kill-failed:${session.name}:${error?.name ?? "Error"}`);
         showToast(error?.message || "Agent Shell could not stop the selected session. Try Stop again.");
         return false;
@@ -655,15 +675,14 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       if (describing) {
         state.describeSessionName = "";
         saveDescribeSession();
-        await refresh();
+        void refresh({ trigger: "mutation-verify" });
         restoreReturnPoint(state.describeReturn);
         showToast("The conversation ended. Saved work stays in Tangent.");
         return true;
       }
       state.view = returnToDocument ? "document" : "work";
-      await refresh();
-      paint(true);
-      if (returnToDocument) await refreshDocument();
+      void refresh({ trigger: "mutation-verify" });
+      if (returnToDocument) void refreshDocument();
       showToast(shell ? "The session closed." : brain ? "The brain stopped. Its work continues." : "The agent stopped. The work stays open.");
       return true;
     };

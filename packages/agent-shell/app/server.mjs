@@ -73,6 +73,8 @@ import { createDocumentRoutes } from "./document-routes.mjs";
 import { projectDesk } from "./desk-projection.mjs";
 import { createShellControlRoutes } from "./shell-control-routes.mjs";
 import { createGoalStopOperation } from "./goal-stop-operation.mjs";
+import { createGoalStopReceipts } from "./goal-stop-receipts.mjs";
+import { createParkGoalReceipts } from "./park-goal-receipts.mjs";
 import { createShellStateRoutes } from "./shell-state-routes.mjs";
 import { createVoiceRoutes } from "./voice-routes.mjs";
 import { activeBrainRoute, brainRouteAreas } from "./brain-notice-route.mjs";
@@ -107,6 +109,7 @@ import { newAttemptReplacement, readAllAttemptReplacements, readAttemptReplaceme
 import { GoalExecutionTransitionError, attachLateSourceEvidence, parkCurrentGoalAttempt, promoteReadyReplacement, reopenParkedGoalQueue } from "./goal-execution-transition.mjs";
 import { dismissGoalCard, dismissGoalDocument, markGoalDocumentOpened, presentGoalCard, presentGoalDocument, projectCards, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalCard, withdrawGoalDocument } from "./goal-presentations.mjs";
 import { createGoalPresentationRoutes } from "./goal-presentation-routes.mjs";
+import { mutationResult } from "./mutation-result.mjs";
 import { createAreaPresentationRoutes } from "./area-presentation-routes.mjs";
 import { createAreaMapContextRoutes } from "./area-map-context-routes.mjs";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
@@ -160,6 +163,7 @@ const rebuildOperations = createRebuildOperations({
   revisions: () => commitChanges.status(),
 });
 const stateEvents = createStateEvents();
+const mutationDomainRevisions = { goal: 0, presentation: 0, queue: 0, session: 0, brain: 0, requests: 0 };
 let agentCmd = process.env.AGENT_CMD ?? "claude";
 
 /** Emits causal stage timings for a mutation that can cross process boundaries. */
@@ -210,6 +214,10 @@ const recordAreaMapEvent = (event) => recordActionTelemetry(ACTION_TELEMETRY_LOG
   shardCount: event.shardCount, legacyCards: event.legacyCards, boundaries: event.boundaries,
   provisionalRegions: event.provisionalRegions, recoveredPlacements: event.recoveredPlacements,
 }).catch(() => false);
+/** Records one bounded server mutation stage without exposing vault or tmux names. */
+const recordMutationStage = (kind, phase, operationId, startedAt, outcome = "ok") => recordActionTelemetry(ACTION_TELEMETRY_LOG, {
+  kind: "work-mutation-server", action: kind, phase, operationId, durationMs: performance.now() - startedAt, outcome,
+}).catch(() => false);
 const areaCanvasRepository = createAreaCanvasRepository({
   root: TREES_ROOT, runGit: runRepositoryGit, commit: vaultRepository.commit,
   transactionRoot: path.join(MAP_STATE_ROOT, "legacy-transactions"),
@@ -243,6 +251,8 @@ const vaultGit = createVaultGitReader(TREES_ROOT);
 // the handovers between them. Ownership stays in the Goal file; this holds
 // only what neither the Goal nor tmux can.
 const PIPELINES_ROOT = process.env.TANGENT_PIPELINES_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "pipelines");
+const goalStopReceipts = createGoalStopReceipts(path.join(path.dirname(PIPELINES_ROOT), "goal-stops"));
+const parkGoalReceipts = createParkGoalReceipts(path.join(path.dirname(PIPELINES_ROOT), "goal-parks"));
 const PRESENTATIONS_ROOT = process.env.TANGENT_PRESENTATIONS_ROOT
   ?? (process.env.TANGENT_PIPELINES_ROOT ? path.join(path.dirname(process.env.TANGENT_PIPELINES_ROOT), "presented") : path.join(os.homedir(), ".tangent", "agent-shell", "presented"));
 const areaMapRecordStore = createAreaMapRecordStore({ root: PRESENTATIONS_ROOT });
@@ -997,6 +1007,19 @@ async function readAreaGoals(area) {
   return goals;
 }
 
+/** Reads one exact Goal path without scanning unrelated Areas or Goals. */
+async function readExactGoal(file) {
+  const safe = safeMarkdownPath(TREES_ROOT, String(file ?? ""));
+  if (!safe || !/^(?:goal|outcome)-[a-z0-9-]+\.md$/.test(path.posix.basename(safe.relative))) return null;
+  const text = await readFile(safe.absolute, "utf8").catch(() => null);
+  if (text == null) return null;
+  const fm = parseFrontmatter(text);
+  if (!["goal", "outcome"].includes(fm.type)) return null;
+  const area = path.posix.dirname(safe.relative);
+  const slug = path.posix.basename(safe.relative, ".md").replace(/^(?:goal|outcome)-/, "");
+  return { area, slug, file: safe.relative, title: text.match(/^# (.+)$/m)?.[1]?.trim() ?? slug, status: normalizeGoalStatus(fm.status || "open"), session: fm.session || null };
+}
+
 /**
  * The launcher's search index: every area with its note's purpose line, the
  * people on it (owners/waiting_on, including its goals'), a lowercased
@@ -1409,9 +1432,7 @@ function replaceNoteSection(text, name, value) {
 }
 
 /** Applies the allowed direct-edit fields to one goal Markdown file. */
-async function editGoalFile(file, { status, session, title, doneWhen, state, understanding, currentBrief, story, wontDoReason, verify }) {
-  const abs = path.join(TREES_ROOT, file);
-  let text = await readFile(abs, "utf8");
+function editGoalText(text, { status, session, title, doneWhen, state, understanding, currentBrief, story, wontDoReason, verify }) {
   if (verify !== undefined) text = verify ? withFrontmatterLine(text, "verify", "yes") : text.replace(/^verify:.*\n/m, "");
   if (status !== undefined) {
     text = withFrontmatterLine(text, "status", status);
@@ -1440,6 +1461,12 @@ async function editGoalFile(file, { status, session, title, doneWhen, state, und
     const decision = `### Won't do\n\n${oneLine(wontDoReason)}`;
     text = replaceNoteSection(text, "State", [decision, previousState].filter(Boolean).join("\n\n"));
   }
+  return text;
+}
+
+/** Applies the allowed direct-edit fields to one goal Markdown file. */
+async function editGoalFile(file, fields) {
+  const text = editGoalText(await readFile(path.join(TREES_ROOT, file), "utf8"), fields);
   await vaultRepository.writeMarkdown(file, text);
 }
 
@@ -4291,9 +4318,13 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
     // the replaced attempt and stop it on the next pass. Drop the changes
     // instead: the next pass re-judges the fresh record. Stop notices only
     // follow a write that landed, so a dropped stop is never announced.
-    const fresh = await readPipeline(PIPELINES_ROOT, record.area, record.slug);
-    if (!fresh || fresh.updatedAt !== record.updatedAt) continue;
-    await writePipeline(PIPELINES_ROOT, record);
+    const landed = await withGoalQueueMutation(record.goal, async () => {
+      const fresh = await readPipeline(PIPELINES_ROOT, record.area, record.slug);
+      if (!fresh || fresh.updatedAt !== record.updatedAt) return false;
+      await writePipeline(PIPELINES_ROOT, record);
+      return true;
+    });
+    if (!landed) continue;
     for (const index of stopped) {
       await notifyBrain(record.area, `Goal ${record.slug}: step ${index} of ${record.steps.length} stopped without a handover. Retry or skip it through the exact queue, or end the work. Julian's recovery start is available only after your recovery is exhausted.`);
     }
@@ -7001,12 +7032,16 @@ const goalPresentationRoutes = createGoalPresentationRoutes({
   },
   /** Hides one presentation on Julian's word until its content changes. */
   async dismiss(body) {
-    const goals = await goalsByFile();
+    const startedAt = performance.now();
     const requested = String(body.goal ?? "");
-    const goal = goals.get(requested) ?? [...goals.values()].find((item) => item.slug === requested);
+    const goal = await readExactGoal(requested);
     if (!goal) return { status: 404, error: `no Goal ${requested}` };
-    const result = await dismissGoalDocument(PRESENTATIONS_ROOT, goal, String(body.file ?? ""));
-    return result.changed ? { status: 200, value: { ok: true } } : { status: 404, error: "no active presentation for that document" };
+    const operationId = String(body.operationId ?? "").trim();
+    if (!operationId) return { status: 400, error: "an operation ID is required" };
+    const result = await dismissGoalDocument(PRESENTATIONS_ROOT, goal, String(body.file ?? ""), new Date().toISOString(), String(body.presentedHash ?? ""));
+    void recordMutationStage("dismiss", "durable-tombstone", operationId, startedAt, result.conflict ? "rejected" : "committed");
+    if (result.conflict) return { status: 409, error: "the presented Document changed before dismissal" };
+    return result.item ? { status: 200, value: mutationResult(operationId, { kind: "goal-presentation", id: `${goal.file}\0${body.file}` }, "committed", { presentationHidden: true }, { idempotent: !result.changed }) } : { status: 404, error: "no active presentation for that document" };
   },
   /** Records that a reader opened a presented Document. The row stays on Work. */
   async opened(body) {
@@ -7101,8 +7136,15 @@ const areaPresentationRoutes = createAreaPresentationRoutes({
   },
   /** Dismisses one Area Document from Julian's surface. */
   async dismiss(body) {
-    const result = await dismissAreaDocument(PRESENTATIONS_ROOT, cleanAreaPath(String(body.area ?? "")), String(body.file ?? ""));
-    return result.changed ? { status: 200, value: { ok: true } } : { status: 404, error: "no active Area presentation for that Document" };
+    const startedAt = performance.now();
+    const area = cleanAreaPath(String(body.area ?? ""));
+    const operationId = String(body.operationId ?? "").trim();
+    if (!operationId) return { status: 400, error: "an operation ID is required" };
+    const expectedHash = String(body.presentedHash ?? "");
+    const result = await dismissAreaDocument(PRESENTATIONS_ROOT, area, String(body.file ?? ""), new Date().toISOString(), expectedHash);
+    void recordMutationStage("dismiss", "durable-tombstone", operationId, startedAt, expectedHash && result.item?.presentedHash !== expectedHash ? "rejected" : "committed");
+    if (expectedHash && result.item && result.item.presentedHash !== expectedHash) return { status: 409, error: "the presented Document changed before dismissal" };
+    return result.item ? { status: 200, value: mutationResult(operationId, { kind: "area-presentation", id: `${area}\0${body.file}` }, "committed", { presentationHidden: true }, { idempotent: !result.changed }) } : { status: 404, error: "no active Area presentation for that Document" };
   },
   /** Records that Julian opened one presented Area Document revision. */
   async opened(body) {
@@ -7193,7 +7235,13 @@ const shellControlOperations = {
 shellControlOperations.stopGoal = createGoalStopOperation({
   listSessions,
   stopSession: shellControlOperations.kill,
+  receipts: goalStopReceipts,
+  /** Records one durable Stop phase without exposing target names. */
+  recordStage: (phase, operationId, startedAt, outcome) => { void recordMutationStage("stop", phase, operationId, startedAt, outcome); },
 });
+void goalStopReceipts.pending().then((receipts) => Promise.allSettled(receipts.map((receipt) => shellControlOperations.stopGoal({
+  goal: receipt.goal, expectedSession: receipt.expectedSession, expectedTarget: receipt.expectedTarget, operationId: receipt.operationId,
+})))).catch((error) => console.error("Goal stop reconciliation:", error.message ?? error));
 const shellControlRoutes = createShellControlRoutes(shellControlOperations);
 const shellStateRoutes = createShellStateRoutes({
   chatSession: CHAT_SESSION,
@@ -7236,7 +7284,7 @@ const shellStateRoutes = createShellStateRoutes({
       (async () => {
         const [indexed, brains] = await Promise.all([vaultIndex(), readAllBrains(BRAINS_ROOT)]);
         const projectedVault = withoutBrainGoalBindings(indexed, brainSessionNames(brains));
-        return { ...projectedVault, projection: await vaultProjection.status(), desk: projectDesk(projectedVault, sessions) };
+        return { ...projectedVault, projection: { ...await vaultProjection.status(), domains: { ...mutationDomainRevisions } }, desk: projectDesk(projectedVault, sessions) };
       })(),
       (async () => {
         const [pipelines, brains, revisions, rebuild, attemptReplacements] = await Promise.all([
@@ -7511,7 +7559,7 @@ const launchRoutes = createLaunchRoutes({
 async function readGoalDetail(file, { conversations = false } = {}) {
   const requested = String(file ?? "").trim();
   const goalIndex = await goalsByFile();
-  let rawGoal = goalIndex.get(requested);
+  let rawGoal = await readExactGoal(requested) ?? goalIndex.get(requested);
   if (!rawGoal) {
     const matches = [...goalIndex.values()].filter((goal) => goal.slug === requested);
     if (matches.length > 1) return { status: 409, error: `goal ${requested} is ambiguous: ${matches.map((goal) => goal.file).join(", ")}` };
@@ -7529,7 +7577,7 @@ async function readGoalDetail(file, { conversations = false } = {}) {
   const enriched = projection.areas
     .flatMap((area) => area.goals ?? [])
     .find((goal) => goal.file === goalFile) ?? rawGoal;
-  const goal = normalizeGoalRecord({ ...rawGoal, ...enriched });
+  const goal = normalizeGoalRecord({ ...enriched, ...rawGoal });
   const validRegistry = registry.error ? null : registry;
   const detail = projectGoalDetail({
     goal,
@@ -7684,18 +7732,19 @@ async function settleParkedGoalSession(goal, sourceTarget, operationId) {
 async function parkGoalExecution(goal, body, operationId) {
   return withGoalQueueMutation(goal.file, async () => {
     const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+    const nextRecord = record ? structuredClone(record) : null;
     let sourceSession = goal.session ?? null;
     let sourceTarget = null;
     let transition = null;
-    if (record?.currentAssignmentId) {
-      const assignment = record.steps.find((item) => item.id === record.currentAssignmentId);
+    if (nextRecord?.currentAssignmentId) {
+      const assignment = nextRecord.steps.find((item) => item.id === nextRecord.currentAssignmentId);
       const attempt = assignment?.attempts?.at(-1);
       if (!assignment || !attempt) return { status: 409, error: "the Goal queue has no exact current attempt", pipeline: record };
-      const inspected = await inspectCurrentGoalAttemptTarget(goal, record, assignment, attempt);
-      if (inspected.error) return { status: 409, code: inspected.code, error: inspected.error, pipeline: record };
+      const inspected = await inspectCurrentGoalAttemptTarget(goal, nextRecord, assignment, attempt);
+      if (inspected.error) return { status: 409, code: inspected.code, error: inspected.error, pipeline: nextRecord };
       sourceTarget = inspected.target;
       try {
-        transition = parkCurrentGoalAttempt(record, {
+        transition = parkCurrentGoalAttempt(nextRecord, {
           assignmentId: assignment.id,
           expectedAttemptId: attempt.id,
           expectedRevision: body.expectedRevision ?? record.revision,
@@ -7704,14 +7753,48 @@ async function parkGoalExecution(goal, body, operationId) {
         });
       } catch (error) {
         if (!(error instanceof GoalExecutionTransitionError)) throw error;
-        return { status: error.code === "stale-revision" ? 409 : 400, code: error.code, error: error.message, pipeline: error.pipeline ?? record };
+        return { status: error.code === "stale-revision" ? 409 : 400, code: error.code, error: error.message, pipeline: error.pipeline ?? nextRecord };
       }
       sourceSession = transition.sourceSession ?? sourceSession;
-      if (!transition.repeated) await writePipeline(PIPELINES_ROOT, record);
     }
-    return { status: 200, transition, sourceSession, sourceTarget, pipeline: record };
+    return { status: 200, transition, sourceSession, sourceTarget, pipeline: nextRecord, queueChanged: Boolean(nextRecord && !transition?.repeated) };
   });
 }
+
+/** Commits one exact Goal revision without using the shared Git index. */
+async function commitExactGoalText(goal, text, operationId, session) {
+  const input = { files: [{ path: goal.file, content: text }], message: `update: ${goal.area} goal ${goal.slug} parked in tree`, area: goal.area, session, operationId };
+  let prepared = await vaultRepository.prepareExactCommit(input);
+  try { await vaultRepository.installPreparedCommit(prepared); }
+  catch {
+    prepared = await vaultRepository.prepareExactCommit(input);
+    await vaultRepository.installPreparedCommit(prepared);
+  }
+  return prepared;
+}
+
+/** Finishes a Park whose authoritative Git commit survived a server crash. */
+async function reconcileParkGoalReceipt(receipt) {
+  const message = await captureVaultGit(["log", "-1", "--format=%B", "--", receipt.goal.file]).catch(() => "");
+  if (!message.includes(`Tangent-Map-Operation: ${receipt.operationId}`)) {
+    await parkGoalReceipts.write({ ...receipt, state: "rejected", error: "the prepared Park did not commit", updatedAt: new Date().toISOString() });
+    return;
+  }
+  try {
+    await vaultRepository.writeMarkdown(receipt.goal.file, receipt.parkedText);
+    await vaultRepository.synchronizeIndexToHead(receipt.goal.file);
+    if (receipt.pipeline) await writePipeline(PIPELINES_ROOT, receipt.pipeline);
+    await removeGoalPresentations(PRESENTATIONS_ROOT, receipt.goal);
+    const detached = receipt.sourceTarget ? await settleParkedGoalSession(receipt.goal, receipt.sourceTarget, receipt.operationId) : { kind: "absent" };
+    const cleanup = detached.kind === "preserved" ? detached.detail : null;
+    await parkGoalReceipts.write({ ...receipt, state: cleanup ? "cleanup-pending" : "complete", detached, ...(cleanup ? { cleanup, updatedAt: new Date().toISOString() } : { completedAt: new Date().toISOString() }) });
+  } catch (error) {
+    await parkGoalReceipts.write({ ...receipt, state: "cleanup-pending", cleanup: String(error.message ?? error), updatedAt: new Date().toISOString() });
+  }
+}
+
+void parkGoalReceipts.unsettled().then((receipts) => Promise.allSettled(receipts.map(reconcileParkGoalReceipt)))
+  .catch((error) => console.error("Goal Park reconciliation:", error.message ?? error));
 
 /** Reopens a parked Goal queue without selecting or launching work. */
 async function reopenGoalExecution(goal, body, operationId) {
@@ -7873,10 +7956,20 @@ const workMutationRoutes = createWorkMutationRoutes({
     }
     const fields = {};
     let lifecycle = null;
+    const requestedOperationId = String(body.operationId ?? body.idempotencyKey ?? "").trim().slice(0, 128);
     const actorSession = body.session ? String(body.session).trim() : "";
     const actor = await statusActor(actorSession);
     if (String(body.status ?? "") === "done" && goal.verify && actor === "brain") {
       return markGoalWaitsForCheck(goal, { note: body.note, session: actorSession, operationId: String(body.operationId ?? body.idempotencyKey ?? randomUUID()) });
+    }
+    if (String(body.status ?? "") === "parked" && normalizeGoalStatus(goal.status) === "parked" && requestedOperationId) {
+      const message = await captureVaultGit(["log", "-1", "--format=%B", "--", file]).catch(() => "");
+      if (message.includes(`Tangent-Map-Operation: ${requestedOperationId}`)) {
+        let receipt = await parkGoalReceipts.read(requestedOperationId);
+        if (receipt && receipt.state !== "complete") { await reconcileParkGoalReceipt(receipt); receipt = await parkGoalReceipts.read(requestedOperationId); }
+        const state = receipt?.state === "complete" ? "committed" : "cleanup-pending";
+        return { status: 200, value: mutationResult(requestedOperationId, { kind: "goal", id: goal.file }, state, { goalStatus: "parked", presentationHidden: true, sessionState: receipt?.detached?.kind === "retired" ? "absent" : receipt?.detached?.kind ?? "unchanged" }, { status: "parked", idempotent: true, ...(receipt?.cleanup ? { cleanup: receipt.cleanup } : {}) }) };
+      }
     }
     if (body.status !== undefined) {
       try { lifecycle = goalStatusChange(goal.status, body.status, body.reason, { actor, verify: goal.verify === true }); }
@@ -7894,7 +7987,10 @@ const workMutationRoutes = createWorkMutationRoutes({
     try {
       let changed;
       let execution = null;
-      const operationId = String(body.operationId ?? body.idempotencyKey ?? randomUUID()).trim().slice(0, 128) || randomUUID();
+      let exactCommit = null;
+      let cleanupPending = null;
+      const operationId = requestedOperationId || randomUUID();
+      const mutationStartedAt = performance.now();
       if (fields.status === "done") {
         changed = await cascadeGoalDone(file, await goalsByFile());
         const remaining = { ...fields };
@@ -7910,8 +8006,27 @@ const workMutationRoutes = createWorkMutationRoutes({
       } else if (fields.status === "parked") {
         execution = await parkGoalExecution(goal, body, operationId);
         if (execution.status !== 200) return { status: execution.status, value: { error: execution.error, code: execution.code, pipeline: execution.pipeline } };
-        await editGoalFile(file, fields);
-        changed = [file];
+        const currentText = await readFile(path.join(TREES_ROOT, file), "utf8");
+        const parkedText = editGoalText(currentText, fields);
+        await parkGoalReceipts.write({
+          schema: "goal-park-operation.v1", operationId, state: "prepared", goal: { area: goal.area, slug: goal.slug, file: goal.file },
+          expectedGoalHash: documentHash(currentText), expectedRevision: body.expectedRevision ?? execution.pipeline?.revision ?? null,
+          parkedText, pipeline: execution.queueChanged ? execution.pipeline : null, sourceTarget: execution.sourceTarget ?? null, preparedAt: new Date().toISOString(),
+        });
+        const preparedCommit = await commitExactGoalText(goal, parkedText, operationId, body.session ? String(body.session) : null);
+        exactCommit = preparedCommit.commit;
+        await parkGoalReceipts.write({ ...(await parkGoalReceipts.read(operationId)), state: "committed", commit: exactCommit, committedAt: new Date().toISOString() });
+        void recordMutationStage("park", "git-committed", operationId, mutationStartedAt, "committed");
+        changed = [];
+        try {
+          await vaultRepository.writeMarkdown(goal.file, parkedText);
+          await vaultRepository.updatePreparedIndex(preparedCommit);
+          if (execution.queueChanged) await writePipeline(PIPELINES_ROOT, execution.pipeline);
+          await removeGoalPresentations(PRESENTATIONS_ROOT, goal);
+          void recordMutationStage("park", "runtime-committed", operationId, mutationStartedAt, "committed");
+        } catch (error) {
+          cleanupPending = String(error.message ?? error);
+        }
       } else if (fields.status === "open" && normalizeGoalStatus(goal.status) === "parked") {
         execution = await reopenGoalExecution(goal, body, operationId);
         if (execution.status !== 200) return { status: execution.status, value: { error: execution.error, code: execution.code, pipeline: execution.pipeline } };
@@ -7921,16 +8036,31 @@ const workMutationRoutes = createWorkMutationRoutes({
         await editGoalFile(file, fields);
         changed = [file];
       }
-      if (!changed.includes(file)) changed.unshift(file);
-      if (["done", "dropped", "parked"].includes(fields.status)) await removeGoalPresentations(PRESENTATIONS_ROOT, goal);
+      if (!exactCommit && !changed.includes(file)) changed.unshift(file);
+      if (["done", "dropped"].includes(fields.status)) await removeGoalPresentations(PRESENTATIONS_ROOT, goal);
       const what = fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "parked" ? "parked" : fields.status === "open" ? "reopened" : fields.verify === true ? "flagged for Julian to check" : fields.verify === false ? "unflagged" : "edited";
-      await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} ${what} in tree`, goal.area, body.session ? String(body.session) : null);
+      if (!exactCommit) {
+        const committed = await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} ${what} in tree`, goal.area, body.session ? String(body.session) : null);
+        if (!committed.committed) throw new Error(`vault commit failed: ${committed.error}`);
+      }
       if (lifecycle?.leftVerify) await forgetCheckNotification(goal);
       if (fields.status === "parked" && execution?.sourceTarget) {
         execution.detached = await settleParkedGoalSession(goal, execution.sourceTarget, operationId)
           .catch((error) => ({ kind: "preserved", detail: `Goal parked; exact worker retirement needs retry: ${String(error.message ?? error)}` }));
+        // Process observation can still hold the pre-Park queue while the exact
+        // tmux target retires. Reassert the fenced transition after settlement.
+        if (execution.queueChanged) await withGoalQueueMutation(goal.file, () => writePipeline(PIPELINES_ROOT, execution.pipeline));
+        if (execution.detached.kind === "preserved") cleanupPending ??= execution.detached.detail;
+        void recordMutationStage("park", "process-settled", operationId, mutationStartedAt, cleanupPending ? "cleanup-pending" : "committed");
       }
+      if (fields.status === "parked") await parkGoalReceipts.write({ ...(await parkGoalReceipts.read(operationId)), state: cleanupPending ? "cleanup-pending" : "complete", ...(cleanupPending ? { cleanup: cleanupPending, updatedAt: new Date().toISOString() } : { completedAt: new Date().toISOString() }) });
       await recordCommittedCommand({ operation: fields.status === "done" ? "goal-done" : fields.status === "dropped" ? "goal-wont-do" : fields.status === "parked" ? "goal-park" : fields.status === "open" ? "goal-reopen" : "goal-edit", actorSession: body.session, targetArea: goal.area, goal: goal.slug, operationId });
+      if (fields.status === "parked") return { status: 200, value: mutationResult(operationId, {
+        kind: "goal", id: goal.file, revision: execution?.pipeline?.revision ?? null,
+        attemptId: execution?.sourceTarget?.attemptId ?? null, tmuxTarget: execution?.sourceTarget?.target ?? null,
+      }, cleanupPending ? "cleanup-pending" : "committed", { goalStatus: "parked", presentationHidden: !cleanupPending, sessionState: execution?.detached?.kind === "retired" ? "absent" : execution?.detached?.kind ?? "unchanged" }, {
+        status: "parked", commit: exactCommit, ...(cleanupPending ? { cleanup: cleanupPending } : {}), ...(execution?.pipeline ? { pipeline: execution.pipeline } : {}), ...(execution?.detached ? { detached: execution.detached } : {}),
+      }) };
       return { status: 200, value: { ok: true, status: fields.status ?? lifecycle?.status ?? goal.status, ...(execution?.pipeline ? { pipeline: execution.pipeline } : {}), ...(execution?.detached ? { detached: execution.detached } : {}) } };
     } catch (error) {
       if (error.cleanup) return { status: 503, value: { error: error.message, cleanup: error.cleanup } };
@@ -8019,6 +8149,7 @@ const server = http.createServer(async (req, res) => {
   const operationId = String(req.headers["x-tangent-operation-id"] ?? randomUUID()).slice(0, 128);
   req.tangentOperationId = operationId;
   res.setHeader("x-tangent-operation-id", operationId);
+  res.setHeader("x-tangent-state-event", "1");
   try {
     if (url.pathname === "/api/health" && req.method === "GET") {
       sendJson(res, 200, { ok: true, service: "tangent-agent-shell-controller", role: IS_CONTROLLER ? "controller" : "standalone", boot: BOOT_ID, instanceId: INSTANCE_ID, pid: process.pid });
@@ -8038,10 +8169,13 @@ const server = http.createServer(async (req, res) => {
       res.once("finish", () => {
         if (res.statusCode < 400) {
           sessionObservation.invalidate();
-          if (["/api/areas", "/api/goals", "/api/idea", "/api/document", "/api/pipelines", "/api/brains", "/api/launch", "/api/work"].some((prefix) => url.pathname.startsWith(prefix))) {
+          const runtimeOnly = new Set(["/api/areas/dismiss-presentation", "/api/goals/dismiss-presentation", "/api/goals/stop", "/api/brains/stop"]);
+          if (!runtimeOnly.has(url.pathname) && ["/api/areas", "/api/goals", "/api/document", "/api/pipelines", "/api/brains", "/api/launch", "/api/work"].some((prefix) => url.pathname.startsWith(prefix))) {
             vaultProjection.invalidate();
           }
-          stateEvents.changed(url.pathname);
+          const domains = url.pathname.includes("dismiss-presentation") ? ["presentation"] : url.pathname.includes("stop") ? ["session", "queue"] : url.pathname === "/api/goals/edit" ? ["goal", "queue", "presentation", "session"] : ["state"];
+          for (const domain of domains) if (domain in mutationDomainRevisions) mutationDomainRevisions[domain] += 1;
+          stateEvents.changed(JSON.stringify({ operationId, domains, path: url.pathname }));
         }
       });
     }

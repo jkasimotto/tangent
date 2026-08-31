@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { discoverProcesses, dueNotice, evaluateProcess, goalNamesProcess, loopNotice, normalizeProcessState, prepareProcessStart, processView, readProcessState, settleProcessDelivery, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
+import { discoverProcesses, dueNotice, evaluateProcess, goalNamesProcess, loopNotice, normalizeProcessState, prepareProcessStart, processView, readProcessState, recordProcessStartPhase, recoverableProcessStart, settleProcessDelivery, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
 import { parseProcessNote, scheduleSlotsBetween } from "./process-note.mjs";
 
 /** A parsed scheduled process for one Area. */
@@ -133,6 +133,27 @@ test("timed policies, v2 migration, catch-up, and fenced start recovery are dete
   const delivered = settleProcessDelivery(prepared.state, prepared.attempt.id, { ok: true, brain: { area: "neara/pgande", generation: 2, session: "brain", instanceId: "i", target: "brain" } });
   assert.equal(delivered.currentEvent.attempts[0].status, "delivered");
   assert.equal(processView(scheduled(), delivered).state, "Starting");
+});
+
+test("accepted Process starts checkpoint every effect boundary and replay monotonically", () => {
+  const note = scheduled();
+  const prepared = prepareProcessStart(normalizeProcessState({ lastNoticeAt: "2026-08-28T09:00:00Z", lastDueAt: "2026-08-28T09:00:00Z" }, note), note, { operationId: "recover-me", now: new Date("2026-08-28T09:01:00Z") });
+  let state = settleProcessDelivery(prepared.state, prepared.attempt.id, { ok: true, brain: { area: note.area, generation: 2, session: "brain", instanceId: "i", target: "brain-target" } });
+  state.currentEvent.attempts[0].status = "accepted";
+  state.currentEvent.plannedGoalFile = "neara/pgande/goal-rebase-event.md";
+
+  assert.equal(recoverableProcessStart(state).attempt.status, "accepted", "startup resumes before the Goal effect");
+  state = recordProcessStartPhase(state, prepared.attempt.id, "goal-created", { goalFile: state.currentEvent.plannedGoalFile });
+  assert.equal(recoverableProcessStart(state).attempt.status, "goal-created", "startup resumes before the Job create effect");
+  const afterGoalReplay = recordProcessStartPhase(state, prepared.attempt.id, "goal-created", { goalFile: state.currentEvent.goalFile });
+  assert.deepEqual(afterGoalReplay, state, "a lost response after the Goal checkpoint is an exact read");
+  state = recordProcessStartPhase(state, prepared.attempt.id, "job-created", { job: { run: 1, revision: 1, assignmentId: "assignment-1", agentSession: null, status: "open" } });
+  assert.equal(recoverableProcessStart(state).attempt.status, "job-created", "startup resumes before the Agent effect");
+  state = recordProcessStartPhase(state, prepared.attempt.id, "started", { job: { ...state.currentEvent.job, revision: 2, agentSession: "worker", status: "running" } });
+  assert.equal(recoverableProcessStart(state), null);
+  assert.equal(state.currentEvent.status, "running");
+  assert.equal(state.currentEvent.job.agentSession, "worker");
+  assert.deepEqual(recordProcessStartPhase(state, prepared.attempt.id, "goal-created"), state, "late phase writes cannot move a settled start backwards");
 });
 
 test("pause and resume rewrite only the status line", () => {

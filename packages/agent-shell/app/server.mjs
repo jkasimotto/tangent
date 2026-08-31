@@ -17,7 +17,7 @@ import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createLaunchMemory } from "./launch-memory.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
-import { discoverProcesses, evaluateProcess, goalNamesProcess, normalizeProcessState, prepareProcessStart, processDefinitionRevision, processFileExists, processView, readAreaProcesses, readProcessState, removeProcessState, settleProcessDelivery, sweepProcesses, withProcessLock, withProcessStatus, writeProcessState } from "./process-scheduler.mjs";
+import { discoverProcesses, evaluateProcess, goalNamesProcess, normalizeProcessState, prepareProcessStart, processDefinitionRevision, processFileExists, processView, readAreaProcesses, readProcessState, recordProcessStartPhase, recoverableProcessStart, removeProcessState, settleProcessDelivery, sweepProcesses, withProcessLock, withProcessStatus, writeProcessState } from "./process-scheduler.mjs";
 import { formatLoopNote, nextSlotAfter, parseProcessNote, validateProcessSlug } from "./process-note.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, safePresentedMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import documentComments from "./public/document-comments.js";
@@ -28,7 +28,7 @@ import { createPaneObserver } from "./pane-observer.mjs";
 import { classifyWorkingComposer } from "./pane-state.mjs";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 import { createObservationCache } from "./observation-cache.mjs";
-import { acceptCurrentAssignment, appendSteps, continuationSource, createJobRun, currentStep, endPipeline, goalBindingGoneFromSnapshot, jobMigration, jobRun, JobMutationError, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllJobs, readAllPipelines, readJob, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./job-record.mjs";
+import { acceptCurrentAssignment, appendSteps, applyOperationReceipt, continuationSource, createJobRun, currentStep, endPipeline, goalBindingGoneFromSnapshot, jobMigration, jobRun, JobMutationError, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllJobs, readAllPipelines, readJob, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./job-record.mjs";
 import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
 import { continuationSection } from "./context-handover.mjs";
 import { messageBanner, noticeMessage, normalizeMessage } from "./agent-messages.mjs";
@@ -1653,6 +1653,7 @@ async function createGoalSet(area, { goal, subgoals = [], description = "", sour
     ...subgoalRecords.map((subgoal) => ({ ...subgoal, subgoals: [], context: `This Goal supports [[goal-${goalSlug}]].` })),
   ].map((record) => ({ ...record, file: `${area}/goal-${record.slug}.md` }));
 
+  const changed = [];
   for (const record of records) {
     if (exactFile && record.file === exactFile && existsSync(path.join(TREES_ROOT, record.file))) {
       const existing = (await goalsByFile()).get(record.file);
@@ -1660,13 +1661,17 @@ async function createGoalSet(area, { goal, subgoals = [], description = "", sour
       throw Object.assign(new Error(`${record.file} belongs to different work`), { code: "process-goal-conflict" });
     }
     await vaultRepository.writeMarkdown(record.file, renderNewGoal(record));
+    changed.push(record.file);
   }
   // Tangent never writes into the Area note (ADR-0041): a Goal is only its file.
-  const changed = records.map((record) => record.file);
+  if (!changed.length) return { file: records[0].file, files: records.map((record) => record.file), idempotent: true };
   await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", ...changed]).catch((err) => {
     console.error(`goal stage failed: ${changed.join(", ")}: ${String(err.stderr ?? err.message ?? err).slice(0, 200)}`);
   });
-  await vaultCommit(changed, `add: ${area} goal ${goalSlug} from Agent Shell`, area, null);
+  const committed = await vaultCommit(changed, `add: ${area} goal ${goalSlug} from Agent Shell`, area, null);
+  if (exactFile && !committed.committed) {
+    throw Object.assign(new Error(`the Process Goal was saved but not committed: ${committed.error}`), { code: "process-goal-commit-failed" });
+  }
   return { file: records[0].file, files: records.map((record) => record.file) };
 }
 
@@ -2443,7 +2448,10 @@ const runtimeScheduler = createRuntimeScheduler([
     async run() {
       await sweepProcesses({ treesRoot: TREES_ROOT, stateRoot: PROCESSES_ROOT, runProbe: runProcessProbe, openGoalFor: openGoalForProcess, notify: notifyBrain,
         /** Delivers one automatic Process attempt through the exact Brain service. */
-        requestStart: ({ note, event, attempt }) => deliverProcessStart({ note, event, attempt, automatic: true }), hiddenAreaStatus, brainLive: loopBrainLive });
+        requestStart: ({ note, event, attempt }) => deliverProcessStart({ note, event, attempt, automatic: true }),
+        /** Resumes every accepted phase on controller startup and later sweeps. */
+        recoverStart: ({ note, event, attempt }) => recoverProcessStart({ note, event, attempt }),
+        hiddenAreaStatus, brainLive: loopBrainLive });
     },
   },
   {
@@ -3155,7 +3163,7 @@ function contextFillChanged(before, after) {
 }
 
 /** Creates the record for one Goal and starts its first step. */
-async function startPipeline(file, { steps, extraFiles = [], start = true, attemptKind = "managed", brain = null, origin = null } = {}) {
+async function startPipeline(file, { steps, extraFiles = [], start = true, attemptKind = "managed", brain = null, origin = null, operationReceipt = null } = {}) {
   const byFile = await goalsByFile();
   const o = byFile.get(file);
   if (!o) return { status: 404, error: `no goal file ${file}` };
@@ -3183,6 +3191,7 @@ async function startPipeline(file, { steps, extraFiles = [], start = true, attem
   const record = jobFile ? createJobRun(jobFile, fields) : newPipeline(fields);
   record.instanceId = INSTANCE_ID;
   record.steps[0].nextAttemptKind = attemptKind;
+  if (operationReceipt) applyOperationReceipt(record, { ...operationReceipt, resultRevision: record.revision, outcome: "created" });
   const { warnings } = materialized;
   const launches = discloseStepFolders(materialized.rows, folders.folders);
   await writePipeline(PIPELINES_ROOT, record);
@@ -6336,6 +6345,31 @@ function canonicalJob(run) {
   return value;
 }
 
+/** Creates one Job while its Goal queue lock is held. */
+async function createJobUnlocked(goal, body, brain) {
+  const steps = Array.isArray(body.steps) && body.steps.length ? body.steps : [{ instruction: String(body.instruction ?? `Complete ${goal.title}. Done when: ${goal.doneWhen}`), ...(body.launch ? { launch: body.launch } : {}), ...(body.path ? { path: body.path } : {}), ...(body.kind ? { kind: body.kind } : {}) }];
+  const existing = await readJob(PIPELINES_ROOT, goal.area, goal.slug);
+  const sameOrigin = body.origin && existing?.runs?.find((run) => run.origin?.kind === "process" && run.origin.processFile === body.origin.processFile && run.origin.eventId === body.origin.eventId);
+  if (sameOrigin) {
+    if (sameOrigin.origin.operationId !== body.origin.operationId) {
+      // A new recovery operation may reuse the event's one Job. The stored
+      // origin remains the creation receipt and is never rewritten.
+      const sameEvent = sameOrigin.origin.processFile === body.origin.processFile && sameOrigin.origin.eventId === body.origin.eventId;
+      if (!sameEvent) return { status: 409, code: "operation-conflict", error: "the Process Job origin changed" };
+    }
+    return { status: 200, state: "queued", session: null, job: canonicalJob(sameOrigin), pipeline: sameOrigin, assignment: canonicalJob(sameOrigin)?.assignments?.[0] ?? null, idempotent: true };
+  }
+  const operationId = String(body.operationId ?? "").trim();
+  const operationReceipt = operationId ? {
+    id: operationId,
+    kind: "job-create",
+    input: { goal: goal.file, steps, extraFiles: body.extraFiles ?? [], origin: body.origin ?? null },
+  } : null;
+  const result = await startPipeline(goal.file, { steps, extraFiles: body.extraFiles ?? [], start: false, brain, origin: body.origin ?? null, operationReceipt });
+  if (result.status === 200) await recordRuntimeEvent("job.created", { operationId, address: goal.file, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: body.caller ?? body.session });
+  return result.status === 200 ? { ...result, job: canonicalJob(result.pipeline), assignment: canonicalJob(result.pipeline)?.assignments?.[0] ?? null } : result;
+}
+
 const jobOperations = {
   /** Records use of one hidden Goal execution alias. */
   alias: (address, operationId) => recordRuntimeEvent("compat.alias.used", { operationId, address, outcome: "adapted" }),
@@ -6355,13 +6389,7 @@ const jobOperations = {
     if (!resolved.goal) return { status: 404, error: resolved.error };
     const brain = await liveCallingOrganizer(String(body.caller ?? body.session ?? ""), resolved.goal.area);
     if (!brain) return { status: 403, error: `only the live organizer of ${resolved.goal.area} can create a Job` };
-    const steps = Array.isArray(body.steps) && body.steps.length ? body.steps : [{ instruction: String(body.instruction ?? `Complete ${resolved.goal.title}. Done when: ${resolved.goal.doneWhen}`), ...(body.launch ? { launch: body.launch } : {}), ...(body.path ? { path: body.path } : {}), ...(body.kind ? { kind: body.kind } : {}) }];
-    const existing = await readJob(PIPELINES_ROOT, resolved.goal.area, resolved.goal.slug);
-    const sameOrigin = body.origin && existing?.runs?.find((run) => run.origin?.kind === "process" && run.origin.processFile === body.origin.processFile && run.origin.eventId === body.origin.eventId);
-    if (sameOrigin) return { status: 200, state: "queued", session: null, job: canonicalJob(sameOrigin), pipeline: sameOrigin, assignment: canonicalJob(sameOrigin)?.assignments?.[0] ?? null, idempotent: true };
-    const result = await startPipeline(resolved.goal.file, { steps, extraFiles: body.extraFiles ?? [], start: false, brain, origin: body.origin ?? null });
-    if (result.status === 200) await recordRuntimeEvent("job.created", { operationId: body.operationId, address: resolved.goal.file, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: body.caller ?? body.session });
-    return result.status === 200 ? { ...result, job: canonicalJob(result.pipeline), assignment: canonicalJob(result.pipeline)?.assignments?.[0] ?? null } : result;
+    return withGoalQueueMutation(resolved.goal.file, () => createJobUnlocked(resolved.goal, body, brain));
   },
   /** Starts the first pending Assignment. */
   async start(requested, body) {
@@ -6370,6 +6398,10 @@ const jobOperations = {
     const guarded = await currentJobForMutation(resolved.goal, body);
     if (guarded.error) return guarded;
     const next = guarded.run.assignments.find((assignment) => assignment.status === "pending");
+    if (!next && String(body.operationId ?? "") && guarded.run.idempotencyKeys?.includes(String(body.operationId))) {
+      const running = guarded.run.assignments.find((assignment) => assignment.status === "running");
+      return { status: 200, state: "repeated", session: running?.session ?? null, pipeline: guarded.run, job: canonicalJob(guarded.run), assignment: running ?? null, repeated: true };
+    }
     if (!next) return { status: 409, error: "the current Job has no pending Assignment" };
     const result = await controlPipeline(resolved.goal.file, "advance", next.index, { caller: String(body.caller ?? body.session ?? ""), expectedRevision: guarded.run.revision, idempotencyKey: String(body.operationId ?? "") });
     await recordJobMigration(guarded.file, resolved.goal, body, result);
@@ -6896,6 +6928,118 @@ function processGoalFile(note, event) {
   return `${note.area}/goal-${title}-${event.id.slice(0, 10).toLowerCase()}.md`;
 }
 
+/** Derives one bounded child operation identity for a composite Process start. */
+function processChildOperationId(operationId, effect) {
+  return createHash("sha256").update(`${operationId}\0${effect}`).digest("base64url");
+}
+
+const processStartRecoveries = new Map();
+
+/** Serializes effects for one accepted Process attempt without holding a Process lock. */
+function withProcessStartRecovery(attemptId, operation) {
+  const earlier = processStartRecoveries.get(attemptId) ?? Promise.resolve();
+  const run = earlier.catch(() => undefined).then(operation);
+  processStartRecoveries.set(attemptId, run);
+  run.finally(() => { if (processStartRecoveries.get(attemptId) === run) processStartRecoveries.delete(attemptId); });
+  return run;
+}
+
+/** Loads one current accepted attempt and refuses a replaced event. */
+async function currentProcessStart(note, eventId, attemptId) {
+  return withProcessLock(note.area, note.slug, async () => {
+    const state = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
+    if (state.currentEvent?.id !== eventId) throw Object.assign(new Error("the Process event changed"), { code: "stale-process-event" });
+    const attempt = state.currentEvent.attempts.find((item) => item.id === attemptId);
+    if (!attempt) throw Object.assign(new Error("the Process attempt is stale"), { code: "stale-process-attempt" });
+    return { state, event: state.currentEvent, attempt };
+  });
+}
+
+/** Persists one completed composite phase before the next external effect. */
+async function persistProcessStartPhase(note, eventId, attemptId, phase, facts = {}) {
+  return withProcessLock(note.area, note.slug, async () => {
+    const current = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
+    if (current.currentEvent?.id !== eventId) throw Object.assign(new Error("the Process event changed"), { code: "stale-process-event" });
+    const next = recordProcessStartPhase(current, attemptId, phase, facts);
+    await writeProcessState(PROCESSES_ROOT, note.area, note.slug, next);
+    return next;
+  });
+}
+
+/** Reconstructs the immutable launch snapshot of the Brain that accepted a run. */
+async function acceptedProcessBrain(fence) {
+  const record = await readBrain(BRAINS_ROOT, fence.area);
+  const generation = record?.generations?.find((item) => item.generation === fence.generation && item.session === fence.session);
+  return generation ? { ...record, generation: generation.generation, session: generation.session, currentAttemptId: generation.session, generations: [generation] } : null;
+}
+
+/** Requires the same exact live Brain before a recovery creates an Agent effect. */
+async function currentProcessBrainAuthority(fence) {
+  if (!fence || fence.instanceId !== INSTANCE_ID) return null;
+  const record = await readBrain(BRAINS_ROOT, fence.area);
+  const generation = currentGeneration(record);
+  if (record?.status !== "active" || record.generation !== fence.generation || record.session !== fence.session || generation?.target !== fence.target) return null;
+  const live = await liveBrainForSession(fence.session);
+  return live?.area === fence.area ? live : null;
+}
+
+/**
+ * Replays the accepted Process start from its last durable phase. Goal and
+ * Job effects are exact and idempotent; Agent creation additionally requires
+ * the original Brain generation to remain current and live.
+ */
+async function recoverProcessStart({ note, event: requestedEvent, attempt: requestedAttempt, caller = "" }) {
+  const recovery = withProcessStartRecovery(requestedAttempt.id, async () => {
+    let { state, event, attempt } = await currentProcessStart(note, requestedEvent.id, requestedAttempt.id);
+    const operationId = attempt.operationId;
+    const goalFile = event.plannedGoalFile || processGoalFile(note, event);
+    if (attempt.status === "accepted") {
+      await createGoalSet(note.area, { goal: { title: note.title, doneWhen: note.title, state: "Not started." }, verify: note.verify, process: note.file, exactFile: goalFile });
+      state = await persistProcessStartPhase(note, event.id, attempt.id, "goal-created", { plannedGoalFile: goalFile, goalFile });
+      ({ event, attempt } = recoverableProcessStart(state) ?? { event: state.currentEvent, attempt: state.currentEvent.attempts.find((item) => item.id === requestedAttempt.id) });
+      await recordRuntimeEvent("process.goal.created", { operationId, address: note.file, eventId: event.id, area: note.area, goalFile, outcome: "created-or-recovered" });
+    }
+    if (attempt.status === "goal-created") {
+      const resolved = await jobGoal(goalFile);
+      if (!resolved.goal) throw Object.assign(new Error(resolved.error), { code: "process-goal-conflict" });
+      const brain = await acceptedProcessBrain(attempt.brain);
+      const step = { instruction: note.body, kind: "implementation", ...(note.path ? { path: note.path } : {}), ...(note.launch ? { launch: parseLaunch(note.launch) } : {}) };
+      const childOperation = processChildOperationId(operationId, "job-create");
+      const created = await withGoalQueueMutation(goalFile, () => createJobUnlocked(resolved.goal, {
+        steps: [step], caller: attempt.brain?.session ?? "", operationId: childOperation,
+        origin: { kind: "process", processFile: note.file, eventId: event.id, operationId },
+      }, brain));
+      if (created.status !== 200) throw Object.assign(new Error(created.error), { status: created.status, code: created.code ?? "process-job-conflict" });
+      const job = { run: created.job.run, revision: created.job.revision, assignmentId: created.assignment?.id ?? null, agentSession: null, status: "open" };
+      state = await persistProcessStartPhase(note, event.id, attempt.id, "job-created", { plannedGoalFile: goalFile, goalFile, job });
+      ({ event, attempt } = recoverableProcessStart(state) ?? { event: state.currentEvent, attempt: state.currentEvent.attempts.find((item) => item.id === requestedAttempt.id) });
+      await recordRuntimeEvent("process.job.created", { operationId, address: note.file, eventId: event.id, area: note.area, goalFile, run: job.run, outcome: "created-or-recovered" });
+    }
+    if (attempt.status === "job-created") {
+      const authority = await currentProcessBrainAuthority(attempt.brain);
+      if (!authority || (caller && caller !== attempt.brain.session)) throw Object.assign(new Error("the Brain that accepted this Process is no longer current and live"), { code: "brain-authority-changed" });
+      const childOperation = processChildOperationId(operationId, "job-start");
+      const started = await jobOperations.start(goalFile, { caller: attempt.brain.session, expectedRun: event.job.run, expectedRevision: event.job.revision, operationId: childOperation });
+      if (started.status !== 200) throw Object.assign(new Error(started.error), { status: started.status, code: started.code ?? "process-job-conflict" });
+      const job = { run: started.job.run, revision: started.job.revision, assignmentId: started.assignment?.id ?? event.job.assignmentId ?? null, agentSession: started.session ?? started.assignment?.session ?? null, status: "running" };
+      state = await persistProcessStartPhase(note, event.id, attempt.id, "started", { plannedGoalFile: goalFile, goalFile, job });
+      await recordRuntimeEvent("process.job.started", { operationId, address: note.file, eventId: event.id, area: note.area, goalFile, run: job.run, agentSession: job.agentSession, outcome: "started-or-recovered" });
+    }
+    return state;
+  });
+  return recovery.catch(async (error) => {
+    await withProcessLock(note.area, note.slug, async () => {
+      const current = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
+      const pending = recoverableProcessStart(current);
+      if (!pending || pending.event.id !== requestedEvent.id || pending.attempt.id !== requestedAttempt.id) return;
+      const failed = settleProcessDelivery(current, requestedAttempt.id, { ok: false, code: error.code ?? "process-start-recovery-failed", error: String(error.message ?? error) });
+      await writeProcessState(PROCESSES_ROOT, note.area, note.slug, failed);
+    });
+    await recordRuntimeEvent("process.start.failed", { operationId: requestedAttempt.operationId, address: note.file, eventId: requestedEvent.id, area: note.area, outcome: error.code ?? "process-start-recovery-failed" }).catch(() => {});
+    throw error;
+  });
+}
+
 const processRoutes = createProcessRoutes({
   /** Lists processes, in one Area and below it when asked. */
   async list(area) {
@@ -7017,46 +7161,36 @@ const processRoutes = createProcessRoutes({
   async start(body) {
     const note = body.file ? await resolveProcessNote(String(body.file), "") : await resolveProcessNote(String(body.slug ?? ""), String(body.area ?? ""));
     const caller = String(body.caller ?? body.session ?? "").trim();
-    if (!await liveCallingOrganizer(caller, note.area)) throw Object.assign(new Error(`only the live organizer of ${note.area} can start this Process`), { status: 403, code: "brain-authority-changed" });
-    let event;
+    const callerBrain = await liveBrainForSession(caller);
+    if (!callerBrain || callerBrain.area !== note.area) throw Object.assign(new Error(`only the live Brain of ${note.area} can start this Process`), { status: 403, code: "brain-authority-changed" });
     let replay = null;
+    let accepted = null;
     await withProcessLock(note.area, note.slug, async () => {
       const state = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
-      event = state.currentEvent;
+      const event = state.currentEvent;
       if (!event || (body.eventId && event.id !== body.eventId)) throw Object.assign(new Error("the Process event changed"), { code: "stale-process-event" });
       const attempt = event.attempts.find((item) => item.id === (body.attemptId || event.currentAttemptId));
       if (!attempt || !["delivered", "accepted", "goal-created", "job-created", "started"].includes(attempt.status)) throw Object.assign(new Error("the Process attempt is stale"), { code: "stale-process-attempt" });
       if (body.definitionRevision && body.definitionRevision !== event.definitionRevision) throw Object.assign(new Error("the Process definition changed"), { code: "stale-process-definition" });
       if (event.definitionRevision !== processDefinitionRevision(note)) throw Object.assign(new Error("the Process definition changed after delivery"), { code: "stale-process-definition" });
+      if (!attempt.brain || attempt.brain.area !== note.area || attempt.brain.session !== caller || attempt.brain.generation !== callerBrain.generation || attempt.brain.instanceId !== INSTANCE_ID) {
+        throw Object.assign(new Error("the Brain authority changed after this Process was delivered"), { status: 403, code: "brain-authority-changed" });
+      }
+      if (body.operationId && String(body.operationId) !== attempt.operationId) throw Object.assign(new Error("the operation ID names different input"), { code: "operation-conflict" });
       if (attempt.status === "started" && event.goalFile && event.job) { replay = { state, event, attempt }; return; }
-      attempt.status = "accepted";
-      event.plannedGoalFile ||= processGoalFile(note, event);
-      state.revision += 1;
-      await writeProcessState(PROCESSES_ROOT, note.area, note.slug, state);
+      if (attempt.status === "delivered") {
+        attempt.status = "accepted";
+        attempt.updatedAt = new Date().toISOString();
+        event.plannedGoalFile ||= processGoalFile(note, event);
+        event.status = "starting";
+        state.revision += 1;
+        await writeProcessState(PROCESSES_ROOT, note.area, note.slug, state);
+      }
+      accepted = { state, event, attempt };
     });
     if (replay) return { process: processView(note, replay.state), goalFile: replay.event.goalFile, job: replay.event.job, session: replay.event.job.agentSession, idempotent: true };
-    const goalFile = event.plannedGoalFile;
-    await createGoalSet(note.area, { goal: { title: note.title, doneWhen: note.title, state: "Not started." }, verify: note.verify, process: note.file, exactFile: goalFile });
-    const operationId = String(body.operationId ?? event.attempts.find((item) => item.id === (body.attemptId || event.currentAttemptId))?.operationId ?? randomUUID());
-    const step = { instruction: note.body, kind: "implementation", ...(note.path ? { path: note.path } : {}), ...(note.launch ? { launch: parseLaunch(note.launch) } : {}) };
-    const jobCreated = await jobOperations.create(goalFile, { steps: [step], caller, operationId: `${operationId}:job-create`, origin: { kind: "process", processFile: note.file, eventId: event.id, operationId } });
-    if (jobCreated.status !== 200) throw Object.assign(new Error(jobCreated.error), { status: jobCreated.status, code: "process-job-conflict" });
-    const started = await jobOperations.start(goalFile, { caller, expectedRun: jobCreated.job.run, expectedRevision: jobCreated.job.revision, operationId: `${operationId}:job-start` });
-    if (started.status !== 200) throw Object.assign(new Error(started.error), { status: started.status });
-    const state = await withProcessLock(note.area, note.slug, async () => {
-      const current = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
-      if (current.currentEvent?.id !== event.id) throw Object.assign(new Error("the Process event changed"), { code: "stale-process-event" });
-      current.currentEvent.status = "running";
-      current.currentEvent.goalFile = goalFile;
-      current.currentEvent.job = { run: jobCreated.job.run, revision: started.job?.revision ?? jobCreated.job.revision, assignmentId: jobCreated.assignment?.id ?? null, agentSession: started.session ?? null, status: "running" };
-      const attempt = current.currentEvent.attempts.find((item) => item.id === (body.attemptId || current.currentEvent.currentAttemptId));
-      if (attempt) attempt.status = "started";
-      current.auto.consecutiveFailedSlots = 0; current.auto.disabledAt = null; current.lastGoalFile = goalFile; current.lastGoalAt = new Date().toISOString(); current.revision += 1;
-      await writeProcessState(PROCESSES_ROOT, note.area, note.slug, current);
-      return current;
-    });
-    await recordRuntimeEvent("process.job.started", { operationId, address: note.file, eventId: event.id, area: note.area, goalFile, run: jobCreated.job.run, agentSession: started.session, outcome: "started" });
-    return { process: processView(note, state), goalFile, job: started.job, session: started.session };
+    const state = await recoverProcessStart({ note, event: accepted.event, attempt: accepted.attempt, caller });
+    return { process: processView(note, state), goalFile: state.currentEvent.goalFile, job: state.currentEvent.job, session: state.currentEvent.job?.agentSession ?? null };
   },
   /** Defers the current event to one server-calculated instant. */
   async defer(body) {
@@ -7457,8 +7591,12 @@ const shellStateRoutes = createShellStateRoutes({
         return { ...await projectMaterialOperationEvents(snapshot), processes: await processViews() };
       })(),
     ]);
-    const [jobFiles, brainRecords] = await Promise.all([readAllJobs(PIPELINES_ROOT), readAllBrains(BRAINS_ROOT)]);
-    session.problems = runtimeInvariantProblems({ jobs: jobFiles, goals: vault.areas.flatMap((area) => area.goals ?? []), brains: brainRecords, agents: sessions });
+    const [jobFiles, brainRecords, processRecords] = await Promise.all([
+      readAllJobs(PIPELINES_ROOT),
+      readAllBrains(BRAINS_ROOT),
+      discoverProcesses(TREES_ROOT).then((notes) => Promise.all(notes.map(async (note) => ({ file: note.file, area: note.area, slug: note.slug, state: normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note) })))),
+    ]);
+    session.problems = runtimeInvariantProblems({ jobs: jobFiles, goals: vault.areas.flatMap((area) => area.goals ?? []), brains: brainRecords, agents: sessions, processes: processRecords });
     return projectWork({ vault, session, programs });
   },
 });

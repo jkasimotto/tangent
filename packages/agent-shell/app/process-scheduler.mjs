@@ -16,6 +16,8 @@ const OPEN_STATUSES = new Set(["open", "active", "verify"]);
 const processLocks = new Map();
 export const PROCESS_START_WINDOW_MS = 10 * 60_000;
 export const PROCESS_AUTO_FAILURE_LIMIT = 3;
+export const PROCESS_START_PHASES = Object.freeze(["accepted", "goal-created", "job-created", "started"]);
+const PROCESS_START_PHASE_INDEX = new Map(PROCESS_START_PHASES.map((phase, index) => [phase, index]));
 
 /** Returns one stable base64url identity for NUL-separated fields. */
 function digest(...parts) {
@@ -108,6 +110,51 @@ export function settleProcessDelivery(state, attemptId, outcome, now = new Date(
     }
   }
   attempt.updatedAt = new Date(now).toISOString();
+  return bump(next, now);
+}
+
+/** Returns the accepted start attempt that controller recovery can resume. */
+export function recoverableProcessStart(state) {
+  const event = state?.currentEvent;
+  const attempt = event?.attempts?.find((item) => item.id === event.currentAttemptId);
+  return attempt && PROCESS_START_PHASE_INDEX.has(attempt.status) && attempt.status !== "started"
+    ? { event, attempt }
+    : null;
+}
+
+/**
+ * Durably advances one composite Process start after its preceding effect
+ * settled. Phases are monotonic, so an exact recovery replay is a read and a
+ * stale or out-of-order effect cannot move the operation backwards.
+ */
+export function recordProcessStartPhase(state, attemptId, phase, facts = {}, now = new Date()) {
+  if (!PROCESS_START_PHASE_INDEX.has(phase)) throw new Error(`unknown Process start phase ${phase}`);
+  const next = structuredClone(state);
+  const event = next.currentEvent;
+  const attempt = event?.attempts?.find((item) => item.id === attemptId);
+  if (!attempt || event.currentAttemptId !== attemptId || !PROCESS_START_PHASE_INDEX.has(attempt.status)) {
+    throw Object.assign(new Error("the Process attempt is stale"), { code: "stale-process-attempt" });
+  }
+  const currentIndex = PROCESS_START_PHASE_INDEX.get(attempt.status);
+  const nextIndex = PROCESS_START_PHASE_INDEX.get(phase);
+  if (nextIndex <= currentIndex) return next;
+  if (nextIndex > currentIndex + 1) {
+    throw Object.assign(new Error(`Process start cannot move from ${attempt.status} to ${phase}`), { code: "process-phase-gap" });
+  }
+  if (facts.plannedGoalFile) event.plannedGoalFile = facts.plannedGoalFile;
+  if (facts.goalFile) event.goalFile = facts.goalFile;
+  if (facts.job) event.job = structuredClone(facts.job);
+  attempt.status = phase;
+  attempt.updatedAt = new Date(now).toISOString();
+  if (phase === "started") {
+    event.status = "running";
+    next.auto.consecutiveFailedSlots = 0;
+    next.auto.disabledAt = null;
+    next.lastGoalFile = event.goalFile;
+    next.lastGoalAt = new Date(now).toISOString();
+  } else {
+    event.status = "starting";
+  }
   return bump(next, now);
 }
 
@@ -271,7 +318,7 @@ export function goalNamesProcess(goal, note) {
 
 /** True when a Goal record is still open in any of its working statuses. */
 function goalIsOpen(goal) {
-  return OPEN_STATUSES.has(String(goal?.status ?? "open"));
+  return Boolean(goal) && OPEN_STATUSES.has(String(goal.status ?? "open"));
 }
 
 /**
@@ -306,7 +353,7 @@ export async function evaluateProcess({ note, state, now = new Date(), runProbe,
  * or `archived` when the Area or an ancestor is folded away: its processes
  * are never due (area-archive Decision 7).
  */
-export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), runProbe, openGoalFor, notify, requestStart = null, hiddenAreaStatus = async () => "", brainLive = async () => true, autoStartEnabled = process.env.TANGENT_PROCESS_AUTO_START !== "0" }) {
+export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), runProbe, openGoalFor, notify, requestStart = null, recoverStart = null, hiddenAreaStatus = async () => "", brainLive = async () => true, autoStartEnabled = process.env.TANGENT_PROCESS_AUTO_START !== "0" }) {
   const results = [];
   for (const discovered of await discoverProcesses(treesRoot)) {
     let delivery = null;
@@ -370,7 +417,7 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
       }
     }
     const attempt = next.currentEvent?.attempts?.find((item) => item.id === next.currentEvent?.currentAttemptId);
-    if (next.currentEvent?.status === "starting" && attempt && new Date(attempt.deadlineAt).getTime() <= now.getTime()) {
+    if (next.currentEvent?.status === "starting" && attempt && ["prepared", "delivery-pending", "delivered"].includes(attempt.status) && new Date(attempt.deadlineAt).getTime() <= now.getTime()) {
       attempt.status = "expired";
       attempt.updatedAt = now.toISOString();
       next.currentEvent.status = "did-not-start";
@@ -395,6 +442,14 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
         await writeProcessState(stateRoot, delivery.note.area, delivery.note.slug, settled);
         return settled;
       });
+    }
+    const recoverable = recoverableProcessStart(result.state);
+    if (recoverable && recoverStart) {
+      try {
+        result.state = await recoverStart({ note: result.note, event: recoverable.event, attempt: recoverable.attempt });
+      } catch (error) {
+        result.recoveryError = { code: error.code ?? "process-start-recovery-failed", message: String(error.message ?? error) };
+      }
     }
     results.push(result);
   }

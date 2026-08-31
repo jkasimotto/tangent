@@ -68,6 +68,34 @@ test("a wall status hover shows the complete server evidence", async () => {
   assert.match(status.title, /You've reached your Opus limit · claude · quota · screen · 2026-08-30T05:50:55.115Z/);
 });
 
+test("Work follows the Job to its pending next Assignment instead of the old idle Agent", async () => {
+  const fixture = workTableFixture();
+  const goal = fixture.goals.find((item) => item.slug === "compact-table");
+  const session = fixture.sessions.find((item) => item.name === goal.session);
+  Object.assign(session, { state: "waiting", stateDetail: "idle" });
+  const job = fixture.pipelines.find((item) => item.goal === goal.file);
+  Object.assign(job, { status: "running", currentAssignmentId: "assignment-1" });
+  Object.assign(job.steps[0], {
+    id: "assignment-1", status: "running", live: true, state: "waiting", stateDetail: "idle",
+    attemptState: { word: "Reported done", since: fixture.now, owner: "brain", evidence: { source: "queue", text: "The worker sent a report." }, next: "The organizer settles it." },
+  });
+  Object.assign(job.steps[1], { id: "assignment-2", status: "pending", live: false, session: null });
+
+  const { window, document } = await bootWorkTable(fixture);
+  let row = document.querySelector(`[data-goal-anchor="${goal.file}"]`);
+  assert.match(row.querySelector(".desk-state").textContent.trim(), /^Reported done/);
+
+  Object.assign(job, { status: "pending", currentAssignmentId: null, updatedAt: fixture.now + 1 });
+  Object.assign(job.steps[0], { status: "complete", live: false, endedAt: fixture.now });
+  await window.refresh();
+  await settle(window);
+
+  row = document.querySelector(`[data-goal-anchor="${goal.file}"]`);
+  assert.equal(row.querySelector(".desk-state").textContent.trim(), "Not started");
+  assert.doesNotMatch(row.textContent, /Finished/);
+  assert.equal(row.querySelector("[data-open-goal-run]"), null, "the historical idle Agent does not replace the pending Assignment's state");
+});
+
 test("Area Map controls and m open the broad root map, then drill and return without losing the Work row", async () => {
   const fixture = workTableFixture();
   const rootGoal = { ...fixture.goals[0], area: "otto", file: "otto/goal-root.md", slug: "root", title: "Root work" };

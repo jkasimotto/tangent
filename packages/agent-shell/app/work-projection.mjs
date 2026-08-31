@@ -83,12 +83,16 @@ export function projectWorkAssignment(step) {
 }
 
 /** Projects queue state for Work without serializing its historical text. */
-export function projectWorkQueue(record) {
-  const source = record?.assignments ?? record?.steps ?? [];
+export function projectWorkJob(record) {
+  // Runtime enrichment is folded into the compatibility `steps` view. The
+  // canonical `assignments` array remains the durable record and can still be
+  // present beside it, so prefer `steps` when both exist or Work drops live
+  // Attempt state at this boundary.
+  const source = record?.steps ?? record?.assignments ?? [];
   const reported = [...source].reverse().find((step) => (step.reports?.length ?? 0) > 0) ?? null;
   const steps = source.filter((step) => !FINAL_ASSIGNMENT.has(step.status) || step === reported).map(projectWorkAssignment);
   return {
-    schema: "agent-shell-work-queue.v1",
+    schema: "agent-shell-work-job.v1",
     goal: record.goal,
     area: record.area,
     slug: record.slug,
@@ -98,13 +102,16 @@ export function projectWorkQueue(record) {
     currentAssignmentId: record.currentAssignmentId ?? null,
     updatedAt: record.updatedAt ?? null,
     counts: {
-      total: steps.length,
+      total: source.length,
       final: source.filter((step) => FINAL_ASSIGNMENT.has(step.status)).length,
       pending: source.filter((step) => step.status === "pending").length,
     },
-    steps,
+    run: Math.max(1, Number(record.run) || 1),
+    assignments: steps,
   };
 }
+
+export const projectWorkQueue = projectWorkJob;
 
 /** Keeps the repair state that the Work desk displays without durable crew history. */
 export function projectWorkRepair(repair) {
@@ -137,9 +144,11 @@ export function projectWorkBrain(brain) {
 /** Creates one compact browser refresh response and its semantic content hash. */
 export function projectWork({ vault, session, programs }) {
   const projectedVault = projectWorkVault(vault);
-  const queues = new Map((session?.pipelines ?? []).map(projectWorkQueue).map((queue) => [queue.goal, queue]));
+  const jobs = (session?.jobs ?? session?.pipelines ?? []).map(projectWorkJob);
+  const queues = new Map(jobs.map((job) => [job.goal, job]));
   const brains = new Map((session?.brains ?? []).map(projectWorkBrain).map((brain) => [brain.area, brain]));
-  projectedVault.areas = projectedVault.areas.map((area) => ({
+  const compatibilityVault = structuredClone(projectedVault);
+  compatibilityVault.areas = compatibilityVault.areas.map((area) => ({
     ...area,
     brain: brains.get(area.path) ?? null,
     goals: area.goals.map((goal) => ({ ...goal, run: queues.get(goal.file) ?? null })),
@@ -153,14 +162,21 @@ export function projectWork({ vault, session, programs }) {
   if (Array.isArray(sessionSummary.sessions)) {
     sessionSummary.sessions = sessionSummary.sessions.filter((item) => item.kind !== "brain" || liveBrainSessions.has(item.name));
   }
+  const legacySession = { ...sessionSummary, runtime };
   const value = {
-    schema: "agent-shell-work.v1",
+    schema: "agent-shell-work.v2",
     vault: projectedVault,
-    session: {
-      ...sessionSummary,
-      runtime,
+    runtime: {
+      instanceId: runtime?.instanceId ?? "",
+      jobs,
+      agents: sessionSummary.sessions ?? [],
+      brains: [...brains.values()],
+      problems: session?.problems ?? [],
     },
     programs,
+    compatibility: {
+      v1: { schema: "agent-shell-work.v1", vault: compatibilityVault, session: legacySession, programs },
+    },
   };
   const body = JSON.stringify(value);
   return { value, body, etag: `"${createHash("sha256").update(body).digest("hex")}"`, bytes: Buffer.byteLength(body) };

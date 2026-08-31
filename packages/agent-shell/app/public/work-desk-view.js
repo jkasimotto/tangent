@@ -436,16 +436,21 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** Finds the live session bound to one goal. */
   function sessionForGoal(goal) {
     if (!goal || ["done", "dropped", "parked", "deferred"].includes(goal.status)) return null;
-    const bound = state.sessions.filter((session) => session.kind !== "brain" && (session.goal === goal.file || session.name === goal.session));
     const record = pipelineRecordForGoal(goal);
-    const current = record?.steps?.find((step) => step.id === record.currentAssignmentId)
-      ?? record?.steps?.find((step) => step.status === "running");
-    const attempt = current?.attempts?.findLast?.((item) => !item.endedAt) ?? current?.attempts?.at?.(-1);
-    // The authoritative current attempt wins. This keeps an earlier pipeline
-    // session from becoming the target when more than one session is live.
-    return bound.find((session) => session.name === attempt?.session)
-      ?? bound.find((session) => session.name === current?.session)
-      ?? bound.find((session) => session.name === goal.session)
+    if (record) {
+      const current = record.steps?.find((step) => step.id === record.currentAssignmentId && ["running", "waiting"].includes(step.status))
+        ?? record.steps?.find((step) => ["running", "waiting"].includes(step.status));
+      if (!current) return null;
+      const attempt = current.attempts?.findLast?.((item) => !item.endedAt) ?? current.attempts?.at?.(-1);
+      // A Job is authoritative over the Goal's old Markdown binding. Once its
+      // current Assignment is complete, that old pane remains history and
+      // must not replace the next pending Assignment's state.
+      return state.sessions.find((session) => session.kind !== "brain" && session.name === attempt?.session)
+        ?? state.sessions.find((session) => session.kind !== "brain" && session.name === current.session)
+        ?? null;
+    }
+    const bound = state.sessions.filter((session) => session.kind !== "brain" && (session.goal === goal.file || session.name === goal.session));
+    return bound.find((session) => session.name === goal.session)
       ?? bound.find((session) => session.name === state.agentSessionName)
       ?? bound[0]
       ?? null;
@@ -681,7 +686,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     openModal({
       kicker: "Area brain",
       title: `Stop the ${humanName(area.split("/").pop())} brain?`,
-      copy: "This makes the brain inactive. Its Goals, queues, and worker agents continue. A later message can wake it.",
+      copy: "This makes the Brain inactive. Its Goals, Jobs, and worker Agents continue. A later message can wake it.",
       confirmLabel: "Stop brain",
       danger: true,
       /** Stops the exact attempt that the Area control displayed. */
@@ -1498,7 +1503,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** The small `Step N of M` line above the pill, and the step facts in its hover title. */
   function deskStepLine(step, total) {
     return {
-      stepLine: `Step ${step.index} of ${total}`,
+      stepLine: `Assignment ${step.index} of ${total}`,
       stepShort: `${step.index}/${total}`,
       stepLabel: step.label || "agent",
       stepTitle: `${step.label || "agent"}: ${step.instruction ?? ""}`,
@@ -1518,7 +1523,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       const ownerKind = step.attemptState.owner === "you" ? "waiting" : step.attemptState.word === "Working" ? "working" : "fact";
       return {
         state: `${step.attemptState.word} · ${shortStateAge(step.attemptState.since)}`,
-        action: route ? `Open step ${step.index}` : "",
+        action: route ? `Open Assignment ${step.index}` : "",
         launch: route ? launchRefText(step.launch) : "",
         cwd: route ? step.launchDisclosure?.cwd ?? "" : "",
         kind: ownerKind,
@@ -1532,10 +1537,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // The folder the step was started in, disclosed with its harness before
     // the session existed, so the row can say where the agent works.
     const cwd = step.launchDisclosure?.cwd ?? "";
-    if (step.state === "working") return { state: "Working", action: `Open step ${step.index}`, launch, cwd, kind: "working", route: "run" };
-    if (step.state === "waiting") return { state: waitingLabel(step), action: `Open step ${step.index}`, launch, cwd, kind: idle, route: "run" };
-    if (step.state === "shell") return { state: "Stopped", action: `Open step ${step.index}`, launch, cwd, kind: idle, route: "run" };
-    return { state: "Open", action: `Open step ${step.index}`, launch, cwd, kind: "ready", route: "run" };
+    if (step.state === "working") return { state: "Working", action: `Open Assignment ${step.index}`, launch, cwd, kind: "working", route: "run" };
+    if (step.state === "waiting") return { state: waitingLabel(step), action: `Open Assignment ${step.index}`, launch, cwd, kind: idle, route: "run" };
+    if (step.state === "shell") return { state: "Stopped", action: `Open Assignment ${step.index}`, launch, cwd, kind: idle, route: "run" };
+    return { state: "Open", action: `Open Assignment ${step.index}`, launch, cwd, kind: "ready", route: "run" };
   }
 
   /** Formats the time since a server-derived word started. */
@@ -1556,7 +1561,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const last = step.index >= pipeline.steps.length;
     const stopped = step.status === "stopped" || (step.status === "running" && !step.live);
     if (stopped) {
-      return (last ? "" : `<button type="button" data-pipeline-control="skip" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Skip to step ${step.index + 1}</button>`)
+      return (last ? "" : `<button type="button" data-pipeline-control="skip" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Skip to Assignment ${step.index + 1}</button>`)
         + `<button type="button" data-pipeline-control="end" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}" title="${escapeHtml(pipeline.migrationProblem ? `${pipeline.migrationProblem} End every live attempt and keep its audit history.` : "End the run; the Goal stays open with its handovers")}">End work</button>`;
     }
     return "";
@@ -1754,7 +1759,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     "Holding your draft": "You typed a message there and did not send it.",
     "Agent did not start": "The session opened but no agent runs in it.",
     "Stopped": "The agent's session is gone. The brain decides what runs next.",
-    "Not started": "This step waits for the brain to start it.",
+    "Not started": "This Assignment waits for the Brain to start it.",
     "Open": "No agent runs. Enter reads the Goal; the brain starts agents.",
     "Ready": "No agent runs. Enter starts one.",
     "Ready for validation": "The work is done and waits for its check.",

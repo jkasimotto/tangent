@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { readInbox } from "./brain-inbox.mjs";
 import { readGoalPresentations } from "./goal-presentations.mjs";
 import { startShellServer } from "./focus-shell-http-fixture.mjs";
+import { readPipeline } from "./job-record.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
@@ -58,7 +59,7 @@ async function startWorker(base, brain, openedSessions, title, kind = "implement
 
 /** Reads the authoritative queue written by the server. */
 async function readQueue(root, worker) {
-  return JSON.parse(await readFile(path.join(root, "pipelines", area, `${worker.slug}.json`), "utf8"));
+  return readPipeline(path.join(root, "pipelines"), area, worker.slug);
 }
 
 test("a worker sends notes, blocked reports, and done to its brain, and nothing else", async (context) => {
@@ -207,7 +208,7 @@ test("a worker sends notes, blocked reports, and done to its brain, and nothing 
   // D5: a worker sends only to its brain. Another session or Area is refused.
   const toBrainSession = await post(base, "/api/agents/send", { to: currentBrain.body.session, from: third.session, text: "Hello brain." });
   assert.equal(toBrainSession.status, 403);
-  assert.equal(toBrainSession.body.error, 'workers only send to their brain. Use: tangent send brain "<note>"');
+  assert.equal(toBrainSession.body.error, `this worker reports only to ${area}: tangent send ${area} "<plain note>"`);
   const toArea = await post(base, "/api/agents/send", { to: "otto", from: third.session, text: "Hello otto." });
   assert.equal(toArea.status, 403);
   const brainToWorker = await post(base, "/api/agents/send", { to: third.session, from: currentBrain.body.session, text: "Carry on." });

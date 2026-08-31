@@ -1,4 +1,4 @@
-import { open, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { expandHome, findCodexRollouts } from "./harness-conversation.mjs";
 
@@ -51,6 +51,48 @@ export async function observeTranscript({ harness, conversation, cwd, startedAt 
   } catch {
     return null;
   }
+}
+
+/** Reads the complete first native user message for an exact prompt receipt. */
+export async function firstUserMessageReceipt({ harness, conversation, cwd, startedAt, expectedSha256, expectedBytes } = {}) {
+  const resolved = await transcriptFile({ harness, conversation, cwd, startedAt });
+  if (!resolved) return { ok: false, reason: "unsupported-or-missing-transcript" };
+  let text;
+  try { text = await readFile(resolved.path, "utf8"); }
+  catch { return { ok: false, reason: "transcript-unavailable" }; }
+  const rows = text.split("\n").filter(Boolean).flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
+  const message = firstUserMessage(resolved.provider, rows);
+  if (message == null) return { ok: false, reason: "first-user-message-unavailable" };
+  const bytes = Buffer.byteLength(message);
+  const sha256 = (await import("node:crypto")).createHash("sha256").update(message).digest("hex");
+  return { ok: sha256 === expectedSha256 && bytes === expectedBytes, sha256, bytes, expectedSha256, expectedBytes, provider: resolved.provider, path: resolved.path, reason: sha256 === expectedSha256 && bytes === expectedBytes ? null : "prompt-mismatch" };
+}
+
+/** Resolves the native transcript path for one harness conversation. */
+async function transcriptFile({ harness, conversation, cwd, startedAt }) {
+  if (!harness?.transcripts || !conversation?.id) return null;
+  const provider = String(conversation.provider ?? harness.id ?? "");
+  if (provider.startsWith("claude")) return { provider, path: path.join(expandHome(harness.transcripts), claudeProjectKey(cwd), `${conversation.id}.jsonl`) };
+  if (provider.startsWith("codex")) {
+    const found = await findCodexRollouts({ transcripts: harness.transcripts, cwd, startedAt });
+    const match = found.find((item) => item.id === conversation.id);
+    return match?.transcriptPath ? { provider, path: match.transcriptPath } : null;
+  }
+  if (provider === "pi" || provider === "pi-code") return { provider, path: path.join(expandHome(harness.transcripts), `${conversation.id}.jsonl`) };
+  return null;
+}
+
+/** Extracts the complete first native user message from transcript rows. */
+function firstUserMessage(provider, rows) {
+  for (const row of rows) {
+    let role = row.message?.role ?? row.role ?? row.payload?.role;
+    let content = row.message?.content ?? row.content ?? row.payload?.content;
+    if (provider.startsWith("codex") && row.type === "response_item" && row.payload?.type === "message") { role = row.payload.role; content = row.payload.content; }
+    if (role !== "user") continue;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) return content.map((item) => typeof item === "string" ? item : item?.text ?? item?.input_text ?? "").join("");
+  }
+  return null;
 }
 
 /** Encodes a cwd the same way Claude names its projects folder. */

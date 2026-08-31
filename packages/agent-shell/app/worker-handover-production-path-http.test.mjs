@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import { readInbox, unreadNotices } from "./brain-inbox.mjs";
 import { startShellServer } from "./focus-shell-http-fixture.mjs";
+import { readPipeline } from "./job-record.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
@@ -62,7 +63,7 @@ async function startWorker(base, brain, openedSessions, title, kind = "implement
 
 /** Reads the authoritative queue written by the production server. */
 async function readQueue(root, worker) {
-  return JSON.parse(await readFile(path.join(root, "pipelines", area, `${worker.pipeline.slug}.json`), "utf8"));
+  return readPipeline(path.join(root, "pipelines"), area, worker.pipeline.slug);
 }
 
 /** Stops one exact tmux session without changing the brain record. */

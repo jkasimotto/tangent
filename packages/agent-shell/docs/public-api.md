@@ -38,7 +38,7 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 - `tangent area audit <area>` writes one detached compatibility audit.
 - `tangent area present <area> <file>... [--note <text>] [--withdraw]` lets the exact active Area brain present or withdraw vault Documents from its own Area. It creates no Goal relation.
 - `tangent goal create --area <area> --title <text> --done-when <text> ...` creates one Goal and optional Subgoals.
-- `tangent goal start <slug> [--step <instruction> --launch <ref> --path <directory>]...` starts work. A worker opens in the step's `--path`, else in the nearest `- Worktree:` or `- Repository:` line under `## Resources` in the Area note or a parent Area note. An Area with no folder is refused before any record is written. The refusal names the note to edit and the line to add. A `- Repository:` line that points into the vault binds only the Area that declares it. The start output prints the folder beside each step's harness, and the attempt records `cwd` and `cwdSource` (`step` or `area:<area>`).
+- `tangent job create|show|start|append|advance|stop|replace` controls durable execution. A worker opens in its Assignment `--path`, else in the nearest bound Area Worktree or Repository. Each Attempt records its resolved folder, command, policy source, launch disclosure, conversation, Agent Shell instance, and immutable target.
 - `tangent goal show <slug>` prints each attempt's session, cwd, harness, conversation id, resume command, and last context fill (ADR-0042). `--conversations` finds a codex conversation by the attempt's folder and start time.
 - `tangent goal list [<area>]` and `tangent goal show <slug>` read Goals. The listing takes `--subtree`, a repeatable `--status`, `--changed-since` with the same window or date, and `--query`. The subtree scent counts what the same filters find in the child Areas and prints the command that reads them.
 - `tangent goal depend|undepend` edits advisory prerequisite links.
@@ -57,8 +57,8 @@ The live tmux ownership key is `@tangent_agent_shell_instance`. A foreign sessio
 
 ## Agent messages
 
-- `tangent agent list` reads live agent sessions and queued message counts.
-- `tangent agent context [session] [--session <name>] [--json]` rebuilds the durable brain or Goal assignment for a tmux session. Without a name it uses the current tmux session.
+- `tangent agent list` reads live Agent sessions and queued message counts. `agent show <session>` joins one exact session to its durable Attempt or Brain generation.
+- `tangent agent stop <session>` fences the current Attempt and immutable target. A Job Agent stop ends that Attempt, returns its Assignment to pending, and leaves its Goal open. `agent resume <session>` creates an unbound resume Agent from historical Attempt identity.
 - `tangent send <session|area> <note...>` sends one plain message. A worker may name only the organizing Area recorded on its assignment. The durable Area path survives brain restarts and can be outside the Goal's ancestry. No message words change Goal or assignment state.
 - `tangent agent send <session-or-area> <text...>` is an alias of `tangent send` for one release and prints a hint line.
 
@@ -77,19 +77,20 @@ When passive observation sees a bound running worker back at its shell, reconcil
 
 Brain stop reads the current attempt ID before it posts the guarded stop operation. A changed, foreign, or legacy attempt is not terminated. The command does not change Goals.
 
+`tangent brain succeed` reuses the current generation's resolved launch after current policy accepts it. It requires changed `## Current` memory and a new ordinary self-sent inbox notice. The successor is staged without authority. Promotion requires the native transcript adapter to prove the complete first user message by SHA-256 and UTF-8 byte count. Agent Shell then moves the logical pointer, marks included notices delivered, and terminates the outgoing immutable target. A changed pointer, note, activity revision, failed receipt, or restart deadline leaves the outgoing generation authoritative; durable recovery retries receipt or retirement. Open Requests remain on the logical Brain.
+
 The server stamps the sender and delivers only into an empty composer. An agent that is still working has one whenever nobody is typing into it, so a message reaches a busy agent and it reads the message at its next turn boundary. A pane the server is already writing to is the exception: an agent session that is booting holds every message until its own opening prompt has arrived. Otherwise, the message stays queued.
 
-## Goal queue
+## Job execution
 
-Every active Goal execution uses one `area-goal-queue.v2` record under `~/.tangent/agent-shell/pipelines/<area>/<slug>.json`. One assignment and many assignments use the same controller. A worker session is one attempt inside an assignment.
+Every Goal execution uses one `job.v1` file under `~/.tangent/agent-shell/pipelines/<area>/<slug>.json`. It keeps all numbered runs. Each run owns ordered Assignments, immutable Attempt history, typed reports, optimistic revision, and bounded operation receipts. Readers accept `area-goal-queue.v2` and `agent-pipeline.v1`; the first mutation writes `job.v1` and preserves the old record as run 1. Ambiguous Goal slugs are refused.
 
 - `tangent goal start <slug> --launch <harness[/model[/effort]]>` declares one implementation assignment.
 - `tangent goal start <slug> --step <instruction> [--kind <implementation|review>] [--launch ...] [--path ...] ...` declares ordered assignments.
 - `tangent goal append <slug> --step <instruction> [--kind <implementation|review>] ...` adds pending assignments without rewriting history. The type defaults to `implementation` and only labels the step.
 - `tangent goal create --area <a> --title "<t>" [--done-when "<d>"] --start --path <dir> [--launch <ref>] [--verify] [--instruction "<i>" | --instruction-file <file>]` is the brain's one command to create a Goal and start its worker. Only a live brain may pass `--start`; the server refuses others with 403 before it writes anything. The done condition defaults to the title.
 - `tangent goal done <slug> [--note "<text>"]` from a brain on a Goal flagged `verify: yes` sets `verify` (Check it) instead of `done` and keeps the note in `## State`. Julian's own Done closes it.
-- `tangent brain advance <goal> <step>` starts one pending assignment through the Goal queue. Any local caller can use the command.
-A normal start acts through the Goal queue and requires the live Area brain. A brain can lend its launch when the Goal's Area allows it. Other callers must name a launch. Agent Shell rejects each disallowed launch before it writes a new attempt. A guarded `--recovery` start records `julian-emergency` in the same queue. It requires a pending assignment, no current attempt, and exhausted brain recovery.
+- `tangent job advance <goal> <assignment>` starts one exact pending Assignment. Normal Job creation, start, append, advance, and replacement require the exact current live organizing Brain. Agent Shell rechecks Area launch policy before each Agent start. A guarded repair path keeps only its existing limited authority. A local user or Brain can stop a Job.
 
 Worker report types are `implementation-result`, `review-result`, `context-risk`, and `failed`. The server validates the report against the assignment kind and queue revision. A worker report never starts another assignment. Missing, malformed, truncated, shell-quoted, and non-object reports fail before queue mutation. A rejected typed report also records no queue result or notice.
 
@@ -97,7 +98,7 @@ An accepted handover adds one `worker-handover-receipt.v1` record to the assignm
 
 No worker report closes a Goal (ADR-0041). A passing `review-result` completes the queue; the brain reads the note and runs `tangent goal done`. Free text is a note and never closes or advances a Goal.
 
-Compatibility readers normalize `agent-pipeline.v1` and solo records. New mutations write only `area-goal-queue.v2`.
+For one release, hidden `goal start`, `goal append`, `brain advance`, `goal replace-agent`, `brain handover`, and `agent context` aliases print their canonical replacement and call the same service. Old HTTP routes are thin adapters. Work v2 includes a deprecated v1 projection. These edges emit `compat.alias.used`.
 
 ## Area brain
 
@@ -134,6 +135,10 @@ Each exact Area can have an `operation-event-ledger.v1`. The server records thes
 Routine healthy polling, starts, stops, and repeated success stay quiet. Event identity includes the Operation, kind, condition, and revision. The event persists before exact-Area inbox delivery.
 
 ## Main HTTP shapes
+
+Canonical execution routes are `GET /api/jobs/show` and `POST /api/jobs/create|start|append|advance|stop|replace`. Canonical Agent routes are `GET /api/agents`, `GET /api/agents/show`, and `POST /api/agents/stop|resume|send`. Canonical Brain routes are `GET /api/brains/show` and `POST /api/brains/stop|succeed|requests|requests/withdraw`. Every mutation takes `operationId`; Job mutations also take `expectedRun` and `expectedRevision`. Canonical responses say `job`, `assignment`, `attempt`, and `agent`. A stale Job fence returns 409 with the current revision.
+
+`GET /api/goals/detail` returns Goal intent only. `GET /api/jobs/show` returns full selected-run execution history. `GET /api/work` returns `agent-shell-work.v2` with separate `vault.areas[].goals`, `runtime.jobs`, `runtime.agents`, `runtime.brains`, `runtime.problems`, and `runtime.instanceId` fields.
 
 - `POST /api/goals/start`: `{ file, steps?, caller?, recovery?, extraFiles? }`. Only a live brain caller starts a worker (ADR-0041). There is no other start route: `POST /api/goals/agent` was deleted on 2026-08-28.
 - `POST /api/goals/attempts/resume`: `{ goal, attemptId?, conversationId? }`. A live attempt answers `status: "live"` with its session. A dead attempt answers `status: "resumed"` with a new `resume` session in the attempt's folder and the typed `command`. The harness needs `resume` in `harnesses.md` (ADR-0042).

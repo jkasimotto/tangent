@@ -696,13 +696,13 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       kicker: shell ? "Open session" : brain ? "Area brain" : "Live agent",
       title: shell ? "Close this session?" : brain ? `Stop the ${humanName((session.brain || session.area || "Area").split("/").pop())} brain?` : `Stop ${agentName(session)}?`,
       copy: brain
-        ? "This makes the brain inactive. Its Goals, queues, and worker agents continue. A later message can wake it."
+        ? "This makes the Brain inactive. Its Goals, Jobs, and worker Agents continue. A later message can wake it."
         : describing
         ? session.kind === "brain"
-          ? "This ends the brain. Goals and pipelines it started keep running. Resume it later from the brain icon on the Area card."
+          ? "This ends the Brain. Goals and Jobs it started keep running. Resume it later from the Brain icon on the Area card."
           : "This ends the conversation about new work. Any Goals or Documents already created stay in Tangent."
         : pipeline
-          ? `This ends the run${stepsLeft ? ` and its ${stepsLeft} remaining step${stepsLeft === 1 ? "" : "s"}` : ""}. The Goal, its notes, and its handovers stay here.`
+          ? `This ends the Job${stepsLeft ? ` and its ${stepsLeft} remaining Assignment${stepsLeft === 1 ? "" : "s"}` : ""}. The Goal, its notes, and its handovers stay here.`
           : "This ends the live session. The work and its notes stay here.",
       confirmLabel: shell ? "Close session" : brain ? "Stop brain" : "Stop agent",
       danger: true,

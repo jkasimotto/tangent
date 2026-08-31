@@ -65,7 +65,7 @@ A framework-neutral layout kernel resolves nested requirements, automatic spacin
 
 Agent Shell embeds Excalidraw as one persistent browser island. The world controller owns loading, selection, history, view masks, drafts, and conflicts. A durable coordinator commits all shards from one gesture in one exact Git commit. Fact refresh and camera changes do not change map authority (ADR-0049, ADR-0051).
 Area skills live at `<area>/.agents/skills/<name>/SKILL.md`. Tangent creates `<area>/.claude/skills` as a relative link, so Codex and Claude discover the same inherited files. Legacy `skill-<slug>.md` Documents remain readable during migration. See ADR-0045.
-Agent Shell derives inherited sources by path. It owns bounded runtime projections, durable Area inbox delivery, Requests, Goal queues, presented-document attention, and Operation health.
+Agent Shell derives inherited sources by path. It owns bounded runtime projections, durable Area inbox delivery, Requests, Goal intent, durable Jobs, live Agent sessions, logical Brains, presented-document attention, and Operation health. A `job.v1` file keeps every numbered run for one Goal; old execution schemas convert on first write without losing history (ADR-0055).
 Each Area can declare allowed agent launches. Child policies intersect with parent policies. Agent Shell remembers the last successful Brain and Work launch separately.
 Presented-document records stay outside the vault and Goal queue. Opening a presented document clears its Work row. Closing the Goal removes its record.
 One budget covers every character Agent Shell generates for a brain prompt; only Julian's own founding instruction sits outside it.
@@ -86,9 +86,9 @@ Search owns structural indexing and search over TypeScript and Dart source: a SQ
 
 `@tangent/agent-shell` owns the vault CLI, agent messages, worker notes, Area brains, and `tangent study`.
 Each Area brain has one logical identity.
-Its durable generation history identifies every brain session. A brain controls Goal work, but it never owns a Goal or becomes a Goal attempt.
+Its durable generation history identifies every Brain Agent. A Brain organizes Job work, but it never owns a Goal or becomes a Job Attempt. Deliberate succession stages a powerless generation and promotes it only after exact native-transcript proof of the complete first message; restart recovery completes receipt or retirement safely (ADR-0055).
 Its lifecycle is active or inactive. Process attempts and recovery are diagnostic health.
-The server owns its activation envelope, bounded prompt, subtree milestones, Requests, exact-Area Goal queue, Area inbox, and Operation event outbox.
+The server owns its activation envelope, subtree milestones, Requests, exact-Area Brain inbox, Job history, and Operation event outbox.
 Each generation stores its complete resolved launch. A user-selected registry choice applies to one start or resume attempt without changing the Area default; reattachment keeps the live launch, and automatic recovery or handover resolves the current default.
 The root `harnesses.md` owns executable harness definitions. Every Area owns a separate `harnesses.md` contract that explicitly inherits and can narrow ancestor policy. Contracts record the registry revision they were checked against; missing, legacy, stale, and invalid states are projected through the catalog, and the shell migration command repairs them without changing allowlists or aliases. See ADR-0054.
 Each accepted worker note (`tangent send brain`) adds a receipt to that Goal queue before it writes one exact-Area inbox notice. A pending receipt is a durable notice outbox, and a stable source ID makes retry and recovery idempotent.

@@ -28,7 +28,7 @@ const records = [
   { id: "expand", keyDisplay: "l", ariaKeyshortcuts: "l", scope: "work", kind: "navigation", label: "Expand or move to child", help: "Expand this tree node. From an expanded node, move to its first child.", shortcuts: [{ key: "l" }] },
   { id: "questions", keyDisplay: "r", ariaKeyshortcuts: "r", scope: "area", kind: "action", label: "Review questions", help: "Review the open questions from this Area's brains.", shortcuts: [{ key: "r" }] },
   { id: "note", keyDisplay: "", ariaKeyshortcuts: null, scope: "area", kind: "action", label: "Send note", help: "Send a note to this Area brain." },
-  { id: "readGoal", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "goal", kind: "action", label: "Read Goal", help: "Read this Goal, its notes, dependencies, queue, and attempts.", shortcuts: [{ key: "o" }] },
+  { id: "readGoal", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "goal", kind: "action", label: "Read Goal", help: "Read this Goal and its intent. Open its Job for Assignments and Attempts.", shortcuts: [{ key: "o" }] },
   { id: "fullDocument", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "document", kind: "action", label: "Full reader", help: "Open this presented Document in the full reader.", shortcuts: [{ key: "o" }] },
   { id: "dismissPresentation", keyDisplay: "x", ariaKeyshortcuts: "x", scope: "document", kind: "action", label: "Dismiss", help: "Hide this presentation until the agent presents new content.", shortcuts: [{ key: "x" }] },
   { id: "readGoalPresented", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "card", kind: "action", label: "Read Goal", help: "Open the Goal reader at Presented.", shortcuts: [{ key: "o" }] },

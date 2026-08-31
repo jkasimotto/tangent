@@ -124,7 +124,8 @@ export const brainCommandSpec: CliCommandSpec = {
         { name: "session", takesValue: true, description: "Brain session name; defaults to the tmux session this command runs in" },
         serverOption
       ]
-    }
+    },
+    { name: "succeed", description: "Safely stage and promote the next Brain generation after exact first-message proof", options: [{ name: "session", takesValue: true, description: "Current Brain session; defaults to this tmux session" }, serverOption, jsonOption] }
   ]
 };
 
@@ -158,7 +159,7 @@ export const studyCommandSpec: CliCommandSpec = {
 
 export const goalCommandSpec: CliCommandSpec = {
   name: "goal",
-  description: "Create, list, start, append to, and close Goals in the Tangent tree",
+  description: "Create, inspect, relate, own, and close Goal intent in the Tangent tree",
   subcommands: [
     {
       name: "present",
@@ -212,13 +213,9 @@ export const goalCommandSpec: CliCommandSpec = {
     },
     {
       name: "show",
-      description: "Show one Goal's notes, status, done condition, dependencies, queue, current agent, and each attempt's resume command",
+      description: "Show one Goal's intent, status, done condition, dependencies, Documents, and cards",
       args: "<slug>",
-      options: [
-        { name: "conversations", description: "Find conversation ids not recorded at launch (codex) by the attempt's folder and start time" },
-        serverOption,
-        jsonOption,
-      ],
+      options: [serverOption, jsonOption],
     },
     {
       name: "depend",
@@ -261,36 +258,6 @@ export const goalCommandSpec: CliCommandSpec = {
       ]
     },
     {
-      name: "start",
-      description: "Start an agent on an existing Goal, or a pipeline of steps. Each --step pairs with the --launch, --path, and --continue-from in the same position. A brain that names no --launch lends its own harness.",
-      args: "<slug>",
-      options: [
-        { name: "step", takesValue: true, description: "One step's instruction, in your words; repeatable, steps run in order" },
-        { name: "launch", takesValue: true, description: "Harness as <harness[/model[/effort]]>; repeatable, one per --step at the same position, or one for a Goal started without --step" },
-        { name: "path", takesValue: true, description: "Any working directory for the step at the same position; repeatable; missing, or an empty --path=, means the Area repository" },
-        { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
-        { name: "kind", takesValue: true, description: "implementation or review; repeatable, one per step" },
-        { name: "recovery", description: "Emergency start through the Goal queue when automatic recovery is impaired" },
-        { name: "session", takesValue: true, description: "Caller session; defaults to the current tmux session when available" },
-        serverOption,
-        jsonOption
-      ]
-    },
-    {
-      name: "append",
-      description: "Add steps to the end of a Goal's pipeline, mid-run or finished, without restarting what already ran. A review is a step like any other; the brain reads its note and marks the Goal done.",
-      args: "<slug>",
-      options: [
-        { name: "step", takesValue: true, description: "One new step's instruction, in your words; repeatable, steps run in order after the existing ones" },
-        { name: "launch", takesValue: true, description: "Harness for the step at the same position as <harness[/model[/effort]]>; repeatable, one per --step; a brain that names none lends its own" },
-        { name: "path", takesValue: true, description: "Any working directory for the step at the same position; repeatable; missing, or an empty --path=, means the Area repository" },
-        { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
-        { name: "kind", takesValue: true, description: "implementation or review; repeatable, one per step. Defaults to implementation" },
-        serverOption,
-        jsonOption
-      ]
-    },
-    {
       name: "done",
       description: "Mark a Goal done: Julian's word, or the brain after it read a worker's done note. A Goal flagged verify becomes Check it and waits for Julian.",
       args: "<slug>",
@@ -313,21 +280,43 @@ export const goalCommandSpec: CliCommandSpec = {
       description: "Return a done, parked, or won't-do Goal to open without starting an agent",
       args: "<slug>",
       options: [serverOption]
-    },
-    {
-      name: "replace-agent",
-      description: "Replace the current Goal attempt with another harness, model, or effort while preserving the Goal and queue",
-      args: "<slug>",
-      options: [
-        { name: "launch", takesValue: true, description: "Replacement as <harness[/model[/effort]]> (required)" },
-        { name: "operation-id", takesValue: true, description: "Reuse the original replacement operation for inspection or confirmation" },
-        { name: "confirm", description: "Confirm that the persisted replacement is ready and finish the no-loss swap" },
-        { name: "session", takesValue: true, description: "Caller session for audit; defaults to the current tmux session" },
-        serverOption,
-        jsonOption
-      ]
     }
   ]
+};
+
+export const jobCommandSpec: CliCommandSpec = {
+  name: "job",
+  description: "Create, inspect, and control durable execution runs for Goals",
+  subcommands: [
+    { name: "create", description: "Create a Job without starting an Agent", args: "<goal>", options: [
+      { name: "step", takesValue: true, description: "Assignment instruction; repeatable" },
+      { name: "launch", takesValue: true, description: "Assignment harness as <harness[/model[/effort]]>; repeatable" },
+      { name: "path", takesValue: true, description: "Assignment working directory; repeatable" },
+      { name: "kind", takesValue: true, description: "implementation or review; repeatable" },
+      { name: "continue-from", takesValue: true, description: "Earlier Assignment number, or -; repeatable" },
+      { name: "session", takesValue: true, description: "Calling Brain session" }, serverOption, jsonOption,
+    ] },
+    { name: "show", description: "Show one Job with Assignments, Attempts, and reports", args: "<goal>", options: [{ name: "run", takesValue: true, description: "Historical run number" }, serverOption, jsonOption] },
+    { name: "start", description: "Start the first pending Assignment", args: "<goal>", options: [{ name: "session", takesValue: true, description: "Calling Brain session" }, serverOption, jsonOption] },
+    { name: "append", description: "Append pending Assignments to the current Job", args: "<goal>", options: [
+      { name: "step", takesValue: true, description: "Assignment instruction; repeatable" },
+      { name: "launch", takesValue: true, description: "Assignment harness; repeatable" },
+      { name: "path", takesValue: true, description: "Assignment working directory; repeatable" },
+      { name: "kind", takesValue: true, description: "implementation or review; repeatable" },
+      { name: "continue-from", takesValue: true, description: "Earlier Assignment number, or -; repeatable" },
+      { name: "session", takesValue: true, description: "Calling Brain session" }, serverOption, jsonOption,
+    ] },
+    { name: "advance", description: "Start an exact pending Assignment", args: "<goal> <n>", options: [{ name: "session", takesValue: true, description: "Calling Brain session" }, serverOption, jsonOption] },
+    { name: "stop", description: "Stop the current Job and leave its Goal open", args: "<goal>", options: [{ name: "session", takesValue: true, description: "Caller session" }, serverOption, jsonOption] },
+    { name: "replace", description: "Readiness-gate a new Attempt for one Assignment", args: "<goal>", options: [
+      { name: "assignment", takesValue: true, description: "Stable Assignment ID" },
+      { name: "launch", takesValue: true, description: "Replacement harness" },
+      { name: "expected-attempt", takesValue: true, description: "Current Attempt ID fence" },
+      { name: "confirm", description: "Promote a ready replacement" },
+      { name: "operation-id", takesValue: true, description: "Stable replacement operation ID" },
+      { name: "session", takesValue: true, description: "Calling Brain session" }, serverOption, jsonOption,
+    ] },
+  ],
 };
 
 export const documentCommandSpec: CliCommandSpec = {
@@ -350,23 +339,16 @@ export const documentCommandSpec: CliCommandSpec = {
 
 export const agentCommandSpec: CliCommandSpec = {
   name: "agent",
-  description: "List live agents, recover durable assignment context, and send messages",
+  description: "List, inspect, stop, resume, and message live Agent sessions",
   subcommands: [
     { name: "list", description: "List live agent sessions with their states and queued messages", options: [serverOption, jsonOption] },
-    {
-      name: "context",
-      description: "Read the durable brain or Goal assignment for this tmux session",
-      args: "[session]",
-      options: [
-        { name: "session", takesValue: true, description: "Session name; defaults to the positional name or current tmux session" },
-        serverOption,
-        jsonOption,
-      ],
-    },
+    { name: "show", description: "Show one live Agent joined to its durable Attempt or Brain generation", args: "<session>", options: [serverOption, jsonOption] },
+    { name: "stop", description: "Stop one exact Agent session; a Job Assignment returns to pending", args: "<session>", options: [serverOption, jsonOption] },
+    { name: "resume", description: "Open an unbound resume Agent from one historical Attempt", args: "<session>", options: [{ name: "conversation", takesValue: true, description: "Conversation ID when discovery finds more than one" }, serverOption, jsonOption] },
     {
       name: "send",
-      description: "Send to a live agent or store a durable message for an Area brain",
-      args: "<session-or-area> <text...>",
+      description: "Send a note to one exact live Agent session",
+      args: "<session> <text...>",
       options: [
         { name: "from", takesValue: true, description: "Sender session name; defaults to the tmux session this command runs in" },
         serverOption

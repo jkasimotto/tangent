@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   BRAIN_SCHEMA,
   beginGeneration,
+  beginStagedGeneration,
   brainForArea,
   brainOwnsArea,
   brainPath,
@@ -18,6 +19,7 @@ import {
   latestHandover,
   newBrain,
   normalizeBrainRecord,
+  promoteStagedGeneration,
   readAllBrains,
   readBrain,
   readBrainResult,
@@ -34,6 +36,28 @@ test("brain session identity includes current and historical attempts", () => {
     }])].sort(),
     ["brain-attempt", "brain-current", "brain-old"]
   );
+});
+
+test("a staged successor has no authority until exact receipt promotion", () => {
+  const record = sampleBrain({ area: "otto/tangent" });
+  const launch = { ref: { harness: "claude", model: null, effort: null }, label: "Claude", command: "claude", sourceArea: null, mode: "brain" };
+  beginGeneration(record, "tangent-brain", launch);
+  const source = currentGeneration(record);
+  source.target = "$source";
+  const operation = {
+    id: "succeed-1", status: "starting",
+    source: { session: source.session, generation: source.generation, target: source.target },
+    successor: { session: "tangent-brain-g2", generation: 2, target: "$next" },
+    prompt: { includedNotices: [] },
+  };
+  const staged = beginStagedGeneration(record, "tangent-brain-g2", source.resolvedLaunch, operation);
+  assert.equal(record.session, source.session);
+  assert.equal(record.generation, source.generation);
+  assert.equal(staged.state, "staged");
+  promoteStagedGeneration(record, { sha256: "proof", bytes: 5 });
+  assert.equal(record.session, "tangent-brain-g2");
+  assert.equal(record.generation, 2);
+  assert.equal(source.state, "succeeded");
 });
 
 test("brain reads preserve malformed-record evidence", async () => {

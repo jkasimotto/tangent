@@ -10,13 +10,23 @@ export async function runBrainCli(argv = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv, { repeatable: ["option", "document"] });
   const subcommand = args._[0];
   if (!subcommand || args.help) return help();
-  if (subcommand === "advance") return advanceCommand(args);
+  if (subcommand === "advance") { console.error("tangent brain advance is now tangent job advance"); return advanceCommand(args); }
   if (subcommand === "request") return requestCommand(args);
   if (subcommand === "withdraw") return withdrawCommand(args);
   if (subcommand === "status") return statusCommand(args);
   if (subcommand === "stop") return stopCommand(args);
-  if (subcommand === "handover") throw new Error("tangent brain handover is gone: a brain runs until Julian restarts it, and the Area note is its memory. Rewrite the note instead.");
+  if (subcommand === "succeed") return succeedCommand(args);
+  if (subcommand === "handover") { console.error("tangent brain handover is now tangent brain succeed"); return succeedCommand(args); }
   throw new Error(`Unknown brain command: ${subcommand}. Try "tangent brain status [area]" or "tangent brain stop [area]".`);
+}
+
+/** Requests safe succession for the calling live Brain. */
+async function succeedCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const session = await requireSession(args, "tangent brain succeed");
+  const result = await postJson(server, "/api/brains/succeed", { session, operationId: randomUUID(), ...(args._[0] === "handover" ? { compatAlias: "brain handover" } : {}) });
+  if (booleanArg(args.json)) return console.log(JSON.stringify(result, null, 2));
+  console.log(`staged successor generation ${result.succession?.successor?.generation ?? ""}; promotion waits for exact first-message proof`);
 }
 
 /** Stops one exact live brain attempt through Agent Shell ownership fencing. */
@@ -74,12 +84,12 @@ async function advanceCommand(args: Args): Promise<void> {
   const slug = String(args._[1] ?? "").trim();
   const step = Number(args._[2]);
   if (!slug) throw new Error("tangent brain advance needs <goal> <step>.");
-  if (!Number.isInteger(step) || step < 1) throw new Error("tangent brain advance needs a positive step number.");
+  if (!Number.isInteger(step) || step < 1) throw new Error("tangent brain advance needs a positive Assignment number.");
   const goal = await requireGoal(server, slug);
   const caller = await currentTmuxSession();
-  const expectedRevision = await goalQueueRevision(server, goal.file);
-  const result = await postJson(server, "/api/pipelines/control", { goal: goal.file, action: "advance", step, expectedRevision, idempotencyKey: randomUUID(), ...(caller ? { caller } : {}) });
-  console.log(`started ${slug} step ${step} in ${String(result.next?.session ?? "(no session)")}`);
+  const shown = await vaultFetch(server, `/api/jobs/show?goal=${encodeURIComponent(goal.file)}`);
+  const result = await postJson(server, "/api/jobs/advance", { goal: goal.file, assignment: step, expectedRun: shown.job.run, expectedRevision: shown.job.revision, operationId: randomUUID(), ...(caller ? { caller } : {}) });
+  console.log(`started ${slug} Assignment ${step} in ${String(result.next?.session ?? "(no session)")}`);
 }
 
 /** Handles `tangent brain status [area]`. */

@@ -98,10 +98,10 @@
     const stalled = sessions.find((session) => session.state === "waiting" || session.state === "shell");
     if (stalled) return waitFrom(stalled.waitingSince, now, waitReason(stalled));
     const stepWaiting = steps.find((step) => step.status === "running" && step.live && (step.state === "waiting" || step.state === "shell") && !bound.has(step.session));
-    if (stepWaiting) return waitFrom(stepWaiting.waitingSince, now, `Step ${stepWaiting.index}: ${waitReason(stepWaiting)}`);
+    if (stepWaiting) return waitFrom(stepWaiting.waitingSince, now, `Assignment ${stepWaiting.index}: ${waitReason(stepWaiting)}`);
     const current = currentPipelineStep(steps);
     const stepStopped = current && (current.status === "stopped" || (current.status === "running" && !current.live)) ? current : null;
-    if (stepStopped) return waitFrom(stepTime(stepStopped.endedAt), now, `Step ${stepStopped.index} stopped`);
+    if (stepStopped) return waitFrom(stepTime(stepStopped.endedAt), now, `Assignment ${stepStopped.index} stopped`);
     const needsYou = handoffNeedsYou === null || handoffNeedsYou === undefined
       ? /\b(julian|you)\b/i.test(String(goal.waitingOn ?? ""))
       : Boolean(handoffNeedsYou);

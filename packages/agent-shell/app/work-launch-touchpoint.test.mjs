@@ -42,8 +42,8 @@ test("a running step's open control is its harness, model, and effort", async ()
 
   assert.match(words(control), /^Codex · pi-code\/glm-5-2 · 1\/\d$/, "agent, launch, and step print once; an empty effort is dropped, not printed");
   assert.equal(control.className, "work-agent-ref", "the launch text never takes the state colour of .desk-action");
-  assert.match(control.getAttribute("aria-label"), /^Open step 1 on pi-code\/glm-5-2:/, "the verb moves into the accessible name");
-  assert.match(control.getAttribute("title"), /^Open step 1 on pi-code\/glm-5-2\n/, "the hover carries the verb, then the step instruction");
+  assert.match(control.getAttribute("aria-label"), /^Open Assignment 1 on pi-code\/glm-5-2:/, "the verb moves into the accessible name");
+  assert.match(control.getAttribute("title"), /^Open Assignment 1 on pi-code\/glm-5-2\n/, "the hover carries the verb, then the Assignment instruction");
   assert.equal(control.querySelector("kbd").textContent, "⌘⇧↵", "the control prints the key that enters the run");
   assert.equal(document.querySelectorAll("tr[data-goal-anchor$='goal-compact-table.md'] .work-cell-agent [data-open-goal-run]").length, 1, "the fact and the control are one element");
 });

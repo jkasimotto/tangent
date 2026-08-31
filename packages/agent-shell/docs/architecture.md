@@ -1,10 +1,10 @@
 # @tangent/agent-shell Architecture
 
-The published package API is `src/cli/`. The same package also carries the local Agent Shell application in `app/`. The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for `area`, `brain`, `goal`, `document`, `vault`, `agent`, `shell`, and `study`.
+The published package API is `src/cli/`. The same package also carries the local Agent Shell application in `app/`. The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for `area`, `brain`, `goal`, `job`, `document`, `vault`, `agent`, `shell`, and `study`.
 
 - `src/cli/spec.ts`: the help specifications for each public Agent Shell command.
 - `src/cli/client.ts`: the HTTP client. Loopback-only, default `http://127.0.0.1:4321`, overridable via `--server` or `TANGENT_SHELL_URL`. Every request has a response deadline and operation ID. A mutation transport failure says that the effect can already have committed. The client reads a tmux session when one is available.
-- `src/cli/commands/`: thin HTTP clients to the Agent Shell server. The worker command and its aliases use one strict report parser and one HTTP route. The server stores Goal queues and Request records.
+- `src/cli/commands/`: thin HTTP clients to the Agent Shell server. Goal owns intent, Job owns execution, Agent owns sessions, and Brain owns Area organization. Hidden compatibility aliases call the canonical service for one release.
 - `src/cli/commands/shell.ts`: `tangent shell rebuild`. It posts the rebuild endpoint and polls `GET /api/sessions` until the boot id changes. `app/rebuild-operation.mjs` persists the target and lifecycle. `app/rebuild-worker.mjs` builds separately and stops the old server only after a successful build.
 - `src/cli/commands/vault.ts`: the one command that shells out itself. `vault commit` uses `@tangent/repo`'s `git()` to commit directly to `~/.tangent/trees` with the same message shape and trailers as the server's `vaultCommit()`.
 - `src/cli/commands/study.ts` and `study-contract.ts`: the second command that does not talk to the server. `tangent study` spawns a local interactive `claude` process with `stdio: "inherit"`, carrying the partner contract as an appended system prompt; the terminal belongs to that session until it exits (ADR-0026). No repo argument, no server involvement: scoping happens in the opening conversation, and the partner's own tool rights (read anywhere, edit and run only in a per-repo study worktree) come entirely from the contract text in `study-contract.ts`, not from code.
@@ -21,7 +21,7 @@ Gateway and controller share one stable Agent Shell instance identity. The gatew
 
 `app/public/refresh-lifecycle.js` serializes all complete browser projection reads. It keeps one trailing refresh when triggers overlap and owns projection retry timing. The browser probes gateway health only after a material projection error. Gateway and controller boot identities remain separate, so only a gateway replacement reloads browser assets.
 
-The browser refreshes through one compact `GET /api/work` read model. The model excludes durable report, handover, attempt, notice, and generation bodies. Targeted Goal and brain routes own full history. The controller gives the response a content ETag. The gateway caches its bytes without parsing them and serves the last valid response during controller recovery.
+The browser refreshes through compact `GET /api/work` v2. Goals and Jobs are separate collections joined by exact Goal file. The model excludes full report, notice, prompt, Attempt, and generation bodies; targeted Job, Agent, Goal, and Brain routes own detail. A deprecated v1 projection protects old browser assets for one release. The controller gives the response a content ETag, and the gateway can serve the last valid bytes during recovery.
 
 `app/native/install-launch-agent.sh` installs the one outer gateway supervisor. Launchd restarts only unsuccessful exits and applies a ten-second throttle. The native app validates `/api/health`, asks launchd to start the job, and uses a re-probing exponential-backoff fallback only when the job is not installed.
 
@@ -39,7 +39,7 @@ The browser refreshes through one compact `GET /api/work` read model. The model 
 - `session-ownership.mjs`: runtime identity, live tmux ownership, stale ownership evidence, and guarded termination;
 - `bounded-work.mjs`: ordered concurrency bounds for pane and message fan-out;
 - `vault-repository.mjs`: safe atomic Markdown writes and exact-path provenance commits;
-- record modules: the only readers and writers of Goal queues, worker handover receipts, brains, inboxes, requests, Operation events, armed prompts, and rebuild state. Compatibility readers normalize old pipeline and continuation records without writing those schemas.
+- record modules: the only readers and writers of `job.v1`, worker report receipts, Brains, inboxes, Requests, Operation events, armed exact-prompt receipts, and rebuild state. `job-record.mjs` preserves numbered run history and reads both old execution schemas; `pipeline-record.mjs` is a one-release re-export.
 - `area-brain-domain.mjs`: milestone storage, Goal queue transitions, Operation projection, and detached audit export.
 - `area-presentations.mjs`: Area-keyed runtime attention records. They project only to `area.presentations`, use the existing Document readers, and are removed when an Area is done or archived.
 

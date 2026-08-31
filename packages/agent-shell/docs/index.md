@@ -3,13 +3,14 @@
 Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 
 - Vault CLI: `tangent area`, `tangent goal`, `tangent document`, `tangent vault commit`.
-- Agent CLI: `tangent agent list`, `tangent send`, and read-only `tangent agent context` recovery from durable brain and Goal records.
+- Agent CLI: `tangent agent list|show|stop|resume|send` joins exact live sessions to durable Job Attempts or Brain generations. Root `tangent send` remains the Area-aware convenience route.
 - Worker CLI: every assignment names its organizing brain's durable Area path. Its only command is `tangent send <brain-area> "<plain note>"`. A note never changes Goal or assignment state. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
 - Brain CLI: `tangent brain request` creates durable user requests, and `tangent brain advance` starts the next approved assignment.
-- Brain and server CLI: `tangent brain status|stop|request|withdraw` reads or stops a brain and files its questions through guarded Agent Shell routes. A brain runs until Julian restarts it; there is no handover (ADR-0041). `tangent goal create --start --path <dir>` is the brain's one command to create a Goal and start its worker. `tangent shell rebuild` rebuilds and restarts the server.
+- Job CLI: `tangent job create|show|start|append|advance|stop|replace` owns numbered execution runs, Assignments, Attempts, reports, and recovery receipts. Goal commands own intent only.
+- Brain and server CLI: `tangent brain status|stop|request|withdraw|succeed` owns exact-Area organization. Safe succession stages the next generation without authority until exact transcript receipt, then retires the outgoing immutable target (ADR-0055). `tangent goal create --start --path <dir>` is the Brain's composite Goal-plus-Job operation. `tangent shell rebuild` rebuilds and restarts the server.
 - Study partner CLI: `tangent study` (spawns an interactive `claude-otto` session carrying the partner contract) and `tangent study contract` (prints that contract).
 
-The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321 and durable terminal transport. It supervises the controller in `server.mjs`. Both processes share one runtime identity. They can use only tmux sessions marked with that identity. The controller owns logical Area brains, durable Area inboxes, Goal queues, Requests, Operation events, and session projection. See ADR-0032, ADR-0034, and ADR-0036.
+The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321 and durable terminal transport. It supervises the controller in `server.mjs`. Both processes share one runtime identity. They can use only tmux sessions marked with that identity. The controller owns Brains, inboxes, Goal intent projection, `job.v1` history, Agent Attempts, Requests, lifecycle events, invariant Problems, and Work v2. See ADR-0032, ADR-0036, and ADR-0055.
 
 Any replacement harness can recover the current assignment from the tmux session name. The context projection does not claim or mutate the session. A live unbound session reports `unassigned`. A worker that exits to its still-live shell leaves its queue status and tmux session intact and creates one durable exact-Area brain notice.
 

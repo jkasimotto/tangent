@@ -207,8 +207,8 @@
       id: askIdentity("stopped-step", goal.file, step.index, step.startedAt || step.session || step.endedAt || "attempt"),
       area: goal.area,
       subject: goal.title,
-      question: `Step ${step.index} stopped. Review its queue recovery?`,
-      actions: [{ kind: "reveal-goal", label: "See steps", arg: { file: goal.file } }],
+      question: `Assignment ${step.index} stopped. Review its Job recovery?`,
+      actions: [{ kind: "reveal-goal", label: "See Assignments", arg: { file: goal.file } }],
       source: "step",
     });
   }

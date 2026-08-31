@@ -12,7 +12,7 @@ import { goalCommandSpec } from "../spec.js";
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   // Boolean flags never consume the token after them.
-  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status", "url", "label", "item", "commit", "review"], boolean: ["continue", "own", "confirm", "start", "verify", "conversations", "withdraw"] });
+  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status", "url", "label", "item", "commit", "review"], boolean: ["continue", "own", "confirm", "start", "verify", "withdraw"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
   // `tangent goal <subcommand> --help` prints that subcommand's own flags:
@@ -26,13 +26,13 @@ export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "release") return ownershipCommand(args, "release");
   if (subcommand === "depend") return dependencyCommand(args, false);
   if (subcommand === "undepend") return dependencyCommand(args, true);
-  if (subcommand === "start") return startCommand(args);
-  if (subcommand === "append") return appendCommand(args);
+  if (subcommand === "start") { console.error("tangent goal start is now tangent job create, then tangent job start"); return startCommand(args); }
+  if (subcommand === "append") { console.error("tangent goal append is now tangent job append"); return appendCommand(args); }
   if (subcommand === "done") return doneCommand(args);
   if (subcommand === "wont-do") return wontDoCommand(args);
   if (subcommand === "park") return parkCommand(args);
   if (subcommand === "reopen") return reopenCommand(args);
-  if (subcommand === "replace-agent") return replaceAgentCommand(args);
+  if (subcommand === "replace-agent") { console.error("tangent goal replace-agent is now tangent job replace"); return replaceAgentCommand(args); }
   if (subcommand === "present") return presentCommand(args);
   throw new Error(`Unknown goal command: ${subcommand}. Try "tangent goal --help".`);
 }
@@ -158,6 +158,7 @@ async function createCommand(args: Args): Promise<void> {
   const own = booleanArg(args.own) ? await requireSession(args, "tangent goal create --own") : "";
   const caller = explicitSession || (await currentTmuxSession());
   const result = await postJson(server, "/api/goals/create", {
+    operationId: randomUUID(),
     area,
     description: stringArg(args.description)?.trim() || "",
     goal: { title, doneWhen, state: "Not started." },
@@ -223,9 +224,11 @@ async function startCommand(args: Args): Promise<void> {
   const solo = steps.length ? undefined : soloLaunch(args);
   const result = recovery
     ? await postJson(server, "/api/goals/start", { file: goal.file, recovery: true, ...(caller ? { caller } : {}) })
-    : steps.length
-    ? await postJson(server, "/api/goals/start", { file: goal.file, steps, recovery, ...(caller ? { caller } : {}) })
-    : await postJson(server, "/api/goals/start", { file: goal.file, approved: true, launch: true, ...(solo ? { choice: solo } : {}), recovery, ...(caller ? { caller } : {}) });
+    : await (async () => {
+      const assignments = steps.length ? steps : [{ instruction: `Complete ${goal.title}. Done when: ${goal.doneWhen}`, ...(solo ? { launch: solo } : {}) }];
+      const created = await postJson(server, "/api/jobs/create", { goal: goal.file, steps: assignments, operationId: randomUUID(), compatAlias: "goal start", ...(caller ? { caller } : {}) });
+      return postJson(server, "/api/jobs/start", { goal: goal.file, expectedRun: created.job.run, expectedRevision: created.job.revision, operationId: randomUUID(), compatAlias: "goal start", ...(caller ? { caller } : {}) });
+    })();
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -233,8 +236,8 @@ async function startCommand(args: Args): Promise<void> {
   printLaunches(result);
   printLaunchWarnings(result);
   const session = result.session ? String(result.session) : "(no session)";
-  if (result.status === "queued") console.log(`queued ${slug} in its authoritative Goal queue`);
-  else if (steps.length) console.log(`started ${slug}: ${steps.length} step${steps.length === 1 ? "" : "s"}, step 1 in ${session}${recovery ? " (recovery)" : ""}`);
+  if (result.status === "queued") console.log(`created ${slug} Job`);
+  else if (steps.length) console.log(`started ${slug}: ${steps.length} Assignment${steps.length === 1 ? "" : "s"}, Assignment 1 in ${session}${recovery ? " (recovery)" : ""}`);
   else console.log(`started ${slug} in ${session}${recovery ? " (recovery)" : ""}`);
 }
 
@@ -260,7 +263,7 @@ function printLaunches(result: { launches?: unknown }): void {
   for (const row of launches) {
     const source = row.source === "brain-default" ? " (your brain's harness)" : "";
     const folder = row.cwd ? ` in ${row.cwd}` : "";
-    console.log(`launch: step ${row.index} runs ${row.launch ?? row.command ?? "(edited command)"}${source}${folder}`);
+    console.log(`launch: Assignment ${row.index} uses ${row.launch ?? row.command ?? "(edited command)"}${source}${folder}`);
   }
 }
 
@@ -283,8 +286,8 @@ async function appendCommand(args: Args): Promise<void> {
   const steps = pipelineSteps(args, { appending: true });
   if (!steps.length) throw new Error("tangent goal append needs at least one --step.");
   const caller = stringArg(args.session) || (await currentTmuxSession());
-  const expectedRevision = await goalQueueRevision(server, goal.file);
-  const result = await postJson(server, "/api/pipelines/append", { goal: goal.file, steps, expectedRevision, idempotencyKey: randomUUID(), ...(caller ? { caller } : {}) });
+  const shown = await vaultFetch(server, `/api/jobs/show?goal=${encodeURIComponent(goal.file)}`);
+  const result = await postJson(server, "/api/jobs/append", { goal: goal.file, steps, expectedRun: shown.job.run, expectedRevision: shown.job.revision, operationId: randomUUID(), compatAlias: "goal append", ...(caller ? { caller } : {}) });
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -292,11 +295,11 @@ async function appendCommand(args: Args): Promise<void> {
   printLaunches(result);
   printLaunchWarnings(result);
   const added = Array.isArray(result.added) ? (result.added as number[]) : [];
-  const which = added.length > 1 ? `steps ${added[0]} to ${added[added.length - 1]}` : `step ${added[0] ?? "?"}`;
+  const which = added.length > 1 ? `Assignments ${added[0]} to ${added[added.length - 1]}` : `Assignment ${added[0] ?? "?"}`;
   const next = result.next as { index?: number; session?: string } | null | undefined;
-  if (result.status === "asked") console.log(`added ${which} to ${slug}; step ${String(result.after)}'s agent (${String(result.session)}) was asked to hand over again`);
-  else if (result.status === "started") console.log(`added ${which} to ${slug}; step ${String(next?.index ?? added[0])} started in ${String(next?.session ?? "(no session)")}`);
-  else console.log(`added ${which} to ${slug}; it starts when step ${String(result.after)} hands over`);
+  if (result.status === "asked") console.log(`added ${which} to ${slug}; Assignment ${String(result.after)}'s Agent (${String(result.session)}) received another report request`);
+  else if (result.status === "started") console.log(`added ${which} to ${slug}; Assignment ${String(next?.index ?? added[0])} started in ${String(next?.session ?? "(no session)")}`);
+  else console.log(`added ${which} to ${slug}; it starts after Assignment ${String(result.after)} reports`);
 }
 
 type PipelineStepInput = {
@@ -381,7 +384,7 @@ function parseContinueFrom(value: string | undefined, stepIndex: number): number
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1 || n >= stepIndex) {
     const range = Number.isFinite(stepIndex) ? ` (1 to ${stepIndex - 1})` : "";
-    throw new Error(`--continue-from${Number.isFinite(stepIndex) ? ` for step ${stepIndex}` : ""} must be an earlier step number${range} or -, got "${value}".`);
+    throw new Error(`--continue-from${Number.isFinite(stepIndex) ? ` for Assignment ${stepIndex}` : ""} must be an earlier Assignment number${range} or -, got "${value}".`);
   }
   return n;
 }
@@ -433,8 +436,7 @@ async function showCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const slug = requiredString(args._[1], "tangent goal show requires <slug>.");
   const goal = await requireGoal(server, slug);
-  const lookup = booleanArg(args.conversations) ? "&conversations=1" : "";
-  const detail = await vaultFetch(server, `/api/goals/detail?goal=${encodeURIComponent(goal.file)}${lookup}`);
+  const detail = await vaultFetch(server, `/api/goals/detail?goal=${encodeURIComponent(goal.file)}`);
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(detail, null, 2));
     return;
@@ -457,58 +459,6 @@ async function showCommand(args: Args): Promise<void> {
     console.log("Presented:");
     for (const card of cards) console.log(`  ${card.kind} · ${card.title} · ${card.summary ?? ""}`.trimEnd());
   }
-  const queue = detail.queue;
-  if (queue) {
-    const assignments = queueAssignments(queue);
-    console.log(`queue: ${queue.status ?? "open"}, revision ${queue.revision ?? "?"}, ${assignments.length} assignment${assignments.length === 1 ? "" : "s"}`);
-    const current = assignments.find((item) => item.id === queue.currentAssignmentId) ?? assignments.find((item) => ["running", "waiting", "stopped"].includes(String(item.status ?? "")));
-    if (current) console.log(`current agent: ${current.session ?? "none"} (${current.status ?? "unknown"})`);
-  }
-  for (const line of attemptLines(Array.isArray(detail.attempts) ? detail.attempts : [])) console.log(line);
-}
-
-type AttemptView = {
-  session?: string | null;
-  cwd?: string | null;
-  resolvedLaunch?: { ref?: { harness?: string; model?: string | null; effort?: string | null } | null; command?: string } | null;
-  contextFill?: { usedTokens?: number; windowTokens?: number } | null;
-  resume?: {
-    live?: boolean;
-    conversationId?: string | null;
-    command?: string | null;
-    found?: Array<{ id?: string }>;
-    contextFill?: { usedTokens?: number; windowTokens?: number } | null;
-  } | null;
-};
-
-/** One `used of window` reading in thousands, or the reason there is none. */
-function contextFillText(fill: { usedTokens?: number; windowTokens?: number } | null | undefined): string {
-  if (!fill || typeof fill.usedTokens !== "number") return "not seen";
-  const window = typeof fill.windowTokens === "number" && fill.windowTokens > 0 ? ` of ${Math.round(fill.windowTokens / 1000)}k` : "";
-  return `${Math.round(fill.usedTokens / 1000)}k${window}`;
-}
-
-/**
- * The per-attempt lines of `tangent goal show` (ADR-0042): session, folder,
- * harness, conversation id, the exact resume command, and the last context
- * fill seen. A brain or Julian copies the resume line as it is.
- */
-function attemptLines(attempts: AttemptView[]): string[] {
-  if (!attempts.length) return [];
-  const lines = ["attempts:"];
-  attempts.forEach((attempt, index) => {
-    const resume = attempt.resume ?? {};
-    const ref = attempt.resolvedLaunch?.ref;
-    const harness = ref?.harness ? [ref.harness, ref.model, ref.effort].filter(Boolean).join("/") : attempt.resolvedLaunch?.command ?? "unknown";
-    lines.push(`  ${index + 1}. session ${attempt.session ?? "none"}${resume.live ? " (live)" : ""}`);
-    lines.push(`     cwd: ${attempt.cwd ?? "unknown"}`);
-    lines.push(`     harness: ${harness}`);
-    lines.push(`     conversation: ${resume.conversationId ?? "not recorded"}`);
-    if ((resume.found?.length ?? 0) > 1) lines.push(`     found: ${resume.found!.map((item) => item.id).join(", ")} (two match, pass one to resume)`);
-    lines.push(`     resume: ${resume.command ?? "none"}`);
-    lines.push(`     context: ${contextFillText(resume.contextFill ?? attempt.contextFill)}`);
-  });
-  return lines;
 }
 
 /**
@@ -581,26 +531,28 @@ async function replaceAgentCommand(args: Args): Promise<void> {
   const launch = parseLaunch(requiredString(stringsArg(args.launch)[0], "tangent goal replace-agent requires --launch <harness[/model[/effort]]>."));
   if (stringsArg(args.launch).length !== 1 || !launch) throw new Error("tangent goal replace-agent takes exactly one --launch.");
   const goal = await requireGoal(server, slug);
-  const detail = await vaultFetch(server, `/api/goals/detail?goal=${encodeURIComponent(goal.file)}`);
-  const queue = detail.queue;
-  if (!queue || !Number.isInteger(queue.revision)) throw new Error("This Goal has no authoritative queue to replace.");
+  const detail = await vaultFetch(server, `/api/jobs/show?goal=${encodeURIComponent(goal.file)}`);
+  const queue = detail.job;
+  if (!queue || !Number.isInteger(queue.revision)) throw new Error("This Goal has no authoritative Job Attempt to replace.");
   const assignments = queueAssignments(queue);
-  const assignmentId = detail.current?.assignmentId ?? queue.currentAssignmentId;
+  const assignmentId = queue.currentAssignmentId;
   const assignment = assignments.find((item) => item.id === assignmentId)
     ?? assignments.find((item) => ["running", "waiting", "stopped"].includes(String(item.status ?? "")));
   if (!assignment) throw new Error("This Goal has no current assignment to replace.");
   const attempt = Array.isArray(assignment.attempts) ? assignment.attempts.slice().reverse().find((item) => !item.endedAt) ?? assignment.attempts.at(-1) : null;
-  const expectedAttemptId = detail.current?.attemptId ?? attempt?.id;
+  const expectedAttemptId = attempt?.id;
   if (!expectedAttemptId) throw new Error("This Goal has no current attempt identity to replace safely.");
   const operationId = stringArg(args["operation-id"])?.trim() || randomUUID();
   const confirmed = booleanArg(args.confirm);
-  const result = await postJson(server, "/api/goals/attempts/replace", {
+  const result = await postJson(server, "/api/jobs/replace", {
     goal: goal.file,
+    expectedRun: queue.run,
     assignmentId: assignment.id,
     expectedRevision: queue.revision,
     expectedAttemptId,
     launch,
     operationId,
+    compatAlias: "goal replace-agent",
     caller: stringArg(args.session) || (await currentTmuxSession()) || "",
     ...(confirmed ? { confirmed: true } : {}),
   });

@@ -40,19 +40,19 @@ test("Work projection excludes durable queue and brain history bodies", () => {
   assert.ok(projected.bytes < 10_000, `expected compact Work bytes, got ${projected.bytes}`);
   assert.doesNotMatch(projected.body, /hhh{100}/);
   assert.doesNotMatch(projected.body, /rrr{100}/);
-  assert.equal(projected.value.vault.areas[0].goals[0].run.steps[0].attemptCount, 1);
-  assert.equal(projected.value.vault.areas[0].goals[0].run.assignments, undefined);
-  assert.equal(projected.value.vault.areas[0].brain.generations, undefined);
-  assert.equal(projected.value.session.sessions.some((session) => session.kind === "brain"), false);
-  assert.deepEqual(projected.value.vault.areas[0].brain.repair, {
+  assert.equal(projected.value.schema, "agent-shell-work.v2");
+  assert.equal(projected.value.vault.areas[0].goals[0].run, undefined, "Goal intent does not contain Job execution");
+  assert.equal(projected.value.runtime.jobs[0].assignments[0].attemptCount, 1);
+  assert.equal(projected.value.runtime.agents.some((session) => session.kind === "brain"), false);
+  assert.deepEqual(projected.value.runtime.brains[0].repair, {
     schema: "area-repair.v1",
     area: "otto",
     current: { session: "otto-repair" },
     history: [{ endedAt: "2026-08-30T00:00:00.000Z", result: "blocked", report: "x".repeat(240) }],
   });
   assert.doesNotMatch(projected.body, /xxx{1000}/);
-  assert.equal(projected.value.session.pipelines, undefined);
-  assert.equal(projected.value.session.brains, undefined);
+  assert.equal(projected.value.runtime.jobs[0].steps, undefined);
+  assert.equal(projected.value.compatibility.v1.schema, "agent-shell-work.v1");
 });
 
 test("Work projection ETag changes only when semantic row data changes", () => {
@@ -63,4 +63,26 @@ test("Work projection ETag changes only when semantic row data changes", () => {
   assert.equal(second.etag, first.etag);
   input.session.sessions.push({ name: "worker", state: "working" });
   assert.notEqual(projectWork(input).etag, first.etag);
+});
+
+test("Work projects the enriched authoritative Assignment view", () => {
+  const projected = projectWork({
+    vault: { areas: [], map: [], documents: [] },
+    session: {
+      sessions: [],
+      pipelines: [{
+        goal: "otto/tangent/goal-live.md", area: "otto/tangent", slug: "live", revision: 2, status: "running",
+        assignments: [{ id: "assignment-1", index: 1, status: "running", session: "worker" }],
+        steps: [{
+          id: "assignment-1", index: 1, status: "running", session: "worker", live: true,
+          attemptState: { word: "Hit a wall", owner: "brain", evidence: { source: "screen", text: "capacity" }, next: "Replace it." },
+        }],
+      }],
+      brains: [],
+    },
+    programs: { operations: [] },
+  });
+
+  assert.equal(projected.value.runtime.jobs[0].assignments[0].live, true);
+  assert.equal(projected.value.runtime.jobs[0].assignments[0].attemptState.word, "Hit a wall");
 });

@@ -187,7 +187,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
     const facts = [item.status || item.assignmentStatus, goalLaunchLabel(item), attemptFillLabel(resume.contextFill ?? item.contextFill)].filter(Boolean).join(" · ");
     const conversation = resume.conversationId ? `<code class="attempt-conversation" title="Conversation id">${escapeHtml(resume.conversationId)}</code>` : "";
     const verb = resume.live || resume.command
-      ? `<button class="quiet-button" type="button" data-resume-attempt="${escapeHtml(item.id ?? "")}" data-resume-goal="${escapeHtml(goalFile)}"${resume.conversationId ? ` data-resume-conversation="${escapeHtml(resume.conversationId)}"` : ""} aria-keyshortcuts="r" title="${escapeHtml(resume.live ? "Attach to the live agent (r)" : `Open a new session in ${resume.cwd || "its folder"} with this typed: ${resume.command}`)}">${resume.live ? "Open agent" : "Resume"} <kbd>r</kbd></button>`
+      ? `<button class="quiet-button" type="button" data-resume-agent="${escapeHtml(item.session ?? "")}"${resume.conversationId ? ` data-resume-conversation="${escapeHtml(resume.conversationId)}"` : ""} aria-keyshortcuts="r" title="${escapeHtml(resume.live ? "Attach to the live Agent (r)" : `Open a new unbound Agent in ${resume.cwd || "its folder"}`)}">${resume.live ? "Open Agent" : "Resume"} <kbd>r</kbd></button>`
       : `<small class="attempt-no-resume">${escapeHtml(resume.conversationId ? "No resume command for this harness." : "No conversation id recorded.")}</small>`;
     return `<li><strong>${escapeHtml(item.session || item.id || "Attempt")}</strong><small>${escapeHtml(facts)}</small>${conversation}${item.current ? `<em>current</em>` : ""}${verb}</li>`;
   }
@@ -208,7 +208,10 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
     const attempts = detail.attempts ?? [];
     const relatedDocuments = detail.relatedDocuments ?? [];
     const cards = detail.cards ?? [];
+    const runOptions = (detail.runs ?? []).map((item) => `<option value="${escapeHtml(String(item.run))}"${item.run === detail.job?.run ? " selected" : ""}>Run ${escapeHtml(String(item.run))} · ${escapeHtml(item.status)}</option>`).join("");
+    /** Renders a link or a vault document action. */
     const cardUrl = (url, label) => url?.href ? `<a href="${escapeHtml(url.href)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>` : `<button type="button" data-open-document="${escapeHtml(url?.file ?? "")}">${escapeHtml(label)}</button>`;
+    /** Renders the fields for one Goal card. */
     const cardBody = (card) => {
       const f = card.fields ?? {};
       if (card.kind === "copy") return `<pre tabindex="0">${escapeHtml(f.text)}</pre>`;
@@ -229,7 +232,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         <section><h2>Dependencies</h2>${references.length ? `<ul>${references.map((item) => `<li><span>${escapeHtml(item.relation)}</span><strong>${escapeHtml(item.title || item.file || item.slug)}</strong><small>${escapeHtml(item.status || "open")}</small></li>`).join("")}</ul>` : `<p>None.</p>`}</section>
         <section><h2>Related Documents</h2>${relatedDocuments.length ? `<ul>${relatedDocuments.map((item) => { const record = typeof item === "string" ? { file: item, title: item } : item; const presented = record.presentedBy?.session ? `Presented by ${record.presentedBy.session}` : ""; return `<li><button type="button" data-open-document="${escapeHtml(record.file)}">${escapeHtml(record.title || record.file)}</button>${presented ? `<small>${escapeHtml(presented)}</small>` : ""}</li>`; }).join("")}</ul>` : `<p>None.</p>`}</section>
         ${cards.length || relatedDocuments.some((item) => item?.presentedBy) ? `<section><h2 id="presented" tabindex="-1">Presented</h2>${cards.map((card) => `<article class="presented-card-detail" aria-label="${escapeHtml(`${card.kind}: ${card.title}, presented by ${card.presentedBy?.session || "brain"}`)}"><h3>${escapeHtml(card.title)}</h3><small>${escapeHtml(card.kind)} · Presented by ${escapeHtml(card.presentedBy?.session || "brain")}</small>${cardBody(card)}</article>`).join("")}</section>` : ""}
-        <section><h2>Queue</h2>${assignments.length ? `<ol>${assignments.map((item, index) => `<li><span>${escapeHtml(String(item.index ?? index + 1))}</span><strong>${escapeHtml(item.instruction || item.label || "Assignment")}</strong><small>${escapeHtml([item.status, goalLaunchLabel(item)].filter(Boolean).join(" · "))}</small></li>`).join("")}</ol>` : `<p>No assignments.</p>`}</section>
+        <section><h2>Job</h2>${runOptions ? `<label>Run <select data-job-run data-job-goal="${escapeHtml(goal.file)}">${runOptions}</select></label>` : ""}${assignments.length ? `<ol>${assignments.map((item, index) => `<li><span>${escapeHtml(String(item.index ?? index + 1))}</span><strong>${escapeHtml(item.instruction || item.label || "Assignment")}</strong><small>${escapeHtml([item.status, goalLaunchLabel(item)].filter(Boolean).join(" · "))}</small></li>`).join("")}</ol>` : `<p>No Assignments.</p>`}</section>
         <section><h2>Attempt history</h2>${attempts.length ? `<ol>${attempts.map((item) => attemptHistoryRow(item, goal.file)).join("")}</ol>` : `<p>No attempts.</p>`}</section>
       </div>
     </section>`;

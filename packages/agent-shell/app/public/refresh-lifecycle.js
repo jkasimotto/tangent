@@ -2,6 +2,18 @@
 export async function readProjection(api) {
   try {
     const work = await api("/api/work");
+    if (work?.schema === "agent-shell-work.v2") {
+      const goals = new Map((work.vault.areas ?? []).flatMap((area) => (area.goals ?? []).map((goal) => [goal.file, goal])));
+      const jobRows = (work.runtime?.jobs ?? []).map((job) => ({ ...job, steps: job.assignments ?? [] }));
+      const jobs = new Map(jobRows.map((job) => [job.goal, job]));
+      const brains = new Map((work.runtime?.brains ?? []).map((brain) => [brain.area, brain]));
+      const documents = new Map((work.vault.documents ?? []).map((document) => [document.file, document]));
+      work.vault.map = (work.vault.map ?? []).map((group) => ({ ...group, goals: (group.goalFiles ?? []).map((file) => goals.get(file)).filter(Boolean) }));
+      work.vault.areas = (work.vault.areas ?? []).map((area) => ({ ...area, brain: brains.get(area.path) ?? null, goals: (area.goals ?? []).map((goal) => ({ ...goal, run: jobs.get(goal.file) ?? null })), documents: (area.documentFiles ?? []).map((file) => documents.get(file)).filter(Boolean) }));
+      const session = { ...(work.compatibility?.v1?.session ?? {}), sessions: work.runtime?.agents ?? [], pipelines: jobRows, brains: work.runtime?.brains ?? [], runtime: { ...(work.compatibility?.v1?.session?.runtime ?? {}), instanceId: work.runtime?.instanceId ?? "" } };
+      if (work.transport) session.runtime.gateway = { boot: work.transport.gatewayBoot, stale: work.transport.stale, capturedAt: work.transport.capturedAt, controller: { boot: work.transport.controllerBoot } };
+      return [work.vault, session, work.programs];
+    }
     if (work?.schema === "agent-shell-work.v1") {
       const goals = new Map((work.vault.areas ?? []).flatMap((area) => (area.goals ?? []).map((goal) => [goal.file, goal])));
       const documents = new Map((work.vault.documents ?? []).map((document) => [document.file, document]));

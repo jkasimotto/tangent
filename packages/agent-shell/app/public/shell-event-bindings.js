@@ -424,11 +424,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   /** Whether this Goal has an attempt to resume: a live session or a recorded one. */
   function resumeAvailabilityForGoal(goal) {
     if (!goal) return { enabled: false, reason: "Choose a Goal row first." };
-    if (sessionForGoal(goal)) return { enabled: true, reason: null };
+    if (sessionForGoal(goal)) return { enabled: true, reason: null, session: sessionForGoal(goal).name };
     const record = pipelineRecordForGoal(goal);
     const attempts = (record?.steps ?? []).flatMap((step) => step.attempts ?? []);
     if (!attempts.length) return { enabled: false, reason: "This Goal has no attempts to resume." };
-    return { enabled: true, reason: null };
+    return { enabled: true, reason: null, session: attempts.at(-1)?.session ?? "" };
   }
 
   /** Resolves the exact mutable identity required for safe attempt replacement. */
@@ -449,7 +449,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       ?? detail?.attempts?.find((item) => item.assignmentId === assignment.id && item.current);
     const expectedAttemptId = attempt?.id ?? attemptId;
     if (!expectedAttemptId) return { enabled: false, reason: "The current assignment has no fenced attempt identity." };
-    if (!Number.isInteger(record.revision)) return { enabled: false, reason: "The current queue has no revision fence." };
+    if (!Number.isInteger(record.revision)) return { enabled: false, reason: "The current Job has no revision fence." };
     return { enabled: true, record, assignment, attempt, assignmentId: assignment.id, expectedAttemptId };
   }
 
@@ -745,7 +745,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         openModal({
           kicker: "Park Goal",
           title: `Park “${goal.title}”?`,
-          copy: sessionForGoal(goal) ? "The server detaches this Goal from its exact live attempt. It does not stop unrelated work." : "The Goal leaves default Work. Its queue, comments, and attempts remain.",
+          copy: sessionForGoal(goal) ? "The server detaches this Goal from its exact live Attempt. It does not stop unrelated work." : "The Goal leaves default Work. Its Job, comments, and Attempts remain.",
           field: { label: "Reason (optional)", placeholder: "Why is this Goal being parked?", required: false },
           confirmLabel: "Park Goal",
           danger: Boolean(sessionForGoal(goal)),
@@ -933,7 +933,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (id === "resumeAttempt") {
       if (!goal) return showToast("Choose a Goal row first.");
       const resumable = resumeAvailabilityForGoal(goal);
-      return resumable.enabled ? resumeGoalAttempt(goal.file) : showToast(resumable.reason);
+      return resumable.enabled ? resumeGoalAttempt(resumable.session) : showToast(resumable.reason);
     }
     if (id === "search") return searchBar.open();
     if (id === "nextMatch") return searchBar.step(1) || showToast("Press / to search first.");
@@ -971,16 +971,16 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    * opens a new `resume` session with the command typed. Either way the
    * session is entered. Without an attempt id the latest attempt is meant.
    */
-  async function resumeGoalAttempt(goalFile, attemptId = "", conversationId = "") {
+  async function resumeGoalAttempt(session, conversationId = "") {
     try {
-      const result = await post("/api/goals/attempts/resume", { goal: goalFile, ...(attemptId ? { attemptId } : {}), ...(conversationId ? { conversationId } : {}) });
+      const result = await post("/api/agents/resume", { session, operationId: crypto.randomUUID(), ...(conversationId ? { conversationId } : {}) });
       await refresh();
       paint(true);
-      const session = state.sessions.find((item) => item.name === result.session);
-      const typed = result.status === "resumed" ? `Resume command typed in ${result.session}. Press Enter there to submit it.` : "";
-      if (typed) showToast(typed);
-      if (session) return openSessionLayer(session, "agent");
-      return typed ? undefined : showToast(`Session ${result.session} is not live yet.`);
+      const resumedName = result.agent?.session;
+      const liveSession = state.sessions.find((item) => item.name === resumedName);
+      const typed = `Resume command typed in ${resumedName}. Press Enter there to submit it.`;
+      if (liveSession) return openSessionLayer(liveSession, "agent");
+      return showToast(typed);
     } catch (error) {
       showToast(error.message);
       return undefined;
@@ -1001,12 +1001,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       await refresh();
       paint(true);
       showToast(result.next
-        ? `Step ${result.next.index} started.`
+        ? `Assignment ${result.next.index} started.`
         : action === "skip"
-          ? `Step ${step} skipped; the pipeline is complete.`
+          ? `Assignment ${step} skipped; the Job is complete.`
           : action === "end"
             ? "Work stopped. The Goal stays open."
-            : `Step ${step} ${action}ed.`);
+            : `Assignment ${step} ${action}ed.`);
     } catch (error) {
       showToast(error.message);
     }
@@ -1463,7 +1463,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (quick) return null;
     const reader = screen.querySelector(".document-reader");
     if (!reader) return null;
-    const buttons = [...reader.querySelectorAll("[data-resume-attempt]")];
+    const buttons = [...reader.querySelectorAll("[data-resume-agent]")];
     return buttons.find((button) => button.parentElement?.querySelector(":scope > em")) ?? buttons[0] ?? null;
   }
 
@@ -1981,8 +1981,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (documentHistory) return navigateDocumentHistory(documentHistory.dataset.documentHistory);
     if (target.closest("[data-leave-document]")) return leaveCurrentSurface();
     if (target.closest("[data-open-reader-agent]")) return openReaderAgent();
-    const resumeAttempt = target.closest("[data-resume-attempt]");
-    if (resumeAttempt) return resumeGoalAttempt(resumeAttempt.dataset.resumeGoal, resumeAttempt.dataset.resumeAttempt, resumeAttempt.dataset.resumeConversation ?? "");
+    const resumeAttempt = target.closest("[data-resume-agent]");
+    if (resumeAttempt) return resumeGoalAttempt(resumeAttempt.dataset.resumeAgent, resumeAttempt.dataset.resumeConversation ?? "");
     if (target.closest("[data-comment-new]")) return openCommentComposer();
     const commentStep = target.closest("[data-comment-step]");
     if (commentStep) return stepComment(Number(commentStep.dataset.commentStep));
@@ -2494,6 +2494,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.addEventListener("change", async (event) => {
+    if (event.target.matches("[data-job-run]")) {
+      try {
+        const result = await api(`/api/jobs/show?goal=${encodeURIComponent(event.target.dataset.jobGoal)}&run=${encodeURIComponent(event.target.value)}`);
+        const attempts = (result.job.assignments ?? []).flatMap((assignment) => (assignment.attempts ?? []).map((attempt) => ({ ...attempt, assignmentId: assignment.id, assignmentIndex: assignment.index, assignmentStatus: assignment.status, current: assignment.id === result.job.currentAssignmentId && !attempt.endedAt, resume: { live: !attempt.endedAt, session: attempt.session, conversationId: attempt.providerSession?.id ?? null, command: attempt.endedAt ? "available" : null, cwd: attempt.cwd } })));
+        state.goalDetail = { ...state.goalDetail, job: result.job, queue: result.job, runs: result.runs, attempts };
+        return paint(true);
+      } catch (error) { return showToast(error.message); }
+    }
     if (event.target.matches("[data-area-focus-path]")) {
       return toggleAreaFocusDraft(event.target.dataset.areaFocusPath, event.target.checked);
     }

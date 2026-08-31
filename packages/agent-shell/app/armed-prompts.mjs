@@ -18,7 +18,8 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
 
-export const ARMED_PROMPT_SCHEMA = "armed-prompt.v1";
+export const ARMED_PROMPT_SCHEMA = "armed-prompt.v2";
+const LEGACY_ARMED_PROMPT_SCHEMA = "armed-prompt.v1";
 
 /** File path of one session's armed-prompt record. */
 export function armedPromptPath(root, session) {
@@ -46,7 +47,7 @@ export async function readAllArmedPrompts(root) {
   const records = [];
   for (const file of await walkJsonFiles(root)) {
     const parsed = await readJsonObject(file);
-    if (parsed?.schema === ARMED_PROMPT_SCHEMA && parsed.session) records.push(parsed);
+    if ([ARMED_PROMPT_SCHEMA, LEGACY_ARMED_PROMPT_SCHEMA].includes(parsed?.schema) && parsed.session) records.push({ ...parsed, schema: ARMED_PROMPT_SCHEMA, receiptRequest: parsed.receiptRequest ?? null });
   }
   return records;
 }

@@ -70,8 +70,10 @@ test("read and write round trip through the area path", async () => {
   const file = pipelinePath(root, "otto/tangent", "agent-pipelines");
   assert.equal(file, path.join(root, "otto/tangent/agent-pipelines.json"));
   const stored = JSON.parse(await readFile(file, "utf8"));
-  assert.equal(Object.hasOwn(stored.steps[0], "continueFrom"), false, "numeric continuation positions are not written");
-  assert.equal(stored.steps[1].continueFromAssignmentId, record.steps[0].id);
+  assert.equal(stored.schema, "job.v1");
+  assert.equal(Object.hasOwn(stored.runs[0], "steps"), false, "the canonical Job stores assignments only");
+  assert.equal(Object.hasOwn(stored.runs[0].assignments[0], "continueFrom"), false, "numeric continuation positions are not written");
+  assert.equal(stored.runs[0].assignments[1].continueFromAssignmentId, record.steps[0].id);
   assert.deepEqual(await readPipeline(root, "otto/tangent", "agent-pipelines"), record);
 
   const leftovers = (await readdir(path.dirname(file))).filter((name) => name.endsWith(".tmp"));
@@ -264,7 +266,7 @@ test("parked is a durable queue status and append does not reopen it", async () 
   const root = await mkdtemp(path.join(tmpdir(), "pipelines-"));
   const record = newPipeline({ goal: "g", area: "otto/tangent", slug: "parked", steps: sampleSteps() });
   record.status = "parked";
-  appendSteps(record, [{ instruction: "Later work.", launch: claude }]);
+  assert.throws(() => appendSteps(record, [{ instruction: "Later work.", launch: claude }]), (error) => error.code === "job-not-reopenable");
   assert.equal(record.status, "parked");
   await writePipeline(root, record);
   assert.equal((await readPipeline(root, record.area, record.slug)).status, "parked");
@@ -391,8 +393,8 @@ test("legacy numeric continuation reads as a stable assignment identity and writ
 
   await writePipeline(root, migrated);
   const persisted = JSON.parse(await readFile(pipelinePath(root, record.area, record.slug), "utf8"));
-  assert.equal(persisted.steps[1].continueFromAssignmentId, persisted.steps[0].id);
-  assert.equal(Object.hasOwn(persisted.steps[1], "continueFrom"), false);
+  assert.equal(persisted.runs[0].assignments[1].continueFromAssignmentId, persisted.runs[0].assignments[0].id);
+  assert.equal(Object.hasOwn(persisted.runs[0].assignments[1], "continueFrom"), false);
   assert.equal(queueNormalizationChanged(await readPipeline(root, record.area, record.slug)), false);
 });
 

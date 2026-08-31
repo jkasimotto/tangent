@@ -1,4 +1,5 @@
 import { renderCommandHelp } from "@tangent/core";
+import { randomUUID } from "node:crypto";
 import { booleanArg, parseArgs, requiredString, stringArg, type Args } from "@tangent/core/cli";
 
 import { currentTmuxSession, postJson, resolveServerUrl, vaultFetch } from "../client.js";
@@ -22,9 +23,44 @@ export async function runAgentCli(argv = process.argv.slice(2)): Promise<void> {
   const subcommand = args._[0];
   if (!subcommand || args.help) return help();
   if (subcommand === "list") return listCommand(args);
-  if (subcommand === "context") return contextCommand(args);
+  if (subcommand === "show") return showCommand(args);
+  if (subcommand === "stop") return stopCommand(args);
+  if (subcommand === "resume") return resumeCommand(args);
+  if (subcommand === "context") { console.error("tangent agent context is now tangent agent show"); return showCommand(args); }
   if (subcommand === "send") return sendCommand(args);
-  throw new Error(`Unknown agent command: ${subcommand}. Try "tangent agent list", "tangent agent context", or "tangent agent send <session-or-area> <text>".`);
+  throw new Error(`Unknown agent command: ${subcommand}. Try "tangent agent list", "tangent agent show <session>", or "tangent agent send <session> <text>".`);
+}
+
+/** Shows one exact live or historical Agent. */
+async function showCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const session = String(args._[1] ?? stringArg(args.session) ?? (await currentTmuxSession()) ?? "").trim();
+  if (!session) throw new Error("tangent agent show needs a session name outside tmux.");
+  const alias = args._[0] === "context" ? "&compatAlias=agent%20context" : "";
+  const { agent } = await vaultFetch(server, `/api/agents/show?session=${encodeURIComponent(session)}${alias}`);
+  if (booleanArg(args.json)) return console.log(JSON.stringify(agent, null, 2));
+  console.log(`${agent.session}  [${agent.live ? "live" : "historical"}]  ${agent.role}`);
+  if (agent.attempt) console.log(`Attempt ${agent.attempt.id} · Assignment ${agent.attempt.assignmentId} · Job ${agent.attempt.run}`);
+  if (agent.context) printContext(agent.context);
+}
+
+/** Stops one exact Agent and its active Attempt. */
+async function stopCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const session = requiredString(args._[1], "tangent agent stop requires <session>.");
+  const { agent } = await vaultFetch(server, `/api/agents/show?session=${encodeURIComponent(session)}`);
+  const result = await postJson(server, "/api/agents/stop", { session, expectedTarget: agent.target, expectedAttemptId: agent.attempt?.id ?? "", operationId: randomUUID() });
+  if (booleanArg(args.json)) return console.log(JSON.stringify(result, null, 2));
+  console.log(`stopped Agent ${session}`);
+}
+
+/** Resumes one historical Agent as an unbound session. */
+async function resumeCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const session = requiredString(args._[1], "tangent agent resume requires <session>.");
+  const result = await postJson(server, "/api/agents/resume", { session, conversationId: stringArg(args.conversation) ?? "", operationId: randomUUID() });
+  if (booleanArg(args.json)) return console.log(JSON.stringify(result, null, 2));
+  console.log(`resumed ${session} in unbound Agent ${result.agent.session}`);
 }
 
 /** Handles `tangent agent list`. */
@@ -49,7 +85,7 @@ async function listCommand(args: Args): Promise<void> {
   }
 }
 
-/** Handles `tangent agent context [session]`. */
+/** Compatibility implementation retained for tests during the alias release. */
 async function contextCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const positional = String(args._[1] ?? "").trim();
@@ -66,20 +102,20 @@ async function contextCommand(args: Args): Promise<void> {
   printContext(context);
 }
 
-/** Handles `tangent agent send <session-or-area> <text...>`, an alias of `tangent send` for one release. */
+/** Sends to one exact Agent. Area addressing remains a one-release adapter. */
 async function sendCommand(args: Args): Promise<void> {
-  console.log('tangent agent send is now tangent send <session|area> "<plain note>"');
   const server = resolveServerUrl(stringArg(args.server));
-  const to = requiredString(args._[1], "tangent agent send requires a live session or Area path.");
+  const to = requiredString(args._[1], "tangent agent send requires a live session.");
   const text = args._.slice(2).join(" ").trim();
   if (!text) throw new Error("tangent agent send requires the message text after the session or Area path.");
   const from = stringArg(args.from) || (await currentTmuxSession());
-  const result = await postJson(server, "/api/agents/send", { to, text, from });
+  const result = await postJson(server, "/api/agents/send", { to, text, from, operationId: randomUUID() });
   if (result.status === "delivered") {
     console.log(`delivered to ${result.to}`);
     return;
   }
   if (result.target === "area") {
+    console.error('Area addressing moved to tangent send <area> "<plain note>"');
     console.log(`queued for ${result.to} (${result.reason})`);
     return;
   }
@@ -157,7 +193,7 @@ function printContext(context: AgentContext): void {
     console.log(`goal status: ${context.goal.status ?? "unknown"}`);
     if (context.goal.doneWhen) console.log(`\nDone when:\n${context.goal.doneWhen}`);
   }
-  if (context.queue) console.log(`\nqueue: ${context.queue.status ?? "unknown"} revision ${context.queue.revision ?? "unknown"}`);
+  if (context.queue) console.log(`\njob: ${context.queue.status ?? "unknown"} revision ${context.queue.revision ?? "unknown"}`);
   if (context.assignment) {
     console.log(`assignment: ${context.assignment.index ?? "?"} of ${context.assignment.total ?? "?"} · ${context.assignment.kind ?? "implementation"} · ${context.assignment.status ?? "unknown"}`);
     if (context.assignment.instruction) console.log(`\nInstruction:\n${context.assignment.instruction}`);
@@ -165,7 +201,7 @@ function printContext(context: AgentContext): void {
   const handovers = (context.priorHandovers ?? []).filter((entry) => entry.handover);
   if (handovers.length) {
     console.log("\nPrior handovers:");
-    for (const handover of handovers) console.log(`- step ${handover.index ?? "?"}: ${handover.handover}`);
+    for (const handover of handovers) console.log(`- Assignment ${handover.index ?? "?"}: ${handover.handover}`);
   }
   if (context.prompt) console.log(`\nRebuilt prompt:\n${context.prompt}`);
   else if (context.promptError) console.log(`\nPrompt rebuild unavailable: ${context.promptError}`);

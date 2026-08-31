@@ -20,8 +20,8 @@ import path from "node:path";
 import { readJsonObject, readJsonObjectResult, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
 import { boundedSessionName } from "./session-names.mjs";
 
-export const BRAIN_SCHEMA = "area-brain.v3";
-const LEGACY_BRAIN_SCHEMAS = new Set(["area-brain.v1", "area-brain.v2"]);
+export const BRAIN_SCHEMA = "area-brain.v4";
+const LEGACY_BRAIN_SCHEMAS = new Set(["area-brain.v1", "area-brain.v2", "area-brain.v3"]);
 
 const MAX_INSTRUCTION_CHARS = 4000;
 const SESSION_NAME_MAX = 60;
@@ -121,6 +121,8 @@ export function normalizeBrainRecord(value, area = "") {
       sourceAttemptId: value.checkpoint?.sourceAttemptId ?? latest?.session ?? null,
     } : null,
     currentAttemptId,
+    activityRevision: Math.max(0, Number(value.activityRevision) || 0),
+    succession: value.succession && typeof value.succession === "object" ? value.succession : null,
     generations,
   };
 }
@@ -157,12 +159,42 @@ export function newBrain({ area, instruction, planFile, now = new Date().toISOSt
     planFile,
     status: "active",
     currentAttemptId: null,
+    activityRevision: 0,
+    succession: null,
     generation: 0,
     session: null,
     createdAt: now,
     updatedAt: now,
     generations: []
   };
+}
+
+/** Appends a successor generation without moving the authority pointer. */
+export function beginStagedGeneration(record, session, resolvedLaunch, operation, now = new Date().toISOString()) {
+  const generation = Math.max(record.generation ?? 0, ...(record.generations ?? []).map((entry) => entry.generation ?? 0)) + 1;
+  const entry = { generation, session, resolvedLaunch: structuredClone(resolvedLaunch), state: "staged", startedAt: now, endedAt: null, handover: null };
+  record.generations = [...(record.generations ?? []), entry];
+  record.succession = { ...operation, successor: { session, generation, target: operation.successor?.target ?? null, instanceId: operation.successor?.instanceId ?? null } };
+  return entry;
+}
+
+/** Promotes one staged generation after exact receipt and fence checks. */
+export function promoteStagedGeneration(record, receipt, now = new Date().toISOString()) {
+  const operation = record.succession;
+  if (!operation || !["starting", "ready"].includes(operation.status)) throw new Error("no staged succession is ready");
+  const successor = record.generations.find((entry) => entry.generation === operation.successor?.generation && entry.session === operation.successor?.session);
+  const source = record.generations.find((entry) => entry.generation === operation.source?.generation && entry.session === operation.source?.session);
+  if (!successor || !source) throw new Error("succession generation is missing");
+  operation.receipt = receipt;
+  operation.status = "promoted";
+  successor.state = "active";
+  source.state = "succeeded";
+  source.endedAt = now;
+  record.generation = successor.generation;
+  record.session = successor.session;
+  record.currentAttemptId = successor.session;
+  record.status = "active";
+  return successor;
 }
 
 /** The current (last) generation entry, or null before the first spawn. */

@@ -998,7 +998,7 @@ function renderSessionLayer() {
         ? "Program session"
         : [agentName(session), peek.kind === "definition" ? "Defining work" : "Agent"].filter(Boolean).join(" · ");
   const detail = assignment
-    ? `Step ${assignment.index} of ${queue.steps.length}${assignment.kind ? ` · ${assignment.kind}` : ""}`
+    ? `Assignment ${assignment.index} of ${queue.steps.length}${assignment.kind ? ` · ${assignment.kind}` : ""}`
     : brain
       ? [brain.generation ? `Generation ${brain.generation}` : "", goal?.title ? `Working ${goal.title} itself` : ""].filter(Boolean).join(" · ")
       : session?.state
@@ -1482,7 +1482,7 @@ async function loadGoalPrompt(file, mode = "goal") {
   paint(true);
   try {
     const brief = await api(`/api/goals/brief?file=${encodeURIComponent(file)}&mode=${encodeURIComponent(mode)}`);
-    const label = mode === "pipeline" ? "Pipeline step" : "Goal assignment";
+    const label = mode === "pipeline" ? "Job Assignment" : "Goal Assignment";
     state.promptInspector = { loading: false, title: `${label} · ${brief.goal.title}`, text: brief.markdown, error: "", file, area: "" };
   } catch (error) {
     state.promptInspector = { loading: false, title: "", text: "", error: error.message, file, area: "" };

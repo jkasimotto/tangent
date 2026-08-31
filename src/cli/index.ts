@@ -22,6 +22,7 @@ const productCommands: Record<string, ProductCommand> = {
   brain: { module: "@tangent/agent-shell/cli", exportName: "runBrainCli", installHint: "brain" },
   shell: { module: "@tangent/agent-shell/cli", exportName: "runShellCli", installHint: "shell" },
   goal: { module: "@tangent/agent-shell/cli", exportName: "runGoalCli", installHint: "goal" },
+  job: { module: "@tangent/agent-shell/cli", exportName: "runJobCli", installHint: "job" },
   harness: { module: "@tangent/agent-shell/cli", exportName: "runHarnessCli", installHint: "harness" },
   handover: { module: "@tangent/agent-shell/cli", exportName: "runHandoverCli", installHint: "handover" },
   send: { module: "@tangent/agent-shell/cli", exportName: "runSendCli", installHint: "send" },
@@ -52,6 +53,7 @@ const tangentCommandSpec: CliCommandSpec = {
       ]
     },
     { name: "process", description: "Read, pause, resume, and check repeatable work (process-<slug>.md notes)", args: "<list|show|pause|resume|check>" },
+    { name: "job", description: "Create, inspect, and control durable Goal execution", args: "<create|show|start|append|advance|stop|replace>" },
     productCommandSpec("usage", "Inspect coding-agent activity"),
     productCommandSpec("rollup", "Generate private rollup notes"),
     productCommandSpec("search", "Index and search repository structure"),

@@ -39,6 +39,7 @@ Decisions:
 - decisions/ADR-0038-agent-shell-keyboard-ownership.md
 - decisions/ADR-0039-durable-generic-agent-message-queue.md
 - decisions/ADR-0054-explicit-area-harness-contracts.md
+- decisions/ADR-0055-separate-goals-jobs-agents-and-brains.md
 - decisions/ADR-0030-area-triggers.md (amended by ADR-0043)
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md

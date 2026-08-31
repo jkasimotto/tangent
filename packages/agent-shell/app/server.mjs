@@ -28,11 +28,11 @@ import { createPaneObserver } from "./pane-observer.mjs";
 import { classifyWorkingComposer } from "./pane-state.mjs";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 import { createObservationCache } from "./observation-cache.mjs";
-import { appendSteps, continuationSource, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllPipelines, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
+import { acceptCurrentAssignment, appendSteps, continuationSource, createJobRun, currentStep, endPipeline, goalBindingGoneFromSnapshot, jobMigration, jobRun, JobMutationError, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllJobs, readAllPipelines, readJob, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./job-record.mjs";
 import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
 import { continuationSection } from "./context-handover.mjs";
 import { messageBanner, noticeMessage, normalizeMessage } from "./agent-messages.mjs";
-import { beginGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, brainSessionNames, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, readBrainResult, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { beginGeneration, beginStagedGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, brainSessionNames, currentGeneration, endBrain, latestHandover, newBrain, promoteStagedGeneration, readAllBrains, readBrain, readBrainResult, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { resolveBrainAttemptLaunch } from "./brain-launch.mjs";
 import { refreshBrainObservation } from "./brain-lifecycle.mjs";
 import { brainAttemptAuthority, inactiveBrainAuthorityState } from "./brain-authority.mjs";
@@ -49,13 +49,14 @@ import { createStateEvents } from "./state-events.mjs";
 import { createBrainRoutes } from "./brain-routes.mjs";
 import { answerBrainRequest, beginRequestEffect, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, finishRequestEffect, openBrainRequests, readBrainRequests, withdrawBrainRequest, writeBrainRequests } from "./brain-requests.mjs";
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
+import { createJobRoutes } from "./job-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
 import { resolveAgentContext, unassignedAgentContext } from "./agent-context.mjs";
 import { workerShellExitNotice } from "./agent-recovery.mjs";
 import { deriveAttemptState, deriveBrainState, latestAttemptReport } from "./attempt-state.mjs";
 import { beginRecoveryStep, expireRecoverySteps, finishRecoveryStep, nextRecoveryAction } from "./recovery-ladder.mjs";
 import { REPAIR_REFUSAL, endRepair, extendRepairLease, liveRepair, newRepair, readAllRepairs, readRepair, repairDispatchDecision, writeRepair } from "./repair-crew.mjs";
-import { observeTranscript } from "./transcript-tail.mjs";
+import { firstUserMessageReceipt, observeTranscript } from "./transcript-tail.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
 import { createAreaCanvasRepository } from "./area-canvas-repository.mjs";
 import { createAreaCanvasRoutes } from "./area-canvas-routes.mjs";
@@ -121,6 +122,7 @@ import { workerWallNotice } from "./worker-wall-notice.mjs";
 import { dismissAreaDocument, markAreaDocumentOpened, presentAreaDocuments, projectAreaPresentations, pruneMissingAreaPresentations, readAreaPresentations, removeAreaPresentations, withdrawAreaDocument } from "./area-presentations.mjs";
 import { cardFieldsHash, cardSummary, validateCard } from "./goal-cards.mjs";
 import { projectWork } from "./work-projection.mjs";
+import { runtimeInvariantProblems } from "./runtime-invariants.mjs";
 
 const rawExecFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = Number(process.env.TANGENT_TMUX_COMMAND_TIMEOUT_MS ?? 10_000);
@@ -371,6 +373,25 @@ async function typeInto(session, text, submit) {
 }
 
 const legacyWorkflowClaims = new Set();
+
+/** Session-name slug of any spoken phrase: "Voice Smoke" -> "voice-smoke". */
+const normName = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+/** Maps a requested name onto a real session name, or null. */
+function resolveSession(name, sessions) {
+  if (!name) return null;
+  const hit = sessions.find((s) => s.name === name) ?? sessions.find((s) => normName(s.name) === normName(name));
+  return hit?.name ?? null;
+}
+
+/** Flattens an area tree into a list of area paths. */
+function flattenAreaPaths(areas, out = []) {
+  for (const n of areas) {
+    out.push(n.path);
+    flattenAreaPaths(n.children, out);
+  }
+  return out;
+}
 
 /** Claims pre-marker live work only when its durable record and tmux tags agree. */
 async function claimLegacyWorkflowSessions(sessions) {
@@ -2163,6 +2184,23 @@ async function typePromptWhenReady(session, prompt, submit = false, label = "age
   return paneWrites.run(session, () => typePromptNow(session, prompt, submit, label, settle));
 }
 
+/** Pastes one complete succession prompt through a verified named tmux buffer. */
+async function typeExactPromptWhenReady(session, prompt, receiptRequest) {
+  return paneWrites.run(session, async () => {
+    if (!(await paneReadyForText(session, true))) return false;
+    const buffer = `tangent-succeed-${receiptRequest.operationId}`.slice(0, 120);
+    await execFileAsync("tmux", ["set-buffer", "-b", buffer, "--", prompt]);
+    const readback = await execFileAsync("tmux", ["show-buffer", "-b", buffer]);
+    const bytes = Buffer.byteLength(readback.stdout);
+    const sha256 = createHash("sha256").update(readback.stdout).digest("hex");
+    if (bytes !== receiptRequest.expectedBytes || sha256 !== receiptRequest.expectedSha256) throw new Error("the succession tmux buffer failed its exact hash check");
+    await execFileAsync("tmux", ["paste-buffer", "-b", buffer, "-t", `=${session}:`, "-d"]);
+    await sleep(150);
+    await execFileAsync("tmux", ["send-keys", "-t", `=${session}:`, "Enter"]);
+    return true;
+  });
+}
+
 /**
  * Types one prompt into a pane that is this writer's alone. Called only from
  * typePromptWhenReady, inside that pane's write queue.
@@ -2257,7 +2295,8 @@ async function tickArmedSessions() {
       armed.firing = false;
       reportArmedPromptFailure(error);
     };
-    if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt").then(settle).catch(failed);
+    if (armed.prompt && armed.receiptRequest?.kind === "brain-succession") typeExactPromptWhenReady(name, armed.prompt, armed.receiptRequest).then(settle).catch(failed);
+    else if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt").then(settle).catch(failed);
     else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.submit, armed.extraFiles).then(settle).catch(failed);
     else {
       // No goal bound yet: nothing left to type, and nobody was promised a
@@ -2294,10 +2333,10 @@ function reportArmedPromptFailure(err) {
  * a restart before the harness leaves its shell still has the prompt to
  * re-arm at boot (rearmPersistedPrompts).
  */
-async function armSession(name, { submit = false, prompt = "", extraFiles = [], onTyped = null } = {}) {
-  armedSessions.set(name, { submit, prompt, extraFiles, onTyped });
+async function armSession(name, { submit = false, prompt = "", extraFiles = [], onTyped = null, receiptRequest = null } = {}) {
+  armedSessions.set(name, { submit, prompt, extraFiles, onTyped, receiptRequest });
   try {
-    await writeArmedPrompt(ARMED_ROOT, name, { submit, prompt, extraFiles });
+    await writeArmedPrompt(ARMED_ROOT, name, { submit, prompt, extraFiles, receiptRequest });
   } catch (err) {
     console.error("armed prompt persist:", err.message ?? err);
   }
@@ -2343,7 +2382,11 @@ async function rearmPersistedPrompts() {
       }
       prompt = await pipelineStepPrompt(queue.area, goal, queue, step.index, [], record.session);
     }
-    await armSession(record.session, { submit: record.submit, prompt, extraFiles: record.extraFiles });
+    /** Reconciles a persisted succession receipt after exact prompt delivery. */
+    const onTyped = record.receiptRequest?.kind === "brain-succession"
+      ? (arrived) => settleBrainSuccessionReceipt(record.receiptRequest, arrived)
+      : null;
+    await armSession(record.session, { submit: record.submit, prompt, extraFiles: record.extraFiles, receiptRequest: record.receiptRequest, onTyped });
   }
 }
 
@@ -3137,7 +3180,9 @@ async function startPipeline(file, { steps, extraFiles = [], start = true, attem
   const error = validateSteps(steps);
   if (error) return { status: 400, error };
   const sameArea = extraFiles.map(String).filter((extra) => byFile.get(extra)?.area === o.area);
-  const record = newPipeline({ goal: o.file, goalRevision: await goalContentRevision(o.file), area: o.area, organizerArea: brain?.area ?? o.area, slug: o.slug, extraFiles: sameArea, steps });
+  const fields = { goal: o.file, goalRevision: await goalContentRevision(o.file), area: o.area, organizerArea: brain?.area ?? o.area, slug: o.slug, extraFiles: sameArea, steps };
+  const jobFile = await readJob(PIPELINES_ROOT, o.area, o.slug);
+  const record = jobFile ? createJobRun(jobFile, fields) : newPipeline(fields);
   record.instanceId = INSTANCE_ID;
   record.steps[0].nextAttemptKind = attemptKind;
   const { warnings } = materialized;
@@ -3285,7 +3330,7 @@ async function settleWorkerHandoverNotice(record, receipt) {
     .find((step) => step.id === receipt.assignmentId)
     ?.handoverReceipts?.find((candidate) => candidate.id === receipt.id) ?? receipt;
   receipt = storedReceipt();
-  if (receipt.destinationArea !== record.area || record.controllerArea !== record.area) {
+  if (receipt.destinationArea !== record.area || (record.organizerArea ?? record.controllerArea) !== record.area) {
     return {
       status: 503,
       error: `The Goal queue recorded submission ${receipt.id}, but its exact-Area destination is inconsistent. Keep this worker open and ask the ${record.area} brain to repair the queue. Tangent sent no notice.`,
@@ -3404,7 +3449,7 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
     if (!step) return { status: 409, error: `${migrated?.migrationProblem ?? "The legacy Goal could not become an authoritative queue"}. Nothing was recorded.` };
     found = { record: migrated, step };
   }
-  if (found.record.migrationProblem || found.record.status === "paused" || found.record.controllerArea !== found.record.area) {
+  if (found.record.migrationProblem || found.record.status === "paused" || (found.record.organizerArea ?? found.record.controllerArea) !== found.record.area) {
     return { status: 409, error: `The authoritative Goal queue is paused: ${found.record.migrationProblem ?? "it needs repair"}. Keep this worker session open and repair the queue for ${found.record.area}. Nothing was recorded.` };
   }
   const effectiveReport = report ?? reportFromSendKind(found.record, found.step, kind, text);
@@ -3581,6 +3626,7 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
   if (!o) return { status: 404, error: `no goal file ${goalFile}` };
   const controlActor = options.caller ? await commandProvenance(options.caller) : null;
   if (controlActor?.role === "repair" && !await liveCallingOrganizer(options.caller, o.area)) return { status: 403, error: REPAIR_REFUSAL };
+  if (action === "advance" && !await liveCallingOrganizer(options.caller, o.area)) return { status: 403, error: brainOnlyStartRefusal(o.area) };
   if (["restart", "send"].includes(action) && !options.caller) {
     return { status: 403, error: action === "restart"
       ? "Use guarded Goal recovery after automatic recovery is exhausted."
@@ -3596,8 +3642,8 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
     }
     return guarded;
   }
-  const step = record.steps[Number(index) - 1];
-  if (!step) return { status: 404, error: `no step ${index}` };
+  const step = record.steps[Number(index) - 1] ?? (action === "end" ? record.steps.find((item) => item.id === record.currentAssignmentId) ?? record.steps.find((item) => !["complete", "skipped", "ended"].includes(item.status)) : null);
+  if (!step && action !== "end") return { status: 404, error: `no step ${index}` };
   const allSessions = await listAllSessions({ fresh: true });
   const sessions = allSessions.filter((session) => session.owned);
   trace?.mark("control sessions ready", { sessions: sessions.length });
@@ -3618,6 +3664,26 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
       step.status = "pending";
       step.session = null;
       record.currentAssignmentId = null;
+    }
+    const current = record.steps.find((item) => item.id === record.currentAssignmentId);
+    if (current && current.id !== step.id) {
+      const currentObserved = current.session ? allSessions.find((item) => item.name === current.session) : null;
+      if (currentObserved && !currentObserved.owned) {
+        const ownership = currentObserved.instanceId ? { state: "foreign", instanceId: currentObserved.instanceId } : { state: "legacy" };
+        return { status: 409, error: terminationError(current.session, ownership) };
+      }
+      try {
+        acceptCurrentAssignment(record, step.index);
+      } catch (error) {
+        if (error instanceof JobMutationError) return { status: 409, code: error.code, error: error.message };
+        throw error;
+      }
+      if (currentObserved?.owned) {
+        const stopped = await terminateOwnedSession(current.session);
+        if (stopped.state !== "terminated") return { status: 409, error: terminationError(current.session, stopped) };
+      }
+      await writePipeline(PIPELINES_ROOT, record);
+      await recordRuntimeEvent("job.assignment.accepted", { operationId: options.idempotencyKey, address: record.goal, run: record.run, revision: record.revision, actorSession: options.caller, assignmentId: current.id, outcome: "plain-note-accepted" });
     }
     if (step.status !== "pending") return { status: 409, error: `step ${step.index} is ${step.status}; advance needs a pending or stopped step` };
     const started = await startPipelineStep(record, step.index, trace);
@@ -3640,7 +3706,7 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
   if (action === "end") {
     // Stop work on the whole run: kill the live step, if any, and end every
     // step that has not run. The Goal stays open with its handovers.
-    const attemptSessions = new Set([step.session, ...(step.attempts ?? []).map((attempt) => attempt.session)].filter(Boolean));
+    const attemptSessions = new Set(record.steps.flatMap((assignment) => [assignment.session, ...(assignment.attempts ?? []).map((attempt) => attempt.session)]).filter(Boolean));
     const foreign = [...attemptSessions].map((name) => allSessions.find((session) => session.name === name)).find((session) => session && !session.owned);
     if (foreign) {
       const ownership = foreign.instanceId ? { state: "foreign", instanceId: foreign.instanceId } : { state: "legacy" };
@@ -3653,7 +3719,7 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
     }
     const ended = endPipeline(record);
     await writePipeline(PIPELINES_ROOT, record);
-    await notifyBrain(record.area, `Goal ${record.slug}: pipeline ended by Julian at step ${step.index}.`);
+    await notifyBrain(record.area, `Goal ${record.slug}: Job stopped${step ? ` at Assignment ${step.index}` : " before an Assignment started"}.`);
     return { status: 200, state: "ended", ended, pipeline: record };
   }
   if (action === "send") {
@@ -4200,7 +4266,7 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
       }
     }
     for (const { receipt } of pendingWorkerHandoverReceipts(record)) {
-      if (receipt.destinationArea !== record.area || record.controllerArea !== record.area) {
+      if (receipt.destinationArea !== record.area || (record.organizerArea ?? record.controllerArea) !== record.area) {
         console.error("worker handover reconcile:", JSON.stringify({ goal: record.goal, receipt: receipt.id, error: "exact-Area destination mismatch" }));
         continue;
       }
@@ -4494,8 +4560,8 @@ function withInbox(area, change) {
 }
 
 /** Writes one notice for the Area's brain and returns it. */
-async function recordBrainNotice(area, text, sourceId = null) {
-  return withInbox(area, (record) => appendNotice(record, text, new Date().toISOString(), sourceId));
+async function recordBrainNotice(area, text, sourceId = null, sender = null) {
+  return withInbox(area, (record) => appendNotice(record, text, new Date().toISOString(), sourceId, sender));
 }
 
 /** Every notice no generation of one brain has read, oldest first. */
@@ -4572,7 +4638,7 @@ async function routeBrainNotice(area, text, { idempotencyKey = null, sender = nu
   const body = noticeMessage(text);
   const message = senderName ? noticeMessage(messageBanner(senderName, senderArea, body)) : body;
   const records = await readAllBrains(BRAINS_ROOT);
-  const notice = await recordBrainNotice(area, message, idempotencyKey);
+  const notice = await recordBrainNotice(area, message, idempotencyKey, sender);
   if (notice.duplicate && (notice.deliveredAt || noticesInFlight(records).has(noticeKey({ area, id: notice.id })))) {
     return { state: notice.deliveredAt ? "delivered" : "queued", addressed: true, notice, sourceArea: area, brainArea: notice.deliveredBrainArea ?? null, session: notice.deliveredTo ?? null, generation: notice.deliveredGeneration ?? null };
   }
@@ -4602,8 +4668,10 @@ const WORKER_REFUSED_ROUTES = new Set([
   "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/edit", "/api/goals/start",
   "/api/goals/depend", "/api/goals/undepend", "/api/goals/accept", "/api/goals/understanding", "/api/goals/cleanup",
   "/api/pipelines/append", "/api/pipelines/control", "/api/goals/attempts/replace", "/api/goals/attempts/resume",
+  "/api/jobs/create", "/api/jobs/start", "/api/jobs/append", "/api/jobs/advance", "/api/jobs/stop", "/api/jobs/replace", "/api/agents/stop", "/api/agents/resume",
   "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/document/resolve", "/api/document",
   "/api/brains/start", "/api/brains/stop", "/api/brains/reply", "/api/brains/verdict", "/api/brains/verdict/undo",
+  "/api/brains/succeed",
   "/api/brains/requests", "/api/brains/requests/withdraw", "/api/brains/requests/answer", "/api/brains/requests/dismiss",
   "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control", "/api/processes/check",
   "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions", "/api/areas/map-promotions/complete",
@@ -4684,6 +4752,7 @@ async function recordCommittedCommand({ operation, actorSession = "", targetArea
   await withBrainMutation(targetArea, async () => {
     const brain = await readBrain(BRAINS_ROOT, targetArea);
     if (!brain) return;
+    if (actor.role === "brain" && actor.session === brain.session && (!actor.generation || actor.generation === brain.generation)) brain.activityRevision = Math.max(0, Number(brain.activityRevision) || 0) + 1;
     brain.lastAction = { command: operation, target: goal || targetArea, at: new Date().toISOString(), operationId };
     await writeBrain(BRAINS_ROOT, brain);
   });
@@ -4699,6 +4768,23 @@ async function recordCommittedCommand({ operation, actorSession = "", targetArea
     `${subject}${assignment ? ` assignment ${assignment}` : ""}: command ${operation} ${result} by ${origin}.`,
     { idempotencyKey: `command:${operation}:${operationId}` },
   );
+}
+
+/** Writes one body-free structured lifecycle event for operators and metrics. */
+async function recordRuntimeEvent(event, { operationId = "", address = "", run = null, revision = null, actorSession = "", outcome = "committed", ...facts } = {}) {
+  const actor = await commandProvenance(actorSession);
+  await messages.log({
+    event,
+    operationId: String(operationId || randomUUID()).slice(0, 128),
+    address: address || null,
+    run,
+    revision,
+    actorRole: actor.role,
+    actorSession: actor.session,
+    outcome,
+    instanceId: INSTANCE_ID,
+    ...facts,
+  });
 }
 
 /** Keeps best-effort behavior for non-workflow notices. */
@@ -4873,6 +4959,7 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     if (!harness) throw new Error(`harness ${resolvedLaunch.ref.harness} is no longer registered`);
     const conversation = newConversation(harness);
     const entry = beginGeneration(record, name, resolvedLaunch);
+    entry.noteBaselineHash = await areaCurrentHash(record.area);
     entry.instanceId = INSTANCE_ID;
     entry.target = target;
     entry.deliveryStatus = "pending";
@@ -4917,6 +5004,216 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     record.health = { status: "failed", problem, updatedAt: new Date().toISOString() };
     await writeBrain(BRAINS_ROOT, record);
     return { status: 500, error: problem };
+  }
+}
+
+/** Hashes only the Area note's durable Brain memory section. */
+async function areaCurrentHash(area) {
+  const current = noteSection(await areaNote(area), "Current");
+  return createHash("sha256").update(current).digest("hex");
+}
+
+/** Builds a bounded succession message without clipping any included notice. */
+function successionPrompt(handover, notices, maxBytes = 3800) {
+  const included = [];
+  let text = handover.text;
+  for (const notice of notices) {
+    if (notice.id === handover.id) continue;
+    const candidate = `${text}\n\n${notice.text}`;
+    if (Buffer.byteLength(candidate) > maxBytes) break;
+    text = candidate;
+    included.push({ area: notice.area, id: notice.id });
+  }
+  return { text, included: [{ area: handover.area, id: handover.id }, ...included] };
+}
+
+/** Starts one staged successor while the outgoing generation keeps authority. */
+async function succeedBrain(session, operationId) {
+  if (!operationId) return { status: 400, code: "operation-required", error: "an operation ID is required" };
+  const source = await liveBrainForSession(session);
+  if (!source) return { status: 403, error: "only the exact current live Brain can succeed itself" };
+  const area = source.area;
+  let staged;
+  const prepared = await withBrainMutation(area, async () => {
+    const record = await readBrain(BRAINS_ROOT, area);
+    if (!record || record.session !== session || record.currentAttemptId !== session) return { status: 409, error: "the Brain generation is no longer authoritative" };
+    if (record.succession && !["complete", "failed"].includes(record.succession.status)) return { status: 409, error: `succession ${record.succession.id} is ${record.succession.status}` };
+    const generation = currentGeneration(record);
+    const noteCurrentHash = await areaCurrentHash(area);
+    if (!generation.noteBaselineHash) {
+      generation.noteBaselineHash = noteCurrentHash;
+      await writeBrain(BRAINS_ROOT, record);
+      return { status: 409, code: "baseline-recorded", error: "The Brain had no succession baseline. Tangent recorded it; rewrite the Area note's Current section, then retry." };
+    }
+    if (generation.noteBaselineHash === noteCurrentHash) return { status: 409, code: "note-unchanged", error: "Rewrite the Area note's Current section before succession." };
+    const inbox = await readInbox(BRAINS_ROOT, area);
+    const used = new Set(record.usedHandoverNoticeIds ?? []);
+    const handover = [...(inbox.notices ?? [])].reverse().find((notice) => notice.sender?.session === session && notice.sender?.role === "brain" && notice.sender?.generation === record.generation && Date.parse(notice.createdAt) >= Date.parse(generation.startedAt) && !used.has(notice.id));
+    if (!handover) return { status: 409, code: "handover-notice-required", error: `Send an ordinary notice to ${area} from this Brain before succession.` };
+    const allowed = await launchCatalog.allowed(area, generation.resolvedLaunch?.ref);
+    if (allowed.error) return { status: allowed.status ?? 409, code: allowed.code ?? "launch-not-allowed", error: allowed.error };
+    const waiting = mergeNotices([inbox]);
+    const prompt = successionPrompt({ ...handover, area }, waiting);
+    const sha256 = createHash("sha256").update(prompt.text).digest("hex");
+    const nextGeneration = Math.max(record.generation, ...(record.generations ?? []).map((entry) => entry.generation ?? 0)) + 1;
+    const names = new Set((await listAllSessions()).map((item) => item.name));
+    const successorSession = uniqueSessionName(brainSessionName(area, nextGeneration), "", names, 60);
+    const operation = {
+      id: operationId,
+      status: "starting",
+      source: { session, generation: record.generation, target: generation.target ?? null, instanceId: generation.instanceId ?? record.instanceId ?? null },
+      successor: { session: successorSession, generation: nextGeneration, target: null, instanceId: INSTANCE_ID },
+      activityRevision: Math.max(0, Number(record.activityRevision) || 0),
+      noteBaselineHash: generation.noteBaselineHash,
+      noteCurrentHash,
+      handoverNoticeId: handover.id,
+      prompt: { sha256, bytes: Buffer.byteLength(prompt.text), includedNotices: prompt.included },
+      receipt: null,
+      requestedAt: new Date().toISOString(),
+      deadlineAt: new Date(Date.now() + 120_000).toISOString(),
+      completedAt: null,
+      failure: null,
+    };
+    const entry = beginStagedGeneration(record, successorSession, generation.resolvedLaunch, operation);
+    entry.noteBaselineHash = noteCurrentHash;
+    entry.firstMessage = prompt.text;
+    await writeBrain(BRAINS_ROOT, record);
+    staged = { record, operation, entry, prompt: prompt.text, resolvedLaunch: generation.resolvedLaunch };
+    return { status: 200 };
+  });
+  if (prepared.status !== 200) return prepared;
+  const { operation, entry, prompt, resolvedLaunch } = staged;
+  await recordRuntimeEvent("brain.succession.requested", { operationId, address: area, actorSession: session, generation: operation.source.generation, noticeId: operation.handoverNoticeId, promptSha256: operation.prompt.sha256, promptBytes: operation.prompt.bytes });
+  await recordRuntimeEvent("brain.succession.staged", { operationId, address: area, actorSession: session, generation: entry.generation, outcome: "no-authority", promptSha256: operation.prompt.sha256, promptBytes: operation.prompt.bytes });
+  let target = "";
+  try {
+    const directory = areaDirectory(TREES_ROOT, area);
+    target = await createOwnedTmuxSession(entry.session, ["-d", "-s", entry.session, "-c", directory]);
+    for (const [key, value] of [["@tangent_area", area], ["@tangent_kind", "brain"], ["@tangent_phase", "orchestrate"], ["@tangent_brain", area], ["@tangent_cwd", directory], ["@tangent_generation", String(entry.generation)]]) await execFileAsync("tmux", ["set-option", "-t", entry.session, key, value]);
+    const registry = await launchCatalog.registry();
+    if (registry.error) throw new Error(registry.error);
+    const harness = registry.harnesses.find((item) => item.id === resolvedLaunch.ref.harness);
+    if (!harness?.transcripts) throw new Error(`harness ${resolvedLaunch.ref.harness} has no exact transcript adapter`);
+    const conversation = newConversation(harness);
+    if (!conversation?.id) throw new Error(`harness ${resolvedLaunch.ref.harness} cannot identify its first-message transcript`);
+    await withBrainMutation(area, async () => {
+      const record = await readBrain(BRAINS_ROOT, area);
+      if (record.succession?.id !== operation.id) throw new Error("the succession operation changed");
+      const successor = record.generations.find((item) => item.session === entry.session && item.generation === entry.generation);
+      successor.target = target;
+      successor.instanceId = INSTANCE_ID;
+      successor.cwd = directory;
+      successor.providerSession = structuredClone(conversation);
+      record.succession.successor.target = target;
+      record.succession.status = "starting";
+      await writeBrain(BRAINS_ROOT, record);
+    });
+    const receiptRequest = { kind: "brain-succession", area, operationId: operation.id, generation: entry.generation, expectedSha256: operation.prompt.sha256, expectedBytes: operation.prompt.bytes, noticeRefs: operation.prompt.includedNotices };
+    await armSession(entry.session, {
+      submit: true,
+      prompt,
+      receiptRequest,
+      /** Settles the exact receipt after the complete prompt arrives. */
+      onTyped: (arrived) => settleBrainSuccessionReceipt(receiptRequest, arrived),
+    });
+    await typeInto(entry.session, launchWithConversation(harness, withDefaultModel(resolvedLaunch.command), conversation), false);
+    await execFileAsync("tmux", ["send-keys", "-t", `=${entry.session}:`, "Enter"]);
+    return { status: 200, state: "starting", brain: (await readBrain(BRAINS_ROOT, area)), succession: operation };
+  } catch (error) {
+    if (target) await sessionOwnership.terminate(entry.session, target).catch(() => {});
+    return failBrainSuccession(area, operation.id, String(error.message ?? error));
+  }
+}
+
+/** Settles the durable exact receipt request, including after controller restart. */
+async function settleBrainSuccessionReceipt(request, arrived) {
+  if (!arrived) return failBrainSuccession(request.area, request.operationId, "the staged Agent did not accept its first message");
+  let receipt = null;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const record = await readBrain(BRAINS_ROOT, request.area);
+    const generation = record?.generations?.find((item) => item.generation === request.generation);
+    const registry = await launchCatalog.registry();
+    const harness = registry.error ? null : registry.harnesses.find((item) => item.id === generation?.resolvedLaunch?.ref?.harness);
+    receipt = await firstUserMessageReceipt({ harness, conversation: generation?.providerSession, cwd: generation?.cwd, startedAt: generation?.startedAt, expectedSha256: request.expectedSha256, expectedBytes: request.expectedBytes });
+    if (receipt.ok || receipt.reason === "prompt-mismatch") break;
+    await sleep(500);
+  }
+  if (!receipt?.ok) return failBrainSuccession(request.area, request.operationId, `exact first-message proof failed: ${receipt?.reason ?? "unavailable"}`);
+  await recordRuntimeEvent("brain.succession.receipt", { operationId: request.operationId, address: request.area, generation: request.generation, outcome: "verified", promptSha256: request.expectedSha256, promptBytes: request.expectedBytes, receiptLatencyMs: receipt.latencyMs ?? null });
+  let sourceTarget;
+  let included;
+  const promoted = await withBrainMutation(request.area, async () => {
+    const record = await readBrain(BRAINS_ROOT, request.area);
+    const operation = record?.succession;
+    if (!operation || operation.id !== request.operationId) return { status: 409, error: "the succession operation changed" };
+    if (record.session !== operation.source.session || record.generation !== operation.source.generation || record.currentAttemptId !== operation.source.session) return { status: 409, error: "the outgoing Brain pointer changed" };
+    if (record.activityRevision !== operation.activityRevision) return { status: 409, error: "the outgoing Brain acted after succession started" };
+    if (await areaCurrentHash(request.area) !== operation.noteCurrentHash) return { status: 409, error: "the Area Current note changed after succession started" };
+    operation.status = "ready";
+    promoteStagedGeneration(record, { ...receipt, verifiedAt: new Date().toISOString() });
+    record.usedHandoverNoticeIds = [...new Set([...(record.usedHandoverNoticeIds ?? []), operation.handoverNoticeId])].slice(-100);
+    record.health = { status: "retiring", problem: null, updatedAt: new Date().toISOString() };
+    sourceTarget = operation.source;
+    included = operation.prompt.includedNotices;
+    await writeBrain(BRAINS_ROOT, record);
+    return { status: 200, record };
+  });
+  if (promoted.status !== 200) return failBrainSuccession(request.area, request.operationId, promoted.error);
+  await recordRuntimeEvent("brain.succession.promoted", { operationId: request.operationId, address: request.area, actorSession: promoted.record.session, generation: promoted.record.generation, outcome: "authoritative", promptSha256: request.expectedSha256, promptBytes: request.expectedBytes });
+  await withInbox(request.area, async (inbox) => { markDelivered(inbox, included.filter((item) => item.area === request.area).map((item) => item.id), { session: promoted.record.session, generation: promoted.record.generation, brainArea: request.area }); });
+  const retired = await sessionOwnership.terminate(sourceTarget.session, sourceTarget.target);
+  await recordRuntimeEvent("brain.succession.retired", { operationId: request.operationId, address: request.area, actorSession: promoted.record.session, generation: sourceTarget.generation, immutableTarget: sourceTarget.target, outcome: retired.state });
+  return withBrainMutation(request.area, async () => {
+    const record = await readBrain(BRAINS_ROOT, request.area);
+    record.succession.status = ["terminated", "absent"].includes(retired.state) ? "complete" : "retiring";
+    record.succession.completedAt = record.succession.status === "complete" ? new Date().toISOString() : null;
+    record.succession.failure = record.succession.status === "complete" ? null : "retirement-incomplete";
+    record.health = { status: record.succession.status === "complete" ? "healthy" : "retirement-incomplete", problem: record.succession.failure, updatedAt: new Date().toISOString() };
+    await writeBrain(BRAINS_ROOT, record);
+    return { status: 200, state: record.succession.status, brain: record };
+  });
+}
+
+/** Fails a staged succession without removing authority from the source Brain. */
+async function failBrainSuccession(area, operationId, failure) {
+  let target = null;
+  const result = await withBrainMutation(area, async () => {
+    const record = await readBrain(BRAINS_ROOT, area);
+    if (!record?.succession || record.succession.id !== operationId) return { status: 409, error: failure };
+    target = record.succession.successor;
+    record.succession.status = "failed";
+    record.succession.failure = failure;
+    record.succession.completedAt = new Date().toISOString();
+    const staged = record.generations.find((item) => item.session === target?.session && item.generation === target?.generation);
+    if (staged) { staged.state = "failed"; staged.endedAt = new Date().toISOString(); }
+    record.health = { status: "healthy", problem: null, updatedAt: new Date().toISOString() };
+    await writeBrain(BRAINS_ROOT, record);
+    return { status: 409, code: "succession-failed", error: failure, brain: record };
+  });
+  if (target?.target) await sessionOwnership.terminate(target.session, target.target).catch(() => {});
+  await recordRuntimeEvent("brain.succession.failed", { operationId, address: area, generation: target?.generation ?? null, immutableTarget: target?.target ?? null, outcome: "failed", failure });
+  await routeBrainNotice(area, `Brain succession ${operationId} failed safely: ${failure}`, { idempotencyKey: `brain-succession-failed:${operationId}` }).catch(() => {});
+  return result;
+}
+
+/** Recovers staged and promoted succession operations after controller restart. */
+async function reconcileBrainSuccessions() {
+  for (const record of await readAllBrains(BRAINS_ROOT)) {
+    const operation = record.succession;
+    if (!operation || ["complete", "failed"].includes(operation.status)) continue;
+    if (["promoted", "retiring"].includes(operation.status)) {
+      const retired = await sessionOwnership.terminate(operation.source.session, operation.source.target);
+      await withBrainMutation(record.area, async () => {
+        const current = await readBrain(BRAINS_ROOT, record.area);
+        if (current?.succession?.id !== operation.id) return;
+        current.succession.status = ["terminated", "absent"].includes(retired.state) ? "complete" : "retiring";
+        current.succession.completedAt = current.succession.status === "complete" ? new Date().toISOString() : null;
+        current.succession.failure = current.succession.status === "complete" ? null : "retirement-incomplete";
+        await writeBrain(BRAINS_ROOT, current);
+      });
+      continue;
+    }
+    if (Date.parse(operation.deadlineAt) <= Date.now()) await failBrainSuccession(record.area, operation.id, "succession receipt deadline passed");
   }
 }
 
@@ -5876,8 +6173,11 @@ async function executeAuthorizedRequestEffect(effect, brain) {
 }
 
 const brainRoutes = createBrainRoutes({
+  /** Records use of one hidden compatibility alias. */
+  alias: (address, operationId) => recordRuntimeEvent("compat.alias.used", { operationId, address, outcome: "adapted" }),
   start: startBrain,
   stop: stopBrain,
+  succeed: succeedBrain,
   normalizeMessage,
   verdict: clearRowWithVerdict,
   undoVerdict: restoreVerdictLine,
@@ -5985,6 +6285,8 @@ const brainRoutes = createBrainRoutes({
   prompt: (brain) => brain.repair?.current?.firstMessage ?? currentGeneration(brain)?.firstMessage ?? brainFirstMessage(brain.foundingInstruction?.text),
 });
 const pipelineRoutes = createPipelineRoutes({
+  /** Records use of one legacy Pipeline compatibility route. */
+  alias: (address, operationId) => recordRuntimeEvent("compat.alias.used", { operationId, address, outcome: "adapted" }),
   normalizeMessage,
   handoverStep: handoverPipelineStep,
   /** Whether a send flag word is one a worker has. */
@@ -5994,6 +6296,129 @@ const pipelineRoutes = createPipelineRoutes({
   replaceAttempt: replaceGoalAttempt,
   resumeAttempt: resumeGoalAttempt,
 });
+
+/** Resolves a Goal slug or exact file and rejects ambiguous slugs. */
+async function jobGoal(requested) {
+  const goals = [...(await goalsByFile()).values()];
+  const exact = goals.find((goal) => goal.file === requested);
+  if (exact) return { goal: exact };
+  const matches = goals.filter((goal) => goal.slug === requested);
+  if (matches.length === 1) return { goal: matches[0] };
+  if (matches.length > 1) return { error: `Goal ${requested} is ambiguous: ${matches.map((goal) => goal.file).join(", ")}` };
+  return { error: `no Goal ${requested}` };
+}
+
+/** Verifies the canonical optimistic Job fences before a mutation. */
+async function currentJobForMutation(goal, body) {
+  const file = await readJob(PIPELINES_ROOT, goal.area, goal.slug);
+  const run = jobRun(file);
+  if (!file || !run) return { error: "this Goal has no Job", status: 404 };
+  if (body.expectedRun != null && Number(body.expectedRun) !== run.run) return { error: `stale-run:${run.run}`, code: "stale-run", currentRevision: run.revision, status: 409 };
+  if (body.expectedRevision != null && Number(body.expectedRevision) !== run.revision) return { error: `stale-revision:${run.revision}`, code: "stale-revision", currentRevision: run.revision, status: 409 };
+  return { file, run };
+}
+
+/** Records one legacy Job migration after its first successful write. */
+async function recordJobMigration(file, goal, body, result) {
+  const migration = jobMigration(file);
+  if (!migration || result.status !== 200) return;
+  await recordRuntimeEvent("job.migrated", { operationId: body.operationId, address: goal.file, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: body.caller ?? body.session, migrationSource: migration.source, pausedMigration: migration.paused, outcome: migration.problem ? "paused" : "converted" });
+}
+
+/** Removes compatibility fields from one canonical Job response. */
+function canonicalJob(run) {
+  if (!run) return null;
+  const value = structuredClone(run);
+  value.assignments = value.assignments ?? value.steps ?? [];
+  delete value.steps;
+  value.schema = "job.v1";
+  return value;
+}
+
+const jobOperations = {
+  /** Records use of one hidden Goal execution alias. */
+  alias: (address, operationId) => recordRuntimeEvent("compat.alias.used", { operationId, address, outcome: "adapted" }),
+  /** Shows one selected Job run. */
+  async show(requested, selectedRun) {
+    const resolved = await jobGoal(requested);
+    if (!resolved.goal) return { status: 404, error: resolved.error };
+    const file = await readJob(PIPELINES_ROOT, resolved.goal.area, resolved.goal.slug);
+    if (!file) return { status: 404, error: "this Goal has no Job" };
+    const run = jobRun(file, selectedRun == null ? file.currentRun : Number(selectedRun));
+    if (!run) return { status: 404, error: `no Job run ${selectedRun}` };
+    return { status: 200, job: canonicalJob(run), runs: file.runs.map((item) => ({ run: item.run, status: item.status, revision: item.revision, createdAt: item.createdAt, endedAt: item.endedAt, sealedAt: item.sealedAt })) };
+  },
+  /** Creates one new Job run. */
+  async create(requested, body) {
+    const resolved = await jobGoal(requested);
+    if (!resolved.goal) return { status: 404, error: resolved.error };
+    const brain = await liveCallingOrganizer(String(body.caller ?? body.session ?? ""), resolved.goal.area);
+    if (!brain) return { status: 403, error: `only the live organizer of ${resolved.goal.area} can create a Job` };
+    const steps = Array.isArray(body.steps) && body.steps.length ? body.steps : [{ instruction: String(body.instruction ?? `Complete ${resolved.goal.title}. Done when: ${resolved.goal.doneWhen}`), ...(body.launch ? { launch: body.launch } : {}), ...(body.path ? { path: body.path } : {}), ...(body.kind ? { kind: body.kind } : {}) }];
+    const result = await startPipeline(resolved.goal.file, { steps, extraFiles: body.extraFiles ?? [], start: false, brain });
+    if (result.status === 200) await recordRuntimeEvent("job.created", { operationId: body.operationId, address: resolved.goal.file, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: body.caller ?? body.session });
+    return result.status === 200 ? { ...result, job: canonicalJob(result.pipeline), assignment: canonicalJob(result.pipeline)?.assignments?.[0] ?? null } : result;
+  },
+  /** Starts the first pending Assignment. */
+  async start(requested, body) {
+    const resolved = await jobGoal(requested);
+    if (!resolved.goal) return { status: 404, error: resolved.error };
+    const guarded = await currentJobForMutation(resolved.goal, body);
+    if (guarded.error) return guarded;
+    const next = guarded.run.assignments.find((assignment) => assignment.status === "pending");
+    if (!next) return { status: 409, error: "the current Job has no pending Assignment" };
+    const result = await controlPipeline(resolved.goal.file, "advance", next.index, { caller: String(body.caller ?? body.session ?? ""), expectedRevision: guarded.run.revision, idempotencyKey: String(body.operationId ?? "") });
+    await recordJobMigration(guarded.file, resolved.goal, body, result);
+    if (result.status === 200) await recordRuntimeEvent("job.started", { operationId: body.operationId, address: resolved.goal.file, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: body.caller ?? body.session, assignmentId: next.id });
+    return result.status === 200 ? { ...result, job: canonicalJob(result.pipeline), assignment: canonicalJob(result.pipeline)?.assignments?.find((item) => item.index === next.index) ?? null } : result;
+  },
+  /** Appends Assignments to the current Job run. */
+  async append(requested, body) {
+    const resolved = await jobGoal(requested);
+    if (!resolved.goal) return { status: 404, error: resolved.error };
+    const guarded = await currentJobForMutation(resolved.goal, body);
+    if (guarded.error) return guarded;
+    const result = await appendPipelineSteps(resolved.goal.file, Array.isArray(body.steps) ? body.steps : [], { caller: String(body.caller ?? body.session ?? ""), expectedRevision: guarded.run.revision, idempotencyKey: String(body.operationId ?? "") });
+    await recordJobMigration(guarded.file, resolved.goal, body, result);
+    if (result.status === 200) await recordRuntimeEvent("job.appended", { operationId: body.operationId, address: resolved.goal.file, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: body.caller ?? body.session, assignmentCount: body.steps?.length ?? 0 });
+    return result.status === 200 ? { ...result, job: canonicalJob(result.pipeline) } : result;
+  },
+  /** Starts one exact pending Assignment. */
+  async advance(requested, body) {
+    const resolved = await jobGoal(requested);
+    if (!resolved.goal) return { status: 404, error: resolved.error };
+    const guarded = await currentJobForMutation(resolved.goal, body);
+    if (guarded.error) return guarded;
+    const index = Number(body.assignment ?? body.index);
+    const result = await controlPipeline(resolved.goal.file, "advance", index, { caller: String(body.caller ?? body.session ?? ""), expectedRevision: guarded.run.revision, idempotencyKey: String(body.operationId ?? "") });
+    await recordJobMigration(guarded.file, resolved.goal, body, result);
+    if (result.status === 200) await recordRuntimeEvent("job.assignment.started", { operationId: body.operationId, address: resolved.goal.file, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: body.caller ?? body.session, assignmentId: result.pipeline?.assignments?.find((item) => item.index === index)?.id ?? null });
+    return result.status === 200 ? { ...result, job: canonicalJob(result.pipeline), assignment: canonicalJob(result.pipeline)?.assignments?.find((item) => item.index === index) ?? null } : result;
+  },
+  /** Stops the current Job run. */
+  async stop(requested, body) {
+    const resolved = await jobGoal(requested);
+    if (!resolved.goal) return { status: 404, error: resolved.error };
+    const guarded = await currentJobForMutation(resolved.goal, body);
+    if (guarded.error) return guarded;
+    const result = await controlPipeline(resolved.goal.file, "end", guarded.run.currentAssignmentId ? guarded.run.assignments.find((item) => item.id === guarded.run.currentAssignmentId)?.index : undefined, { caller: String(body.caller ?? body.session ?? ""), expectedRevision: guarded.run.revision, idempotencyKey: String(body.operationId ?? "") });
+    await recordJobMigration(guarded.file, resolved.goal, body, result);
+    if (result.status === 200) await recordRuntimeEvent("job.stopped", { operationId: body.operationId, address: resolved.goal.file, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: body.caller ?? body.session });
+    return result.status === 200 ? { ...result, job: canonicalJob(result.pipeline) } : result;
+  },
+  /** Replaces one Assignment's current Agent Attempt. */
+  async replace(requested, body) {
+    const resolved = await jobGoal(requested);
+    if (!resolved.goal) return { status: 404, error: resolved.error };
+    const guarded = await currentJobForMutation(resolved.goal, body);
+    if (guarded.error) return guarded;
+    const result = await replaceGoalAttempt(resolved.goal.file, { assignmentId: String(body.assignmentId ?? body.assignment ?? ""), expectedAttemptId: String(body.expectedAttemptId ?? ""), expectedRevision: guarded.run.revision, launch: body.launch, operationId: String(body.operationId ?? ""), caller: String(body.caller ?? body.session ?? ""), confirmed: body.confirmed === true });
+    await recordJobMigration(guarded.file, resolved.goal, body, result);
+    if (result.status === 200) await recordRuntimeEvent("job.attempt.replaced", { operationId: body.operationId, address: resolved.goal.file, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: body.caller ?? body.session, assignmentId: body.assignmentId ?? body.assignment, attemptId: result.operation?.attemptId ?? null, outcome: body.confirmed === true ? "promoted" : "staged" });
+    return result.status === 200 ? { ...result, job: canonicalJob(result.pipeline), attempt: result.operation ?? null } : result;
+  },
+};
+const jobRoutes = createJobRoutes(jobOperations);
 
 /** Rebuilds an opening prompt without hiding otherwise usable durable context. */
 async function rebuiltAgentPrompt(build) {
@@ -6030,6 +6455,8 @@ function recoveredExtraGoals(projected, goalIndex) {
 }
 
 const agentRouteOperations = {
+  /** Records use of one hidden Agent compatibility alias. */
+  alias: (address, operationId) => recordRuntimeEvent("compat.alias.used", { operationId, address, outcome: "adapted" }),
   /** Returns every live non-process session with its delivery state. */
   async list() {
     const sessions = await listSessions();
@@ -6051,6 +6478,82 @@ const agentRouteOperations = {
         agentState: attempts.get(session.name) ?? brainStates.get(session.name) ?? repairStates.get(session.name) ?? null,
         queued: messages.queuedCount(session.name),
       }));
+  },
+  /** Joins one exact live Agent with its durable Attempt or Brain generation. */
+  async show(session) {
+    const [live, context, ownership] = await Promise.all([
+      agentRouteOperations.list().then((agents) => agents.find((agent) => agent.name === session) ?? null),
+      agentRouteOperations.context(session),
+      sessionOwnership.inspect(session),
+    ]);
+    if (!live && !context) return null;
+    const attempt = (await readAllPipelines(PIPELINES_ROOT)).flatMap((record) => record.assignments.flatMap((assignment) => (assignment.attempts ?? []).map((item) => ({ ...item, goal: record.goal, run: record.run, assignmentId: assignment.id })))).find((item) => item.session === session) ?? null;
+    return { session, live: Boolean(live), summary: live, role: context?.role ?? (live?.kind === "brain" ? "brain" : live?.kind === "goal" ? "worker" : "unassigned"), context, attempt, instanceId: ownership.instanceId ?? null, target: ownership.target ?? attempt?.target ?? null };
+  },
+  /** Ends only this exact Agent Attempt; the Job remains open and pending. */
+  async stop(session, body) {
+    const brain = (await readAllBrains(BRAINS_ROOT)).find((record) => record.status === "active" && record.session === session);
+    if (brain) return { status: 409, code: "brain-agent", error: `Agent ${session} is a Brain. Use tangent brain stop ${brain.area}.` };
+    const record = (await readAllPipelines(PIPELINES_ROOT)).find((job) => job.assignments.some((assignment) => assignment.attempts?.some((attempt) => attempt.session === session)));
+    if (!record) {
+      const stopped = await sessionOwnership.terminate(session, String(body.expectedTarget ?? ""));
+      if (!["terminated", "absent"].includes(stopped.state)) return { status: 409, error: terminationError(session, stopped) };
+      await recordRuntimeEvent("agent.stopped", { operationId: body.operationId, address: session, actorSession: body.caller ?? body.session, immutableTarget: body.expectedTarget, outcome: stopped.state });
+      return { status: 200, agent: { session, live: false }, attempt: null, assignment: null };
+    }
+    const assignment = record.assignments.find((item) => item.attempts?.some((attempt) => attempt.session === session));
+    const attempt = assignment.attempts.find((item) => item.session === session);
+    const expectedAttemptId = String(body.expectedAttemptId ?? "");
+    const expectedTarget = String(body.expectedTarget ?? "");
+    if (!expectedAttemptId || attempt.id !== expectedAttemptId) return { status: 409, code: "stale-attempt", error: "the Agent Attempt changed" };
+    if (!expectedTarget || attempt.target !== expectedTarget || attempt.instanceId !== INSTANCE_ID) return { status: 409, code: "ownership-mismatch", error: "the Agent target is foreign, legacy, or stale" };
+    const operationId = String(body.operationId ?? "");
+    if (!operationId) return { status: 400, error: "an operation ID is required" };
+    await withGoalQueueMutation(record.goal, async () => {
+      const current = await readPipeline(PIPELINES_ROOT, record.area, record.slug);
+      current.stopOperation = { id: operationId, kind: "agent-stop", status: "pending", session, attemptId: attempt.id, target: expectedTarget, requestedAt: new Date().toISOString() };
+      await writePipeline(PIPELINES_ROOT, current);
+    });
+    const stopped = await sessionOwnership.terminate(session, expectedTarget);
+    if (!["terminated", "absent"].includes(stopped.state)) return { status: 409, error: terminationError(session, stopped) };
+    let settled;
+    await withGoalQueueMutation(record.goal, async () => {
+      const current = await readPipeline(PIPELINES_ROOT, record.area, record.slug);
+      const currentAssignment = current.assignments.find((item) => item.id === assignment.id);
+      const currentAttempt = currentAssignment?.attempts?.find((item) => item.id === attempt.id);
+      if (currentAttempt && !currentAttempt.endedAt) {
+        currentAttempt.endedAt = new Date().toISOString();
+        currentAttempt.result = { type: "agent-stopped", summary: "The exact Agent session was stopped." };
+      }
+      if (currentAssignment?.session === session) {
+        currentAssignment.status = "pending";
+        currentAssignment.session = null;
+        currentAssignment.endedAt = null;
+        current.currentAssignmentId = null;
+      }
+      current.stopOperation = { ...current.stopOperation, status: "complete", completedAt: new Date().toISOString() };
+      current.status = "open";
+      current.revision += 1;
+      await writePipeline(PIPELINES_ROOT, current);
+      settled = { current, currentAssignment, currentAttempt };
+    });
+    const goal = (await goalsByFile()).get(record.goal);
+    if (goal?.session === session) {
+      await writeGoalBinding(goal.file, { status: "open", session: null });
+      await vaultCommit([goal.file], `update: ${goal.area} goal ${goal.slug} Agent stopped`, goal.area, session);
+    }
+    await recordRuntimeEvent("agent.stopped", { operationId, address: session, run: record.run, revision: settled.current?.revision, actorSession: body.caller ?? body.session, immutableTarget: expectedTarget, attemptId: attempt.id, assignmentId: assignment.id });
+    return { status: 200, agent: { session, live: false }, attempt: settled.currentAttempt, assignment: settled.currentAssignment };
+  },
+  /** Opens an unbound resume session from one historical Attempt. */
+  async resume(session, body) {
+    if (!String(body.operationId ?? "").trim()) return { status: 400, error: "an operation ID is required" };
+    const record = (await readAllPipelines(PIPELINES_ROOT)).find((job) => job.assignments.some((assignment) => assignment.attempts?.some((attempt) => attempt.session === session)));
+    if (!record) return { status: 404, error: `no historical Attempt for ${session}` };
+    const sourceAttempt = record.assignments.flatMap((assignment) => assignment.attempts ?? []).find((attempt) => attempt.session === session);
+    const result = await resumeGoalAttempt(record.goal, { attemptId: sourceAttempt.id, conversationId: String(body.conversationId ?? "") });
+    if (result.status === 200) await recordRuntimeEvent("agent.resumed", { operationId: body.operationId, address: result.session, run: record.run, revision: record.revision, actorSession: body.caller ?? body.session, immutableTarget: result.target ?? null, sourceAttemptId: sourceAttempt.id });
+    return result.status === 200 ? { ...result, agent: { session: result.session, role: "unassigned", sourceAttemptId: sourceAttempt.id }, sourceAttempt } : result;
   },
   /** Resolves durable recovery facts, then distinguishes an unknown session with one read-only live check. */
   async context(session) {
@@ -6118,6 +6621,7 @@ const agentRouteOperations = {
     }
     const result = await handoverPipelineStep(session, text, null, String(body.idempotencyKey ?? ""), kind ?? "note");
     if (result.status !== 200) return { status: result.status, error: result.error };
+    await recordRuntimeEvent("job.assignment.reported", { operationId: body.idempotencyKey, address: result.pipeline?.goal, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: session, assignmentId: result.receipt?.assignmentId ?? actor.assignment?.id ?? null, outcome: kind ?? "note" });
     for (const document of resolvedPresentations) {
       await presentGoalDocument(PRESENTATIONS_ROOT, goal, document, { session: actor.session, role: "worker", assignmentId: actor.assignment?.id ?? null });
     }
@@ -6151,7 +6655,7 @@ const agentRouteOperations = {
     if (inbox) {
       const delivery = await routeBrainNotice(inbox.area, text, {
         idempotencyKey: body.idempotencyKey || body.operationId || null,
-        sender: { session: entry.from, area: entry.area },
+        sender: { session: entry.from, area: entry.area, role: sender.role === "brain" ? "brain" : sender.role === "worker" ? "worker" : sender.role === "repair" ? "repair" : "local", generation: sender.generation ?? null },
       });
       const reason = delivery.addressed
         ? "stored in the Area inbox and queued for its live brain"
@@ -6788,6 +7292,8 @@ const shellStateRoutes = createShellStateRoutes({
         return { ...await projectMaterialOperationEvents(snapshot), processes: await processViews() };
       })(),
     ]);
+    const [jobFiles, brainRecords] = await Promise.all([readAllJobs(PIPELINES_ROOT), readAllBrains(BRAINS_ROOT)]);
+    session.problems = runtimeInvariantProblems({ jobs: jobFiles, goals: vault.areas.flatMap((area) => area.goals ?? []), brains: brainRecords, agents: sessions });
     return projectWork({ vault, session, programs });
   },
 });
@@ -7046,28 +7552,20 @@ async function readGoalDetail(file, { conversations = false } = {}) {
   }
   if (!rawGoal) return { status: 404, error: `no goal ${requested}` };
   const goalFile = rawGoal.file;
-  const [projection, markdown, queue, sessions, registry] = await Promise.all([
+  const [projection, markdown] = await Promise.all([
     vaultIndex(),
     readFile(path.join(TREES_ROOT, goalFile), "utf8"),
-    readPipeline(PIPELINES_ROOT, rawGoal.area, rawGoal.slug),
-    listSessions(),
-    launchCatalog.registry(),
   ]);
   const enriched = projection.areas
     .flatMap((area) => area.goals ?? [])
     .find((goal) => goal.file === goalFile) ?? rawGoal;
   const goal = normalizeGoalRecord({ ...enriched, ...rawGoal });
-  const validRegistry = registry.error ? null : registry;
   const detail = projectGoalDetail({
     goal,
     markdown,
-    queue,
-    sessions,
     relatedDocuments: goal.documents ?? [],
     cards: goal.cards ?? [],
-    registry: validRegistry,
   });
-  if (conversations) await attachFoundConversations(goal, detail, validRegistry);
   return { status: 200, value: detail };
 }
 
@@ -7367,9 +7865,12 @@ const workMutationRoutes = createWorkMutationRoutes({
         await recordCommittedCommand({ operation: "goal-create", actorSession: caller, targetArea: area, goal: path.basename(created.file, ".md").replace(/^goal-/, "") });
         const instruction = String(body.instruction ?? "").trim() || `${String(goal.title).trim()}. Done when: ${goal.doneWhen}`;
         const step = { instruction, kind: "implementation", ...(typeof body.path === "string" && body.path.trim() ? { path: body.path.trim() } : {}), ...(body.launch && typeof body.launch === "object" ? { launch: body.launch } : {}) };
-        const started = await startPipeline(created.file, { steps: [step], attemptKind: "managed", brain: callingBrain });
+        const operationId = String(body.operationId ?? randomUUID());
+        const jobCreated = await jobOperations.create(created.file, { steps: [step], caller, operationId: `${operationId}:job-create` });
+        if (jobCreated.status !== 200) return { status: 200, value: { ...created, started: false, startError: jobCreated.error } };
+        const started = await jobOperations.start(created.file, { caller, expectedRun: jobCreated.job.run, expectedRevision: jobCreated.job.revision, operationId: `${operationId}:job-start` });
         if (started.status !== 200) return { status: 200, value: { ...created, started: false, startError: started.error } };
-        await recordCommittedCommand({ operation: "goal-start", actorSession: caller, targetArea: area, goal: path.basename(created.file, ".md").replace(/^goal-/, ""), result: `started assignment 1 in ${started.session}` });
+        await recordCommittedCommand({ operation: "goal-start", actorSession: caller, targetArea: area, goal: path.basename(created.file, ".md").replace(/^goal-/, ""), operationId, result: `started assignment 1 in ${started.session}` });
         return { status: 200, value: { ...created, started: true, session: started.session, launches: started.launches ?? [], warnings: started.warnings ?? [] } };
       }
       if (own && created.file) {
@@ -7649,6 +8150,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (await shellStateRoutes.handle(req, res, url)) return;
     if (await brainRoutes.handle(req, res, url)) return;
+    if (await jobRoutes.handle(req, res, url)) return;
     if (await pipelineRoutes.handle(req, res, url)) return;
     if (await agentRoutes.handle(req, res, url)) return;
     if (await areaRoutes.handle(req, res, url)) return;
@@ -7725,6 +8227,8 @@ server.listen(PORT, HOST, () => {
   // A prompt armed by the last process is still waiting on disk if its
   // harness had not left the shell yet.
   rearmPersistedPrompts().catch((err) => console.error("armed prompts:", err.message ?? err));
+  reconcileBrainSuccessions().catch((err) => console.error("brain succession recovery:", err.message ?? err));
+  readAllPipelines(PIPELINES_ROOT).then((jobs) => Promise.allSettled(jobs.filter((job) => job.stopOperation?.kind === "agent-stop" && job.stopOperation.status === "pending").map((job) => agentRouteOperations.stop(job.stopOperation.session, { expectedTarget: job.stopOperation.target, expectedAttemptId: job.stopOperation.attemptId, operationId: job.stopOperation.id })))).catch((err) => console.error("Agent stop recovery:", err.message ?? err));
   backfillClosureMilestones().catch((err) => console.error("milestone backfill:", err.message ?? err));
   resumeAttemptReplacements().catch((err) => console.error("replacement resume:", err.message ?? err));
 });

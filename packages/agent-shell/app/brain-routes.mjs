@@ -21,6 +21,7 @@ export function createBrainRoutes(operations) {
   const routes = new Map([
     ["POST /api/brains/start", start],
     ["POST /api/brains/stop", stop],
+    ["POST /api/brains/succeed", succeed],
     ["GET /api/brains/show", show],
     ["POST /api/brains/verdict", verdict],
     ["POST /api/brains/verdict/undo", undoVerdict],
@@ -78,6 +79,14 @@ export function createBrainRoutes(operations) {
     sendJson(response, result.status, result.status === 200
       ? { operationId: String(body.operationId ?? ""), target: { kind: "brain", id: String(body.area ?? ""), attemptId: String(body.expectedAttemptId ?? ""), tmuxTarget: expectedTarget || null }, state: "committed", effect: { sessionState: "absent", brainState: result.brain?.status ?? "inactive" }, retryable: false, brain: result.brain }
       : { error: result.error, ...(result.code ? { code: result.code } : {}) });
+  }
+
+  /** Starts safe succession for the calling Brain. */
+  async function succeed(request, response) {
+    const body = await readJson(request);
+    if (body.compatAlias) await operations.alias?.(String(body.compatAlias), body.operationId);
+    const result = await operations.succeed(String(body.session ?? ""), String(body.operationId ?? ""));
+    sendJson(response, result.status, result.status === 200 ? { state: result.state, brain: result.brain, succession: result.succession ?? result.brain?.succession } : { error: result.error, ...(result.code ? { code: result.code } : {}) });
   }
 
   /** Returns one brain by Area or session. */

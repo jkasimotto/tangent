@@ -143,7 +143,7 @@ function assignmentContext(session, { record, assignment, attempt, current }, go
       status: record.status,
       revision: record.revision ?? null,
       currentAssignmentId: record.currentAssignmentId ?? null,
-      controllerArea: record.controllerArea ?? record.area,
+      controllerArea: record.organizerArea ?? record.controllerArea ?? record.area,
       extraFiles: [...(record.extraFiles ?? [])].map(String),
       assignments: steps.map(projectAssignmentSummary),
     },

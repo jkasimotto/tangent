@@ -14,6 +14,7 @@ export function createPipelineRoutes(operations) {
   async function handle(request, response, url) {
     const route = routes.get(`${request.method} ${url.pathname}`);
     if (!route) return false;
+    await operations.alias?.(url.pathname, request.tangentOperationId);
     await route(request, response);
     return true;
   }

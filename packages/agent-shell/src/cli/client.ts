@@ -125,7 +125,7 @@ export function postJson(server: URL, path: string, payload: unknown): Promise<R
 export async function goalQueueRevision(server: URL, goalFile: string): Promise<number> {
   const snapshot = await vaultFetch(server, "/api/sessions");
   const queue = Array.isArray(snapshot.pipelines) ? snapshot.pipelines.find((item: any) => item?.goal === goalFile) : null;
-  if (!queue || !Number.isInteger(queue.revision)) throw new Error("This Goal has no authoritative queue revision.");
+  if (!queue || !Number.isInteger(queue.revision)) throw new Error("This Goal has no authoritative Job revision.");
   return queue.revision;
 }
 

@@ -64,7 +64,7 @@ export async function writeInbox(root, record) {
  * Appends one notice and returns it. Ids count up inside the inbox, so they
  * stay stable across restarts and never repeat.
  */
-export function appendNotice(record, text, now = new Date().toISOString(), sourceId = null) {
+export function appendNotice(record, text, now = new Date().toISOString(), sourceId = null, sender = null) {
   const body = String(text ?? "").trim();
   if (!body) throw new Error("a notice needs text");
   const stableSourceId = String(sourceId ?? "").trim() || null;
@@ -79,6 +79,12 @@ export function appendNotice(record, text, now = new Date().toISOString(), sourc
     deliveredTo: null,
     deliveredGeneration: null,
     deliveredBrainArea: null,
+    ...(sender?.session ? { sender: {
+      session: String(sender.session),
+      area: sender.area == null ? null : String(sender.area),
+      role: ["brain", "worker", "repair", "local"].includes(sender.role) ? sender.role : "local",
+      generation: Number.isInteger(sender.generation) ? sender.generation : null,
+    } } : {}),
     ...(stableSourceId ? { sourceId: stableSourceId } : {}),
   };
   record.notices = [...(record.notices ?? []), notice];

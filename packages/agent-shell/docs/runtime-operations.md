@@ -52,7 +52,7 @@ Agent Shell stores owner sidecars here:
 Each JSON record contains `session`, `instanceId`, and `claimedAt`. The file
 name is a hash of the session name.
 
-Goal queues and brain records also store `instanceId`. Compare all records with
+Job Attempts and Brain generation records also store `instanceId`. Compare all records with
 the public health identity before you diagnose recovery.
 
 Controller startup logs include `instance=<id>`. Gateway health names its
@@ -89,3 +89,15 @@ shutdown, and legacy refusal.
 
 The governance rule `agent-shell/session-ownership-contract` rejects raw tmux
 termination outside `session-ownership.mjs`.
+
+## Job conversion and rollback
+
+`job.v1` remains under the historical `pipelines/<area>/<slug>.json` path. Old `area-goal-queue.v2` and `agent-pipeline.v1` files are read in memory as run 1. Their first mutation writes `job.v1` with all Attempt and report history. Do not roll a state root that contains `job.v1` back past the compatibility foundation release.
+
+Work v2 publishes `runtime.problems` for multiple mutable runs, crossed Brain authority, invalid Goal bindings, Attempts on terminal Goals, expired staged successors, and promoted successions whose outgoing Agent is still live. Resolve these before enabling live conversion on another state root.
+
+## Succession recovery
+
+Brain succession stores the staged generation, expected prompt hash and byte count, included notice IDs, deadline, activity fence, immutable targets, and receipt state before delivery. On controller restart, armed-prompt recovery reconstructs exact receipt verification. A promoted operation retries outgoing retirement. An expired unpromoted operation terminates only the successor and leaves the outgoing Brain authoritative.
+
+Lifecycle logs use `job.*`, `agent.*`, `brain.succession.*`, and `compat.alias.used`. They contain operation IDs, addresses, run and revision fences, actor roles, outcomes, immutable targets, prompt hashes, byte counts, and notice IDs. They do not contain Goal bodies, notices, or prompts.

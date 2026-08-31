@@ -88,7 +88,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
       const [documentRecord, goalDetail] = await Promise.all([
         api(documentReadUrl(file)),
         goal
-          ? api(`/api/goals/detail?goal=${encodeURIComponent(file)}`).catch((error) => ({ goal, error: error.message }))
+          ? loadGoalReader(file, goal)
           : Promise.resolve(null),
       ]);
       state.document = documentRecord;
@@ -455,7 +455,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
       const [documentRecord, goalDetail] = await Promise.all([
         api(`/api/document?file=${encodeURIComponent(file)}`),
         goal
-          ? api(`/api/goals/detail?goal=${encodeURIComponent(file)}`).catch((error) => ({ goal, error: error.message }))
+          ? loadGoalReader(file, goal)
           : Promise.resolve(null),
       ]);
       state.document = documentRecord;
@@ -467,6 +467,19 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     } catch (error) {
       showToast(error.message);
     }
+  }
+
+  /** Joins intent-only Goal detail with targeted current Job history. */
+  async function loadGoalReader(file, fallbackGoal, run = null) {
+    try {
+      const [intent, execution] = await Promise.all([
+        api(`/api/goals/detail?goal=${encodeURIComponent(file)}`),
+        api(`/api/jobs/show?goal=${encodeURIComponent(file)}${run ? `&run=${encodeURIComponent(run)}` : ""}`).catch((error) => error?.status === 404 ? null : Promise.reject(error)),
+      ]);
+      if (!execution?.job) return { ...intent, job: null, runs: [] };
+      const attempts = (execution.job.assignments ?? []).flatMap((assignment) => (assignment.attempts ?? []).map((attempt) => ({ ...attempt, assignmentId: assignment.id, assignmentIndex: assignment.index, assignmentStatus: assignment.status, current: assignment.id === execution.job.currentAssignmentId && !attempt.endedAt, resume: { live: !attempt.endedAt, session: attempt.session, conversationId: attempt.providerSession?.id ?? null, command: attempt.endedAt ? "available" : null, cwd: attempt.cwd } })));
+      return { ...intent, job: execution.job, queue: execution.job, runs: execution.runs ?? [], attempts };
+    } catch (error) { return { goal: fallbackGoal, error: error.message }; }
   }
 
   // ---- Document comments (design contract: design-comment-on-documents) ----

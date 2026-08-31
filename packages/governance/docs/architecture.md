@@ -9,5 +9,6 @@ Rules:
 - The Agent Shell workflow lint rejects retired schema writers, inherited mutation authority, combined instruction reads, and Test-based routine closure.
 - The Agent Shell worker handover lint requires one strict CLI parser, strict route input, and durable queue notice receipts.
 - The Area-map world lint rejects locked regions, retired scope authority, and projection metadata in composed-world modules.
+- The retired-capture lint rejects removed storage, routes, commands, schema values, instructions, and current product nouns.
 
 Refer to ../../../docs/architecture/package-boundaries.md and ../../../docs/architecture/dependency-graph.md for monorepo boundaries.

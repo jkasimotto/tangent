@@ -1,4 +1,3 @@
-import { journalCaptureNeedsRetry, journalCaptureToast } from "./journal-capture-core.js";
 import { keyboardEventIsComposing, resolveKeyboardContext } from "./keyboard-context.js";
 import { documentReadingCommands, documentReadingScrollTarget, matchDocumentReadingCommand } from "./document-reading-commands.js";
 import { workCommandMatches, workCommandsFor } from "./work-commands.js";
@@ -31,7 +30,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   } = work;
   const {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelDescribe, areaIsFolded,
-    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, removeProcess, preferredArea, areaLabel, loadAreaJournal,
+    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, removeProcess, preferredArea, areaLabel,
   } = areas;
   const {
     showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, currentProgram,
@@ -46,7 +45,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   const {
     openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
     cancelCommentComposer, submitCommentComposer, commentIdentity, syncCommentCursor, activeCommentIdentity, focusCommentIdentity,
-    editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea,
+    editActiveComment, replyToActiveComment, resolveActiveComment, stepComment,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, readerCopyPayload, openReaderAgent,
     closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading, openDocumentPeek,
     leaveQuickPath,
@@ -1876,9 +1875,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.view = "areas";
       state.whatHappened = null;
       revealArea(state.areaSelection);
-      // History shows the Journal beside the finished Goals, so read it on
-      // the way in. The paint below does not wait for it.
-      loadAreaJournal(state.areaSelection);
       return paint(true);
     }
     if (target.closest("[data-close-area-history]")) { state.areaHistory = false; return paint(true); }
@@ -1946,7 +1942,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       saveDescribeDraft();
       return paint(true);
     }
-    if (target.closest("[data-save-idea]")) return saveVisibleIdea();
     if (target.closest("[data-notify-document-comments]")) return notifyDocumentComments();
     const vaultLink = target.closest("[data-open-vault-link]");
     if (vaultLink) return openVaultLink(vaultLink.dataset.openVaultLink);
@@ -2300,19 +2295,17 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.addEventListener("submit", async (event) => {
-    if (event.target.matches("[data-area-journal-form]")) {
+    if (event.target.matches("[data-area-message-form]")) {
       event.preventDefault();
       const form = event.target;
       const text = new FormData(form).get("text")?.toString().trim() || "";
       if (!text) return;
       try {
-        const idempotencyKey = form.dataset.journalIdempotencyKey || crypto.randomUUID();
-        form.dataset.journalIdempotencyKey = idempotencyKey;
-        const saved = await post("/api/areas/journal", { area: state.areaSelection, text, idempotencyKey, source: "Agent Shell" });
-        showToast(journalCaptureToast(saved));
-        if (journalCaptureNeedsRetry(saved)) return;
-        delete form.dataset.journalIdempotencyKey;
-        state.areaJournal = null;
+        const idempotencyKey = form.dataset.messageIdempotencyKey || crypto.randomUUID();
+        form.dataset.messageIdempotencyKey = idempotencyKey;
+        const delivery = await post("/api/agents/send", { to: state.areaSelection, text, from: "Agent Shell", idempotencyKey });
+        showToast(delivery.live ? "Sent." : "Queued.");
+        delete form.dataset.messageIdempotencyKey;
         form.reset();
         await refresh();
       } catch (error) { showToast(error.message); }

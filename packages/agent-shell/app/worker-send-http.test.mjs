@@ -186,7 +186,7 @@ test("a worker sends notes, blocked reports, and done to its brain, and nothing 
   const refusedRoutes = [
     "/api/goals/attempts/replace", "/api/goals/attempts/resume", "/api/pipelines/append", "/api/pipelines/control",
     "/api/processes/check", "/api/harnesses", "/api/launch/default", "/api/brains/reply", "/api/brains/verdict", "/api/brains/requests/answer",
-    "/api/areas/journal", "/api/spawn", "/api/agent", "/api/brains/start", "/api/brains/stop", "/api/document",
+    "/api/spawn", "/api/agent", "/api/brains/start", "/api/brains/stop", "/api/document",
   ];
   for (const route of refusedRoutes) {
     const answer = await post(base, route, { area, file: third.goal, goal: third.goal, caller: third.session, session: third.session }, third.session);
@@ -195,6 +195,14 @@ test("a worker sends notes, blocked reports, and done to its brain, and nothing 
   }
   const noHandover = await fetch(`${base}/api/brains/handover`, { method: "POST", headers: { "content-type": "application/json", "x-tangent-session": third.session }, body: "{}" });
   assert.equal(noHandover.status, 404, "the brain handover route is gone, not gated");
+
+  const browserMessage = { to: area, from: "Agent Shell", text: "Exact live Area note.", idempotencyKey: "browser-live-1" };
+  const liveArea = await post(base, "/api/agents/send", browserMessage);
+  const liveAreaRetry = await post(base, "/api/agents/send", browserMessage);
+  assert.equal(liveArea.body.status, "sent");
+  assert.equal(liveArea.body.live, true);
+  assert.equal(liveAreaRetry.body.receipt, liveArea.body.receipt);
+  assert.equal((await readInbox(path.join(root, "brains"), area)).notices.filter((notice) => notice.sourceId === browserMessage.idempotencyKey).length, 1);
 
   // D5: a worker sends only to its brain. Another session or Area is refused.
   const toBrainSession = await post(base, "/api/agents/send", { to: currentBrain.body.session, from: third.session, text: "Hello brain." });

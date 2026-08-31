@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { areaCanvasPath, areaCanvasSummary, legacyAreaCanvasPath, parseAreaCanvas, parseLegacyAreaCanvas, safeCanvasPath, serializeAreaCanvas, validateAreaCanvas } from "./area-canvas.mjs";
-import { createBlockElements, createEmptyScene, createTextElement } from "./public/area-board-core.js";
+import { createBlockElements, createEmptyScene, createTextElement, kindForReference, tangentOf } from "./public/area-board-core.js";
 
 const sample = createEmptyScene();
 sample.elements.push(createTextElement({ id: "ink", text: "Try this", x: 20, y: 40, width: 180, height: 90 }));
@@ -19,6 +19,13 @@ test("derives the new canonical path and keeps the old path migration-only", () 
   assert.equal(areaCanvasPath("../otto"), null);
   assert.equal(safeCanvasPath("/vault", "../escape.excalidraw"), null);
   assert.equal(safeCanvasPath("/vault", "otto/otto.excalidraw").absolute, "/vault/otto/otto.excalidraw");
+});
+
+test("retired capture metadata is ordinary canvas content", () => {
+  const retired = ["id", "ea"].join("");
+  const file = `otto/${retired}s.md`;
+  assert.equal(kindForReference(file), "document");
+  assert.equal(tangentOf({ customData: { tangent: { kind: retired, ref: file } } }), null);
 });
 
 test("rejects duplicate ids, unsafe numbers, invalid Tangent metadata, and unsupported types", () => {

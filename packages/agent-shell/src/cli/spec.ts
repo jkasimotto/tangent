@@ -34,7 +34,7 @@ export const areaCommandSpec: CliCommandSpec = {
   description: "List, inspect, and create Tangent tree Areas",
   subcommands: [
     { name: "list", description: "List every open Area path in the vault; done and archived Areas fold away", options: [{ name: "all", description: "Include done and archived Areas, each with its status" }, serverOption, jsonOption] },
-    { name: "show", description: "Show one Area's purpose, resources, skills, processes, and ideas", args: "<area>", options: [serverOption, jsonOption] },
+    { name: "show", description: "Show one Area's purpose, resources, skills, and processes", args: "<area>", options: [serverOption, jsonOption] },
     { name: "recent", description: "Show material milestones for one Area and its child Areas", args: "<area>", options: [{ name: "since", takesValue: true, description: "Only milestones inside a window (30d, 12h, 2w, 90m) or after an ISO time" }, { name: "query", takesValue: true, description: "Only milestones whose summary or reference holds any of these words" }, { name: "limit", takesValue: true, description: "Maximum rows (default 12)" }, serverOption, jsonOption] },
     { name: "audit", description: "Export detached legacy Area-brain records for explicit audit", args: "<area>", options: [serverOption, jsonOption] },
     { name: "present", description: "Present an Area Document without a Goal", args: "<area> <file>...", options: [{ name: "note", takesValue: true, description: "Short reason to read it" }, { name: "withdraw", description: "Withdraw one presented Document" }, { name: "session", takesValue: true, description: "Calling brain session" }, serverOption] },
@@ -327,15 +327,6 @@ export const goalCommandSpec: CliCommandSpec = {
         jsonOption
       ]
     }
-  ]
-};
-
-export const ideaCommandSpec: CliCommandSpec = {
-  name: "idea",
-  description: "Capture and list ideas on an Area. Ideas live in the Area's ideas.md, never in its note",
-  subcommands: [
-    { name: "add", description: "Save one idea line to the Area's ideas.md", args: "<area> <text...>", options: [serverOption] },
-    { name: "list", description: "List ideas, optionally scoped to one Area", args: "[area]", options: [serverOption, jsonOption] }
   ]
 };
 

@@ -13,7 +13,7 @@ const CANVAS = "#ffffff";
 const BLOCK_STROKE = "#1971c2";
 const BLOCK_FILL = "#a5d8ff";
 const LABEL_COLUMNS = 26;
-const ENTITY_KINDS = new Set(["goal", "document", "area", "link", "idea", "brain", "agent", "person", "request", "commit", "evidence"]);
+const ENTITY_KINDS = new Set(["goal", "document", "area", "link", "brain", "agent", "person", "request", "commit", "evidence"]);
 
 /** Returns a stable positive Excalidraw seed for one authored id. */
 function seedFor(id) {
@@ -89,7 +89,6 @@ function kindForReference(ref) {
   if (/^https?:\/\//i.test(ref)) return "link";
   const file = ref.split("#")[0];
   if (/(^|\/)goal-[^/]+\.md$/.test(file)) return "goal";
-  if (/(^|\/)ideas\.md$/.test(file)) return "idea";
   const parent = file.replace(/\/[^/]+$/, "");
   const leaf = parent.split("/").pop();
   if (leaf && file === `${parent}/${leaf}.md`) return "area";

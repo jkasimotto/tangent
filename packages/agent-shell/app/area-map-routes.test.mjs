@@ -33,6 +33,6 @@ test("promotion completion has its own exact-brain route", async () => {
   areaExists: async () => true,
   /** Accepts only the fixture brain. */
   authorizeBrain: async (_area, session) => session === "exact" ? { session } : null });
-  const accepted = response(); await routes.handle(request({ area: "otto", session: "exact", id: "op", durableRef: { file: "otto/ideas.md" } }), accepted, new URL("http://x/api/areas/map-promotions/complete")); assert.equal(accepted.status, 200); assert.equal(calls[0][1], "op");
+  const accepted = response(); await routes.handle(request({ area: "otto", session: "exact", id: "op", durableRef: { file: "otto/design-note.md" } }), accepted, new URL("http://x/api/areas/map-promotions/complete")); assert.equal(accepted.status, 200); assert.equal(calls[0][1], "op");
   const rejected = response(); await routes.handle(request({ area: "otto", session: "other", id: "op" }), rejected, new URL("http://x/api/areas/map-promotions/complete")); assert.equal(rejected.status, 403);
 });

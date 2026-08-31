@@ -1,6 +1,6 @@
 import { readJson, sendJson } from "./http-json.mjs";
 
-/** Creates routes that mutate Goals, ideas, and Area status. */
+/** Creates routes that mutate Goals and Area status. */
 export function createWorkMutationRoutes(operations) {
   const routes = new Map([
     ["POST /api/goals/understanding", "understanding"],
@@ -8,8 +8,6 @@ export function createWorkMutationRoutes(operations) {
     ["POST /api/goals/new", "createSimple"],
     ["POST /api/goals/create", "create"],
     ["GET /api/goals/detail", "detail"],
-    ["POST /api/idea/new", "createIdea"],
-    ["GET /api/ideas", "ideas"],
     ["POST /api/areas/status", "areaStatus"],
     ["POST /api/goals/edit", "edit"],
     ["POST /api/goals/cleanup", "cleanup"],

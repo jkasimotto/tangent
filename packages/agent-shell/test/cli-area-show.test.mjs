@@ -26,7 +26,7 @@ async function runShow(detail, options = []) {
 
 test("tangent area show prints route skills and project skills as name, description, and path", async () => {
   const detail = {
-    area: "otto/dnd", purpose: "", goals: [], ideas: [], processes: [],
+    area: "otto/dnd", purpose: "", goals: [], processes: [],
     skills: [
       { name: "review", description: "Review a change.", path: "/vault/otto/skill-review.md" },
       { name: "release", description: "Ship a release.", path: "/vault/otto/dnd/skill-release.md" },
@@ -38,13 +38,13 @@ test("tangent area show prints route skills and project skills as name, descript
 });
 
 test("tangent area show prints no Skills section when there are none", async () => {
-  const text = await runShow({ area: "otto/dnd", purpose: "", goals: [], ideas: [], processes: [], skills: [], projectSkills: [] });
+  const text = await runShow({ area: "otto/dnd", purpose: "", goals: [], processes: [], skills: [], projectSkills: [] });
   assert.doesNotMatch(text, /Skills:/);
 });
 
 test("tangent area show omits Goals even when the server projection includes them", async () => {
   const text = await runShow({
-    area: "otto/dnd", purpose: "Play.", ideas: [], processes: [], skills: [], projectSkills: [],
+    area: "otto/dnd", purpose: "Play.", processes: [], skills: [], projectSkills: [],
     goals: [{ slug: "hidden-work", status: "active", title: "Do not print this" }],
   });
   assert.doesNotMatch(text, /Goals \(|hidden-work|Do not print this/);
@@ -52,6 +52,6 @@ test("tangent area show omits Goals even when the server projection includes the
 });
 
 test("tangent area show --json also omits the Goal collection", async () => {
-  const text = await runShow({ area: "otto/dnd", purpose: "Play.", goals: [{ slug: "hidden-work" }], ideas: [] }, ["--json"]);
-  assert.deepEqual(JSON.parse(text), { area: "otto/dnd", purpose: "Play.", ideas: [] });
+  const text = await runShow({ area: "otto/dnd", purpose: "Play.", goals: [{ slug: "hidden-work" }] }, ["--json"]);
+  assert.deepEqual(JSON.parse(text), { area: "otto/dnd", purpose: "Play." });
 });

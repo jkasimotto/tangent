@@ -25,7 +25,6 @@ const productCommands: Record<string, ProductCommand> = {
   harness: { module: "@tangent/agent-shell/cli", exportName: "runHarnessCli", installHint: "harness" },
   handover: { module: "@tangent/agent-shell/cli", exportName: "runHandoverCli", installHint: "handover" },
   send: { module: "@tangent/agent-shell/cli", exportName: "runSendCli", installHint: "send" },
-  idea: { module: "@tangent/agent-shell/cli", exportName: "runIdeaCli", installHint: "idea" },
   process: { module: "@tangent/agent-shell/cli", exportName: "runProcessCli", installHint: "process" },
   document: { module: "@tangent/agent-shell/cli", exportName: "runDocumentCli", installHint: "document" },
   study: { module: "@tangent/agent-shell/cli", exportName: "runStudyCli", installHint: "study" },
@@ -65,7 +64,6 @@ const tangentCommandSpec: CliCommandSpec = {
     { name: "harness", description: "List harnesses and resolved Area launch defaults", args: "<list>" },
     { name: "send", description: "Send a note to your brain (--done, --blocked, --question), a live session, or an Area brain", args: "<brain|session|area> <note...>" },
     { name: "handover", description: "Replaced by tangent send brain; kept as an alias", args: "<facts...>", hidden: true },
-    { name: "idea", description: "Capture and list ideas on an Area (ideas.md)", args: "<add|list>" },
     { name: "document", description: "List and resolve Julian's comments inside a vault Document", args: "<comments|resolve>" },
     { name: "study", description: "Start the study partner: an interactive agent session beside nvim", args: "<contract>" },
     { name: "vault", description: "Commit vault edits with provenance", args: "<commit>" },
@@ -195,7 +193,7 @@ function productCommandSpec(name: string, description: string): CliCommandSpec {
  * commands; a worker has one; the rest are Julian's own tools.
  */
 const HELP_GROUPS: Array<{ title: string; commands: string[] }> = [
-  { title: "Brains", commands: ["goal", "area", "send", "agent", "idea", "document", "vault", "brain", "harness", "process", "service"] },
+  { title: "Brains", commands: ["goal", "area", "send", "agent", "document", "vault", "brain", "harness", "process", "service"] },
   { title: "Workers", commands: ["send"] },
   { title: "Julian", commands: ["setup", "status", "open", "shell", "study", "usage", "rollup", "search", "eval", "doctor", "dev", "data", "completion"] },
 ];
@@ -224,7 +222,6 @@ Examples:
   tangent goal done connect-chosen-ramp-faces --note "The ramp test passes."
   tangent send brain "Done: the faces connect. Proved by the ramp test." --done
   tangent area show otto/dnd
-  tangent idea add otto/dnd Maybe add a calmer return screen later.
   tangent vault commit otto/dnd/dnd.md -m "update: otto/dnd rewrite Current"
   tangent process list
   tangent service list

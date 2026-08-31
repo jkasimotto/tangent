@@ -95,7 +95,7 @@ import { uniqueSessionName } from "./session-names.mjs";
 import { withDefaultModel } from "./agent-command.mjs";
 import { findCodexRollouts, launchWithConversation, newConversation, resumeCommand } from "./harness-conversation.mjs";
 import { clearGoalCleanup, readAllGoalCleanups, readGoalCleanup, writeGoalCleanup } from "./goal-cleanup-record.mjs";
-import { appendJournalEntry, appendMilestone, emergencyStartProblem, exportLegacyAudit, journalFiles, querySubtreeMilestones, readJournalEntry, readMilestones } from "./area-brain-domain.mjs";
+import { appendMilestone, emergencyStartProblem, exportLegacyAudit, querySubtreeMilestones } from "./area-brain-domain.mjs";
 import { areaDirectory, areaFilePrefix, isRootArea, ROOT_AREA, rootAreaRow } from "./area-identity.mjs";
 import { materialOperationEvents, markOperationEventDelivered, readOperationEvents, writeOperationEvents } from "./operation-events.mjs";
 import { agentShellInstanceId, createSessionOwnership, SESSION_OWNER_OPTION } from "./session-ownership.mjs";
@@ -104,7 +104,7 @@ import { projectGoalDetail } from "./goal-detail.mjs";
 import { SETTLED_GOAL_STATUSES, goalIsFlaggedForVerify, goalStatusChange, normalizeGoalRecord, normalizeGoalStatus } from "./goal-lifecycle.mjs";
 import { withoutBrainGoalBinding, withoutBrainGoalBindings } from "./goal-brain-binding.mjs";
 import { notifyGoalWaitsForCheck, removeGoalCheckNotification } from "./julian-notify.mjs";
-import { appendIdea, areaNoteTemplate, areaTitle, currentSectionKey, ensureAreaNoteLinks, ensureVaultRootLinks, ideasFilePath, ideasFromFile, noteSignal, orderGoals, vaultRootAgentsText } from "./area-note-links.mjs";
+import { areaNoteTemplate, areaTitle, currentSectionKey, ensureAreaNoteLinks, ensureVaultRootLinks, noteSignal, orderGoals, vaultRootAgentsText } from "./area-note-links.mjs";
 import { newAttemptReplacement, readAllAttemptReplacements, readAttemptReplacement, sameAttemptReplacementRequest, transitionAttemptReplacement, unsettledAttemptReplacements, writeAttemptReplacement } from "./goal-attempt-replacement.mjs";
 import { GoalExecutionTransitionError, attachLateSourceEvidence, parkCurrentGoalAttempt, promoteReadyReplacement, reopenParkedGoalQueue } from "./goal-execution-transition.mjs";
 import { dismissGoalCard, dismissGoalDocument, markGoalDocumentOpened, presentGoalCard, presentGoalDocument, projectCards, projectPresentations, pruneMissingPresentations, readGoalPresentations, removeGoalPresentations, withdrawGoalCard, withdrawGoalDocument } from "./goal-presentations.mjs";
@@ -1630,20 +1630,6 @@ async function createGoalSet(area, { goal, subgoals = [], description = "", sour
   return { file: records[0].file, files: records.map((record) => record.file) };
 }
 
-/**
- * The ideas of one Area: its `ideas.md` lines, then any `- Idea:` line an
- * older note still carries under Ideas and open questions.
- */
-async function areaIdeas(area) {
-  const file = await readFile(path.join(TREES_ROOT, ideasFilePath(area)), "utf8").catch(() => "");
-  const legacy = noteSection(await areaNote(area), "Ideas and open questions")
-    .split("\n")
-    .map((line) => line.match(/^-\s*Idea:\s*(.+)$/))
-    .filter(Boolean)
-    .map((match) => match[1].trim());
-  return [...ideasFromFile(file), ...legacy];
-}
-
 /** Reduces one readAreaGoals() entry to the compact shape the tangent goal CLI lists. */
 function goalSummary(goal) {
   return {
@@ -1670,14 +1656,6 @@ function goalFilterFlags(filters) {
     filters.changedSince ? ` --changed-since ${filters.changedSince}` : "",
     filters.query ? ` --query ${JSON.stringify(filters.query)}` : "",
   ].join("");
-}
-
-/** Saves one idea line to the Area's ideas.md; the note itself is never written. */
-async function saveWorkIdea(area, description) {
-  const file = await appendIdea({ treesRoot: TREES_ROOT, area, text: description });
-  await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
-  await vaultCommit([file], `note: ${area} captures an idea`, area, null);
-  return file;
 }
 
 /**
@@ -4600,7 +4578,7 @@ const WORKER_REFUSED_ROUTES = new Set([
   "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/edit", "/api/goals/start",
   "/api/goals/depend", "/api/goals/undepend", "/api/goals/accept", "/api/goals/understanding", "/api/goals/cleanup",
   "/api/pipelines/append", "/api/pipelines/control", "/api/goals/attempts/replace", "/api/goals/attempts/resume",
-  "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/areas/journal", "/api/idea/new", "/api/document/resolve", "/api/document",
+  "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/document/resolve", "/api/document",
   "/api/brains/start", "/api/brains/stop", "/api/brains/reply", "/api/brains/verdict", "/api/brains/verdict/undo",
   "/api/brains/requests", "/api/brains/requests/withdraw", "/api/brains/requests/answer", "/api/brains/requests/dismiss",
   "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control", "/api/processes/check",
@@ -4614,8 +4592,8 @@ const WORKER_SEND_TARGET_REFUSAL = 'workers only send to their brain. Use: tange
 const REPAIR_REFUSED_ROUTES = new Set([
   "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/start",
   "/api/goals/depend", "/api/goals/undepend", "/api/goals/accept", "/api/goals/understanding", "/api/goals/cleanup",
-  "/api/goals/attempts/resume", "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/areas/journal",
-  "/api/idea/new", "/api/document/resolve", "/api/document", "/api/brains/start", "/api/brains/stop", "/api/brains/reply",
+  "/api/goals/attempts/resume", "/api/areas/new", "/api/areas/status", "/api/areas/move",
+  "/api/document/resolve", "/api/document", "/api/brains/start", "/api/brains/stop", "/api/brains/reply",
   "/api/brains/verdict", "/api/brains/verdict/undo", "/api/brains/requests", "/api/brains/requests/withdraw",
   "/api/brains/requests/answer", "/api/brains/requests/dismiss", "/api/operations/new", "/api/operations/control",
   "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control",
@@ -4749,96 +4727,6 @@ async function describeWorkToBrain(owner, area, description, sources, launchOver
     return { status: started.status, error: `Your description was saved for the ${owner.area} brain, but the brain did not start: ${started.error}` };
   }
   return { ...started, brainArea: owner.area, route, launchLabel: started.brain?.resolvedLaunch?.label || "" };
-}
-
-/**
- * Commits one Journal capture and reports whether its words are durable. A
- * vault with no Git history has nothing to commit, the same rule `runVaultGit`
- * already follows, so an isolated vault never blocks capture. A vault that has
- * history must hold the words before a milestone or a brain reads them, which
- * is what ADR-0033 means by the Journal commit occurring first.
- */
-async function commitJournalCapture(changed, message, area, session) {
-  const outcome = await vaultCommit(changed, message, area, session);
-  if (outcome.committed || !existsSync(path.join(TREES_ROOT, ".git"))) return { committed: true, error: null };
-  return outcome;
-}
-
-/** True when both durable downstream records exist for one Journal entry. */
-async function journalProcessingComplete(area, entry) {
-  const sourceId = `journal:${entry.id}`;
-  const [milestones, inbox] = await Promise.all([
-    readMilestones(BRAINS_ROOT, area),
-    readInbox(BRAINS_ROOT, area),
-  ]);
-  return milestones.items.some((item) => item.id === sourceId)
-    && inbox.notices.some((notice) => notice.sourceId === sourceId);
-}
-
-/**
- * Finds only the Journal paths that still belong to this capture's refused
- * commit. A marker in HEAD proves that the entry is durable. It does not
- * prove that the entry gained its milestone and brain notice. In that case,
- * a rollover archive linked by the entry's Journal can still be pending, but
- * an unrelated active-Journal edit must stay out of the recovery commit.
- */
-async function pendingJournalChangedPaths(area, entry) {
-  const files = await journalFiles(TREES_ROOT, area);
-  const changed = files.map((file) => path.relative(TREES_ROOT, file));
-  if (!changed.length || !existsSync(path.join(TREES_ROOT, ".git"))) return { paths: [], persisted: true };
-  const marker = `<!-- tangent-journal:${entry.id} -->`;
-  let persisted = false;
-  for (const relative of changed) {
-    const committed = await captureVaultGit(["show", `HEAD:${relative}`]).catch(() => "");
-    if (committed.includes(marker)) {
-      persisted = true;
-      break;
-    }
-  }
-  if (!persisted) {
-    const status = await captureVaultGit(["status", "--porcelain", "--", ...changed]);
-    return { paths: status.trim() ? changed : [], persisted: false };
-  }
-
-  const containingFile = entry.existingFile || entry.file;
-  const current = await readFile(containingFile, "utf8").catch(() => "");
-  const linkedArchives = [...current.matchAll(/\((journal-[^)\/]+\.md)\)/g)].map((match) => match[1]);
-  const available = new Map(files.map((file) => [path.basename(file), file]));
-  const pending = [];
-  for (const name of new Set(linkedArchives)) {
-    const file = available.get(name);
-    if (!file) continue;
-    const relative = path.relative(TREES_ROOT, file);
-    const committed = await captureVaultGit(["show", `HEAD:${relative}`]).then(() => true).catch(() => false);
-    if (!committed) pending.push(relative);
-  }
-  return { paths: pending, persisted: true };
-}
-
-/** The vault paths one saved Journal entry changed, its active file first. */
-function journalChangedPaths(entry) {
-  const files = [entry.file, ...(entry.archive ? [entry.archive] : [])];
-  return files.map((file) => path.relative(TREES_ROOT, file));
-}
-
-/**
- * Delivers one saved Journal notice to the exact Area brain, and wakes that
- * brain when its record exists but nothing is live. Capture promises Julian
- * that his words reach the brain, not only the file, so an inactive
- * destination is activated instead of left with an unread notice. The notice
- * is written down before the wake, so a start error costs the delivery and
- * never the words. An Area with no brain record keeps the notice for the
- * brain it gets later. Returns what happened, so the surface can say it.
- */
-async function deliverJournalToBrain(area, message, idempotencyKey) {
-  if (await notifyBrain(area, message, { idempotencyKey })) return { route: "brain-opened" };
-  const record = brainRecordForArea(await readAllBrains(BRAINS_ROOT), area);
-  if (!record) return { route: "no-brain" };
-  // The notice already carries Julian's words, so this wake is a message wake
-  // even though the start call has no instruction text of its own.
-  const started = await startBrain(area, { resume: true, messageRecorded: true });
-  if (started.status !== 200) return { route: "not-started", brainError: started.error };
-  return { route: record.status === "active" ? "brain-started" : "brain-resumed", session: started.session };
 }
 
 /**
@@ -5910,26 +5798,7 @@ async function acceptGoalAssignment(file) {
   return { status: 200 };
 }
 
-// ---- voice + typed command control ----
-// POST /api/voice: an utterance in, actions out. The browser records push-to-
-// talk audio; this server transcribes it (Groq whisper) and hands the
-// transcript plus live shell state (sessions, states, pane tails, tree areas,
-// the areas visible in the user's sidebar) to a fast LLM router.
-// POST /api/command is the same lane for typed text: identical grammar,
-// identical routing, no transcription.
-//
-// The router's contract: the user's words are never rewritten. Speech or text
-// meant for an agent travels verbatim via the "say" action — the router only
-// picks the destination and names the leading address words, which the server
-// strips itself. Shell verbs (view, spawn, kill, sidebar, caffeinate, agent
-// switch, spoken answers) are a small closed set and fire only on clear
-// matches. Areas have no agents of their own: addressing a tree area
-// delivers the utterance to the orchestrator (the chat session) with the
-// area name kept in the words, so the orchestrator knows which area is
-// meant. On any router failure the fallback is inert: the utterance is
-// typed into the focused session, unsubmitted — a misheard or misrouted
-// utterance can never fire an action on its own.
-
+// ---- voice Area message delivery ----
 const GROQ_KEY =
   process.env.GROQ_API_KEY ??
   (() => {
@@ -5942,32 +5811,6 @@ const GROQ_KEY =
       return null;
     }
   })();
-const ROUTER_MODEL = process.env.VOICE_ROUTER_MODEL ?? "llama-3.3-70b-versatile";
-
-const ROUTER_SYSTEM = `You route commands for Agent Shell, a terminal app whose tabs are tmux sessions running coding agents. The session named in chatSession is the orchestrator. It organizes Areas, captures Goals, and opens sessions. The user addresses agents by session name or Area name. Areas have no agents of their own, so an Area name means the orchestrator acting on that Area.
-
-You get a JSON payload: the utterance (speech-to-text or typed), the focused session, all sessions (state: working = agent busy, waiting = agent finished or needs input, shell = plain shell, service/stopped = background command), the visible pane tail of relevant sessions, visibleAreas (the tree areas the user can currently see in the sidebar — their mental model; prefer them when resolving names), and allAreas.
-
-THE RULE ABOVE ALL OTHERS: you never write, rewrite, trim, or fix the user's words. Words meant for an agent travel verbatim through "say"; you only pick the destination and identify which leading words were the address. The server strips the address itself.
-
-Reply with JSON only: {"actions":[...]}, at most 5 actions, executed in order. Action types:
-- {"type":"say","target":"<the payload's exact session name or Area path, or \\"\\" for the focused session>","address":"<the exact leading words that name the target, or \\"\\" if none>"} — deliver the utterance without its address. This is the default action. An utterance that opens with a session or Area name is addressed. Everything else has target "". A Goal or Subgoal request addressed to an Area stays in one complete utterance. The orchestrator receives an Area target with the Area name intact. Never infer a target from topic or content. A non-empty target must include the address words that named it.
-- {"type":"keys","session":"<name>","keys":["Enter"]} — press special keys. Allowed: Enter, Escape, Tab, Up, Down, Left, Right, BSpace, Space, C-c, and single letters or digits like "y" or "2". Use for answering menus and permission prompts visible in the pane tail (send the matching option key) and for "stop" or "interrupt" (Escape, or C-c in a shell).
-- {"type":"view","target":"<session or Area name>"} — show that session or Area. Use this for "show me X", "open X", "go to X", or "switch to X".
-- {"type":"close_view"} — leave the current session view, back to the orchestrator.
-- {"type":"sidebar"} — toggle the area tree sidebar.
-- {"type":"spawn","area":"<Area path>","name":"<lowercase-hyphen-name>"} — create a plain work session in an Area. Only for a bare "new/open a session on X (called Y)" with nothing else attached. If the user states a Goal or context in the same utterance, do NOT spawn. Send the complete request to the Area instead.
-- {"type":"kill","session":"<name>"} — destroy a session and everything in it. Only on an explicit kill or destroy request.
-- {"type":"caffeinate","on":true} — keep the mac awake (or release it).
-- {"type":"agent","cmd":"<command>"} — switch the orchestrator's agent command (for example "claude-otto" or "pi"). Only on an explicit request; it restarts the orchestrator. Goal sessions are unaffected: they always run their area's own agent.
-- {"type":"speak","text":"one short sentence"} — answer out loud. Use for status questions ("who's waiting on me?" — summarize the waiting and working sessions from the payload) and to say why you did nothing.
-
-Rules:
-- Shell verbs fire only on a clear match. When torn between say and any non-destructive action, say. Never guess kill, agent, or spawn.
-- Spoken names are fuzzy, but targets are literal. Copy the matched session name or complete Area path from the payload. A complete session-name match wins. Otherwise, a name that matches an Area's base name selects that Area. Resolve sessions first, then visibleAreas, then allAreas. Reference only payload entries.
-- A bare confirmation ("yes", "go ahead", "option two") while the focused pane shows a question or menu: answer with keys matching the visible choices; otherwise say it.
-- To act on a prompt in a session that is not focused, put a view action first so the user sees what happens.
-- Unclear or nothing matches: return one speak action asking a single short question.`;
 
 /**
  * Transcribes one recorded utterance via Groq whisper-large-v3-turbo. Session
@@ -5980,7 +5823,7 @@ async function transcribe(audio, contentType, nameHints) {
   const fd = new FormData();
   fd.append("file", new Blob([audio], { type }), "utterance." + ext);
   fd.append("model", "whisper-large-v3-turbo");
-  fd.append("prompt", `Voice commands for a terminal app. Names: ${nameHints.join(", ")}.`.slice(0, 500));
+  fd.append("prompt", `Spoken note for an Area. Names: ${nameHints.join(", ")}.`.slice(0, 500));
   const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
     method: "POST",
     headers: { authorization: `Bearer ${GROQ_KEY}` },
@@ -5990,330 +5833,6 @@ async function transcribe(audio, contentType, nameHints) {
   const text = ((await res.json()).text ?? "").trim();
   if (text.length < 2) throw new Error("heard nothing");
   return text;
-}
-
-/** One JSON-mode chat call to the router model, parsed leniently ({ to }). */
-async function routerCall(userPayload) {
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: { authorization: `Bearer ${GROQ_KEY}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: ROUTER_MODEL,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: ROUTER_SYSTEM },
-        { role: "user", content: JSON.stringify(userPayload) },
-      ],
-    }),
-  });
-  if (!res.ok) throw new Error(`router ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const content = (await res.json()).choices?.[0]?.message?.content ?? "";
-  const m = content.match(/\{[\s\S]*\}/);
-  return JSON.parse(m ? m[0] : content);
-}
-
-/**
- * Live state the router decides against: every session with its agent state,
- * pane tails for the focused, chat, and waiting sessions (what a "yes" or an
- * option number would answer), the vault area paths, and the subset of areas
- * the user's sidebar currently shows (their mental model, so spoken names
- * resolve the way the tree spells them).
- */
-async function voiceContext(focused, visibleAreas = []) {
-  const sessions = await listSessions();
-  const paneTails = {};
-  for (const s of sessions) {
-    if (s.name !== focused && s.state !== "waiting" && !s.isChat) continue;
-    try {
-      const { stdout } = await execFileAsync("tmux", ["capture-pane", "-p", "-t", "=" + s.name + ":"]);
-      paneTails[s.name] = stdout.replace(/\s+$/, "").split("\n").slice(-14).join("\n");
-    } catch {}
-  }
-  const areas = flattenAreaPaths(await readTree(TREES_ROOT));
-  // Workable goals ride along so spoken references to work ("who's on X?")
-  // can resolve against real goal titles.
-  const goals = [...(await goalsByFile()).values()]
-    .filter((goal) => !CLOSED_GOAL.has(goal.status))
-    .map((o) => ({ title: o.title, area: o.area }));
-  return { sessions, paneTails, areas, visibleAreas: visibleAreas.filter((p) => areas.includes(p)), goals };
-}
-
-/** Flattens the nested tree into the plain area-path list the router reads. */
-function flattenAreaPaths(areas, out = []) {
-  for (const n of areas) {
-    out.push(n.path);
-    flattenAreaPaths(n.children, out);
-  }
-  return out;
-}
-
-const NAMED_KEYS = new Set(["Enter", "Escape", "Tab", "Up", "Down", "Left", "Right", "BSpace", "Space", "C-c", "C-d", "C-u", "Home", "End", "PPage", "NPage"]);
-/** Awaitable pause, used to let a TUI ingest typed text before Enter. */
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-/** Session-name slug of any spoken phrase: "Voice Smoke" -> "voice-smoke". */
-const normName = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-
-/** Maps a spoken (fuzzy) session name onto a real one, or null. */
-function resolveSession(name, sessions) {
-  if (!name) return null;
-  const hit = sessions.find((s) => s.name === name) ?? sessions.find((s) => normName(s.name) === normName(name));
-  return hit?.name ?? null;
-}
-
-/**
- * Resolves a spoken target onto a session or a tree area: sessions first,
- * then area base names (visible areas before the whole vault), then full
- * area paths. "root", "orchestrator", and "chat" all mean the orchestrator
- * session. Returns {session} or {area} or null.
- */
-function resolveTarget(spoken, ctx) {
-  const n = normName(spoken ?? "");
-  if (!n) return null;
-  if (n === "root" || n === "orchestrator" || n === "chat") return { session: CHAT_SESSION };
-  const sess = resolveSession(spoken, ctx.sessions);
-  if (sess) return { session: sess };
-  /** First path whose base name (else full path) matches the spoken name. */
-  const byName = (paths) =>
-    paths.find((p) => normName(p.split("/").pop()) === n) ?? paths.find((p) => normName(p) === n);
-  const area = byName(ctx.visibleAreas) ?? byName(ctx.areas);
-  return area ? { area } : null;
-}
-
-/**
- * The utterance's own leading words when they name the resolved target, null
- * otherwise. The router is supposed to report which spoken words addressed
- * its target; when it forgets, this recovers the obvious cases ("Tangent,
- * here's a big one...") so the no-address invariant judges the utterance,
- * not the router's bookkeeping. Matching is deliberately exact: a fuzzy
- * spoken form the server cannot verify stays unaddressed.
- */
-function leadingAddress(utterance, resolved) {
-  const names = resolved.area ? [resolved.area, resolved.area.split("/").pop()] : [resolved.session];
-  const norms = new Set(names.map(normName));
-  const words = String(utterance).trim().split(/\s+/).slice(0, 4);
-  for (let n = words.length; n >= 1; n--) {
-    const lead = words.slice(0, n).join(" ");
-    if (norms.has(normName(lead))) return lead;
-  }
-  return null;
-}
-
-/**
- * Removes the router-identified address words from the front of the utterance,
- * but only when they really are its first words — the verbatim guarantee is
- * that nothing else ever changes. On any mismatch the full utterance survives.
- */
-function stripAddress(utterance, address) {
-  const words = String(address ?? "").trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return utterance;
-  const m = utterance.match(new RegExp(`^\\s*(?:\\S+\\s+){${words.length - 1}}\\S+[\\s,.:;!?]*`));
-  /** Case-, punctuation-, and whitespace-insensitive comparison form. */
-  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9&]+/g, " ").trim();
-  if (!m || norm(m[0]) !== norm(words.join(" "))) return utterance;
-  return utterance.slice(m[0].length).trim() || utterance;
-}
-
-/**
- * Types literal text into a session's active pane. The pause before Enter
- * lets an agent TUI finish ingesting the text before the submit arrives.
- */
-async function typeInto(session, text, submit) {
-  // "=name:" exact session, active pane — send-keys rejects bare "=name".
-  for (const chunk of typeChunks(text)) {
-    await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "-l", "--", chunk]);
-  }
-  if (submit) {
-    await sleep(150);
-    await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
-  }
-}
-
-/**
- * Executes the router's plan. Server-owned actions run here in order; actions
- * only the page can perform (view, scope, close_view, sidebar) are returned to it.
- * Every action degrades to a summary line, never an exception: one failed
- * step must not hide what the rest of the plan did.
- */
-async function executeVoiceActions(actions, ctx, focused, utterance) {
-  const { sessions } = ctx;
-  const summary = [];
-  const clientActions = [];
-  for (const a of (Array.isArray(actions) ? actions : []).slice(0, 5)) {
-    try {
-      switch (a.type) {
-        case "say": {
-          // The invariant that stops topic-guessing: the router may redirect
-          // only when the user actually spoke address words. No address means
-          // the focused session, whatever the router claims the target is. A
-          // missing address is first re-derived from the utterance itself, so
-          // the invariant judges the user's words, not the router's paperwork.
-          let address = String(a.address ?? "").trim();
-          const named = a.target ? resolveTarget(a.target, ctx) : null;
-          if (!address && named) address = leadingAddress(utterance, named) ?? "";
-          const resolved = address && a.target ? named : { session: focused };
-          if (!resolved) {
-            await typeInto(focused, utterance, false);
-            summary.push(`no "${a.target}" — typed here, not sent`);
-            break;
-          }
-          // An Area has no agent of its own: Area-addressed words go to the
-          // orchestrator with the address kept, so it knows which area is
-          // meant. Session-addressed words are stripped of the address.
-          const target = resolved.area ? CHAT_SESSION : resolved.session;
-          const text = (resolved.area ? utterance : stripAddress(utterance, address)).slice(0, 4000);
-          // Never auto-run prose at a bare shell prompt; agents get Enter.
-          const submit = sessions.find((s) => s.name === target)?.state !== "shell";
-          await typeInto(target, text, submit);
-          // The HUD line says WHY it went there: which spoken words redirected
-          // it, or that it followed the viewed session.
-          const why = resolved.area ? ` (for ${resolved.area})` : address ? ` (you said “${address}”)` : "";
-          summary.push((submit ? `→ ${target}` : `typed into ${target}, not sent`) + why);
-          break;
-        }
-        case "keys": {
-          const requested = String(a.session ?? "").trim();
-          const target = requested ? resolveSession(requested, sessions) : focused;
-          if (!target) {
-            summary.push(`no session "${requested}" — pressed nothing`);
-            break;
-          }
-          const keys = (Array.isArray(a.keys) ? a.keys : [])
-            .filter((k) => NAMED_KEYS.has(k) || /^[0-9a-zA-Z]$/.test(k))
-            .slice(0, 8);
-          if (!keys.length) break;
-          await execFileAsync("tmux", ["send-keys", "-t", "=" + target + ":", ...keys]);
-          summary.push(`pressed ${keys.join(" ")} in ${target}`);
-          break;
-        }
-        case "view": {
-          const spoken = a.target ?? a.session;
-          const resolved = resolveTarget(spoken, ctx);
-          if (!resolved) {
-            summary.push(`no session or area "${spoken}"`);
-            break;
-          }
-          if (resolved.area) {
-            // An Area is a place in the tree, not a session: viewing it
-            // scopes the sidebar to that subtree.
-            clientActions.push({ type: "scope", area: resolved.area });
-            summary.push(`scoped the tree to ${resolved.area}`);
-            break;
-          }
-          clientActions.push({ type: "view", session: resolved.session });
-          summary.push(`viewing ${resolved.session}`);
-          break;
-        }
-        case "close_view":
-          clientActions.push({ type: "close_view" });
-          summary.push("closed view");
-          break;
-        case "sidebar":
-          clientActions.push({ type: "sidebar" });
-          summary.push("toggled sidebar");
-          break;
-        case "spawn": {
-          const name = normName(a.name ?? "");
-          const result = await spawnSession(String(a.area ?? ""), name);
-          if (result.status !== 200) {
-            summary.push(`spawn failed: ${result.error}`);
-            break;
-          }
-          clientActions.push({ type: "view", session: name });
-          summary.push(`spawned ${name} on ${a.area}`);
-          break;
-        }
-        case "kill": {
-          const target = resolveSession(a.session, sessions);
-          if (!target || target === CHAT_SESSION) {
-            summary.push("refusing to kill that");
-            break;
-          }
-          const stopped = await terminateOwnedSession(target);
-          if (stopped.state !== "terminated") {
-            summary.push(`refusing to kill ${target}: ${terminationError(target, stopped)}`);
-            break;
-          }
-          summary.push(`killed ${target}`);
-          break;
-        }
-        case "caffeinate":
-          setCaffeinate(Boolean(a.on));
-          summary.push(`caffeinate ${a.on ? "on" : "off"}`);
-          break;
-        case "agent": {
-          const cmd = String(a.cmd ?? "").trim();
-          if (!cmd) break;
-          agentCmd = cmd;
-          const stopped = await terminateOwnedSession(CHAT_SESSION);
-          if (!["terminated", "absent"].includes(stopped.state)) throw new Error(terminationError(CHAT_SESSION, stopped));
-          summary.push(`chat agent → ${cmd}`);
-          break;
-        }
-        case "speak": {
-          const text = String(a.text ?? "").slice(0, 400);
-          if (!text) break;
-          execFile("say", [text], () => {});
-          summary.push(`“${text}”`);
-          break;
-        }
-        default:
-          summary.push(`unknown action ${String(a.type).slice(0, 40)}`);
-      }
-    } catch (err) {
-      summary.push(`${a.type} failed: ${String(err.stderr ?? err.message ?? err).slice(0, 120)}`);
-    }
-  }
-  return { summary, clientActions };
-}
-
-const VOICE_LOG = path.join(os.homedir(), ".tangent", "agent-shell-voice.jsonl");
-
-/**
- * Appends one routing decision to ~/.tangent/agent-shell-voice.jsonl: the
- * utterance, the router's raw plan, and what actually executed. The audit
- * trail for "why did that go there?" — without it a misroute is unexplainable
- * after the fact. Best effort, never throws.
- */
-function logVoice(entry) {
-  appendFile(VOICE_LOG, JSON.stringify({ at: new Date().toISOString(), ...entry }) + "\n").catch(() => {});
-}
-
-/**
- * Routes one utterance (spoken or typed, same grammar) and executes the plan.
- * The failure fallback is inert: the utterance is typed into the focused
- * session, unsubmitted, and nothing else happens.
- */
-async function routeAndExecute(utterance, focused, ctx) {
-  let plan = null;
-  try {
-    plan = await routerCall({
-      utterance,
-      chatSession: CHAT_SESSION,
-      focusedSession: focused,
-      sessions: ctx.sessions.map(({ name, state, area, kind }) => ({ name, state, area, kind })),
-      paneTails: ctx.paneTails,
-      visibleAreas: ctx.visibleAreas,
-      allAreas: ctx.areas,
-      goals: ctx.goals,
-    });
-    const out = await executeVoiceActions(plan.actions, ctx, focused, utterance);
-    logVoice({ utterance, focused, plan, summary: out.summary });
-    return out;
-  } catch (err) {
-    console.error("voice router:", err.message ?? err);
-    logVoice({ utterance, focused, plan, error: String(err.message ?? err) });
-    try {
-      await typeInto(focused, utterance, false);
-    } catch {}
-    return { summary: ["router failed — typed it here, not submitted"], clientActions: [] };
-  }
-}
-
-/** Name hints for whisper: sessions plus visible area base names. */
-function voiceNameHints(ctx) {
-  const areaNames = ctx.visibleAreas.map((p) => p.split("/").pop());
-  return [...new Set([...ctx.sessions.map((s) => s.name), ...areaNames])];
 }
 
 /** Executes the small allowlist of effects that one Request revision can authorize. */
@@ -6328,32 +5847,6 @@ async function executeAuthorizedRequestEffect(effect, brain) {
     await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} done in tree`, goal.area, brain.session);
     await recordCommittedCommand({ operation: "goal-done", actorSession: brain.session, targetArea: goal.area, goal: goal.slug, result: "authorized request applied" });
     return;
-  }
-  if (type === "route-journal") {
-    const area = String(effect.area ?? "");
-    const text = String(effect.text ?? "").trim();
-    const areas = flattenAreaPaths(await readTree(TREES_ROOT));
-    if ((!areas.includes(area) && !isRootArea(area)) || !text) throw new Error("the authorized Journal route is invalid");
-    const sourceEntryId = String(effect.sourceEntryId ?? "").trim();
-    if (sourceEntryId) {
-      const sourceEntry = await readJournalEntry(TREES_ROOT, brain.area, sourceEntryId);
-      if (!sourceEntry) throw new Error(`source Journal entry ${sourceEntryId} does not exist in ${brain.area}`);
-      if (!sourceEntry.text.includes(text)) throw new Error("the authorized Journal route is not an exact excerpt of its source entry");
-    }
-    const id = String(effect.idempotencyKey ?? `request-route:${brain.area}:${createHash("sha256").update(text).digest("hex")}`);
-    const sourceArea = isRootArea(brain.area) ? "Root" : brain.area;
-    const source = sourceEntryId ? `Routed from ${sourceArea} Journal entry ${sourceEntryId}` : `routed from ${sourceArea}`;
-    const entry = await appendJournalEntry({ treesRoot: TREES_ROOT, area, text, idempotencyKey: id, source });
-    if (!entry.duplicate) {
-      const changed = journalChangedPaths(entry);
-      const [relative] = changed;
-      await runVaultGit(["add", "--", ...changed]);
-      const saved = await commitJournalCapture(changed, `note: ${area} routed Journal capture`, area, brain.session);
-      if (!saved.committed) throw new Error(`the routed Journal text was saved to ${relative} but not committed: ${saved.error}`);
-      await appendMilestone({ root: BRAINS_ROOT, area, kind: "routed-journal", summary: text, ref: relative, idempotencyKey: `journal:${entry.id}`, now: entry.createdAt });
-      await notifyBrain(area, `The ${brain.area} brain routed exact Journal text to this Area. Read ${relative}. This message grants no authority.`);
-    }
-    return { type, area, journal: path.relative(TREES_ROOT, entry.file), duplicate: entry.duplicate };
   }
   throw new Error(`unsupported Request effect type: ${type || "missing"}`);
 }
@@ -6512,7 +6005,7 @@ function recoveredExtraGoals(projected, goalIndex) {
   return goals;
 }
 
-const agentRoutes = createAgentRoutes({
+const agentRouteOperations = {
   /** Returns every live non-process session with its delivery state. */
   async list() {
     const sessions = await listSessions();
@@ -6630,21 +6123,23 @@ const agentRoutes = createAgentRoutes({
     }
     if (sender.role === "repair" && live?.kind === "goal" && live.area !== sender.area) return { status: 403, error: REPAIR_REFUSAL };
     const entry = { from: sender.session ?? "unknown sender", area: sender.area, text, durable: true, queuedAt: new Date().toISOString() };
-    if (!live) {
-      const inbox = areaInboxTarget(requested, { areas: [ROOT_AREA, ...flattenAreaPaths(tree)], brains });
-      if (inbox) {
-        const delivery = await routeBrainNotice(inbox.area, text, { sender: { session: entry.from, area: entry.area } });
-        const reason = delivery.addressed
-          ? "stored in the Area inbox and queued for its live brain"
-          : "stored in the Area inbox; it will arrive when the brain starts";
-        return { status: 200, value: { status: "queued", to: inbox.area, target: "area", live: delivery.addressed, via: inbox.via, reason, receipt: delivery.notice.id } };
-      }
+    const inbox = areaInboxTarget(requested, { areas: [ROOT_AREA, ...flattenAreaPaths(tree)], brains });
+    if (inbox) {
+      const delivery = await routeBrainNotice(inbox.area, text, {
+        idempotencyKey: body.idempotencyKey || body.operationId || null,
+        sender: { session: entry.from, area: entry.area },
+      });
+      const reason = delivery.addressed
+        ? "stored in the Area inbox and queued for its live brain"
+        : "stored in the Area inbox; it will arrive when the brain starts";
+      return { status: 200, value: { status: delivery.addressed ? "sent" : "queued", to: inbox.area, target: "area", live: delivery.addressed, via: inbox.via, reason, receipt: delivery.notice.id } };
     }
     const result = await messages.dispatch(live ?? null, entry);
     if (result.status !== 200) return { status: result.status, error: result.error };
     return { status: 200, value: { status: result.state, to: result.to, ...(result.reason ? { reason: result.reason, position: result.position } : {}) } };
   },
-});
+};
+const agentRoutes = createAgentRoutes(agentRouteOperations);
 const areaRoutesOperations = {
   /** Returns the complete Area tree. */
   async tree() {
@@ -6663,7 +6158,6 @@ const areaRoutesOperations = {
       skills: [],
       projectSkills: [],
       goals: [],
-      ideas: [],
       processes: [],
     };
     if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) return null;
@@ -6687,7 +6181,6 @@ const areaRoutesOperations = {
       skills: await routeSkills(TREES_ROOT, area),
       projectSkills: await projectSkills(resolved.repository?.value ?? null),
       goals: (await readAreaGoals(area)).map(goalSummary),
-      ideas: await areaIdeas(area),
       processes: await processViews({ area, exact: true }),
       map: canvas.ok ? {
         exists: canvas.exists,
@@ -6697,12 +6190,6 @@ const areaRoutesOperations = {
         proposals: openProposals.map((proposal) => ({ id: proposal.id, version: proposal.version, kind: proposal.kind, source: proposal.source, note: proposal.note })),
       } : { exists: true, file: canvas.file, hash: canvas.hash, errors: canvas.errors },
     };
-  },
-  /** Returns archived and active Journal text in chronological file order. */
-  async journal(area) {
-    if (!area || (!isRootArea(area) && !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area))) return null;
-    const files = await journalFiles(TREES_ROOT, area);
-    return { area, files: await Promise.all(files.map(async (file) => ({ file: path.relative(TREES_ROOT, file), text: await readFile(file, "utf8") }))) };
   },
   /** Returns the durable recent-context projection for an Area and its children. */
   async milestones(area, options) {
@@ -6721,27 +6208,6 @@ const areaRoutesOperations = {
     const safe = area.replaceAll("/", "--");
     const output = path.join(os.homedir(), ".tangent", "audit", `${safe}-area-brain-legacy.json.gz`);
     return exportLegacyAudit({ output, area, records: { generations: brain?.generations ?? [], requests: requests.requests, pipelines } });
-  },
-  /** Commits exact capture text and its rollover archive, then wakes the logical Area brain. An uncommitted capture wakes nothing. */
-  async capture(body) {
-    const area = String(body.area ?? "");
-    if (!isRootArea(area) && !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) throw new Error("The destination Area does not exist.");
-    const entry = await appendJournalEntry({ treesRoot: TREES_ROOT, area, text: body.text, idempotencyKey: body.idempotencyKey || body.id, source: body.source || "capture", now: body.createdAt || new Date().toISOString() });
-    if (entry.duplicate && await journalProcessingComplete(area, entry)) return { ...entry, route: "duplicate", files: [] };
-    const pending = entry.duplicate ? await pendingJournalChangedPaths(area, entry) : { paths: journalChangedPaths(entry), persisted: false };
-    const changed = pending.paths;
-    if (entry.duplicate && !pending.persisted && !changed.length) {
-      return { ...entry, route: "not-committed", commitError: "The Journal entry is not in Git, and no pending Journal file can be committed.", files: [] };
-    }
-    const relative = entry.existingFile ? path.relative(TREES_ROOT, entry.existingFile) : changed[0];
-    if (changed.length) {
-      await runVaultGit(["add", "--", ...changed]);
-      const saved = await commitJournalCapture(changed, `note: ${area} Journal capture`, area, null);
-      if (!saved.committed) return { ...entry, route: "not-committed", commitError: saved.error, files: changed };
-    }
-    await appendMilestone({ root: BRAINS_ROOT, area, kind: "journal", summary: entry.text || String(body.text ?? "").trim(), ref: relative, idempotencyKey: `journal:${entry.id}`, now: entry.createdAt || new Date().toISOString() });
-    const delivery = await deliverJournalToBrain(area, `Journal entry ${entry.id} was saved. Read ${relative} and respond in this Area conversation.`, `journal:${entry.id}`);
-    return { ...entry, ...delivery, files: changed };
   },
   /** Creates and commits one Area. */
   async create(body) {
@@ -7312,12 +6778,11 @@ const shellStateRoutes = createShellStateRoutes({
   },
 });
 const voiceRoutes = createVoiceRoutes({
-  chatSession: CHAT_SESSION,
-  /** Reports whether transcription and command routing are configured. */
+  /** Reports whether transcription is configured. */
   available: () => Boolean(GROQ_KEY),
   transcribe,
-  /** Saves transcribed or typed capture through the Journal-first Area route. */
-  capture(body) { return areaRoutesOperations.capture(body); },
+  /** Sends transcribed text through the durable Area inbox. */
+  send(body) { return agentRouteOperations.send(body); },
 });
 const goalQueryRoutes = createGoalQueryRoutes({
   /**
@@ -7904,27 +7369,6 @@ const workMutationRoutes = createWorkMutationRoutes({
       }
       return { status: 200, value: { ...created, ...(own ? { session: own } : {}) } };
     } catch (error) { return serverError(error); }
-  },
-  /** Saves one idea on an Area. */
-  async createIdea(body) {
-    const area = String(body.area ?? "");
-    const description = String(body.description ?? "").trim();
-    if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
-    if (!description) return { status: 400, error: "describe the idea before you save it" };
-    try {
-      const file = await saveWorkIdea(area, description);
-      await recordCommittedCommand({ operation: "idea-add", actorSession: body.caller, targetArea: area });
-      return { status: 200, value: { ok: true, file } };
-    }
-    catch (error) { return serverError(error); }
-  },
-  /** Lists ideas in one Area or the complete vault. */
-  async ideas({ area = null }) {
-    const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
-    if (area && !allAreas.includes(area)) return { status: 404, error: `no area "${area}"` };
-    const ideas = [];
-    for (const one of area ? [area] : allAreas) ideas.push(...(await areaIdeas(one)).map((text) => ({ area: one, text })));
-    return { status: 200, value: { ideas } };
   },
   /** Marks an Area done, archived, or active without changing its Goals. */
   async areaStatus(body) {

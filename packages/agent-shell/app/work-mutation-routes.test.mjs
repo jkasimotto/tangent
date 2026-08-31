@@ -20,21 +20,16 @@ function response() {
   };
 }
 
-test("work mutation routes dispatch POST bodies and GET filters", async () => {
+test("work mutation routes dispatch POST bodies and GET Goal filters", async () => {
   const routes = createWorkMutationRoutes({
     /** Creates one simple Goal. */
     async createSimple(body) { return { status: 200, value: { file: body.title } }; },
-    /** Lists filtered ideas. */
-    async ideas(input) { return { status: 200, value: { ideas: [{ area: input.area }] } }; },
     /** Reads one Goal detail projection. */
     async detail(input) { return { status: 200, value: { goal: { file: input.goal } } }; },
   });
   const created = response();
   await routes.handle(request("POST", { title: "Goal" }), created, new URL("http://shell/api/goals/new"));
   assert.equal(created.body.file, "Goal");
-  const ideas = response();
-  await routes.handle(request("GET"), ideas, new URL("http://shell/api/ideas?area=otto"));
-  assert.equal(ideas.body.ideas[0].area, "otto");
   const detail = response();
   await routes.handle(request("GET"), detail, new URL("http://shell/api/goals/detail?goal=otto%2Fgoal.md"));
   assert.equal(detail.body.goal.file, "otto/goal.md");

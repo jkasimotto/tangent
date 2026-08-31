@@ -984,25 +984,6 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     element.focus({ preventScroll: true });
   }
 
-  /** Saves the visible natural description as an idea and creates no goal. */
-  async function saveVisibleIdea() {
-    const area = document.querySelector("#describe-area")?.value || state.describeDraft?.area || "";
-    const description = document.querySelector("#describe-work")?.value.trim() || state.describeDraft?.description || "";
-    if (!area || !description) {
-      showToast("Choose an Area and describe the idea first.");
-      return;
-    }
-    try {
-      await post("/api/idea/new", { area, description });
-      state.describeDraft = null;
-      saveDescribeDraft();
-      showWork();
-      showToast("The description is saved as an idea. No goal was created.");
-    } catch (error) {
-      showToast(error.message);
-    }
-  }
-
   /** Tells the exact live Area brain that Julian finished commenting. */
   async function notifyDocumentComments() {
     if (!state.document?.file) return;
@@ -1017,5 +998,5 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** Opens the explicit next-step decision page. */
 
-  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, openDocumentPeek, leaveQuickPath, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, bindDocumentPeekReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, readerCopyPayload, cacheSelectionCommentAnchor, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentScope, existingCommentAnchor, replyInsertionAnchor, editComment, replyComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, commentIdentity, commentIndexInDocument, syncCommentCursor, activeCommentRecord, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea, notifyDocumentComments };
+  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, openDocumentPeek, leaveQuickPath, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, bindDocumentPeekReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, readerCopyPayload, cacheSelectionCommentAnchor, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentScope, existingCommentAnchor, replyInsertionAnchor, editComment, replyComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, commentIdentity, commentIndexInDocument, syncCommentCursor, activeCommentRecord, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, notifyDocumentComments };
 }

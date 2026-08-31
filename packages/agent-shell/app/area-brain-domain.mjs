@@ -1,14 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import zlib from "node:zlib";
 import { queryTerms, recencyBound } from "./goal-query-filters.mjs";
-import { areaDirectory, isRootArea } from "./area-identity.mjs";
+import { isRootArea } from "./area-identity.mjs";
 import { promisify } from "node:util";
 
 export const MILESTONE_SUMMARY_LIMIT = 240;
-export const JOURNAL_LIMIT_BYTES = 256 * 1024;
 export const GOAL_QUEUE_SCHEMA = "area-goal-queue.v2";
 export const LEGACY_AUDIT_SCHEMA = "area-brain-legacy-audit.v1";
 export const AREA_MILESTONES_SCHEMA = "area-milestones.v1";
@@ -29,92 +27,6 @@ export function clipSummary(text, limit = MILESTONE_SUMMARY_LIMIT) {
   if (value.length <= limit) return value;
   return `${value.slice(0, Math.max(1, limit - 1)).trimEnd()}…`;
 }
-/** Resolves the active Journal path for an Area. */
-export function journalPath(treesRoot, area) {
-  return path.join(areaDirectory(treesRoot, area), "journal.md");
-}
-
-/**
- * Saves exact capture text once, then returns its stable entry. Once spans the
- * whole Journal, archives included, so a retry after a rollover is still the
- * same entry. A duplicate returns the original body, time, and containing
- * file so a refused Git commit can resume without appending the words again.
- * A Journal that reached its size limit rolls over first, and the entry then
- * also names the archive it created, because one capture must commit both
- * files together.
- */
-export async function appendJournalEntry({ treesRoot, area, text, idempotencyKey, source = "capture", now = new Date().toISOString() }) {
-  const clean = cleanArea(area);
-  const value = String(text ?? "").trim();
-  const key = String(idempotencyKey ?? "").trim();
-  if ((!clean && !isRootArea(area)) || !value || !key) throw new Error("Area, text, and idempotency key are required.");
-  const file = journalPath(treesRoot, clean);
-  await mkdir(path.dirname(file), { recursive: true });
-  let current = "";
-  try { current = await readFile(file, "utf8"); } catch {}
-  const marker = `<!-- tangent-journal:${key} -->`;
-  const existing = journalEntryAtMarker(file, current, marker) ?? await archivedJournalEntry(file, marker);
-  if (existing) return { area: clean, file, archive: null, id: key, duplicate: true, ...existing };
-  const archive = Buffer.byteLength(current) >= JOURNAL_LIMIT_BYTES ? await archiveJournal(file, current, now) : null;
-  const heading = current && !archive ? "" : journalHeading(archive);
-  const entry = `${heading}${marker}\n## ${now}\n\nSource: ${source}.\n\n${value}\n\n`;
-  await appendFile(file, entry, "utf8");
-  return { area: clean, file, archive, id: key, duplicate: false, text: value, createdAt: now };
-}
-
-/**
- * Opens an active Journal. After a rollover the heading also names the archive
- * that holds the earlier entries, so a reader who opens `journal.md` alone
- * still finds the history the Area History view stitches together.
- */
-function journalHeading(archive) {
-  if (!archive) return "# Journal\n\n";
-  const name = path.basename(archive);
-  return `# Journal\n\nEarlier entries: [${name}](${name}).\n\n`;
-}
-
-/**
- * Returns the original envelope whose marker is in a rolled-over archive. The
- * active Journal loses every earlier marker when it rolls over, so a retry of
- * a capture whose original moved to an archive must still use that entry.
- */
-async function archivedJournalEntry(file, marker) {
-  const directory = path.dirname(file);
-  let names = [];
-  try { names = await readdir(directory); } catch { return null; }
-  for (const name of names.filter((item) => /^journal-.*\.md$/.test(item))) {
-    let text = "";
-    try { text = await readFile(path.join(directory, name), "utf8"); } catch { continue; }
-    const entry = journalEntryAtMarker(path.join(directory, name), text, marker);
-    if (entry) return entry;
-  }
-  return null;
-}
-
-/** Reads one stable Journal envelope without changing its exact body. */
-function journalEntryAtMarker(file, journal, marker) {
-  const markerAt = journal.indexOf(marker);
-  if (markerAt < 0) return null;
-  const afterMarker = journal.slice(markerAt + marker.length);
-  const envelope = afterMarker.match(/^\n## ([^\n]+)\n\nSource: [^\n]+\.\n\n/);
-  if (!envelope) return { existingFile: file, text: "", createdAt: "" };
-  const bodyAt = markerAt + marker.length + envelope[0].length;
-  const nextEntry = journal.indexOf("\n<!-- tangent-journal:", bodyAt);
-  const bodyEnd = nextEntry < 0 ? journal.length : nextEntry;
-  return { existingFile: file, text: journal.slice(bodyAt, bodyEnd).trimEnd(), createdAt: envelope[1] };
-}
-
-/** Moves a full active Journal to a dated archive and returns that archive path. */
-async function archiveJournal(file, text, now) {
-  const headings = [...text.matchAll(/^## (\d{4}-\d{2}-\d{2})/gm)].map((match) => match[1]);
-  const from = headings[0] ?? "unknown";
-  const to = headings.at(-1) ?? now.slice(0, 10);
-  let archive = path.join(path.dirname(file), `journal-${from}-${to}.md`);
-  for (let index = 2; existsSync(archive); index += 1) archive = path.join(path.dirname(file), `journal-${from}-${to}-${index}.md`);
-  await rename(file, archive);
-  return archive;
-}
-
 /** Creates an ordered queue with immutable assignment identities. */
 export function newGoalQueue(goal, assignments, now = new Date().toISOString(), options = {}) {
   const identity = typeof goal === "object" ? goal : { file: goal, revision: options.goalRevision, area: options.controllerArea };
@@ -238,26 +150,6 @@ export async function exportLegacyAudit({ output, area, records, now = new Date(
   await mkdir(path.dirname(output), { recursive: true });
   await writeFile(output, await gzip(`${JSON.stringify(payload)}\n`));
   return { output, manifest: payload.sources };
-}
-
-/** Lists archived and active Journal files in continuous order. */
-export async function journalFiles(treesRoot, area) {
-  const directory = path.dirname(journalPath(treesRoot, area));
-  let names = [];
-  try { names = await readdir(directory); } catch { return []; }
-  return names.filter((name) => /^journal(?:-.*)?\.md$/.test(name)).sort((left, right) => left === "journal.md" ? 1 : right === "journal.md" ? -1 : left.localeCompare(right)).map((name) => path.join(directory, name));
-}
-
-/** Reads one stable Journal entry by its retry/provenance identifier. */
-export async function readJournalEntry(treesRoot, area, id) {
-  const marker = `<!-- tangent-journal:${String(id ?? "").trim()} -->`;
-  if (marker === "<!-- tangent-journal: -->") return null;
-  for (const file of await journalFiles(treesRoot, area)) {
-    const text = await readFile(file, "utf8").catch(() => "");
-    const entry = journalEntryAtMarker(file, text, marker);
-    if (entry) return { id: String(id), file, ...entry };
-  }
-  return null;
 }
 
 /** Returns the durable milestone index path for one Area. */

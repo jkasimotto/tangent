@@ -1,21 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendFile, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { promisify } from "node:util";
-import { appendJournalEntry, appendMilestone, emergencyStartProblem, exportLegacyAudit, JOURNAL_LIMIT_BYTES, MILESTONE_SUMMARY_LIMIT, newGoalQueue, operationFromProgram, querySubtreeMilestones, readJournalEntry, startNextAssignment, submitWorkerReport } from "./area-brain-domain.mjs";
-import { ROOT_AREA } from "./area-identity.mjs";
+import { appendMilestone, emergencyStartProblem, exportLegacyAudit, MILESTONE_SUMMARY_LIMIT, newGoalQueue, operationFromProgram, querySubtreeMilestones, startNextAssignment, submitWorkerReport } from "./area-brain-domain.mjs";
 
 test("a stored milestone summary is clipped where it is written", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-milestone-clip-"));
   const stored = await appendMilestone({
     root,
     area: "otto/tangent",
-    kind: "journal",
+    kind: "goal-done",
     summary: `${"n".repeat(4_000)}`,
-    idempotencyKey: "journal:long",
+    idempotencyKey: "goal-done:long",
   });
   assert.equal(stored.summary.length, MILESTONE_SUMMARY_LIMIT);
   assert.match(stored.summary, /…$/);
@@ -24,60 +23,12 @@ test("a stored milestone summary is clipped where it is written", async () => {
   assert.ok(query.milestones[0].summary.length <= MILESTONE_SUMMARY_LIMIT);
 });
 
-test("Journal intake saves exact text once before delivery", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-journal-"));
-  const first = await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "Exact words.", idempotencyKey: "capture-1" });
-  const again = await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "Exact words.", idempotencyKey: "capture-1" });
-  assert.equal(first.duplicate, false);
-  assert.equal(again.duplicate, true);
-  assert.equal((await readFile(first.file, "utf8")).match(/Exact words\./g).length, 1);
-});
-
-test("Root Journal capture writes at the vault root without creating a root folder", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-root-journal-"));
-  const text = "Remember this.\nI am not sure yet.";
-  const entry = await appendJournalEntry({ treesRoot: root, area: ROOT_AREA, text, idempotencyKey: "native-message-1" });
-  assert.equal(entry.file, path.join(root, "journal.md"));
-  assert.equal((await readFile(entry.file, "utf8")).includes(text), true);
-  await assert.rejects(readFile(path.join(root, "root", "journal.md"), "utf8"));
-});
-
-test("a Journal entry can be resolved by its stable route identifier", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-journal-source-"));
-  await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "First line.\nExact routed excerpt.", idempotencyKey: "native-source-1" });
-  const entry = await readJournalEntry(root, "otto/test", "native-source-1");
-  assert.equal(entry.text, "First line.\nExact routed excerpt.");
-  assert.equal(await readJournalEntry(root, "otto/test", "missing"), null);
-});
-
-test("Journal intake stays exactly once after a rollover archives the entry", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-journal-rollover-"));
-  const first = await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "Exact words.", idempotencyKey: "capture-1", now: "2026-01-01T00:00:00.000Z" });
-  await appendFile(first.file, `## 2026-02-01T00:00:00.000Z\n\n${"Filler line.\n".repeat(25_000)}\n`, "utf8");
-  assert.ok(Buffer.byteLength(await readFile(first.file, "utf8")) >= JOURNAL_LIMIT_BYTES, "the fixture Journal is over the rollover limit");
-
-  // A later entry rolls the first one into an archive, so the active Journal
-  // no longer carries its marker.
-  const rolled = await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "Later words.", idempotencyKey: "capture-2", now: "2026-03-01T00:00:00.000Z" });
-  assert.ok(rolled.archive, "the second entry rolled the Journal over");
-  assert.match(await readFile(rolled.archive, "utf8"), /Exact words\./);
-  assert.doesNotMatch(await readFile(first.file, "utf8"), /Exact words\./);
-
-  const retry = await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "Exact words.", idempotencyKey: "capture-1", now: "2026-03-02T00:00:00.000Z" });
-  assert.equal(retry.duplicate, true, "the archived key is still used");
-  assert.equal(retry.existingFile, rolled.archive, "the retry names the archive that holds the original entry");
-  assert.equal(retry.createdAt, "2026-01-01T00:00:00.000Z", "the retry keeps the original entry time");
-  assert.match(retry.text, /^Exact words\./, "the retry returns the original entry body");
-  const everywhere = [await readFile(first.file, "utf8"), await readFile(rolled.archive, "utf8")].join("");
-  assert.equal(everywhere.match(/Exact words\./g).length, 1);
-});
-
 test("recent context is durable, idempotent, and scoped to the Area subtree", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-milestones-"));
-  await appendMilestone({ root, area: "otto/portland", kind: "journal", summary: "Neil owns Friday.", idempotencyKey: "one", now: "2026-08-25T01:00:00.000Z" });
+  await appendMilestone({ root, area: "otto/portland", kind: "goal-done", summary: "Neil owns Friday.", idempotencyKey: "one", now: "2026-08-25T01:00:00.000Z" });
   await appendMilestone({ root, area: "otto/portland/rules", kind: "goal-done", summary: "Rule 250 passed.", idempotencyKey: "two", now: "2026-08-25T02:00:00.000Z" });
-  await appendMilestone({ root, area: "otto/other", kind: "journal", summary: "Noise.", idempotencyKey: "three", now: "2026-08-25T03:00:00.000Z" });
-  await appendMilestone({ root, area: "otto/portland", kind: "journal", summary: "Duplicate.", idempotencyKey: "one" });
+  await appendMilestone({ root, area: "otto/other", kind: "goal-done", summary: "Noise.", idempotencyKey: "three", now: "2026-08-25T03:00:00.000Z" });
+  await appendMilestone({ root, area: "otto/portland", kind: "goal-done", summary: "Duplicate.", idempotencyKey: "one" });
   const areas = ["otto/portland", "otto/portland/rules", "otto/other"];
   const result = await querySubtreeMilestones({ root, area: "otto/portland", areas });
   assert.deepEqual(result.milestones.map((item) => item.summary), ["Rule 250 passed.", "Neil owns Friday."]);

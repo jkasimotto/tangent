@@ -40,7 +40,7 @@ test("the server refuses every Tangent mutation from a worker session through on
   assert.match(source, /const refusal = await refuseWorkerMutation\(req, url\)/);
   assert.equal(source.match(/workers only send\. Use: tangent send brain "<note>"/g)?.length, 1, "one literal, one gate");
   const gated = source.match(/const WORKER_REFUSED_ROUTES = new Set\(\[[\s\S]*?\]\)/)?.[0] ?? "";
-  for (const route of ["/api/goals/edit", "/api/goals/create", "/api/goals/own", "/api/goals/release", "/api/goals/start", "/api/pipelines/append", "/api/areas/new", "/api/areas/status", "/api/idea/new", "/api/document/resolve", "/api/brains/start", "/api/brains/requests"]) {
+  for (const route of ["/api/goals/edit", "/api/goals/create", "/api/goals/own", "/api/goals/release", "/api/goals/start", "/api/pipelines/append", "/api/areas/new", "/api/areas/status", "/api/document/resolve", "/api/brains/start", "/api/brains/requests"]) {
     assert.ok(gated.includes(`"${route}"`), `${route} is gated`);
   }
   for (const route of ["/api/goals/handover", "/api/agents/send", "/api/goals/show"]) {

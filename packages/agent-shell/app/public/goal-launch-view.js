@@ -63,7 +63,6 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
           </label>
           <div class="create-actions">
             <button class="primary-button" type="submit">${escapeHtml(startLabel)} <kbd>⌘↵</kbd></button>
-            <button class="quiet-button" type="button" data-save-idea>Save as an idea</button>
             <button class="quiet-button" type="button" data-cancel-describe>Cancel</button>
           </div>
           <p class="form-note">${brain?.live ? "The brain is live and reads this next." : "The brain opens in the Area folder with the Area note as its instructions."}</p>

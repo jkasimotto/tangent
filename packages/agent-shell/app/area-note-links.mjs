@@ -5,12 +5,12 @@
 // brain runs in reads that chain itself, root first. Pure file work: the
 // server commits what changed through the vault repository.
 //
-// Tangent never writes into an Area note. Ideas go to `ideas.md` in the Area
-// folder, and a Goal is only its `goal-<slug>.md` file.
+// Tangent never writes into an Area note. A Goal is only its
+// `goal-<slug>.md` file.
 
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile, lstat, mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,6 +21,7 @@ const KNOWN_ROOT_AGENTS_SHA256 = new Set([
   "bab789f8f60d1f0269cd7ea095be7234fcf2267607b8a4713a0603ea3c99cfb0",
   "14dfde36d20ba15569e0808a1ff622748b9c258db7e14335b827636d757332a7",
   "9432e7e2fd709684ea6d826b8a814f3962bf6fd1b09ddc7c946a5f16678cb3ca",
+  "9e053031b7d430676b2be271a71651970d93149148f0ddb23a23290b5c109e84",
 ]);
 
 /** The text of the vault root AGENTS.md this build ships, for a vault that has none. */
@@ -30,7 +31,7 @@ export async function vaultRootAgentsText() {
 
 /** The note an Area gets when it has none: the template from docs/design/area-note-as-system-prompt/vision.md. */
 export function areaNoteTemplate(title) {
-  return `---\ntype: area\nstatus: active\n---\n# ${String(title ?? "").trim()}\n## Purpose\n\n## Knowledge\n\n## Current\n\n## Ideas and open questions\n`;
+  return `---\ntype: area\nstatus: active\n---\n# ${String(title ?? "").trim()}\n## Purpose\n\n## Knowledge\n\n## Current\n\n## Open questions\n`;
 }
 
 /** The vault-relative note file of one Area. */
@@ -167,29 +168,6 @@ export function noteSignal(text, currentChangedAt = null, now = Date.now()) {
 /** A stable key for one note's Current text, so a git lookup can be cached. */
 export function currentSectionKey(text) {
   return createHash("sha256").update(noteSectionText(text, "Current")).digest("hex");
-}
-
-/** The ideas file of one Area. */
-export function ideasFilePath(area) {
-  return `${area}/ideas.md`;
-}
-
-/** Appends one idea line to the Area's ideas.md, creating it with a heading. */
-export async function appendIdea({ treesRoot, area, text }) {
-  const file = path.join(treesRoot, ideasFilePath(area));
-  const line = String(text ?? "").replace(/\s*\n\s*/g, " ").trim();
-  if (!line) throw new Error("describe the idea before you save it");
-  if (!existsSync(file)) await writeFile(file, "# Ideas\n\n", "utf8");
-  await appendFile(file, `- ${line}\n`, "utf8");
-  return ideasFilePath(area);
-}
-
-/** The idea lines of one ideas.md, in order. */
-export function ideasFromFile(text) {
-  return String(text ?? "").split("\n")
-    .map((line) => line.match(/^-\s+(?:Idea:\s*)?(.+)$/))
-    .filter(Boolean)
-    .map((match) => match[1].trim());
 }
 
 // The order Work shows an Area's Goals in: what runs, what waits for Julian,

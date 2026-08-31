@@ -1384,7 +1384,7 @@ export function AreaMapWorld({ host, bridge, options }) {
         if (event.key === "Tab") { stop(event); setWidePicker((value) => !value); }
         else if (event.key === "Escape") { stop(event); escape(); }
         else if (event.key === "Enter" && pickerChoices[0]) { stop(event); placeBlock(pickerChoices[0], event.shiftKey); }
-      }} placeholder="Goal, Document, Area, idea, or URL" />
+      }} placeholder="Goal, Document, Area, or URL" />
       <ul role="listbox">{pickerChoices.slice(0, 30).map((choice) => <li key={`${choice.kind}:${choice.ref}`}><button type="button" onClick={() => placeBlock(choice)}><small>{choice.kind}</small><span>{choice.title}</span><em>{choice.status}</em></button></li>)}</ul>
       <p><kbd>Tab</kbd> {widePicker ? "return here" : "whole vault"} · <kbd>Enter</kbd> place · <kbd>⇧Enter</kbd> place another · <kbd>Esc</kbd> Work</p>
     </section></div>}

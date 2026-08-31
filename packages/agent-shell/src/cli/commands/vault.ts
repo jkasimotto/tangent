@@ -89,7 +89,7 @@ function help(): void {
   console.log(`
 Examples:
   tangent vault commit otto/dnd/goal-connect-faces.md -m "add: otto/dnd Goal: connect chosen ramp faces"
-  tangent vault commit otto/dnd/dnd.md -m "note: otto/dnd captures an idea"
+  tangent vault commit otto/dnd/dnd.md -m "update: otto/dnd rewrite Current"
   tangent vault commit otto/dnd/goal-x.md -m "update: otto/dnd goal x edited in tree" --area otto/dnd
 `);
 }

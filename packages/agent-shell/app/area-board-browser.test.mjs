@@ -120,7 +120,7 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     await page.getByRole("dialog", { name: "Place a Tangent block" }).getByRole("textbox").fill("map");
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => window.editor.current().elements.some((element) => element.customData?.tangent?.kind === "goal"));
-    assert.equal(await page.getByRole("button", { name: /Ask brain/ }).count(), 0, "the map has no Journal-note Ask action");
+    assert.equal(await page.getByRole("button", { name: /Ask brain/ }).count(), 0, "the map has no Ask action");
     assert.equal(await page.getByRole("button", { name: /^Correct/ }).count(), 0, "the map has no legacy Correct action");
 
     const canvas = page.locator(".excalidraw canvas.interactive");

@@ -189,7 +189,7 @@ test("an Area with no note gets the template before its brain starts", async (co
   const { area } = server;
   assert.equal(await waitForFile(path.join(area, "probeblank.md")), true);
   const note = await readFile(path.join(area, "probeblank.md"), "utf8");
-  assert.equal(note, "---\ntype: area\nstatus: active\n---\n# Probeblank\n## Purpose\n\n## Knowledge\n\n## Current\n\n## Ideas and open questions\n");
+  assert.equal(note, "---\ntype: area\nstatus: active\n---\n# Probeblank\n## Purpose\n\n## Knowledge\n\n## Current\n\n## Open questions\n");
   assert.doesNotMatch(note, /## Goals|## Resources/);
 });
 

@@ -27,7 +27,7 @@ const records = [
   { id: "collapse", keyDisplay: "h", ariaKeyshortcuts: "h", scope: "work", kind: "navigation", label: "Collapse or move to parent", help: "Collapse this tree node. From a collapsed node or leaf, move to its parent.", shortcuts: [{ key: "h" }] },
   { id: "expand", keyDisplay: "l", ariaKeyshortcuts: "l", scope: "work", kind: "navigation", label: "Expand or move to child", help: "Expand this tree node. From an expanded node, move to its first child.", shortcuts: [{ key: "l" }] },
   { id: "questions", keyDisplay: "r", ariaKeyshortcuts: "r", scope: "area", kind: "action", label: "Review questions", help: "Review the open questions from this Area's brains.", shortcuts: [{ key: "r" }] },
-  { id: "note", keyDisplay: "", ariaKeyshortcuts: null, scope: "area", kind: "action", label: "Capture note", help: "Save a Journal note and send it to this Area brain." },
+  { id: "note", keyDisplay: "", ariaKeyshortcuts: null, scope: "area", kind: "action", label: "Send note", help: "Send a note to this Area brain." },
   { id: "readGoal", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "goal", kind: "action", label: "Read Goal", help: "Read this Goal, its notes, dependencies, queue, and attempts.", shortcuts: [{ key: "o" }] },
   { id: "fullDocument", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "document", kind: "action", label: "Full reader", help: "Open this presented Document in the full reader.", shortcuts: [{ key: "o" }] },
   { id: "dismissPresentation", keyDisplay: "x", ariaKeyshortcuts: "x", scope: "document", kind: "action", label: "Dismiss", help: "Hide this presentation until the agent presents new content.", shortcuts: [{ key: "x" }] },

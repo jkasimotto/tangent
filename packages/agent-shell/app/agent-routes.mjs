@@ -39,6 +39,7 @@ export function createAgentRoutes(operations) {
     const body = await readJson(request);
     try {
       body.operationId ??= String(request.headers["x-tangent-operation-id"] ?? "").trim();
+      body.idempotencyKey ??= body.operationId;
       const result = String(body.to ?? "").trim() === "brain" ? await operations.sendToBrain(body) : await operations.send(body);
       sendJson(response, result.status, result.status === 200 ? result.value : { error: result.error });
     } catch (error) {

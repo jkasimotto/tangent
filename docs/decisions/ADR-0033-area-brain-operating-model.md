@@ -4,6 +4,8 @@ Date: 2026-08-26
 
 Status: accepted
 
+The Journal clauses are superseded by [ADR-0053](ADR-0053-remove-journal-remember-ideas-and-threads.md).
+
 ## Context
 
 Agent Shell exposed runtime generations, separate approval flows, inferred attention, pipelines, and Programs as peer product concepts.

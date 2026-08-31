@@ -511,7 +511,7 @@ const areaDirectoryView = createAreaDirectoryView({
 });
 const {
   areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, removeProcess, selectedArea, areaParent, areaTreeRows, areaProgramMark,
-  areaGoalRow, goalAttention, orderedGoalTrees, loadAreaJournal, mountAreaMap, refreshAreaMap: refreshInlineAreaMap, disposeAreaMap: disposeInlineAreaMap, areaContents, renderAreas,
+  areaGoalRow, goalAttention, orderedGoalTrees, mountAreaMap, refreshAreaMap: refreshInlineAreaMap, disposeAreaMap: disposeInlineAreaMap, areaContents, renderAreas,
   areaParentOptions, renderAreaEditor,
 } = areaDirectoryView;
 
@@ -560,7 +560,7 @@ const {
   openCommentComposer, setCommentScope, syncCommentDraft, cancelCommentComposer, noteInComposer,
   composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer,
   commentIdentity, syncCommentCursor, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment,
-  resolveActiveComment, stepComment, saveVisibleIdea, notifyDocumentComments,
+  resolveActiveComment, stepComment, notifyDocumentComments,
 } = documentReaderController;
 
 const shellCoordinator = createShellCoordinator({
@@ -1800,7 +1800,7 @@ shellBindings = bindShellEvents({
   },
   areas: {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelDescribe, areaIsFolded,
-    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, removeProcess, preferredArea, areaLabel, loadAreaJournal,
+    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, removeProcess, preferredArea, areaLabel,
   },
   programs: {
     showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, currentProgram,
@@ -1815,7 +1815,7 @@ shellBindings = bindShellEvents({
   documents: {
     openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
     cancelCommentComposer, submitCommentComposer, commentIdentity, syncCommentCursor,
-    activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea,
+    activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, readerCopyPayload, openReaderAgent,
     closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading,
     leaveQuickPath, openDocumentPeek,

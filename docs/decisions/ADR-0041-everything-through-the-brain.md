@@ -4,6 +4,8 @@ Date: 2026-08-27
 
 Status: accepted. Supersedes the brain handover, pacing, and completion clauses of ADR-0023, ADR-0024, ADR-0028, ADR-0034, and ADR-0037. Design: `docs/design/agent-shell-operating-vision/design-record.md`, D8 to D15 and D24, and `docs/design/area-note-as-system-prompt/design-record.md`.
 
+The Idea storage and Area-note heading clauses are superseded by [ADR-0053](ADR-0053-remove-journal-remember-ideas-and-threads.md).
+
 ## Context
 
 Julian's rule for Tangent: "tangent provides cli commands for brains to organise workers. That is it. Everything is basically md and agents and a few helpers from tangent cli."

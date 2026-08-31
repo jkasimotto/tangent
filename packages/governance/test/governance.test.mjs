@@ -98,6 +98,65 @@ test("agent lint rejects retired solo execution writers", async () => {
   }
 });
 
+test("agent lint rejects every retired capture artifact", async () => {
+  const artifacts = [
+    "/api/areas/journal",
+    "/api/idea/new",
+    "/api/ideas",
+    "route-journal",
+    "routed-journal",
+    "tangent idea",
+    "ideas.md",
+    "journal.md",
+    "journal-2026-01-01.md",
+    "/remember",
+    ".agents/skills/remember",
+    "Ideas and open questions",
+    'kind: "idea"',
+  ];
+  for (const artifact of artifacts) {
+    const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+    try {
+      await writeMinimalRootAgentDocs(root);
+      const app = path.join(root, "packages", "agent-shell", "app");
+      await mkdir(app, { recursive: true });
+      await writeFile(path.join(app, "server.mjs"), artifact, "utf8");
+      const result = await lintGovernance({ root, groups: ["docs"] });
+      assert.ok(result.findings.some((finding) => finding.rule === "agent-shell/retired-capture-vocabulary"), artifact);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("agent lint rejects retired product nouns in current architecture", async () => {
+  for (const noun of ["Journal", "Ideas", "Threads"]) {
+    const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+    try {
+      await writeMinimalRootAgentDocs(root);
+      await writeFile(path.join(root, "ARCHITECTURE.md"), `# Architecture\n\n${noun} is a current product.\n`, "utf8");
+      const result = await lintGovernance({ root, groups: ["docs"] });
+      assert.ok(result.findings.some((finding) => finding.rule === "agent-shell/retired-capture-vocabulary"), noun);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("agent lint accepts technical database, transaction, provider, and runtime terms", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeMinimalRootAgentDocs(root);
+    const app = path.join(root, "packages", "agent-shell", "app");
+    await mkdir(app, { recursive: true });
+    await writeFile(path.join(app, "server.mjs"), 'import "node:worker_threads";\nconst journal_mode = "wal";\nconst transactionJournal = true;\nconst thread_id = "provider";\n', "utf8");
+    const result = await lintGovernance({ root, groups: ["docs"] });
+    assert.equal(result.findings.some((finding) => finding.rule === "agent-shell/retired-capture-vocabulary"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("agent lint requires the durable worker handover markers", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
   try {

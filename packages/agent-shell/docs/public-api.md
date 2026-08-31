@@ -6,7 +6,7 @@ Public import paths:
 - `@tangent/agent-shell/cli`
 - `@tangent/agent-shell/area-resources`
 
-The first two paths export the CLI runners and help specifications for `send`, `area`, `brain`, `goal`, `idea`, `document`, `agent`, `handover`, `process`, `shell`, `study`, and `vault`. They also export the study contract. The third path exports the one parser for an Area note's `## Resources` section (`parseAreaResources`, `resolveWorkFolder`, `describeAreaResources`, `unboundAreaMessage`). The root `tangent service` command reads Area folders through it. Agent Shell exports no other server module.
+The first two paths export the CLI runners and help specifications for `send`, `area`, `brain`, `goal`, `document`, `agent`, `handover`, `process`, `shell`, `study`, and `vault`. They also export the study contract. The third path exports the parser for an Area note's `## Resources` section. The root `tangent service` command reads Area folders through it. Agent Shell exports no other server module.
 
 The root `tangent` command loads this package only when one of these nouns is used. The root package owns `tangent service` (servers and watchers). `tangent process start|stop|restart|close` still reach it for one release with a hint (ADR-0043).
 
@@ -44,11 +44,10 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 - `tangent goal depend|undepend` edits advisory prerequisite links.
 - `tangent goal own|release` changes the Goal session binding without stealing a live owner. Neither starts an agent.
 - `tangent goal done|wont-do` changes Goal state only on Julian's explicit instruction.
-- `tangent idea add|list` writes or reads Area ideas.
 - `tangent document comments|resolve` reads or resolves Julian's inline Document comments.
 - `tangent vault commit <paths...> -m "<verb>: <area> <summary>"` commits only the named vault paths with provenance trailers. A worker session (`@tangent_kind goal`) is refused.
 
-Every request carries the caller's tmux session in the `x-tangent-session` header. The server refuses a Goal, Area, idea, Document, brain, or pipeline mutation from a worker session with 403 `workers only send. Use: tangent send brain "<note>"`. Reads stay open (ADR-0040).
+Every request carries the caller's tmux session in the `x-tangent-session` header. The server refuses Goal, Area, Document, brain, and pipeline mutations from worker sessions. Reads stay open (ADR-0040).
 
 Area paths do not grant command permission. Brains, workers, browser actions, stale sessions, and local shells use the same target validation. Caller identity is audit provenance. Live ownership, revisions, queue state, and exact attempts remain enforced.
 
@@ -117,7 +116,7 @@ Area memory includes exact `Purpose`, `Current`, and `Knowledge`. It includes sm
 
 Every Question accepts a free-text reply in the native exact-Area brain conversation. A Question can also contain one effect from the server allowlist.
 
-The initial effects are `goal-done` and `route-journal`. Each effect has a hashed revision and a durable operation record. The server writes operation intent before execution. Success closes the Question. Failure records the problem and leaves the Question actionable for retry.
+The effect allowlist contains only `goal-done`. Each effect has a hashed revision and a durable operation record. The server writes operation intent before execution. Success closes the Question. Failure records the problem and leaves the Question available for retry.
 
 Legacy Decide and Test plan lines remain readable during migration. They do not define closure for new Goal queues.
 
@@ -141,6 +140,8 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 - `GET /api/goals/detail?goal=<file>[&conversations=1]`: the Goal reader model. Each attempt carries `resume: { live, session, cwd, harness, conversationId, command, contextFill }`. With `conversations=1`, attempts without a recorded id list what the transcript folder holds under `resume.found`.
 - `POST /api/goals/handover`: `{ session, text, report?, kind?, idempotencyKey? }`. `kind` is `note`, `done`, or `blocked`. A successful response includes the queue `pipeline` and its worker handover `receipt`.
 - `POST /api/agents/send` with `to: "brain"`: `{ to, from, text, kind? }`. The server resolves the worker's Goal queue and its brain. A caller that is not a worker gets 400.
+- `POST /api/agents/send` with an Area path: `{ to, from, text, idempotencyKey? }`. The route writes the Area inbox before live delivery. A retry with one key returns one receipt.
+- `POST /api/voice?area=<path>` transcribes the audio body. It sends the transcript through the Area message route and returns `{ transcript, delivery }`.
 - `POST /api/pipelines/control`: `{ goal, action, step, caller, expectedRevision, idempotencyKey }`.
 - `POST /api/pipelines/append`: `{ goal, steps, caller, expectedRevision, idempotencyKey }`.
 - `POST /api/brains/start`: `{ area, instruction, choice?: { harness, model?, effort? }, expectedLaunch?, resume? }`.
@@ -150,8 +151,6 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 - `GET /api/sessions` reads the complete Work projection.
 - `POST /api/kill/<session>` stops only a session owned by the responding Agent Shell instance. It returns 409 for foreign or legacy sessions.
 - `GET /api/goals?area=<path>[&subtree=1]` lists Goals. An exact-Area result also carries `scope`, `childAreas`, `descendantGoals`, and the `subtreeCommand` that reads the rest.
-- `POST /api/areas/journal`: `{ area, text, idempotencyKey, source? }` saves the exact words, commits them with any rollover archive as `files`, and then wakes the exact Area brain. The result `route` says what happened to that brain: `brain-opened`, `brain-resumed`, `brain-started`, `no-brain`, `not-started`, `duplicate`, or `not-committed`. A `not-committed` capture carries `commitError`, records no milestone, and wakes no brain. The surface keeps its text and idempotency key. After Git recovers, the same request commits the existing Journal files before one milestone and one brain delivery. An idempotency key stays used after a rollover moves its entry to an archive, so a retry never saves the same words twice.
-- `GET /api/areas/journal?area=<path>` reads the active Journal and its archives in order.
 - `GET /api/areas/milestones?area=<path>[&since&limit]` reads material milestones across the Area subtree.
 - `GET /api/operations` lists Area Operations with one `mode`, one `state`, and any `problem`.
 

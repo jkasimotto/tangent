@@ -6,6 +6,8 @@ Status: accepted. The worker verb clause is amended by ADR-0040: `tangent send b
 
 Amended 2026-08-28: the Area brain controls the Goal queue but is never a Goal owner or attempt. The server rejects all brain generations at each Goal-binding writer. Reads quarantine contaminated bindings. Reconciliation clears the Goal binding and stops an invalid queue assignment without terminating the brain session.
 
+The Journal routing clauses are superseded by [ADR-0053](ADR-0053-remove-journal-remember-ideas-and-threads.md).
+
 ## Context
 
 The Area brain workflow had conflicting execution, authority, closure, lifecycle, Question, memory, and Operation paths.

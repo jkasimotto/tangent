@@ -3,7 +3,7 @@ import { lstat, mkdir, mkdtemp, readFile, readlink, writeFile } from "node:fs/pr
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { appendIdea, areaNoteTemplate, currentSectionKey, ensureAreaNoteLinks, ensureVaultRootLinks, ideasFromFile, noteSignal, orderGoals, removeGoalsSection, vaultRootAgentsText } from "./area-note-links.mjs";
+import { areaNoteTemplate, currentSectionKey, ensureAreaNoteLinks, ensureVaultRootLinks, noteSignal, orderGoals, removeGoalsSection, vaultRootAgentsText } from "./area-note-links.mjs";
 
 test("an Area gets its note, instruction links, and Claude skill link once", async () => {
   const trees = await mkdtemp(path.join(os.tmpdir(), "area-note-links-"));
@@ -30,22 +30,22 @@ test("an Area gets its note, instruction links, and Claude skill link once", asy
 
 test("the known root instruction template upgrades without replacing hand-written instructions", async () => {
   const trees = await mkdtemp(path.join(os.tmpdir(), "area-root-instructions-"));
-  const oldTemplate = await readFile(new URL("./vault-root-AGENTS.md", import.meta.url), "utf8");
-  const legacy = oldTemplate.replace(/\n## Journal memory[\s\S]*$/, "");
-  await writeFile(path.join(trees, "AGENTS.md"), legacy, "utf8");
-  assert.deepEqual(await ensureVaultRootLinks({ treesRoot: trees, agentsText: oldTemplate }), ["AGENTS.md", "CLAUDE.md", ".claude/skills"]);
-  assert.equal(await readFile(path.join(trees, "AGENTS.md"), "utf8"), oldTemplate);
+  const oldTemplate = await readFile(new URL("./test-fixtures/vault-root-AGENTS-before-0053.md", import.meta.url), "utf8");
+  const currentTemplate = await readFile(new URL("./vault-root-AGENTS.md", import.meta.url), "utf8");
+  await writeFile(path.join(trees, "AGENTS.md"), oldTemplate, "utf8");
+  assert.deepEqual(await ensureVaultRootLinks({ treesRoot: trees, agentsText: currentTemplate }), ["AGENTS.md", "CLAUDE.md", ".claude/skills"]);
+  assert.equal(await readFile(path.join(trees, "AGENTS.md"), "utf8"), currentTemplate);
 
   const custom = path.join(trees, "custom");
   await mkdir(custom);
   await writeFile(path.join(custom, "AGENTS.md"), "# My instructions\n", "utf8");
-  assert.deepEqual(await ensureVaultRootLinks({ treesRoot: custom, agentsText: oldTemplate }), ["CLAUDE.md", ".claude/skills"]);
+  assert.deepEqual(await ensureVaultRootLinks({ treesRoot: custom, agentsText: currentTemplate }), ["CLAUDE.md", ".claude/skills"]);
   assert.equal(await readFile(path.join(custom, "AGENTS.md"), "utf8"), "# My instructions\n");
 });
 
-test("the template has Purpose, Knowledge, Current, and Ideas and no Goals or Resources", () => {
+test("the template has Purpose, Knowledge, Current, and Open questions", () => {
   const note = areaNoteTemplate("Live Edit");
-  assert.equal(note, "---\ntype: area\nstatus: active\n---\n# Live Edit\n## Purpose\n\n## Knowledge\n\n## Current\n\n## Ideas and open questions\n");
+  assert.equal(note, "---\ntype: area\nstatus: active\n---\n# Live Edit\n## Purpose\n\n## Knowledge\n\n## Current\n\n## Open questions\n");
 });
 
 test("removing the machine-written Goals section keeps every other byte", () => {
@@ -69,17 +69,6 @@ test("the note signal counts lines and ages Current, and warns past the guide", 
   assert.equal(long.text, "121 lines · no Current");
   assert.equal(noteSignal("# A\n## Current\n\nNow.\n", null).text, "4 lines · Current age unknown");
   assert.notEqual(currentSectionKey("## Current\n\nA\n"), currentSectionKey("## Current\n\nB\n"));
-});
-
-test("ideas go to ideas.md and read back in order", async () => {
-  const trees = await mkdtemp(path.join(os.tmpdir(), "area-ideas-"));
-  await mkdir(path.join(trees, "otto", "dnd"), { recursive: true });
-  assert.equal(await appendIdea({ treesRoot: trees, area: "otto/dnd", text: " A calmer\nreturn screen. " }), "otto/dnd/ideas.md");
-  await appendIdea({ treesRoot: trees, area: "otto/dnd", text: "Second." });
-  const text = await readFile(path.join(trees, "otto", "dnd", "ideas.md"), "utf8");
-  assert.equal(text, "# Ideas\n\n- A calmer return screen.\n- Second.\n");
-  assert.deepEqual(ideasFromFile(text), ["A calmer return screen.", "Second."]);
-  await assert.rejects(() => appendIdea({ treesRoot: trees, area: "otto/dnd", text: " " }), /describe the idea/);
 });
 
 test("Goals order by status, then creation time, then slug", () => {

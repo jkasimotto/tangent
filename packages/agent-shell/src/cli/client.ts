@@ -1,4 +1,4 @@
-// Thin HTTP client for the `tangent area`, `tangent goal`, and `tangent idea` CLI commands. The
+// Thin HTTP client for the `tangent area` and `tangent goal` CLI commands. The
 // Agent Shell server (packages/agent-shell/app/server.mjs) is the single writer for the vault
 // (~/.tangent/trees); these commands never touch vault files directly. Mirrors
 // packages/agent-shell/app/goal-command.mjs's local-server contract: default port 4321,

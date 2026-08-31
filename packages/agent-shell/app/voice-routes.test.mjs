@@ -21,17 +21,25 @@ function response() {
   };
 }
 
-test("typed capture saves exact text to the named Area", async () => {
+test("voice returns the transcript and the standard Area delivery", async () => {
+  const input = Readable.from([Buffer.alloc(300, "x")]);
+  input.method = "POST";
+  input.headers = { "content-type": "audio/webm", "x-idempotency-key": "one" };
   const routes = createVoiceRoutes({
     chatSession: "chat",
-    /** Reports configured routing. */
+    /** Reports configured transcription. */
     available: () => true,
-    /** Saves one Journal entry. */
-    async capture(body) { return { area: body.area, text: body.text }; },
+    /** Returns exact transcribed text. */
+    async transcribe() { return "Exact note."; },
+    /** Sends one Area message. */
+    async send(body) {
+      assert.deepEqual(body, { to: "otto/tangent", text: "Exact note.", from: "Agent Shell voice", idempotencyKey: "one" });
+      return { status: 200, value: { status: "queued", to: body.to, target: "area", live: false, receipt: "n1" } };
+    },
   });
   const output = response();
-  await routes.handle(request({ area: "otto/tangent", text: "Exact note.", idempotencyKey: "one" }), output, new URL("http://shell/api/command"));
-  assert.deepEqual(output.body, { transcript: "Exact note.", entry: { area: "otto/tangent", text: "Exact note." } });
+  await routes.handle(input, output, new URL("http://shell/api/voice?area=otto/tangent"));
+  assert.deepEqual(output.body, { transcript: "Exact note.", delivery: { status: "queued", to: "otto/tangent", target: "area", live: false, receipt: "n1" } });
 });
 
 test("voice capture rejects audio when transcription is not configured", async () => {

@@ -312,21 +312,12 @@ test("the context-first shell is default and keeps the user's understanding with
   const sourceAfterCreate = await fetch(`${base}/api/document?file=otto%2Ftest%2Fuse-cases.md`).then((response) => response.json());
   assert.match(sourceAfterCreate.goalHistory.map((goal) => goal.title).join(" "), /Complete flow works/);
 
-  const idea = await fetch(`${base}/api/idea/new`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/test", description: "Maybe add a calmer return screen later." }),
-  }).then((response) => response.json());
-  assert.equal(idea.ok, true);
-  assert.match(await readFile(path.join(areaDirectory, "ideas.md"), "utf8"), /^- Maybe add a calmer return screen later\.$/m, "ideas live in ideas.md");
-  assert.doesNotMatch(await readFile(path.join(areaDirectory, "test.md"), "utf8"), /calmer return screen/, "Tangent never writes into the Area note");
-
-  // Read-only endpoints behind `tangent area`, `tangent goal`, and `tangent idea`.
+  // Read-only endpoints behind `tangent area` and `tangent goal`.
   const areaShow = await fetch(`${base}/api/areas/show?area=otto%2Ftest`).then((response) => response.json());
   assert.deepEqual(areaShow.goals.map((goal) => goal.slug).sort(), [
     "a-second-visible-result", "a-trivial-fix", "complete-flow-works", "connect-chosen-ramp-faces", "first-proof-works", "prove-it", "second-proof-works",
   ]);
-  assert.deepEqual(areaShow.ideas, ["Maybe add a calmer return screen later."]);
+  assert.equal(Object.hasOwn(areaShow, "ideas"), false);
   const missingAreaShow = await fetch(`${base}/api/areas/show?area=otto%2Fnowhere`);
   assert.equal(missingAreaShow.status, 404);
 
@@ -356,28 +347,25 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.ok(subtreeScope.goals.some((goal) => goal.slug === "nested-work"), "the subtree scope reaches child Areas");
   assert.equal(subtreeScope.subtreeCommand, undefined, "a subtree listing does not point at itself");
 
-  // Journal capture saves the exact words, then the read route returns them.
-  const captured = await fetch(`${base}/api/areas/journal`, {
+  // Area messages enter the durable inbox. A retry uses the same receipt and
+  // does not change the Area note.
+  const messageBody = { to: "otto/test", text: "Neil owns the loading work until Friday.", from: "Agent Shell", idempotencyKey: "area-message-http-1" };
+  const sent = await fetch(`${base}/api/agents/send`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/test", text: "Neil owns the loading work until Friday.", idempotencyKey: "journal-http-1", source: "Agent Shell" }),
+    body: JSON.stringify(messageBody),
   }).then((response) => response.json());
-  assert.equal(captured.duplicate, false);
-  const journalRead = await fetch(`${base}/api/areas/journal?area=otto%2Ftest`).then((response) => response.json());
-  assert.equal(journalRead.files.length, 1);
-  assert.match(journalRead.files[0].text, /Neil owns the loading work until Friday\./);
-  assert.match(journalRead.files[0].text, /<!-- tangent-journal:journal-http-1 -->/);
-  // The same key never writes the note twice.
-  await fetch(`${base}/api/areas/journal`, {
+  assert.equal(sent.status, "queued");
+  assert.equal(sent.live, false);
+  const retried = await fetch(`${base}/api/agents/send`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/test", text: "Neil owns the loading work until Friday.", idempotencyKey: "journal-http-1", source: "Agent Shell" }),
-  });
-  const journalAgain = await fetch(`${base}/api/areas/journal?area=otto%2Ftest`).then((response) => response.json());
-  assert.equal(journalAgain.files[0].text.match(/Neil owns the loading work until Friday\./g).length, 1);
-  // The capture is a material milestone, clipped to its stored limit.
-  const recent = await fetch(`${base}/api/areas/milestones?area=otto%2Ftest`).then((response) => response.json());
-  assert.ok(recent.milestones.some((item) => item.kind === "journal" && /Neil owns the loading work/.test(item.summary)));
+    body: JSON.stringify(messageBody),
+  }).then((response) => response.json());
+  assert.equal(retried.receipt, sent.receipt);
+  const inbox = JSON.parse(await readFile(path.join(root, "brains", "otto", "test", "inbox.json"), "utf8"));
+  assert.equal(inbox.notices.filter((notice) => notice.sourceId === messageBody.idempotencyKey).length, 1);
+  assert.doesNotMatch(await readFile(path.join(areaDirectory, "test.md"), "utf8"), /Neil owns the loading work/);
 
   const goalShow = await fetch(`${base}/api/goals/show?slug=prove-it`).then((response) => response.json());
   assert.equal(goalShow.goal.title, "Prove it");
@@ -438,10 +426,10 @@ test("the context-first shell is default and keeps the user's understanding with
   const afterFailedOwnCreate = await fetch(`${base}/api/goals?area=otto%2Ftest`).then((response) => response.json());
   assert.ok(!afterFailedOwnCreate.goals.some((goal) => goal.title === "Never created"));
 
-  const areaIdeas = await fetch(`${base}/api/ideas?area=otto%2Ftest`).then((response) => response.json());
-  assert.deepEqual(areaIdeas.ideas, [{ area: "otto/test", text: "Maybe add a calmer return screen later." }]);
-  const allIdeas = await fetch(`${base}/api/ideas`).then((response) => response.json());
-  assert.ok(allIdeas.ideas.some((entry) => entry.area === "otto/test" && entry.text === "Maybe add a calmer return screen later."));
+  for (const [method, route] of [["GET", "/api/areas/" + "journal"], ["POST", "/api/areas/" + "journal"], ["GET", "/api/" + "ideas"], ["POST", "/api/" + "idea/new"], ["POST", "/api/" + "command"]]) {
+    const response = await fetch(`${base}${route}`, { method, ...(method === "POST" ? { headers: { "content-type": "application/json" }, body: "{}" } : {}) });
+    assert.equal(response.status, 404, `${method} ${route} is not routed`);
+  }
 
   // ---- agent pipelines ----
   // A registry with an effort axis; step launches resolve through it.

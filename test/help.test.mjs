@@ -25,7 +25,16 @@ test("tangent help groups commands by who runs them and names no removed verb", 
     assert.equal(out.includes(removed), false, `help names the removed "${removed}"`);
   }
   assert.match(out, /send <brain\|session\|area> <note\.\.\.>/);
+  assert.doesNotMatch(out, /^\s+idea\b/m);
   assert.match(out, /Run tangent <command> --help for the exact flags\./);
+});
+
+test("completion omits the retired Area capture noun and it is an unknown command", async () => {
+  const completion = await tangent("__complete", "");
+  assert.equal(completion.split("\n").includes(["id", "ea"].join("")), false);
+  const error = await execFileAsync(process.execPath, [cli, ["id", "ea"].join("")])
+    .then(() => "", (failure) => String(failure.stderr));
+  assert.match(error, /Unknown command/);
 });
 
 test("tangent brain --help and tangent goal --help match the commands that exist", async () => {

@@ -45,10 +45,10 @@ When Julian asks for a loop, use these commands. Do not write the process note b
 
 Keep your Area's `AGENTS.md` current: rewrite, do not append. Harvest a durable fact into Knowledge, then delete the narrative. Commit with `tangent vault commit`.
 
-## Orientation
+## Journal memory
 
-When Julian asks for orientation, read the Area notes, Goals, recent activity, and inbox messages. Start with the last meaningful user view.
+The Journal preserves Julian's own remembered words. The `/remember` skill saves the complete preceding user message to this brain's Journal. The save command writes and commits it before it reports success. Do not claim that a message was saved before that command succeeds. A correction is a later entry; never rewrite an earlier entry.
 
-Then explain material changes and the next decision. Use “The records show…” for facts and “My read is…” for your interpretation.
+When Julian asks you to orient him, read recent Journal entries before you answer. The Root brain (`@root`, whose folder is this vault root) reads `journal.md` and Journals throughout the complete Area tree. Another Area brain reads its own Journal, Journals in its subtree, and routed entries that reached that scope. Also read the current Area notes, Goals, and recent activity. Start with the last meaningful user view. Then explain material changes and the next decision. Use “You said…” for remembered user text, “The records show…” for current facts and activity, and “My read is…” for your interpretation. Time spent shows attention, not priority. A Journal entry is context; it is not automatically a command or a current fact.
 
-Time spent shows attention, not priority.
+To propose routing context, select an exact excerpt from one source Journal entry. Create an approval Request with a `route-journal` effect that names the destination `area`, exact `text`, and source `sourceEntryId`. The source entry stays complete. Only an authorized effect writes the excerpt to the destination Journal. Routing does not create a Goal, change priority, or authorize work.

@@ -4,7 +4,6 @@ import areaWorkCore from "./area-work-core.js";
 import goToCore from "./go-to-core.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, toggleAreaFocusRoot, writeAreaFocus } from "./area-focus-core.js";
-import { journalCaptureNeedsRetry, journalCaptureToast } from "./journal-capture-core.js";
 import { workCommand, workCaptionKeys, workRowKind } from "./work-commands.js";
 
 const PRESENTED_ROWS_PER_GOAL = 3;
@@ -1269,20 +1268,19 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     });
   }
 
-  /** Opens one journal-first note composer for the selected Work Area. */
+  /** Opens one note composer for the selected Work Area. */
   function openAreaCapture(area) {
     if (!area) return showToast("Choose an Area row first.");
     const idempotencyKey = crypto.randomUUID();
-    /** Saves the exact modal text before delivery to the Area brain. */
+    /** Sends the exact modal text to the Area brain. */
     const saveCapture = async () => {
       const text = document.querySelector("[data-modal-input]")?.value.trim() || "";
-      if (!text) throw new Error("Write a Journal note.");
-      const saved = await post("/api/areas/journal", { area, text, idempotencyKey, source: "Agent Shell" });
-      showToast(journalCaptureToast(saved));
-      if (journalCaptureNeedsRetry(saved)) return false;
+      if (!text) throw new Error("Write a note.");
+      const delivery = await post("/api/agents/send", { to: area, text, from: "Agent Shell", idempotencyKey });
+      showToast(delivery.live ? "Sent." : "Queued.");
       await refresh();
     };
-    openModal({ kicker: "Capture", title: `To: ${area} brain`, copy: "Tangent saves the exact text before it wakes the brain.", field: { label: "Journal note", placeholder: "Write or dictate a note." }, confirmLabel: "Save and send", onConfirm: saveCapture });
+    openModal({ kicker: "Message", title: `Send to ${area} brain`, copy: "The Area inbox keeps this note until the brain reads it.", field: { label: "Message", placeholder: "Write or dictate a note." }, confirmLabel: "Send", onConfirm: saveCapture });
   }
 
   /** The fallback asks grouped by Area, so every row says which Area it is from. */

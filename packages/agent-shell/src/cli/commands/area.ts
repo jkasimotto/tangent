@@ -167,10 +167,6 @@ async function showCommand(args: Args): Promise<void> {
   printResources(detail);
   printSkills(detail);
   printProcesses(detail);
-  console.log("");
-  console.log(`Ideas (${detail.ideas.length}):`);
-  if (!detail.ideas.length) console.log("  none");
-  for (const idea of detail.ideas) console.log(`  - ${idea}`);
   if (detail.map) {
     console.log("");
     console.log(`Map: ${detail.map.exists ? detail.map.file : "none"}`);

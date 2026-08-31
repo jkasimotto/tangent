@@ -13,7 +13,6 @@ All Tangent state lives under `~/.tangent/`. Know these paths:
 | `usage/repos/<hash>/` | One directory per repo, keyed by a hash of the repo path |
 | `usage/global/insights/` | Aggregated deterministic insights (e.g. `park.json`) |
 | `trees/` | Git-managed project tree; node directories only, no content files. README.md has the vault rules. |
-| `trees/.agents/skills/remember/` | Canonical Tangent `/remember` skill. It lives at the vault repository root so agents launched in `~/.tangent/trees` can discover it. Agents working in this repository must use that copy when inspecting or changing Journal capture behavior. |
 | `marks/` | Captured agent-failure marks (`tangent.mark.v1` JSON), owned by @tangent/eval |
 | `eval/runs/` | Eval run manifests, variant work dirs, metrics, reports, diffs |
 | `loops/` | Agent loop logs (plan, scope, implement, review, deploy, ux, watch, feedback) |
@@ -98,7 +97,7 @@ If the CLI/SDK is unavailable, the global index at `~/.tangent/usage/global/inde
 - @tangent/rollup: private rollup notes from Usage turns.
 - @tangent/eval: coding-agent eval preparation, execution, collection, and reports.
 - @tangent/search: structural indexing and search over TypeScript and Dart source (standalone, no Usage/Rollup/Eval dependency).
-- @tangent/agent-shell: the vault CLI (`tangent area`, `tangent goal`, `tangent idea`, `tangent document`, `tangent vault commit`), the cross-agent messaging CLI (`tangent agent list|send`), the pipeline CLI (`tangent goal start`, `tangent goal append`), the brain CLI (`tangent brain status|stop|request`, `tangent area create`), the server CLI (`tangent shell rebuild`), and the study partner launcher (`tangent study`); thin HTTP clients to the running Agent Shell server except `vault commit` and `study`. `vault commit` writes the vault's git history, and `study` spawns a local interactive session. The Agent Shell server owns pipelines (ADR-0023) and Area brains (ADR-0024).
+- @tangent/agent-shell: the vault CLI (`tangent area`, `tangent goal`, `tangent document`, `tangent vault commit`), the cross-agent messaging CLI (`tangent agent list|send`), the pipeline CLI (`tangent goal start`, `tangent goal append`), the brain CLI (`tangent brain status|stop|request`, `tangent area create`), the server CLI (`tangent shell rebuild`), and the study partner launcher (`tangent study`); thin HTTP clients to the running Agent Shell server except `vault commit` and `study`. `vault commit` writes the vault's git history, and `study` spawns a local interactive session. The Agent Shell server owns pipelines (ADR-0023) and Area brains (ADR-0024).
 
 Architecture docs:
 - ARCHITECTURE.md

@@ -67,9 +67,12 @@ export const PANE_SIGNATURES = {
   codex: {
     busy: [/esc to interrupt/i],
     dialog: [/\(y\/n\)/i, /press y to approve/i, /Would you like to run the following command\?/i, /›\s+\d+\.\s+(?:Yes|No)/i],
-    // No Codex wall capture is verified. In particular, an MCP login warning
-    // belongs to that dependency and is not evidence about Codex login.
-    wall: [],
+    // Verified from the live Codex pane on 2026-08-31. The warning sits above
+    // the empty composer and footer, so it needs the bounded visible-tail
+    // match instead of the terminal-line match used by Claude.
+    wall: [
+      { id: "codex-model-capacity-v1", kind: "capacity", pattern: /^⚠\s*Selected model is at capacity\. Please try a different model\.$/i, visibleTail: true },
+    ],
     // Codex paints gray placeholder text after the prompt. Placeholder text
     // never moves the cursor, so "cursor at home column" still means empty.
     composer: { prompt: /^›(\s|$)/, homeColumn: 2 },
@@ -218,18 +221,43 @@ export function wallFromText(text, signatures = Object.values(PANE_SIGNATURES)) 
   const terminalLine = [...lines].reverse().find((line) => line.trim())?.trim() ?? "";
   for (const signature of signatures) {
     for (const entry of signature.wall ?? []) {
-      const match = terminalLine.match(entry.pattern);
+      const candidate = entry.visibleTail ? visibleTailWallLine(lines, entry.pattern) : terminalLine;
+      const match = candidate.match(entry.pattern);
       if (!match) continue;
       return {
         pattern: entry.id,
         kind: entry.kind,
         model: entry.model && match[entry.model] ? String(match[entry.model]).trim() : null,
-        text: terminalLine,
+        text: candidate,
         source: "screen",
       };
     }
   }
   return null;
+}
+
+/**
+ * Returns a wall line followed only by Codex's static composer chrome.
+ * Ordinary worker output after an old warning disproves that the warning is
+ * the pane's current terminal state.
+ */
+function visibleTailWallLine(lines, pattern) {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const candidate = lines[index].trim();
+    if (!pattern.test(candidate)) continue;
+    const tail = lines.slice(index + 1).map((line) => line.trim()).filter(Boolean);
+    if (tail.every(isCodexStaticChrome)) return candidate;
+    return "";
+  }
+  return "";
+}
+
+/** True for the non-output rows Codex keeps below a terminal warning. */
+function isCodexStaticChrome(line) {
+  return /^[-─━]+$/.test(line)
+    || /^\d+\s+background terminals? running\b.*\/ps\b.*\/stop\b/i.test(line)
+    || /^›\s+Ask Codex to do anything$/i.test(line)
+    || /^gpt-[\w.-]+\s+(?:low|medium|high|xhigh|max|ultra)\b.*(?:~\/|\/)/i.test(line);
 }
 
 /** Uses the named family first and generic evidence second. */

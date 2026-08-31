@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootWorkTable, press, settle } from "./work-table-harness.mjs";
 import { workTableFixture, withDirectAsks, plannedWorkFixture, withBrainOnlyArea } from "./work-table-fixture.mjs";
+import { projectWork } from "./work-projection.mjs";
 import { workCommand } from "./public/work-commands.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -22,6 +23,15 @@ function verb(element) {
 /** Returns the visible Goal-title buttons of the work table, in row order. */
 function titles(document) {
   return [...document.querySelectorAll(".work-table [data-work-row-title]")].filter((button) => !button.closest("tr[hidden]"));
+}
+
+/** Builds the production Work v2 boundary from one mutable browser fixture. */
+function workProjection(fixture) {
+  return () => projectWork({
+    vault: fixture.vault,
+    session: { sessions: fixture.sessions, pipelines: fixture.pipelines, brains: fixture.brains },
+    programs: fixture.programs ?? { operations: [], processes: [], problems: [], areas: [], liveCount: 0 },
+  }).value;
 }
 
 test("the work table states its rows and columns in the accessibility tree", async () => {
@@ -63,8 +73,12 @@ test("a wall status hover shows the complete server evidence", async () => {
     word: "Hit a wall · Opus", since: fixture.now, owner: "brain", next: "The organizer replaces or ends the attempt.",
     evidence: { source: "screen", text: "You've reached your Opus limit · claude · quota · screen · 2026-08-30T05:50:55.115Z" },
   };
-  const { document } = await bootWorkTable(fixture);
+  const staleSession = fixture.sessions.find((item) => item.name === step.session);
+  Object.assign(staleSession, { state: "waiting", stateDetail: "idle" });
+  const { document, gets } = await bootWorkTable(fixture, { workProjection: workProjection(fixture) });
   const status = document.querySelector('[data-work-cursor="goal:otto/tangent/goal-compact-table.md"] .desk-state');
+  assert.ok(gets.some((url) => new URL(url).pathname === "/api/work"), "the regression crosses the real compact Work boundary");
+  assert.doesNotMatch(status.textContent, /Finished/, "the stale idle Agent cannot overrule the capacity-blocked Attempt");
   assert.match(status.title, /You've reached your Opus limit · claude · quota · screen · 2026-08-30T05:50:55.115Z/);
 });
 
@@ -81,7 +95,8 @@ test("Work follows the Job to its pending next Assignment instead of the old idl
   });
   Object.assign(job.steps[1], { id: "assignment-2", status: "pending", live: false, session: null });
 
-  const { window, document } = await bootWorkTable(fixture);
+  const { window, document, gets } = await bootWorkTable(fixture, { workProjection: workProjection(fixture) });
+  assert.ok(gets.some((url) => new URL(url).pathname === "/api/work"), "the regression crosses the real compact Work boundary");
   let row = document.querySelector(`[data-goal-anchor="${goal.file}"]`);
   assert.match(row.querySelector(".desk-state").textContent.trim(), /^Reported done/);
 

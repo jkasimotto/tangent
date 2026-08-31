@@ -19,6 +19,20 @@ test("a verified Claude quota line is named and retains complete evidence", () =
   assert.deepEqual(quota.wall, { pattern: "claude-quota-reached-v1", kind: "quota", model: "Fable 5", text: "You've reached your Fable 5 limit", source: "screen" });
 });
 
+test("a verified Codex capacity screen is a wall, not an idle composer", () => {
+  const { text, cursorY } = fixture("codex-capacity.txt", /^› Ask Codex to do anything/);
+  const result = classifyStaticPane({ text, cursorX: 2, cursorY, harness: "codex" });
+  assert.equal(result.kind, "wall");
+  assert.deepEqual(result.wall, {
+    pattern: "codex-model-capacity-v1",
+    kind: "capacity",
+    model: null,
+    text: "⚠ Selected model is at capacity. Please try a different model.",
+    source: "screen",
+  });
+  assert.equal(classifyWorkingComposer({ text, cursorX: 2, cursorY, harness: "codex" }), null);
+});
+
 test("unverified authentication text, dependency warnings, prompts, and updates are not walls", () => {
   const cases = [
     { harness: "codex", text: "⚠ The Slack MCP server is not logged in. Run `codex mcp login Slack`." },
@@ -37,6 +51,7 @@ test("wall signatures never cross harness families or match stale transcript tex
   assert.equal(classifyStaticPane({ text: line, harness: "codex" }).kind, "waiting");
   assert.equal(classifyStaticPane({ text: line, harness: "unknown" }).kind, "waiting");
   assert.equal(classifyStaticPane({ text: `${line}\nnew worker output`, harness: "claude" }).kind, "waiting");
+  assert.equal(classifyStaticPane({ text: "⚠ Selected model is at capacity. Please try a different model.\n• Continued working", harness: "codex" }).kind, "waiting");
 });
 
 test("a pi prose line that says Do you want is not a dialog", () => {

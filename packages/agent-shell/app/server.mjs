@@ -4230,8 +4230,9 @@ async function pipelinesView(sessions) {
     status: pipelineStatus(record, (name) => byName.has(name)),
     steps: record.steps.map((step) => {
       const live = step.session ? byName.get(step.session) : null;
-      const brain = brainRecords.find((item) => item.area === record.area) ?? null;
-      const repair = repairRecords.find((item) => item.area === record.area) ?? null;
+      const organizerArea = record.organizerArea ?? record.area;
+      const brain = brainRecords.find((item) => item.area === organizerArea) ?? null;
+      const repair = repairRecords.find((item) => item.area === organizerArea) ?? null;
       const projectedBrain = brain ? { ...brain, live: Boolean(brain.session && sessions.some((session) => session.name === brain.session)) } : null;
       const attemptState = deriveAttemptState({
         assignment: step,

@@ -40,7 +40,8 @@ export function deriveAttemptState({ assignment, observation: rawObservation, re
     return state(title(assignment.status), timestamp(assignment?.endedAt, now), "none", "queue", `The assignment is ${assignment.status}.`, "No next action.");
   }
   const exhausted = [...(recovery ?? assignment?.attempts?.at?.(-1)?.recovery ?? [])].reverse().find((step) => step?.result === "failed" || step?.result === "expired");
-  if (exhausted?.terminal === true) {
+  const liveHarness = observation?.fresh !== false && observation?.process === "harness" && now - observation.at < staleMs;
+  if (exhausted?.terminal === true && !liveHarness) {
     return ownedState("Stuck", timestamp(exhausted.startedAt, now), brain, repair, now, repairGraceMs, "recovery", "Tangent used the repair ladder.", "The organizer decides the next action.");
   }
   if (!observation) {
@@ -115,7 +116,8 @@ function ownedState(word, since, brain, repair, now, repairGraceMs, source, evid
   if (latestRepair?.result === "blocked") return state(word, since, "you", source, latestRepair.report || evidence, "Restart the brain, or decide on the row.");
   const sameStopAttempts = latestRepair ? (repair.history ?? []).filter((item) => item.stop?.since === latestRepair.stop?.since).length : 0;
   if (sameStopAttempts >= 2 && ["failed", "expired"].includes(latestRepair?.result)) return state(word, since, "you", source, latestRepair.report || evidence, "Restart the brain, or decide on the row.");
-  const stoppedSince = Date.parse(brain?.health?.updatedAt ?? brain?.updatedAt ?? 0);
+  const stoppedAt = brain?.health?.updatedAt ?? brain?.updatedAt;
+  const stoppedSince = stoppedAt ? Date.parse(stoppedAt) : Number.NaN;
   const live = brain?.status === "active" && brain?.live !== false && !["failed"].includes(brain?.health?.status);
   if (live) {
     const owner = now - since >= 10 * 60_000 ? "you" : "brain";

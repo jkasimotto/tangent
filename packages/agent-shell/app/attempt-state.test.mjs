@@ -52,6 +52,44 @@ test("fresh work beats a contradictory retained wall", () => {
   assert.equal(result.word, "Working");
 });
 
+test("a fresh live harness supersedes terminal recovery history", () => {
+  const recovery = [
+    { kind: "resume-in-place", startedAt: "2026-08-31T21:21:48.240Z", result: "failed", terminal: true },
+    { kind: "nudge", startedAt: "2026-08-31T21:34:46.211Z", result: "done" },
+  ];
+  const assignment = {
+    status: "running",
+    startedAt: "2026-08-31T21:21:46.760Z",
+    attempts: [{ id: "0757cd1a-7f25-44f8-8f6d-ed0de7d1d3b2", recovery }],
+  };
+  const observation = {
+    at: NOW,
+    fresh: true,
+    process: "harness",
+    activity: { lastOutputAt: NOW, source: "screen" },
+    composer: "none",
+    dialog: null,
+    wall: null,
+  };
+
+  const state = deriveAttemptState({ assignment, observation, recovery, now: NOW });
+
+  assert.equal(state.word, "Working");
+  assert.equal(state.owner, "worker");
+  assert.equal(state.evidence.source, "screen");
+});
+
+test("a missing organizer record is not an old stopped organizer", () => {
+  const state = deriveAttemptState({
+    assignment: { status: "running", startedAt: NOW - 60_000 },
+    recovery: [{ kind: "resume-in-place", startedAt: NOW - 30_000, result: "failed", terminal: true }],
+    now: NOW,
+  });
+
+  assert.equal(state.word, "Stuck");
+  assert.equal(state.owner, "brain");
+});
+
 test("a dialog under a live brain belongs to Julian", () => {
   const state = deriveAttemptState({
     assignment: { status: "running" },

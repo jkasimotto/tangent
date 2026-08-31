@@ -619,7 +619,7 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
       const ids = new Set();
       for (const element of mutation.put) {
         const error = sourceElementError(element, ownerSet); if (error) return { status: 422, error };
-        const bindingError = sourceBindingError(element, owner, idsByOwner); if (bindingError) return { status: 422, error: bindingError };
+        const bindingError = sourceBindingError(element, owner, idsByOwner); if (bindingError) return { status: 422, code: "cross-owner-binding", error: bindingError };
         const ownerError = arrowOwnershipError(element, owner); if (ownerError) return { status: 422, error: ownerError };
         if (ids.has(element.id)) return { status: 422, error: `source ID ${element.id} appears more than once for ${owner}` };
         ids.add(element.id);

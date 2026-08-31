@@ -171,6 +171,26 @@ export function splitComposed(elements, origins, offsets = new Map()) {
   return byOwner;
 }
 
+/** Detaches direct text containers that cross source-owner boundaries. */
+export function detachCrossOwnerTextBindings(elements, origins) {
+  const byId = new Map((elements ?? []).map((element) => [element.id, element]));
+  let detached = 0;
+  for (const text of elements ?? []) {
+    if (text.type !== "text" || !text.containerId) continue;
+    const textOrigin = origins.get(text.id) ?? text.customData?.tangentWorld;
+    const container = byId.get(text.containerId);
+    const containerOrigin = origins.get(text.containerId) ?? container?.customData?.tangentWorld;
+    if (!textOrigin?.owner || !containerOrigin?.owner || textOrigin.owner === containerOrigin.owner) continue;
+    const textIds = new Set([text.id, textOrigin.sourceId, runtimeId(textOrigin.owner, textOrigin.sourceId)]);
+    text.containerId = null;
+    if (Array.isArray(container?.boundElements)) {
+      container.boundElements = container.boundElements.filter((binding) => binding.type !== "text" || !textIds.has(binding.id));
+    }
+    detached += 1;
+  }
+  return detached;
+}
+
 /** Creates deterministic stored or provisional regions for a complete Area list. */
 export function provisionalRegions(areaKeys, stored = new Map()) {
   const children = new Map();
@@ -788,4 +808,4 @@ export function remapAreaMapWorld(world, changedPaths) {
   return moved;
 }
 
-export default { AREA_MAP_LAYOUT, composeAreaMapWorld, composeRegionElement, composeShard, computeWorldGeometry, elementKey, inflateRect, nearestFreeRectangle, protectAreaRegions, provisionalRegions, rectanglesOverlap, regionId, regionKey, remapAreaMapWorld, reprioritizeAreaPlacement, runtimeId, shardHulls, solveAreaMapGesture, solveOwnedElementGesture, splitComposed, unionRects };
+export default { AREA_MAP_LAYOUT, composeAreaMapWorld, composeRegionElement, composeShard, computeWorldGeometry, detachCrossOwnerTextBindings, elementKey, inflateRect, nearestFreeRectangle, protectAreaRegions, provisionalRegions, rectanglesOverlap, regionId, regionKey, remapAreaMapWorld, reprioritizeAreaPlacement, runtimeId, shardHulls, solveAreaMapGesture, solveOwnedElementGesture, splitComposed, unionRects };

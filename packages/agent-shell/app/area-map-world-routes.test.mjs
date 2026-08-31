@@ -157,6 +157,32 @@ test("retries ambiguous acknowledgement loss with the exact idempotent request",
   assert.ok(events.some((event) => event.name === "area_map_retry" && event.failureKind === "transport" && event.retryable === true));
 });
 
+test("uses the server's privacy-safe binding code for the client save failure", async () => {
+  const events = [];
+  /** Returns the server's classified cross-owner validation response. */
+  async function api() {
+    throw Object.assign(new Error("source binding rejected"), {
+      status: 422,
+      payload: { status: 422, code: "cross-owner-binding", retryable: false },
+    });
+  }
+  const request = {
+    schema: "area-map-gesture.v1", operationId: "operation-binding", gestureId: "gesture-binding",
+    worldId: "world-binding", treeRevision: "tree-binding", worldRevision: "revision-binding",
+    mutations: [{ owner: "root/child", put: [], remove: [] }],
+  };
+
+  await assert.rejects(saveAreaMapGestureRequest(api, request, {
+    /** Captures the public content-free client phase. */
+    onEvent: (name, fields) => events.push({ name, ...fields }),
+  }), /source binding rejected/);
+
+  assert.ok(events.some((event) => event.name === "area_map_save_phase"
+    && event.phase === "failed"
+    && event.failureKind === "cross-owner-binding"
+    && event.status === 422));
+});
+
 test("applies source mutations to complete canonical shards through the transaction adapter", async () => {
   const { index } = mutationFixture();
   const world = await index.snapshot("root/child");
@@ -453,7 +479,10 @@ test("rejects traversal references and unsafe cross-Area endpoint identities", a
 });
 
 test("keeps cross-Area bindings in metadata while the start endpoint owns the arrow", async () => {
-  const { index } = mutationFixture();
+  const events = [];
+  /** Captures the server's content-free gesture result. */
+  const recordEvent = (event) => events.push(event);
+  const { index } = mutationFixture({ recordEvent });
   const world = await index.snapshot("root/child");
   const saved = [];
   /** Captures an accepted metadata-only endpoint. */
@@ -465,7 +494,9 @@ test("keeps cross-Area bindings in metadata while the start endpoint owns the ar
   const foreignBinding = response();
   await routes.handle(jsonRequest(gesture(world, [{ owner: "root", baseHash: "parent-hash", put: [arrow], remove: [] }])), foreignBinding, new URL("http://local/api/areas/map-gestures"));
   assert.equal(foreignBinding.status, 422);
+  assert.equal(JSON.parse(foreignBinding.body).code, "cross-owner-binding");
   assert.match(JSON.parse(foreignBinding.body).error, /binds across source owners/);
+  assert.ok(events.some((event) => event.name === "area_map_gesture" && event.phase === "failed" && event.failureKind === "cross-owner-binding"));
 
   arrow.startBinding = null;
   const wrongOwner = response();

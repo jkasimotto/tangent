@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { composeAreaMapWorld, computeWorldGeometry, protectAreaRegions, provisionalRegions, shardHulls, solveAreaMapGesture, splitComposed } from "./public/area-map-world-core.js";
+import { composeAreaMapWorld, computeWorldGeometry, detachCrossOwnerTextBindings, protectAreaRegions, provisionalRegions, shardHulls, solveAreaMapGesture, splitComposed } from "./public/area-map-world-core.js";
 
 const areas = ["neara", "neara/delivery", "neara/delivery/standards"];
 
@@ -147,4 +147,23 @@ test("decomposes one multi-owner composed change without changing unrelated sour
   assert.equal(split.get("root")[0].x, 15);
   assert.equal(split.get("root/child")[0].id, "child");
   assert.equal(split.get("root/child")[0].x, 20);
+});
+
+test("detaches only text containers that cross source owners before partitioning", () => {
+  const parent = { id: "parent", type: "rectangle", boundElements: [{ id: "foreign-text", type: "text" }, { id: "cross-arrow", type: "arrow" }] };
+  const local = { id: "local", type: "rectangle", boundElements: [{ id: "local-text", type: "text" }] };
+  const foreignText = { id: "foreign-text", type: "text", containerId: "parent" };
+  const localText = { id: "local-text", type: "text", containerId: "local" };
+  const origins = new Map([
+    ["parent", { owner: "root", sourceId: "parent" }],
+    ["local", { owner: "root", sourceId: "local" }],
+    ["foreign-text", { owner: "root/child", sourceId: "foreign-text" }],
+    ["local-text", { owner: "root", sourceId: "local-text" }],
+  ]);
+
+  assert.equal(detachCrossOwnerTextBindings([parent, local, foreignText, localText], origins), 1);
+  assert.equal(foreignText.containerId, null);
+  assert.deepEqual(parent.boundElements, [{ id: "cross-arrow", type: "arrow" }]);
+  assert.equal(localText.containerId, "local");
+  assert.deepEqual(local.boundElements, [{ id: "local-text", type: "text" }]);
 });

@@ -359,6 +359,8 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await page.locator("[data-map-column]").focus();
     await page.keyboard.press("Shift+o");
     await waitForOnly(true);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.waitForTimeout(500);
 
     // Find searches only the current projection. An outside Area is a miss
     // that leaves the exact scope and camera unchanged.
@@ -374,6 +376,24 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await find.waitFor({ state: "detached" });
     assert.equal(await only.getAttribute("aria-pressed"), "true");
     assert.equal(await page.locator(".tangent-map-ancestry button").count(), 3, "the Tangent scope never changed");
+
+    // The toolbar click bubbles through the complete shell after React gives
+    // the picker input focus. Shell focus styling must not take that focus.
+    const focusCanvas = page.locator(".excalidraw canvas.interactive");
+    await focusCanvas.evaluate((canvas) => { canvas.dataset.focusJourneyIdentity = "original"; });
+    await page.getByRole("button", { name: /^Block/ }).click();
+    const pickerInput = page.getByRole("dialog", { name: "Place a Tangent block" }).getByRole("textbox");
+    await pickerInput.evaluate((input) => { input.dataset.focusJourneyIdentity = "original"; });
+    assert.equal(await pickerInput.evaluate((input) => document.activeElement === input), true, "the Block click leaves its auto-focused input active before the click task ends");
+    await page.keyboard.type("cont");
+    await page.evaluate(async () => { const { refresh } = await import("/shell.js"); await refresh(); });
+    await page.keyboard.type("inuous");
+    assert.equal(await pickerInput.getAttribute("data-focus-journey-identity"), "original", "fact refresh keeps the exact picker input node");
+    assert.equal(await pickerInput.evaluate((input) => document.activeElement === input), true, "fact refresh keeps Block input focus");
+    assert.equal(await pickerInput.inputValue(), "continuous", "typing continues across fact refresh without a second click");
+    assert.equal(await focusCanvas.getAttribute("data-focus-journey-identity"), "original", "fact refresh keeps the exact canvas");
+    await page.locator("[data-tangent-area-map]").dispatchEvent("pointerdown");
+    await pickerInput.waitFor({ state: "detached" });
 
     await page.locator(".excalidraw canvas.interactive").evaluate((canvas) => { canvas.dataset.companionIdentity = "original"; });
     await page.keyboard.press("b");

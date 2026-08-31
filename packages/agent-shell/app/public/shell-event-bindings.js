@@ -1698,7 +1698,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const target = event.target;
     if (target.closest?.("[data-map-brain]")) return toggleMapBrain();
     if (target.closest?.("[data-close-map-brain]")) return closeMapBrain();
-    if (target.closest?.("[data-map-column]")) focusMapCompanion("map");
+    if (target.closest?.("[data-map-column]")) {
+      const interactive = target.closest?.("button, input, select, textarea, a, dialog, [role='dialog'], [contenteditable]:not([contenteditable='false'])");
+      focusMapCompanion("map", { moveDomFocus: !interactive });
+    }
     else if (target.closest?.("[data-map-brain-pane]")) focusMapCompanion("brain");
     if (state.documentPeek && documentPeekLayer.contains(target)) return handleDocumentPeekClick(event);
     const processControl = target.closest?.("[data-control-process]");

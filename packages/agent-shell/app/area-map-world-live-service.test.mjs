@@ -204,8 +204,16 @@ async function json(base, resource, options) {
 }
 
 /** Mounts the actual production Area-board persistence adapter in one page. */
-async function mountLiveWorld(page, base, { navigate = true } = {}) {
-  if (navigate) await page.goto(base, { waitUntil: "networkidle" });
+async function mountLiveWorld(page, base, { navigate = true, isolated = false } = {}) {
+  if (navigate && isolated) {
+    const fixtureUrl = `${base}/__area-map-live-fixture`;
+    await page.route(fixtureUrl, (route) => route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"></head><body></body></html>",
+    }));
+    await page.goto(fixtureUrl, { waitUntil: "networkidle" });
+  } else if (navigate) await page.goto(base, { waitUntil: "networkidle" });
   await page.evaluate(async () => {
     document.body.innerHTML = '<div id="live-map" style="position:fixed;inset:0"></div>';
     /** Calls one production JSON route from the browser fixture. */
@@ -565,6 +573,178 @@ test("deep SE resize, move, and NW resize render hierarchy reflow before they pe
   const restarted = await renderedRegions(page);
   assertSameGeometry(restarted, northWestPreview, proofAreas, "server restart recomputes the same rendered layout");
   assertContainment(restarted);
+});
+
+test("text placed on an Area region saves as unbound text across reload and restart", { skip: !enabled, timeout: 90_000 }, async (context) => {
+  const fixture = await createMigrationVault("text-save");
+  let server = null; let browser = null;
+  context.after(async () => { await browser?.close(); await stopServer(server); await rm(fixture.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
+  server = await startServer(fixture, "text-save-1");
+  browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath(), headless: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1, reducedMotion: "reduce", colorScheme: "dark" });
+  const responses = [];
+  page.on("response", (response) => {
+    if (new URL(response.url()).pathname === "/api/areas/map-gestures") responses.push(response.status());
+  });
+  await mountLiveWorld(page, server.base, { isolated: true });
+  const target = "neara/delivery/standards";
+  const text = "Durable region text";
+  await page.evaluate((area) => window.liveEditor.fitArea(area, { push: false, select: false }), target);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const placement = await areaScreenPoint(page, target, 0.9, 0.9);
+  const selectionTool = page.getByRole("radio", { name: /Selection/i }).first();
+  await selectionTool.click({ force: true });
+  await page.mouse.click(placement.x, placement.y);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.waitForTimeout(100);
+  const textTool = page.getByRole("radio", { name: /Text/i }).first();
+  await textTool.click({ force: true });
+  assert.equal(await textTool.isChecked(), true, "the visible production toolbar activates Text");
+  await page.mouse.click(placement.x, placement.y);
+  await page.waitForFunction(() => document.activeElement?.matches('textarea[data-type="wysiwyg"]'));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const textEditor = page.locator('textarea[data-type="wysiwyg"]');
+  assert.equal(await textEditor.evaluate((element) => document.activeElement === element), true, "the text editor remains focused after pointer settlement");
+  assert.equal(await textEditor.inputValue(), "", `the blank Area point starts a new text element at ${JSON.stringify(placement)}`);
+  await page.keyboard.type(text);
+  assert.equal(await textEditor.inputValue(), text, "the real Excalidraw text editor receives the complete value");
+  await page.keyboard.press("Escape");
+  try {
+    await page.waitForFunction((value) => window.liveEditor.current().elements.some((element) => element.type === "text" && element.text === value), text, { timeout: 3_000 });
+  } catch (error) {
+    const state = await page.evaluate(() => ({
+      current: window.liveEditor.current().elements.filter((element) => element.type === "text").map((element) => ({ id: element.id, text: element.text, containerId: element.containerId, role: element.customData?.tangent?.role })),
+      rendered: (window.liveEditor.rendered() ?? []).filter((element) => element.type === "text").map((element) => ({ id: element.id, text: element.text, containerId: element.containerId, role: element.customData?.tangent?.role })),
+      events: window.liveEvents.map((event) => ({ name: event.name, phase: event.phase, reason: event.reason, command: event.command, saveState: event.saveState })),
+      active: { tag: document.activeElement?.tagName, className: String(document.activeElement?.className ?? ""), value: document.activeElement?.value ?? null },
+    }));
+    throw new Error(`text gesture did not settle: ${JSON.stringify(state)}`, { cause: error });
+  }
+  await page.evaluate(() => window.liveEditor.flush());
+  await page.getByText("Saved", { exact: true }).waitFor();
+
+  assert.deepEqual(responses, [200], "the real toolbar gesture receives one successful save acknowledgement");
+  assert.equal(await page.locator(".tangent-map-draft-choice").count(), 0, "a normal save never offers Restore or Discard");
+  const repository = createAreaCanvasRepository({
+    root: fixture.trees, runGit,
+    transactionRoot: path.join(fixture.mapState, "text-save-read-transactions"),
+  });
+  const parentBefore = await repository.read("neara/delivery");
+  const savedBefore = await repository.read(target);
+  const savedText = savedBefore.scene.elements.find((element) => element.type === "text" && element.text === text);
+  assert.ok(savedText, `the deepest Area owns the new text: ${JSON.stringify({ parent: parentBefore.scene.elements.filter((element) => element.type === "text").map((element) => ({ text: element.text, containerId: element.containerId })), target: savedBefore.scene.elements.filter((element) => element.type === "text").map((element) => ({ text: element.text, containerId: element.containerId })) })}`);
+  assert.equal(savedText.containerId, null, "the persisted text has no foreign Area-region container");
+  assert.equal(parentBefore.scene.elements.some((element) => element.type === "text" && element.text === text), false, "the parent source keeps no copy of the new text");
+
+  /** Requires the exact text to be present in the mounted production scene. */
+  const assertMountedText = async (message) => {
+    const values = await page.evaluate(() => (window.liveEditor.rendered() ?? []).filter((element) => !element.isDeleted && element.type === "text").map((element) => element.text));
+    assert.ok(values.includes(text), message);
+    assert.equal(await page.locator(".tangent-map-draft-choice").count(), 0, `${message}: no stale recovery choice`);
+  };
+
+  await page.reload({ waitUntil: "networkidle" });
+  await mountLiveWorld(page, server.base, { navigate: false });
+  await assertMountedText("page reload restores the durable text");
+  await page.evaluate(() => window.liveEditor.destroy());
+  await mountLiveWorld(page, server.base, { navigate: false });
+  await assertMountedText("controller remount restores the durable text");
+  await page.evaluate(() => window.liveEditor.destroy());
+  await stopServer(server);
+  server = await startServer(fixture, "text-save-2");
+  await mountLiveWorld(page, server.base, { isolated: true });
+  await assertMountedText("server restart restores the durable text");
+});
+
+test("retryable text edits survive fact refresh and controller replacement in browser recovery", { skip: !enabled, timeout: 90_000 }, async (context) => {
+  const fixture = await createMigrationVault("draft-browser");
+  let server = null; let browser = null;
+  context.after(async () => { await browser?.close(); await stopServer(server); await rm(fixture.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
+  server = await startServer(fixture, "draft-browser");
+  browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath(), headless: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1, reducedMotion: "reduce", colorScheme: "dark" });
+  let failedAttempts = 0;
+  const savedRequests = [];
+  await page.route("**/api/areas/map-gestures", async (route) => {
+    if (failedAttempts < 1) {
+      failedAttempts += 1;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ status: 503, code: "injected-retry", retryable: true, error: "injected retryable save failure" }),
+      });
+      return;
+    }
+    savedRequests.push(JSON.parse(route.request().postData() || "{}"));
+    await route.continue();
+  });
+  await mountLiveWorld(page, server.base, { isolated: true });
+  const target = "neara/hackathon/proof";
+  const firstText = "Recover first text";
+  const secondText = "Recover later text";
+  await page.evaluate((area) => window.liveEditor.fitArea(area, { push: false, select: false }), target);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.waitForTimeout(100);
+
+  /** Creates one visible text command through Excalidraw's production toolbar. */
+  const placeText = async (value, horizontal, vertical) => {
+    const point = await areaScreenPoint(page, target, horizontal, vertical);
+    const selectionTool = page.getByRole("radio", { name: /Selection/i }).first();
+    await selectionTool.click({ force: true });
+    await page.mouse.click(point.x, point.y);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.waitForTimeout(100);
+    const textTool = page.getByRole("radio", { name: /Text/i }).first();
+    await textTool.click({ force: true });
+    assert.equal(await textTool.isChecked(), true, "the visible production toolbar activates Text");
+    await page.mouse.click(point.x, point.y);
+    await page.waitForFunction(() => document.activeElement?.matches('textarea[data-type="wysiwyg"]'));
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.keyboard.type(value);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction((expected) => window.liveEditor.current().elements.some((element) => element.type === "text" && element.text === expected), value);
+  };
+
+  await placeText(firstText, 0.35, 0.55);
+  await page.evaluate(() => window.liveEditor.flush());
+  await page.waitForFunction(() => document.querySelector(".tangent-map-save")?.textContent?.includes("Not saved"));
+  assert.equal(failedAttempts, 1, "the production client records the one injected retryable save failure");
+  await page.waitForTimeout(100);
+  await placeText(secondText, 0.65, 0.7);
+  await page.waitForFunction(() => window.liveEvents.some((event) => event.name === "area_map_draft" && event.phase === "stored" && event.pendingCount === 2));
+
+  const beforeRefresh = await page.evaluate(() => {
+    const canvas = document.querySelector(".excalidraw canvas.interactive");
+    canvas.dataset.recoveryIdentity = "original";
+    return {
+      texts: (window.liveEditor.rendered() ?? []).filter((element) => !element.isDeleted && element.type === "text").map((element) => element.text),
+    };
+  });
+  assert.ok(beforeRefresh.texts.includes(firstText) && beforeRefresh.texts.includes(secondText), `both recoverable edits are visible before refresh: ${JSON.stringify(beforeRefresh)}`);
+  await page.evaluate(() => window.liveEditor.refreshFacts({ only: false, activeOnly: false, areas: [] }));
+  assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-recovery-identity"), "original", "fact refresh keeps the exact canvas");
+  const afterRefreshTexts = await page.evaluate(() => (window.liveEditor.rendered() ?? []).filter((element) => !element.isDeleted && element.type === "text").map((element) => element.text));
+  assert.ok(afterRefreshTexts.includes(firstText) && afterRefreshTexts.includes(secondText), "fact refresh keeps both recoverable edits");
+
+  await page.evaluate(() => window.liveEditor.destroy());
+  await mountLiveWorld(page, server.base, { navigate: false });
+  await page.getByRole("button", { name: "Restore" }).waitFor();
+  await page.getByRole("button", { name: "Restore" }).click();
+  const restoredTexts = await page.evaluate(() => (window.liveEditor.rendered() ?? []).filter((element) => !element.isDeleted && element.type === "text").map((element) => element.text));
+  assert.ok(restoredTexts.includes(firstText) && restoredTexts.includes(secondText), "controller replacement restores the failed and later text exactly");
+  await page.getByRole("button", { name: "Retry" }).click();
+  await page.getByText("Saved", { exact: true }).waitFor();
+  await page.waitForFunction(() => !document.querySelector(".tangent-map-draft-choice"));
+  assert.equal(savedRequests.length, 2, "Retry saves both recovered commands in order");
+  const savedTextByRequest = savedRequests.map((request) => request.mutations.flatMap((mutation) => mutation.put).filter((element) => element.type === "text").map((element) => element.text));
+  assert.ok(savedTextByRequest[0].includes(firstText), "the failed command saves first");
+  assert.ok(savedTextByRequest[1].includes(secondText), "the later queued command saves second");
+
+  await page.evaluate(() => window.liveEditor.destroy());
+  await mountLiveWorld(page, server.base, { navigate: false });
+  const finalTexts = await page.evaluate(() => (window.liveEditor.rendered() ?? []).filter((element) => !element.isDeleted && element.type === "text").map((element) => element.text));
+  assert.ok(finalTexts.includes(firstText) && finalTexts.includes(secondText), "a final remount loads both durable recovered edits");
+  assert.equal(await page.locator(".tangent-map-draft-choice").count(), 0, "cleared recovery does not return after remount");
 });
 
 test("the first Area detail response recovers a crash after the first target rename", { skip: !enabled, timeout: 90_000 }, async (context) => {

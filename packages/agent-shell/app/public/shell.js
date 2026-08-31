@@ -1625,13 +1625,14 @@ function mapBrainLiveSession(area = mapBrainArea()) {
   return brainSessions().find((session) => session.name === brain?.repair?.current?.session || (session.area === area && session.kind === "brain") || session.name === brain?.session) ?? null;
 }
 /** Moves keyboard ownership and the visible focus edge between columns. */
-function focusMapCompanion(side) {
+function focusMapCompanion(side, { moveDomFocus = true } = {}) {
   if (!mapBrainOpen && side === "brain") return;
   mapBrainFocus = side;
   const map = screen.querySelector("[data-map-column]");
   const pane = screen.querySelector("[data-map-brain-pane]");
   map?.classList.toggle("focused", side === "map");
   pane?.classList.toggle("focused", side === "brain");
+  if (!moveDomFocus) return;
   if (side === "brain") (pane?.querySelector(".xterm-helper-textarea, input, textarea, select, button") ?? pane)?.focus?.({ preventScroll: true });
   else screen.querySelector("[data-map-column]")?.focus?.({ preventScroll: true });
 }

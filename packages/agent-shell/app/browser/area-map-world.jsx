@@ -183,6 +183,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const pointerSettleWaitersRef = useRef([]);
   const pastePlacementRef = useRef(null);
   const pasteTimerRef = useRef(null);
+  const textPlacementRef = useRef(null);
   const nonPointerKindRef = useRef(null);
   const nonPointerBaselineRef = useRef(null);
   const nonPointerSettleRef = useRef(0);
@@ -591,6 +592,15 @@ export function AreaMapWorld({ host, bridge, options }) {
     return true;
   }
 
+  /** Publishes Excalidraw's buffered text after its editor consumes a finish key. */
+  function finishBufferedTextEdit() {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!textEditRef.current) return;
+      const appState = api?.getAppState?.() ?? {};
+      handleCanvasChange(api?.getSceneElements?.() ?? textEditRef.current.elements, { ...appState, editingTextElement: null });
+    }));
+  }
+
   /** Captures one immutable pointer baseline before Excalidraw changes selection. */
   function beginPointerGesture(origin, pointerDownState = { origin }) {
     if (pointerBaselineRef.current) return;
@@ -839,7 +849,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       return element && element.customData?.tangent?.role !== "area-region" && !ephemeral(element) ? [origins.get(id)?.owner] : [];
     }).filter(Boolean));
     if (pointerBaselineRef.current) for (const origin of claimedOriginsRef.current.values()) if (origin?.owner) candidateOwners.add(origin.owner);
-    const pointer = pastePlacement?.point ?? pointerStateRef.current?.origin;
+    const pointer = pastePlacement?.point ?? textPlacementRef.current ?? pointerStateRef.current?.origin;
     const owners = new Set(nextWorld.areas.map((node) => node.key));
     const sourceIds = new Map();
     const claimedRuntimeIds = new Map();
@@ -938,6 +948,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       claimedRuntimeIds.set(selectedNewIds[0], target); claimedRuntimeIdsRef.current.set(selectedNewIds[0], target);
     }
     pastePlacementRef.current = null;
+    textPlacementRef.current = null;
     if (pasteTimerRef.current !== null) { clearTimeout(pasteTimerRef.current); pasteTimerRef.current = null; }
     const authoredById = new Map(authoredRuntime.map((element) => [element.id, element]));
     const selectedBlocks = new Map();
@@ -974,6 +985,7 @@ export function AreaMapWorld({ host, bridge, options }) {
         }
       }
     }
+    worldCore.detachCrossOwnerTextBindings(completeRuntime, origins);
     const byOwner = worldCore.splitComposed(authoredRuntime, origins, nextComposition.offsets);
     for (const [owner, authored] of byOwner) {
       if (pointerBaselineRef.current && !candidateOwners.has(owner)) continue;
@@ -1065,7 +1077,10 @@ export function AreaMapWorld({ host, bridge, options }) {
       if (findOpen) return;
       if (event.target.closest?.(".tangent-map-outline")) return;
       const appState = api.getAppState?.();
-      if (textEditRef.current && appState?.editingTextElement) return;
+      if (textEditRef.current && appState?.editingTextElement) {
+        if (event.key === "Escape" || (event.metaKey || event.ctrlKey) && event.key === "Enter") finishBufferedTextEdit();
+        return;
+      }
       const clearedStaleEditing = clearStaleEditingText(appState);
       const typing = event.target instanceof HTMLElement && (event.target.matches("input, textarea, select") || event.target.isContentEditable);
       if (typing || appState?.editingTextElement && !clearedStaleEditing) return;
@@ -1285,10 +1300,17 @@ export function AreaMapWorld({ host, bridge, options }) {
   })}</ol>;
 
   /** Captures one Excalidraw pointer command through the current world closure. */
-  function handleCanvasPointerDown(_tool, pointerDownState) { beginPointerGesture(pointerDownState.origin, pointerDownState); }
+  function handleCanvasPointerDown(tool, pointerDownState) {
+    if (tool?.type === "text") { textPlacementRef.current = pointerDownState.origin; return; }
+    textPlacementRef.current = null;
+    beginPointerGesture(pointerDownState.origin, pointerDownState);
+  }
 
   /** Closes the same command with Excalidraw's original pointer-down state. */
-  function handleCanvasPointerUp(_tool, _pointerDownState) { endPointerGesture(); }
+  function handleCanvasPointerUp(tool, _pointerDownState) {
+    if (tool?.type === "text") return;
+    endPointerGesture();
+  }
 
   /** Routes Excalidraw pointer previews through the current containment solver. */
   function handleCanvasPointerUpdate({ pointer }) { previewPointerGesture(pointer); }
@@ -1342,6 +1364,10 @@ export function AreaMapWorld({ host, bridge, options }) {
     let sourceElements = elements;
     if (textEditRef.current) {
       const buffered = textEditRef.current; textEditRef.current = null;
+      // The text command supersedes the selection that existed when its
+      // pointer started. Do not project that stale selection over the final
+      // Excalidraw text callback.
+      programmaticSelectionRef.current = null;
       const latestText = buffered.elements.find((element) => element.id === buffered.editingId);
       if (latestText) {
         sourceElements = clone(elements);

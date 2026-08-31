@@ -142,6 +142,8 @@ documents.push(
 );
 
 window.worldEvents = [];
+window.mapTelemetry = [];
+window.addEventListener("tangent:area-map", (event) => window.mapTelemetry.push(event.detail));
 window.loadCalls = [];
 window.loadResolvers = new Map();
 window.mountCount = 1;
@@ -452,6 +454,66 @@ async function moveAreaInPlace(page, area, delta) {
   return { before, after: (await regions(page))[area] };
 }
 
+/** Performs the first authored gesture directly on an initially unselected Area. */
+async function moveUnselectedArea(page, area, delta, { clearSelection = true, selectedBefore = null, fitTarget = true } = {}) {
+  if (fitTarget) await page.evaluate((target) => window.editor.fitArea(target, { push: false, select: false }), area);
+  if (clearSelection) {
+    await page.evaluate(() => {
+      window.editor.controller().setSelection([]);
+      return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+    assert.equal(await selectedArea(page), null, `${area} starts without an Excalidraw selection`);
+  } else {
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await selectedArea(page), selectedBefore, `${selectedBefore} remains selected before the direct ${area} hit`);
+  }
+  const before = (await regions(page))[area];
+  const hitData = await page.evaluate((target) => {
+    const elements = window.editor.rendered?.() ?? [];
+    const region = elements.find((element) => element.customData?.tangent?.role === "area-region" && element.customData.tangent.area === target);
+    const authored = elements.filter((element) => element.customData?.tangent?.role !== "area-region" && !element.customData?.tangentWorldEphemeral);
+    const candidates = [
+      [0.8, 0.2], [0.5, 0.2], [0.2, 0.2], [0.8, 0.8], [0.2, 0.8], [0.8, 0.5], [0.5, 0.8], [0.2, 0.5], [0.5, 0.5],
+    ].map(([x, y]) => ({ x: region.x + region.width * x, y: region.y + region.height * y }));
+    return {
+      point: candidates.find((point) => !authored.some((element) => point.x >= element.x - 12 && point.x <= element.x + element.width + 12
+        && point.y >= element.y - 12 && point.y <= element.y + element.height + 12)),
+      region: { x: region.x, y: region.y, width: region.width, height: region.height },
+      authored: authored.map((element) => ({ x: element.x, y: element.y, width: element.width, height: element.height, owner: element.customData?.tangentWorld?.owner })),
+    };
+  }, area);
+  const grip = hitData.point;
+  assert.ok(grip, `${area} has an authored-content-free drag point: ${JSON.stringify(hitData)}`);
+  const start = await viewportPoint(page, grip.x, grip.y);
+  const end = await viewportPoint(page, grip.x + delta.x, grip.y + delta.y);
+  const priorEvents = await page.evaluate(() => window.worldEvents.length);
+  const samples = [];
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  for (let step = 1; step <= 6; step += 1) {
+    await page.mouse.move(start.x + (end.x - start.x) * step / 6, start.y + (end.y - start.y) * step / 6);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    samples.push(await renderedRegion(page, area));
+  }
+  await page.mouse.up();
+  try {
+    await page.waitForFunction((count) => window.worldEvents.length > count, priorEvents, { timeout: 5_000 });
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => ({
+      appSelection: window.editor.appState().selectedElementIds,
+      controllerSelection: [...window.editor.controller().snapshot().selection],
+      selectedElements: (window.editor.rendered?.() ?? []).filter((element) => window.editor.appState().selectedElementIds[element.id]).map((element) => ({
+        id: element.id, type: element.type, role: element.customData?.tangent?.role ?? null, area: element.customData?.tangent?.area ?? null,
+        sourceId: element.customData?.tangentWorld?.sourceId ?? null,
+      })),
+      pointer: window.mapTelemetry.filter((event) => event.name === "area_map_pointer_down").at(-1),
+      projections: window.mapTelemetry.filter((event) => event.name === "area_map_projection").slice(-4),
+    }));
+    assert.fail(`the direct Area drag did not persist: ${JSON.stringify(diagnostic)} (${error.message})`);
+  }
+  return { before, after: (await regions(page))[area], samples, priorEvents };
+}
+
 /** Starts a literal south-east corner resize and leaves the pointer down. */
 async function beginSouthEastResize(page, area, delta, steps = 4) {
   await selectArea(page, area);
@@ -572,6 +634,104 @@ test("visible descendants move and resize without changing the opening Only scop
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const unscoped = await regions(page);
   for (const area of ["neara/delivery/standards", "neara/delivery/standards/clearance"]) assert.deepEqual(unscoped[area], durable[area], `${area} keeps the same authoritative geometry after clearing Only`);
+});
+
+test("the first direct drag of an unselected Area persists without jitter or snapback", { timeout: 90_000 }, async (context) => {
+  const page = await openWorld(context);
+  await page.evaluate(() => { window.worldEvents.length = 0; });
+
+  const moved = await moveUnselectedArea(page, "neara/hackathon", { x: 72, y: 48 });
+
+  assert.equal(moved.priorEvents, 0);
+  assert.ok(moved.after.x > moved.before.x + 60 && moved.after.y > moved.before.y + 35, `the direct hit keeps the complete first drag: ${JSON.stringify(moved)}`);
+  for (let index = 1; index < moved.samples.length; index += 1) {
+    assert.ok(moved.samples[index].x >= moved.samples[index - 1].x - 0.01, `x never snaps backward: ${JSON.stringify(moved.samples)}`);
+    assert.ok(moved.samples[index].y >= moved.samples[index - 1].y - 0.01, `y never snaps backward: ${JSON.stringify(moved.samples)}`);
+  }
+  assert.deepEqual(
+    Object.fromEntries(["x", "y", "width", "height"].map((field) => [field, moved.samples.at(-1)[field]])),
+    Object.fromEntries(["x", "y", "width", "height"].map((field) => [field, moved.after[field]])),
+    "the release keeps the final rendered preview",
+  );
+  assert.equal(await page.evaluate(() => window.worldEvents.length), 1, "the first direct drag persists exactly once");
+  const projectionTelemetry = await page.evaluate(() => window.mapTelemetry.filter((event) => event.name === "area_map_projection"));
+  const consumedProjectionIds = new Set(projectionTelemetry.filter((event) => event.phase === "consumed").map((event) => event.projectionId));
+  assert.ok(projectionTelemetry.some((event) => event.phase === "request" && consumedProjectionIds.has(event.projectionId)), "one projection request is correlated with its consumed callback");
+  assert.ok(projectionTelemetry.filter((event) => event.phase === "consumed").every((event) => event.duration >= 0));
+  for (const event of projectionTelemetry) {
+    assert.deepEqual(
+      Object.keys(event).filter((key) => ["fingerprint", "selection", "selectedIds", "area", "owner", "coordinates", "elements"].includes(key)),
+      [],
+      `projection telemetry contains no authored content fields: ${JSON.stringify(event)}`,
+    );
+  }
+});
+
+test("an unmodified direct drag switches from the selected Area to the hit Area", { timeout: 90_000 }, async (context) => {
+  const page = await openWorld(context);
+  const selected = "neara/delivery/standards/clearance";
+  const target = "neara/hackathon";
+  await page.evaluate((area) => window.editor.fitArea(area, { push: false, select: false }), target);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await selectArea(page, selected);
+  await page.evaluate(() => { window.worldEvents.length = 0; });
+  const selectedBefore = (await regions(page))[selected];
+
+  const moved = await moveUnselectedArea(page, target, { x: 68, y: 44 }, { clearSelection: false, selectedBefore: selected, fitTarget: false });
+
+  assert.ok(moved.after.x > moved.before.x + 55 && moved.after.y > moved.before.y + 30, "the newly hit Area receives the complete drag");
+  assert.deepEqual((await regions(page))[selected], selectedBefore, "the previously selected Area does not move additively");
+  assert.equal(await page.evaluate(() => window.worldEvents.length), 1, "switching the direct target persists one gesture");
+  const durable = await regions(page);
+  await page.evaluate(async () => {
+    window.nextWorld = structuredClone(window.worldEvents[0].world);
+    await window.editor.controller().reload();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const reloaded = await regions(page);
+  assert.deepEqual(reloaded[target], durable[target], "the switched target survives authoritative reload");
+  assert.deepEqual(reloaded[selected], durable[selected], "reload keeps the prior Area unchanged");
+});
+
+test("flush and teardown inside the pointer release fence persist exactly once", { timeout: 90_000 }, async (context) => {
+  const page = await openWorld(context);
+  const area = "neara/hackathon";
+  await page.evaluate((target) => window.editor.fitArea(target, { push: false, select: false }), area);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await selectArea(page, area);
+  const sourceBefore = await page.evaluate((target) => structuredClone(window.editor.controller().world().areas.find((node) => node.key === target).region.storedRect), area);
+  const rendered = await renderedRegion(page, area);
+  const grip = { x: rendered.x + rendered.width - 45, y: rendered.y + rendered.height * 0.3 };
+  const start = await viewportPoint(page, grip.x, grip.y);
+  const end = await viewportPoint(page, grip.x + 64, grip.y + 36);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 4 });
+  const sourcePreview = await page.evaluate((target) => structuredClone(window.editor.controller().world().areas.find((node) => node.key === target).region.storedRect), area);
+  await page.evaluate(() => {
+    const controller = window.editor.controller();
+    const destroy = controller.destroy.bind(controller);
+    window.internalControllerDestroyCount = 0;
+    controller.destroy = () => { window.internalControllerDestroyCount += 1; return destroy(); };
+    window.releaseFenceResult = new Promise((resolve, reject) => {
+      document.querySelector(".excalidraw canvas.interactive").addEventListener("pointerup", () => queueMicrotask(async () => {
+        try {
+          const flushed = window.editor.flush();
+          window.editor.destroy();
+          await flushed;
+          resolve(structuredClone(window.worldEvents));
+        } catch (error) { reject(error); }
+      }), { capture: true, once: true });
+    });
+  });
+  await page.mouse.up();
+  const events = await page.evaluate(() => window.releaseFenceResult);
+
+  assert.equal(events.length, 1, "release, flush, and teardown close one history word");
+  const persisted = events[0].world.areas.find((node) => node.key === area).region.storedRect;
+  assert.ok(persisted.x > sourceBefore.x + 50 && persisted.y > sourceBefore.y + 25, `teardown persists the pointer delta: ${JSON.stringify({ sourceBefore, persisted })}`);
+  assert.deepEqual(persisted, sourcePreview, "teardown persists the final source preview without snapback");
+  await page.waitForFunction(() => window.internalControllerDestroyCount === 1);
 });
 
 test("every ancestor and descendant is one selectable live region", { timeout: 90_000 }, async (context) => {

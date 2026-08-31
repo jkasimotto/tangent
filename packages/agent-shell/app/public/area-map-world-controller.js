@@ -20,6 +20,41 @@ const leaf = (area) => String(area ?? "").split("/").at(-1) || "Area";
 /** Returns the local fallback view key for one stable world. */
 const viewKey = (worldId) => `tangent.area-map-view.v2:${worldId}`;
 
+/** Classifies one save result without retaining messages or authored values. */
+function failureKind(result = {}) {
+  if (result.code) return String(result.code).slice(0, 40);
+  const status = Number(result.status ?? 0);
+  if (!status) return "transport";
+  if (status === 409) return "conflict";
+  if (status === 422) return "validation";
+  if (status >= 500) return "unavailable";
+  return status >= 400 ? "request" : "none";
+}
+
+/** Chooses conflict actions only for an external authority conflict, never a safe retry race. */
+function failureSaveState(result = {}) {
+  const status = Number(result.status ?? 0);
+  return status === 409 && result.retryable !== true && result.code !== "head-race" ? "conflict" : "blocked";
+}
+
+/** Keeps only opaque correlation tokens that cannot contain paths or authored text. */
+function safeCorrelationFields({ operationId = null, gestureId = null } = {}) {
+  /** Accepts one bounded opaque machine correlation value. */
+  const safe = (value) => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(String(value ?? "")) ? String(value) : null;
+  return Object.fromEntries([["operationId", safe(operationId)], ["gestureId", safe(gestureId)]].filter(([, value]) => value));
+}
+
+/** Recovers save correlation from one private draft without exposing its authored payload. */
+function draftCorrelation(record = null, result = {}) {
+  const pending = record?.pending?.[0];
+  const command = pending?.command;
+  const direction = pending?.direction ?? "after";
+  return safeCorrelationFields({
+    operationId: result?.operationId ?? record?.failure?.operationId ?? command?.operationIds?.[direction],
+    gestureId: result?.gestureId ?? record?.failure?.gestureId ?? command?.id,
+  });
+}
+
 /** Returns the exact Excalidraw projection change, or null for a no-op poll. */
 export function areaMapProjectionUpdate({ appliedFingerprint = null, currentSelection = [], scene = null, selection = [] } = {}) {
   const fingerprint = boardCore.authoredFingerprint(scene?.elements ?? []);
@@ -159,6 +194,10 @@ export function createAreaMapWorldController({
   let viewTimer = null;
   let pendingView = null;
   let draft = null;
+  let draftEpoch = 0;
+  let draftWrites = Promise.resolve();
+  let draftLoad = Promise.resolve();
+  let recoveryStoreClosed = false;
   let treeRefresh = null;
   let treeRefreshRequested = false;
   const inFlightLoads = new Map();
@@ -317,9 +356,9 @@ export function createAreaMapWorldController({
   function applyHashes(target, hashes = {}) {
     if (!target?.areas) return;
     for (const [owner, hash] of Object.entries(hashes)) {
-      if (owner === "@root") { if (target.rootShard) target.rootShard.hash = hash; continue; }
+      if (owner === "@root") { if (target.rootShard) { target.rootShard.hash = hash; target.rootShard.revision = hash; } continue; }
       const node = target.areas.find((entry) => entry.key === owner);
-      if (node) node.shard.hash = hash;
+      if (node) { node.shard.hash = hash; node.shard.revision = hash; }
     }
   }
 
@@ -370,14 +409,49 @@ export function createAreaMapWorldController({
       status: result?.status ?? 0,
       failure: clone(result ?? {}),
     };
-    Promise.resolve(recoveryStore.save(draft)).catch(() => {});
+    draftEpoch += 1;
+    const record = clone(draft);
+    const correlation = draftCorrelation(record, result);
+    draftWrites = draftWrites.catch(() => null).then(async () => {
+      const startedAt = performance.now();
+      try {
+        await recoveryStore.save(record);
+        recordEvent("area_map_draft", { phase: "stored", draftState: "available", pendingCount: record.pending.length, status: record.status, failureKind: failureKind(record.failure), duration: performance.now() - startedAt, ...correlation });
+      } catch {
+        recordEvent("area_map_draft", { phase: "failed", draftState: "unavailable", pendingCount: record.pending.length, failureKind: "storage", duration: performance.now() - startedAt, ...correlation });
+      }
+    });
   }
 
   /** Clears private recovery after every required command is durable. */
-  function clearDraft() { draft = null; Promise.resolve(recoveryStore.remove(world.worldId)).catch(() => {}); }
+  function clearDraft(result = {}) {
+    draftEpoch += 1;
+    const correlation = draftCorrelation(draft, result);
+    draft = null;
+    const worldId = world.worldId;
+    draftWrites = draftWrites.catch(() => null).then(async () => {
+      const startedAt = performance.now();
+      try {
+        await recoveryStore.remove(worldId);
+        recordEvent("area_map_draft", { phase: "cleared", draftState: "none", pendingCount: 0, duration: performance.now() - startedAt, ...correlation });
+      } catch {
+        recordEvent("area_map_draft", { phase: "failed", draftState: "unavailable", pendingCount: 0, failureKind: "storage", duration: performance.now() - startedAt, ...correlation });
+      }
+    });
+  }
+
+  /** Closes recovery storage once every earlier read and ordered write settles. */
+  function closeRecoveryStoreWhenIdle() {
+    void Promise.allSettled([draftLoad, draftWrites]).then(() => {
+      if (recoveryStoreClosed) return;
+      recoveryStoreClosed = true;
+      recoveryStore.close?.();
+    });
+  }
 
   /** Persists one immutable command selected by the shared history queue. */
   async function persistCommand(command, direction) {
+    if (destroyed) return { status: 499, cancelled: true };
     const generation = authorityGeneration;
     if (failedSave) {
       saveBarrier ??= {};
@@ -392,13 +466,16 @@ export function createAreaMapWorldController({
     const changedAreas = new Set(state.get("changedAreas") ?? []);
     const changedOwners = new Set(state.get("changedOwners") ?? []);
     save = { state: "saving", result: null }; notify("saving");
+    const saveStartedAt = performance.now();
+    recordEvent("area_map_save", { gestureId: command.id, gestureKind: command.kind, phase: "started", saveState: "saving", shardCount: changedOwners.size, affectedCount: changedAreas.size + changedOwners.size, pendingCount: worldHistory.state.queue.length });
     try {
       const result = await persistWorld?.(clone(commandWorld), changedAreas, changedOwners, command, direction) ?? {};
       if (generation !== authorityGeneration) return { status: 499, cancelled: true };
       if (result?.error || result?.status === 409 || result?.status >= 400) {
-        save = { state: result?.status === 409 ? "conflict" : "blocked", result };
+        save = { state: failureSaveState(result), result };
         failedSave = { command: clone(command), direction };
         storeDraft(result);
+        recordEvent("area_map_save", { operationId: result.operationId, gestureId: command.id, gestureKind: command.kind, phase: "failed", saveState: save.state, status: Number(result.status ?? 0), failureKind: failureKind(result), retryable: result.retryable === true, shardCount: changedOwners.size, affectedCount: changedAreas.size + changedOwners.size, pendingCount: worldHistory.state.queue.length, duration: performance.now() - saveStartedAt });
         return result;
       }
       applyHashes(world, result.hashes ?? {});
@@ -408,17 +485,19 @@ export function createAreaMapWorldController({
         applyHashes(value, result.hashes); applyRevision(value, result);
       }
       failedSave = null;
-      const hasLater = recoveryQueue.length || worldHistory.state.queue.length || worldHistory.state.active && worldHistory.state.active.command?.id !== command.id;
-      if (!hasLater) clearDraft();
+      const hasLater = Boolean(gesture || worldHistory.state.open || recoveryQueue.length || worldHistory.state.queue.length || worldHistory.state.active && worldHistory.state.active.command?.id !== command.id);
+      if (!hasLater) clearDraft({ operationId: result.operationId, gestureId: command.id });
       saveBarrier?.resolve?.(); saveBarrier = null;
-      save = { state: worldHistory.state.queue.length ? "dirty" : "saved", result };
+      save = { state: hasLater ? "dirty" : "saved", result };
+      recordEvent("area_map_save", { operationId: result.operationId, gestureId: command.id, gestureKind: command.kind, phase: "acknowledged", outcome: "saved", saveState: save.state, status: Number(result.status ?? 200), idempotent: result.idempotent === true, shardCount: changedOwners.size, affectedCount: changedAreas.size + changedOwners.size, pendingCount: worldHistory.state.queue.length, duration: performance.now() - saveStartedAt, worldRevision: result.worldRevision, treeRevision: result.treeRevision });
       return result;
     } catch (error) {
       if (generation !== authorityGeneration) return { status: 499, cancelled: true };
       const result = { ...(error?.payload ?? {}), status: Number(error?.status ?? error?.payload?.status ?? 503), error: String(error?.message ?? error) };
-      save = { state: result.status === 409 ? "conflict" : "blocked", result };
+      save = { state: failureSaveState(result), result };
       failedSave = { command: clone(command), direction };
       storeDraft(result);
+      recordEvent("area_map_save", { operationId: result.operationId, gestureId: command.id, gestureKind: command.kind, phase: "failed", saveState: save.state, status: result.status, failureKind: failureKind(result), retryable: result.retryable === true, shardCount: changedOwners.size, affectedCount: changedAreas.size + changedOwners.size, pendingCount: worldHistory.state.queue.length, duration: performance.now() - saveStartedAt });
       return result;
     } finally {
       notify("save-result");
@@ -445,7 +524,10 @@ export function createAreaMapWorldController({
   function retainLoadedShards(fresh) {
     for (const node of fresh.areas ?? []) {
       const previous = world.areas.find((entry) => entry.key === node.key);
-      if (node.shard?.state !== "deferred" || !previous?.shard?.scene || node.shard.hash !== previous.shard.hash) continue;
+      const revisionsMatch = node.shard?.revision && previous?.shard?.revision
+        ? node.shard.revision === previous.shard.revision
+        : node.shard?.hash !== null && node.shard?.hash !== undefined && node.shard.hash === previous?.shard?.hash;
+      if (node.shard?.state !== "deferred" || !previous?.shard?.scene || !revisionsMatch) continue;
       node.shard = { ...node.shard, state: previous.shard.state, scene: clone(previous.shard.scene) };
     }
     return fresh;
@@ -489,8 +571,9 @@ export function createAreaMapWorldController({
   /** Starts one pointer or text command boundary. */
   function beginGesture(kind = "pointer") {
     if (!gesture) {
-      gesture = { kind, before: clone(world), changedAreas: new Set(), changedOwners: new Set() };
-      worldHistory.begin(kind, historyState(world), [...selection]);
+      const gestureId = worldHistory.begin(kind, historyState(world), [...selection]);
+      gesture = { id: gestureId, kind, startedAt: performance.now(), before: clone(world), changedAreas: new Set(), changedOwners: new Set() };
+      recordEvent("area_map_gesture", { gestureId, gestureKind: kind, phase: "started", selectedCount: selection.size });
     }
     return clone(gesture.before);
   }
@@ -502,6 +585,7 @@ export function createAreaMapWorldController({
     for (const owner of changedOwners) gesture.changedOwners.add(owner);
     worldHistory.state.open.before.set("changedAreas", [...gesture.changedAreas].sort());
     worldHistory.state.open.before.set("changedOwners", [...gesture.changedOwners].sort());
+    if (!failedSave) save = { state: "dirty", result: null };
     install(nextWorld, "preview");
     worldHistory.update(historyState(world, gesture.changedAreas, gesture.changedOwners), [...selection]);
   }
@@ -510,13 +594,20 @@ export function createAreaMapWorldController({
   function endGesture(kind = gesture?.kind ?? "pointer") {
     if (!gesture) return null;
     const current = gesture; gesture = null;
-    if (same(current.before, world)) { worldHistory.state.open = null; return null; }
+    if (same(current.before, world)) {
+      worldHistory.state.open = null;
+      if (!failedSave && !worldHistory.state.active && !worldHistory.state.queue.length) save = { state: "saved", result: save.result };
+      recordEvent("area_map_gesture", { gestureId: current.id, gestureKind: kind, phase: "finished", outcome: "unchanged", affectedCount: 0, duration: performance.now() - current.startedAt });
+      notify("gesture-unchanged");
+      return null;
+    }
     const command = worldHistory.finish(historyState(world, current.changedAreas, current.changedOwners), [...selection]);
     if (command) {
       if (failedSave) storeDraft(save.result);
       else save = { state: "dirty", result: null };
       notify(failedSave ? "recovery-dirty" : "dirty");
     }
+    recordEvent("area_map_gesture", { gestureId: current.id, gestureKind: kind, phase: "finished", outcome: command ? "queued" : "unchanged", affectedCount: current.changedAreas.size + current.changedOwners.size, pendingCount: worldHistory.state.queue.length, duration: performance.now() - current.startedAt });
     if (treeRefreshRequested) setTimeout(() => { void reconcileTree(); }, 0);
     return command;
   }
@@ -639,12 +730,12 @@ export function createAreaMapWorldController({
         if (loaded?.worldRevision !== world.worldRevision || !["ready", "missing"].includes(loaded?.state)) throw new Error(loaded?.error || "map world changed");
         const current = world.areas.find((entry) => entry.key === area);
         current.shard = { ...current.shard, ...loaded };
-        install(world, "loaded"); recordEvent("area_map_shard_loaded", { owner: area, state: current.shard.state, bytes: JSON.stringify(loaded).length, duration: performance.now() - startedAt }); return current.shard;
+        install(world, "loaded"); recordEvent("area_map_shard_loaded", { worldRevision: world.worldRevision, shardRevision: current.shard.revision ?? current.shard.hash, shardState: current.shard.state, bytes: JSON.stringify(loaded).length, duration: performance.now() - startedAt }); return current.shard;
       } catch (error) {
         if (generation !== authorityGeneration || requestedRevision !== world.worldRevision) return world.areas.find((entry) => entry.key === area)?.shard ?? null;
         const current = world.areas.find((entry) => entry.key === area);
         current.shard = { ...current.shard, state: "load-error", errors: [String(error?.message ?? error)] };
-        install(world, "load-error"); recordEvent("area_map_shard_loaded", { owner: area, state: "load-error", bytes: 0, duration: performance.now() - startedAt }); return current.shard;
+        install(world, "load-error"); recordEvent("area_map_shard_loaded", { worldRevision: world.worldRevision, shardState: "load-error", failureKind: "load", bytes: 0, duration: performance.now() - startedAt }); return current.shard;
       }
     })();
     inFlightLoads.set(area, task);
@@ -675,7 +766,7 @@ export function createAreaMapWorldController({
         installTreeRevision(fresh);
         return true;
       } catch (error) {
-        recordEvent("area_map_tree_refresh_failed", { errorKind: error?.name ?? "Error" });
+        recordEvent("area_map_tree_refresh_failed", { failureKind: "refresh" });
         notify("tree-refresh-failed");
         return false;
       } finally {
@@ -698,8 +789,13 @@ export function createAreaMapWorldController({
     save = { state: "dirty", result: null }; notify("retry");
     for (let index = 0; index < pending.length; index += 1) {
       const item = pending[index]; recoveryQueue = pending.slice(index + 1);
+      recordEvent("area_map_retry", { gestureId: item.command?.id, phase: "started", retryAttempt: index + 1, pendingCount: pending.length - index });
       const result = await persistCommand(item.command, item.direction);
-      if (result?.error || result?.status >= 400) { storeDraft(result); return result; }
+      if (result?.error || result?.status >= 400) {
+        recordEvent("area_map_retry", { operationId: result?.operationId, gestureId: item.command?.id, phase: "failed", retryAttempt: index + 1, pendingCount: pending.length - index, status: Number(result?.status ?? 0), failureKind: failureKind(result), retryable: result?.retryable === true });
+        return result;
+      }
+      recordEvent("area_map_retry", { operationId: result?.operationId, gestureId: item.command?.id, phase: "acknowledged", outcome: "saved", retryAttempt: index + 1, pendingCount: pending.length - index - 1, status: Number(result?.status ?? 200) });
     }
     return save.result;
   }
@@ -761,7 +857,7 @@ export function createAreaMapWorldController({
       return result;
     } catch (error) {
       const result = { status: Number(error?.status ?? 503), error: String(error?.message ?? error) };
-      failedSave = pending; save = { state: result.status === 409 ? "conflict" : "blocked", result }; notify("rebase-failed");
+      failedSave = pending; save = { state: failureSaveState(result), result }; notify("rebase-failed");
       return result;
     }
   }
@@ -774,17 +870,24 @@ export function createAreaMapWorldController({
     worldHistory.state.redo.splice(0, worldHistory.state.redo.length, ...(clone(draft.history?.redo ?? [])));
     const pending = clone(draft.pending ?? []); failedSave = pending.shift() ?? null; recoveryQueue = pending;
     draft = { ...draft, restored: true };
-    save = { state: Number(draft.status) === 409 ? "conflict" : "blocked", result: { ...(draft.failure ?? {}), draft: true } }; notify("draft-ready");
+    const result = { ...(draft.failure ?? {}), status: Number(draft.status ?? draft.failure?.status ?? 0), draft: true };
+    save = { state: failureSaveState(result), result }; notify("draft-ready");
+    recordEvent("area_map_draft", { phase: "restored", draftState: "active", pendingCount: pending.length + Boolean(failedSave), status: result.status, failureKind: failureKind(result), ...draftCorrelation(draft) });
     return true;
   }
 
   /** Discards the offered draft only on Julian's explicit act. */
-  function discardDraft() { clearDraft(); recoveryQueue = []; notify("draft-discarded"); }
+  function discardDraft() {
+    const pendingCount = draft?.pending?.length ?? 0;
+    const correlation = draftCorrelation(draft);
+    clearDraft(correlation); recoveryQueue = []; notify("draft-discarded");
+    recordEvent("area_map_draft", { phase: "discarded", draftState: "none", pendingCount, ...correlation });
+  }
 
   updateSemanticDetail();
   project();
   recordEvent("area_map_world_loaded", {
-    revision: world.worldRevision,
+    worldRevision: world.worldRevision,
     areaCount: world.areas.length,
     eagerShards: world.areas.filter((node) => node.shard.scene).length,
     bytes: JSON.stringify(world).length,
@@ -798,10 +901,12 @@ export function createAreaMapWorldController({
     },
     save: persistCommand,
   });
-  Promise.resolve(recoveryStore.load(world.worldId)).then((record) => {
-    if (destroyed || record?.schema !== DRAFT_SCHEMA || record.worldId !== world.worldId) return;
+  const loadEpoch = draftEpoch;
+  draftLoad = Promise.resolve(recoveryStore.load(world.worldId)).then((record) => {
+    if (destroyed || draftEpoch !== loadEpoch || record?.schema !== DRAFT_SCHEMA || record.worldId !== world.worldId) return;
     draft = record; notify("draft-found");
-  }).catch(() => {});
+    recordEvent("area_map_draft", { phase: "found", draftState: "available", pendingCount: record.pending?.length ?? 0, status: Number(record.status ?? 0), failureKind: failureKind(record.failure), ...draftCorrelation(record) });
+  }).catch(() => { recordEvent("area_map_draft", { phase: "failed", draftState: "unavailable", pendingCount: 0, failureKind: "storage" }); });
 
   return {
     /** Subscribes to immutable controller snapshots. */
@@ -813,20 +918,38 @@ export function createAreaMapWorldController({
     composition: () => composition,
     beginGesture, preview, endGesture, commitWorld,
     /** Undoes one map-owned command word. */
-    undo: () => worldHistory.undo(),
+    undo: () => {
+      const changed = worldHistory.undo();
+      if (changed && failedSave) storeDraft(save.result);
+      return changed;
+    },
     /** Redoes one map-owned command word. */
-    redo: () => worldHistory.redo(),
+    redo: () => {
+      const changed = worldHistory.redo();
+      if (changed && failedSave) storeDraft(save.result);
+      return changed;
+    },
     selectArea, setSelection, setFindReveal, fitArea, navigateArea, setRestriction, toggleRestriction, escape, toggleFold, setFocus, setCamera,
     materialize, prioritizeLoads, refreshFacts,
-    /** Waits for all queued map persistence. */
-    flush: () => worldHistory.flush(),
+    /** Drains durable work, but never waits for a user Retry decision after a failed save. */
+    async flush() {
+      while (worldHistory.state.scheduled || worldHistory.state.active || worldHistory.state.queue.length) {
+        if (failedSave) {
+          await draftWrites;
+          return save.result;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      await draftWrites;
+      return save.result;
+    },
     retry, reload, keepMine, restoreDraft, discardDraft, recordEvent,
     /** Releases timers and subscribers. */
     destroy() {
       destroyed = true; authorityGeneration += 1; saveBarrier?.resolve?.(); saveBarrier = null; listeners.clear();
       if (viewTimer !== null) clearTimeout(viewTimer);
       if (pendingView && persistView) Promise.resolve(persistView(pendingView)).catch(() => {});
-      viewTimer = null; pendingView = null; recoveryStore.close?.();
+      viewTimer = null; pendingView = null; closeRecoveryStoreWhenIdle();
     },
   };
 }

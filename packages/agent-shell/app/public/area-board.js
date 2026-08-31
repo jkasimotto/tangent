@@ -37,6 +37,37 @@ function symmetricOverlapClosure(world, changedAreas) {
   return closed;
 }
 
+/** Posts one idempotent map gesture, retrying safe races and ambiguous acknowledgement loss. */
+export async function saveAreaMapGestureRequest(api, request, { onEvent = null, gestureKind = "edit", shardCount = request.mutations?.length ?? 0, maxAttempts = 3, now = () => performance.now() } = {}) {
+  const { operationId, gestureId = operationId } = request;
+  const startedAt = now();
+  const body = JSON.stringify(request);
+  for (let retryAttempt = 0; retryAttempt < maxAttempts; retryAttempt += 1) {
+    onEvent?.("area_map_save_phase", { operationId, gestureId, gestureKind, phase: retryAttempt ? "retry" : "request", retryAttempt, shardCount, duration: now() - startedAt });
+    try {
+      const result = await api("/api/areas/map-gestures", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-tangent-operation-id": operationId },
+        body,
+      });
+      onEvent?.("area_map_save_phase", { operationId, gestureId, gestureKind, phase: "acknowledged", outcome: "saved", status: Number(result.status ?? 200), retryAttempt, retryable: false, idempotent: result.idempotent === true, shardCount, duration: now() - startedAt, worldRevision: result.worldRevision, treeRevision: result.treeRevision });
+      return result;
+    } catch (error) {
+      const result = error?.payload ?? {};
+      const retryable = result.retryable === true || ["timeout", "transport"].includes(error?.kind);
+      const status = Number(error?.status ?? 0);
+      const failureKind = result.code ?? error?.kind ?? (status === 400 ? "invalid-request" : status === 409 ? "conflict" : status === 422 ? "validation" : status >= 500 ? "unavailable" : "transport");
+      if (retryable && retryAttempt + 1 < maxAttempts) {
+        onEvent?.("area_map_retry", { operationId, gestureId, phase: "scheduled", retryAttempt: retryAttempt + 1, status, failureKind, retryable: true, pendingCount: 1 });
+        continue;
+      }
+      onEvent?.("area_map_save_phase", { operationId, gestureId, gestureKind, phase: "failed", outcome: "not-saved", status, failureKind, retryAttempt, retryable, shardCount, duration: now() - startedAt });
+      throw error;
+    }
+  }
+  throw new Error("Area map save retry loop ended unexpectedly");
+}
+
 /** Replaces the host with one safe, visible world-authority error. */
 function showWorldError(host, error, retry = null) {
   const section = document.createElement("section"); section.className = "area-board-empty"; section.setAttribute("role", "alert");
@@ -51,7 +82,7 @@ function showWorldError(host, error, retry = null) {
 function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = null, onViewState = null, onEntityVerb = null, onEvent = null, focus = null }) {
   host.replaceChildren();
   const loader = document.createElement("div"); loader.className = "area-board-loading"; loader.innerHTML = "<p>Loading drawing tools…</p>"; host.append(loader);
-  let editor = null; let pendingNavigation = null; let pendingFind = false; let authority = null;
+  let editor = null; let pendingNavigation = null; let pendingFind = false; let authority = null; let closing = false; let closePromise = null;
   /** Returns the source shard for one explicit owner. */
   const shardFor = (value, owner) => owner === "@root" ? value.rootShard : value.areas.find((entry) => entry.key === owner)?.shard;
   /** Merges one full source element into its owner mutation. */
@@ -88,18 +119,17 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
     if (!payload.length) return { status: 200, hashes: {} };
     const operationIds = command ? command.operationIds ??= {} : null;
     const operationId = operationIds ? operationIds[direction] ??= crypto.randomUUID() : crypto.randomUUID();
-    const startedAt = performance.now();
-    authority?.recordEvent("area_map_save_phase", { operationId, phase: "request", shardCount: payload.length, duration: 0 });
-    try {
-      const result = await api("/api/areas/map-gestures", { method: "POST", body: JSON.stringify({ schema: "area-map-gesture.v1", operationId, worldId: nextWorld.worldId, treeRevision: nextWorld.treeRevision, reason: command?.kind ?? "map gesture", mutations: payload }) });
-      authority?.recordEvent("area_map_save_phase", { operationId, phase: "acknowledged", shardCount: payload.length, duration: performance.now() - startedAt });
-      return result;
-    } catch (error) {
-      const result = error?.payload ?? {};
-      if (Number(error?.status) === 409 || result.conflict) authority?.recordEvent("area_map_save_conflict", { operationId, conflictingOwners: result.conflictingOwners ?? result.owners ?? [] });
-      else authority?.recordEvent("area_map_save_phase", { operationId, phase: "failed", shardCount: payload.length, duration: performance.now() - startedAt });
-      throw error;
-    }
+    const gestureId = command?.id ?? operationId;
+    return saveAreaMapGestureRequest(api, {
+      schema: "area-map-gesture.v1", operationId, gestureId, worldId: nextWorld.worldId,
+      treeRevision: nextWorld.treeRevision, worldRevision: nextWorld.worldRevision,
+      reason: command?.kind ?? "map gesture", mutations: payload,
+    }, {
+      /** Forwards privacy-safe save phases through the map controller. */
+      onEvent: (name, fields) => authority?.recordEvent(name, fields),
+      gestureKind: command?.kind ?? "edit",
+      shardCount: payload.length,
+    });
   };
 
   /** Loads current world authority and exact source shards required for rebase. */
@@ -129,14 +159,16 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
       return api(`/api/areas/map-shard?area=${encodeURIComponent(area)}&worldRevision=${encodeURIComponent(context.worldRevision ?? current.worldRevision)}&located=${encodeURIComponent(context.locatedArea ?? current.locatedArea)}`);
     },
     /** Persists only rendering and camera preferences for this world ID. */
-    persistView: (value) => api("/api/areas/map-view", { method: "POST", body: JSON.stringify({ worldId: world.worldId, view: value }) }),
+    persistView: (value) => api("/api/areas/map-view", { method: "PUT", body: JSON.stringify({ worldId: world.worldId, view: value }) }),
   });
   const ready = editorLoader().then((module) => {
+    if (closing) { loader.remove(); return null; }
     loader.remove(); editor = module.mountAreaBoardEditor(host, { world, controller: authority, scene: { elements: [], appState: {}, files: {} }, getDocuments, onEntityVerb, onViewState });
     if (pendingNavigation) editor.navigateArea?.(pendingNavigation.area, pendingNavigation.settings);
     if (pendingFind) editor.openFind?.();
     return editor;
   }).catch((error) => {
+    if (closing) return null;
     loader.remove(); showWorldError(host, error, () => mountWorld(host, { world, getDocuments, api, onBack, onNavigation, onViewState, onEntityVerb, onEvent, focus })); throw error;
   });
   return {
@@ -171,8 +203,15 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
     },
     /** Changes the rendering-only Focus mask. */
     setFocus(value) { if (editor?.setFocus) editor.setFocus(value); else authority.setFocus(value); return true; },
-    /** Releases the editor island and controller. */
-    destroy() { editor?.destroy?.(); authority.destroy(); },
+    /** Settles any live gesture, drains its save, then releases controller storage. */
+    destroy() {
+      closing = true;
+      closePromise ??= ready.catch(() => null).then(async () => {
+        editor?.destroy?.();
+        await authority.flush();
+      }).finally(() => authority.destroy());
+      return closePromise;
+    },
   };
 }
 

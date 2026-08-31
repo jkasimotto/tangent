@@ -25,7 +25,7 @@ export function createAreaMapWorldRoutes({ index, saveGesture = null, viewStore 
       catch (error) { sendJson(response, Number(error?.status ?? 500), { error: String(error?.message ?? error) }); }
       return true;
     }
-    if (url.pathname === "/api/areas/map-view" && request.method === "POST") {
+    if (url.pathname === "/api/areas/map-view" && ["POST", "PUT"].includes(request.method)) {
       const body = await readJson(request);
       try {
         if (!viewStore) throw Object.assign(new Error("Area-map view storage is unavailable"), { status: 503 });

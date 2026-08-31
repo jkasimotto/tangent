@@ -249,7 +249,7 @@ function permitsOverlap(regions, left, right) {
 }
 
 /** Computes one Area geometry record after its sibling placement is resolved. */
-function computeAreaGeometry(region, required, inkHull, resolvedStored = region.storedRect, branchPriority = placementPriority(region)) {
+function computeAreaGeometry(region, required, inkHull, resolvedStored = region.storedRect, branchPriority = placementPriority(region), drawnRequired = null) {
   const preferred = rect(region.storedRect);
   const resolved = rect(resolvedStored);
   const minimum = { x: resolved.x, y: resolved.y, width: Math.max(MIN_WIDTH, preferred.width), height: Math.max(MIN_HEIGHT, preferred.height, LABEL_BAND) };
@@ -265,6 +265,12 @@ function computeAreaGeometry(region, required, inkHull, resolvedStored = region.
     width: inkHull.width,
     height: inkHull.height,
   };
+  const translatedDrawnRequired = drawnRequired && {
+    x: resolved.x + drawnRequired.x,
+    y: resolved.y + LABEL_BAND + drawnRequired.y,
+    width: drawnRequired.width,
+    height: drawnRequired.height,
+  };
   const constraint = unionRects([minimum, inflateRect(translatedRequired)]);
   return {
     stored: preferred,
@@ -272,8 +278,9 @@ function computeAreaGeometry(region, required, inkHull, resolvedStored = region.
     layoutOffset: { x: quantize(resolved.x - preferred.x), y: quantize(resolved.y - preferred.y) },
     branchPriority,
     required,
+    drawnRequired,
     constraint,
-    drawn: unionRects([constraint, inflateRect(translatedInk)]),
+    drawn: unionRects([constraint, inflateRect(translatedInk), inflateRect(translatedDrawnRequired)]),
   };
 }
 
@@ -322,7 +329,7 @@ function arrangeChildren(owner, children, regions, geometry, inkHulls) {
     const resolvedConstraint = collision ? nearestFreeRectangle(current.constraint, blockerRects, { gap: CONTENT_MARGIN }) : current.constraint;
     const dx = resolvedConstraint.x - current.constraint.x; const dy = resolvedConstraint.y - current.constraint.y;
     const resolvedStored = rect({ ...current.resolvedStored, x: current.resolvedStored.x + dx, y: current.resolvedStored.y + dy });
-    const resolved = computeAreaGeometry(region, current.required, inkHulls.get(area), resolvedStored, current.branchPriority);
+    const resolved = computeAreaGeometry(region, current.required, inkHulls.get(area), resolvedStored, current.branchPriority, current.drawnRequired);
     geometry.set(area, resolved);
     const entry = { area, constraint: resolved.constraint };
     occupied.push(entry); index(entry);
@@ -336,10 +343,14 @@ function computePreparedWorldGeometry({ regions, blockHulls = new Map(), inkHull
   for (const area of ordered) {
     const region = regions.get(area);
     arrangeChildren(area, children.get(area) ?? [], regions, result, inkHulls);
-    const childRects = (children.get(area) ?? []).map((child) => result.get(child)?.constraint).filter(Boolean);
-    const required = unionRects([blockHulls.get(area), ...childRects]);
+    const childConstraints = (children.get(area) ?? []).map((child) => result.get(child)?.constraint).filter(Boolean);
+    const childDrawn = (children.get(area) ?? []).map((child) => result.get(child)?.drawn).filter(Boolean);
+    const required = unionRects([blockHulls.get(area), ...childConstraints]);
+    // Drawn extents propagate separately so every ancestor contains the
+    // rendered subtree without turning free ink into a sibling collision wall.
+    const drawnRequired = unionRects(childDrawn);
     const branchPriority = Math.max(placementPriority(region), ...(children.get(area) ?? []).map((child) => result.get(child)?.branchPriority ?? 0));
-    result.set(area, computeAreaGeometry(region, required, inkHulls.get(area), region.storedRect, branchPriority));
+    result.set(area, computeAreaGeometry(region, required, inkHulls.get(area), region.storedRect, branchPriority, drawnRequired));
   }
   arrangeChildren("@root", children.get("@root") ?? [], regions, result, inkHulls);
   return result;
@@ -530,7 +541,7 @@ export function solveAreaMapGesture(baseline, intent) {
     for (const area of selected) {
       const current = baselineGeometry.get(area); const region = regions.get(area);
       if (!current || !region) continue;
-      intended.set(area, computeAreaGeometry(region, current.required, baseline.inkHulls?.get(area), region.storedRect, priority));
+      intended.set(area, computeAreaGeometry(region, current.required, baseline.inkHulls?.get(area), region.storedRect, priority, current.drawnRequired));
     }
     /** Adds or removes both authored halves of one exact overlap pair. */
     const setPair = (area, sibling, enabled) => {

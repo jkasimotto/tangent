@@ -497,7 +497,7 @@ const {
 } = programView;
 
 const areaDirectoryView = createAreaDirectoryView({
-  shell: { state, api, post, paint, refresh, showToast, screen },
+  shell: { state, api, post, actionTelemetry, paint, refresh, showToast, screen },
   documents: { openDocument: forward(() => openDocument), openDocumentPeek: forward(() => openDocumentPeek) },
   work: {
     selectGoal: forward(() => selectGoal), allGoals, goalTrees, goalTreeState, goalTreeIsActive, goalByFile,
@@ -1764,6 +1764,7 @@ function mountDedicatedAreaMap() {
       documents: areaMapEntities(),
       getDocuments: areaMapEntities,
       api,
+      onEvent: actionTelemetry.recordAreaMap,
       onEntityVerb: areaMapEntityVerb,
       onBack: leaveAreaMap,
       /** Keeps shell chrome aligned with the session-only located marker. */

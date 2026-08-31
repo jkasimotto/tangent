@@ -209,10 +209,17 @@ const MAP_STATE_ROOT = process.env.TANGENT_MAP_STATE_ROOT ?? path.join(os.homedi
 /** Persists coordinate-free Area-map operations in the bounded action log. */
 const recordAreaMapEvent = (event) => recordActionTelemetry(ACTION_TELEMETRY_LOG, {
   kind: "area-map", action: event.name, eventStream: "area-map",
-  operationId: event.operationId, durationMs: event.duration,
-  phase: event.phase, priorPhase: event.priorPhase, outcome: event.outcome,
+  operationId: event.operationId, gestureId: event.gestureId, projectionId: event.projectionId,
+  worldRevision: event.worldRevision, treeRevision: event.treeRevision, shardRevision: event.shardRevision,
+  durationMs: event.duration, usableTimeMs: event.usableTime, completeTimeMs: event.completeTime,
+  status: event.status, retryAttempt: event.retryAttempt, retryable: event.retryable, idempotent: event.idempotent,
+  phase: event.phase, priorPhase: event.priorPhase, outcome: event.outcome, failureKind: event.failureKind,
+  gestureKind: event.gestureKind, projectionKind: event.projectionKind, saveState: event.saveState, draftState: event.draftState, shardState: event.shardState, invariantName: event.invariantName,
   shardCount: event.shardCount, legacyCards: event.legacyCards, boundaries: event.boundaries,
   provisionalRegions: event.provisionalRegions, recoveredPlacements: event.recoveredPlacements,
+  areaCount: event.areaCount, eagerShards: event.eagerShards, selectedCount: event.selectedCount,
+  affectedCount: event.affectedCount, pendingCount: event.pendingCount, previewCount: event.previewCount, elementCount: event.elementCount,
+  depth: event.depth, bytes: event.bytes,
 }).catch(() => false);
 /** Records one bounded server mutation stage without exposing vault or tmux names. */
 const recordMutationStage = (kind, phase, operationId, startedAt, outcome = "ok") => recordActionTelemetry(ACTION_TELEMETRY_LOG, {

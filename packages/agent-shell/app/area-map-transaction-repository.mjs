@@ -202,6 +202,8 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     const conflict = {
       status: 409,
       conflict: true,
+      code: "target-race",
+      retryable: false,
       operationId: manifest.operationId,
       currentHashes,
       changedPaths: changed.map((target) => target.file),
@@ -245,7 +247,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       if (head !== index || head !== worktree) changed.push(target.file);
     }
     if (!changed.length) return;
-    const conflict = { status: 409, conflict: true, operationId: manifest.operationId, changedPaths: changed, error: "an exact move target has pending vault edits" };
+    const conflict = { status: 409, conflict: true, code: "target-race", retryable: false, operationId: manifest.operationId, changedPaths: changed, error: "an exact move target has pending vault edits" };
     await writeManifest(manifestFile, { ...manifest, state: "conflict", conflict, failedAt: new Date().toISOString() });
     throw Object.assign(new Error(conflict.error), conflict);
   }
@@ -278,7 +280,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       const source = await directoryEntries(guard.source);
       const destination = await directoryEntries(guard.destination);
       if (source && JSON.stringify(source) === JSON.stringify(guard.entries) && destination === null) continue;
-      const conflict = { status: 409, conflict: true, operationId: manifest.operationId, changedPaths: [guard.source, guard.destination], error: "the Area directory changed while its move was preparing" };
+      const conflict = { status: 409, conflict: true, code: "target-race", retryable: false, operationId: manifest.operationId, changedPaths: [guard.source, guard.destination], error: "the Area directory changed while its move was preparing" };
       await writeManifest(manifestFile, { ...manifest, state: "conflict", conflict, failedAt: new Date().toISOString() });
       throw Object.assign(new Error(conflict.error), conflict);
     }
@@ -294,6 +296,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
   /** Finishes index and worktree installation for one prepared commit. */
   async function finishPrepared(manifest, manifestFile, { installRef, recheckTargets = false }) {
     const phase = phaseFields(manifest);
+    let refInstalled = !installRef;
     await blockReaders();
     try {
       if (installRef) {
@@ -303,6 +306,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
           await rejectChangedDirectoryGuards(manifest, manifestFile);
         }
         await vault.installPreparedCommit(manifest.prepared);
+        refInstalled = true;
         await checkpoint("ref-installed", phase);
       }
       await vault.updatePreparedIndex(manifest.prepared);
@@ -327,6 +331,29 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       await checkpoint("result-recorded", phase);
       return committed;
     } catch (error) {
+      if (!refInstalled) {
+        const head = await currentHead().catch(() => "");
+        if (head === manifest.prepared.commit) refInstalled = true;
+        else {
+          const headRace = Boolean(head && head !== manifest.prepared.expectedHead);
+          if (!error?.conflict) {
+            Object.assign(error, {
+              status: headRace ? 409 : Number(error?.status ?? 503),
+              conflict: headRace,
+              code: headRace ? "head-race" : "install-failed",
+              retryable: true,
+            });
+            await writeManifest(manifestFile, {
+              ...manifest,
+              state: "aborted",
+              failure: { status: error.status, code: error.code, retryable: error.retryable },
+              failedAt: new Date().toISOString(),
+            }).catch(() => {});
+          }
+          throw error;
+        }
+      }
+      Object.assign(error, { status: Number(error?.status ?? 503), code: "install-interrupted", retryable: true });
       recoveryPending = { operationId: manifest.operationId, reason: "an interrupted map install needs recovery" };
       recoveryPromise = null;
       throw error;
@@ -405,21 +432,26 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
   }
 
   /** Saves every source shard of one world gesture as one exact Git commit. */
-  async function saveMany(writes, { operationId, worldId = "default", area = writes[0]?.area ?? "", session = null } = {}) {
+  async function saveMany(writes, { operationId, worldId = "default", area = writes[0]?.area ?? "", session = null, preflight = null, acknowledgement = null } = {}) {
     if (!operationId) throw new Error("Area map gestures require an operation ID");
+    const startedAt = Date.now();
     await ensureRecovered();
-    if (recoveryRequired) return { status: 503, error: "Area map recovery requires attention", recoveryRequired };
+    if (recoveryRequired) return { status: 503, code: "recovery-required", retryable: false, error: "Area map recovery requires attention", recoveryRequired };
     const requestDigest = digest(writes.map((write) => ({ area: write.area, baseHash: write.baseHash ?? null, canvas: write.canvas })));
     const directory = operationDirectory(worldId, operationId);
     const manifestFile = path.join(directory, "manifest.json");
     return withLock(async () => {
       await recoverUnlocked();
-      if (recoveryRequired) return { status: 503, error: "Area map recovery requires attention", recoveryRequired };
+      if (recoveryRequired) return { status: 503, code: "recovery-required", retryable: false, error: "Area map recovery requires attention", recoveryRequired };
       try {
         const prior = JSON.parse(await readFile(manifestFile, "utf8"));
-        if (prior.digest !== requestDigest) return { status: 409, conflict: true, operationId, error: "operation ID was already used for different map content" };
+        if (prior.digest !== requestDigest) return { status: 409, conflict: true, code: "operation-id-reused", retryable: false, operationId, error: "operation ID was already used for different map content" };
         if (prior.state === "committed") return { ...prior.result, idempotent: true };
       } catch (error) { if (error.code !== "ENOENT") throw error; }
+      if (typeof preflight === "function") {
+        const result = await preflight();
+        if (Number(result?.status ?? 0) >= 400) return { ...result, operationId: result.operationId ?? operationId };
+      }
       const unique = new Map();
       for (const write of writes) {
         if (!write?.area || unique.has(write.area)) throw new Error("a map gesture must name each source owner once");
@@ -431,9 +463,15 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         return { write, current, newText, newHash: canvasHash(newText) };
       }));
       const conflicts = preparedWrites.filter((entry) => entry.current.hash !== entry.newHash && entry.current.hash !== (entry.write.baseHash ?? null));
-      if (conflicts.length) return { status: 409, conflict: true, operationId, currentHashes: Object.fromEntries(conflicts.map((entry) => [entry.write.area, entry.current.hash])) };
+      if (conflicts.length) return { status: 409, conflict: true, code: "shard-conflict", retryable: false, operationId, currentHashes: Object.fromEntries(conflicts.map((entry) => [entry.write.area, entry.current.hash])) };
       const changed = preparedWrites.filter((entry) => entry.current.hash !== entry.newHash);
-      if (!changed.length) return { committed: true, idempotent: true, operationId, hashes: Object.fromEntries(preparedWrites.map((entry) => [entry.write.area, entry.newHash])) };
+      if (!changed.length) {
+        return {
+          committed: true, idempotent: true, operationId,
+          hashes: Object.fromEntries(preparedWrites.map((entry) => [entry.write.area, entry.newHash])),
+          ...(acknowledgement ? { acknowledgement } : {}),
+        };
+      }
       const targets = changed.flatMap((entry) => [
         { area: entry.write.area, file: entry.current.file, oldText: entry.current.canonicalExists === false ? null : entry.current.text ?? null, newText: entry.newText, oldHash: entry.current.hash ?? null, newHash: entry.newHash },
         ...(entry.current.legacy ? [{ area: entry.write.area, file: entry.current.legacy.file, oldText: entry.current.legacy.text, newText: null, oldHash: canvasHash(entry.current.legacy.text), newHash: null }] : []),
@@ -446,23 +484,22 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         area, file: changed.find((entry) => entry.write.area === area)?.current.file ?? changed[0].current.file,
         hash: preparedWrites.find((entry) => entry.write.area === area)?.newHash ?? null,
         hashes: Object.fromEntries(preparedWrites.map((entry) => [entry.write.area, entry.newHash])),
+        bytes: Buffer.byteLength((changed.find((entry) => entry.write.area === area) ?? changed[0]).newText),
         committed: true, operationId, idempotent: false,
+        ...(acknowledgement ? { acknowledgement } : {}),
       };
       const manifest = { schema: "area-map-transaction.v2", operationId, worldId, digest: requestDigest, state: "prepared", preparedAt: new Date().toISOString(), shardCount: changed.length, prepared, targets, result };
       await writeManifest(manifestFile, manifest);
       await checkpoint("prepared", phaseFields(manifest));
       const committed = await finishPrepared(manifest, manifestFile, { installRef: true, recheckTargets: true });
-      const primary = changed.find((entry) => entry.write.area === area) ?? changed[0];
-      const metadata = await stat(safeCanvasPath(root, primary.current.file).absolute);
-      committed.result.bytes = metadata.size;
-      await writeManifest(manifestFile, committed);
       return committed.result;
     }).catch((error) => {
       if (error?.simulatedCrash) throw error;
-      emitEvent("area_map_save_phase", { operationId, phase: "failed", shardCount: writes.length, duration: 0 });
+      emitEvent("area_map_save_phase", { operationId, phase: "failed", shardCount: writes.length, duration: Date.now() - startedAt, status: Number(error?.status ?? 503), failureKind: error?.code ?? "transaction-failed", retryable: error?.retryable === true });
       reportError(`Area map transaction failed: ${error.message}`);
       return {
         status: Number(error?.status ?? 503), committed: false, saved: false, operationId, error: error.message,
+        code: error?.code ?? "transaction-failed", retryable: error?.retryable === true,
         ...(error?.conflict ? { conflict: true, currentHashes: error.currentHashes ?? {}, changedPaths: error.changedPaths ?? [] } : {}),
       };
     });

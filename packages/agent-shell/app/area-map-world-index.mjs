@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
-import { areaCanvasPath, parseAreaCanvas, validateAreaCanvas } from "./area-canvas.mjs";
+import { areaCanvasPath, canvasHash, parseAreaCanvas, serializeAreaCanvas, validateAreaCanvas } from "./area-canvas.mjs";
 import { areaForBlock, isAreaBoundary, isAreaRegion, tangentOf } from "./public/area-board-core.js";
 import { AREA_MAP_LAYOUT, nearestFreeRectangle, rectanglesOverlap, regionId, regionKey, shardHulls } from "./public/area-map-world-core.js";
 
@@ -13,6 +13,7 @@ const MIN_REGION_HEIGHT = AREA_MAP_LAYOUT.minimumHeight;
 const PLACEMENT_SCHEMA = AREA_MAP_LAYOUT.placementSchema;
 const ROOT_OWNER = "@root";
 const CACHE_LIMIT = 256;
+const OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 /** Returns a compact revision digest. */
 const digest = (value) => createHash("sha256").update(String(value)).digest("base64url").slice(0, 16);
@@ -34,6 +35,13 @@ const legacyLayout = () => ({ schema: PLACEMENT_SCHEMA, priority: 0, overlapWith
 const labelId = (element) => element.boundElements?.find((entry) => entry.type === "text")?.id ?? `${element.id}-tangent-label`;
 /** Returns one Area scene's revision token, including legacy in-memory reads. */
 const shardRevision = (shard) => shard.hash ?? (shard.legacy?.text ? `legacy:${digest(shard.legacy.text)}` : shard.ok === false ? `unreadable:${digest(shard.errors?.join("\n"))}` : "missing");
+
+/** Computes the exact post-gesture world revision without rereading later authority. */
+function gestureAcknowledgement(state, writes) {
+  const saved = new Map(writes.map((write) => [write.area, canvasHash(serializeAreaCanvas(write.canvas))]));
+  const worldRevision = digest(`${state.world.treeRevision}\n${state.owners.map((owner) => `${owner}:${saved.has(owner) ? saved.get(owner) : shardRevision(state.reads.get(owner))}`).join("\n")}`);
+  return { worldId: state.world.worldId, treeRevision: state.world.treeRevision, worldRevision };
+}
 
 /** Keeps one bounded insertion-ordered cache. */
 function cacheSet(cache, key, value) {
@@ -454,15 +462,20 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
   let lastMigrationSignature = "";
   const worldIdPromise = realpath(root).catch(() => path.resolve(root)).then((resolved) => digest(resolved));
 
+  /** Emits one coordinate-free world event without affecting map authority. */
+  function emitEvent(name, fields = {}) {
+    try {
+      const result = recordEvent?.({ name, at: Date.now(), ...fields });
+      result?.catch?.(() => {});
+    } catch { /* Diagnostics never affect map authority. */ }
+  }
+
   /** Emits one coordinate-free migration summary without affecting a world read. */
   function emitMigration(fields) {
     const signature = JSON.stringify(fields);
     if (signature === lastMigrationSignature) return;
     lastMigrationSignature = signature;
-    try {
-      const result = recordEvent?.({ name: "area_map_migration_read", at: Date.now(), ...fields });
-      result?.catch?.(() => {});
-    } catch { /* Diagnostics never affect map authority. */ }
+    emitEvent("area_map_migration_read", fields);
   }
 
   /** Reads and summarizes the current complete tree under any outer read lease. */
@@ -523,7 +536,7 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
       const shard = reads.get(owner); const summary = summaries.get(owner); const facts = projectedFacts.get(owner);
       const state = shard.ok === false ? "unreadable" : !shard.exists ? "missing" : eager ? "ready" : "deferred";
       return {
-        owner, file: shard.file ?? null, hash: shard.hash ?? null, state,
+        owner, file: shard.file ?? null, hash: shard.hash ?? null, revision: shardRevision(shard), state,
         elementCount: facts.elementCount, blockCount: facts.blockCount,
         ownBlockHull: facts.ownBlockHull, ownInkHull: facts.ownInkHull,
         ...(eager && shard.ok !== false ? { scene: projectedScenes.get(owner) } : {}),
@@ -570,16 +583,22 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
     if (!node) return { status: 404, error: `no Area ${area}` };
     const current = await repository.read(area);
     if (shardRevision(current) !== shardRevision(state.reads.get(area))) return { status: 409, error: "map shard changed", worldRevision };
-    return { status: 200, area, worldRevision, hash: current.hash, state: current.ok === false ? "unreadable" : current.exists ? "ready" : "missing", scene: current.ok === false ? undefined : state.projectedScenes.get(area), errors: current.errors ?? [] };
+    return { status: 200, area, worldRevision, hash: current.hash, revision: shardRevision(current), state: current.ok === false ? "unreadable" : current.exists ? "ready" : "missing", scene: current.ok === false ? undefined : state.projectedScenes.get(area), errors: current.errors ?? [] };
   }
 
   /** Applies one validated source-space gesture through the injected transaction adapter. */
-  async function applyGesture(request, saveGesture) {
+  async function applyGestureCore(request, saveGesture) {
     if (request?.schema !== "area-map-gesture.v1") return { status: 400, error: "gesture schema must be area-map-gesture.v1" };
     if (request.scene !== undefined || request.elements !== undefined || request.composedScene !== undefined || request.tangentWorld !== undefined) return { status: 422, error: "a map gesture accepts source mutations, not a composed scene" };
     const operationId = String(request.operationId ?? "").trim();
-    if (!operationId || operationId.length > 128 || operationId.includes("\0")) return { status: 400, error: "a safe operation ID is required" };
+    if (!OPAQUE_ID.test(operationId)) return { status: 400, error: "a safe operation ID is required" };
+    const gestureId = String(request.gestureId ?? operationId).trim();
+    if (!OPAQUE_ID.test(gestureId)) return { status: 400, error: "a safe gesture ID is required" };
     if (typeof request.treeRevision !== "string" || !request.treeRevision || request.treeRevision.includes("\0")) return { status: 400, error: "a safe tree revision is required" };
+    const requestedWorldRevision = request.worldRevision === undefined || request.worldRevision === null
+      ? null
+      : String(request.worldRevision).trim();
+    if (requestedWorldRevision !== null && !OPAQUE_ID.test(requestedWorldRevision)) return { status: 400, error: "a safe world revision is required" };
     if (!Array.isArray(request.mutations) || !request.mutations.length) return { status: 422, error: "a gesture must contain source mutations" };
     const state = await readState();
     if (request.worldId !== state.world.worldId) return { status: 409, conflict: true, code: "world-conflict", error: "map world changed", worldId: state.world.worldId };
@@ -637,14 +656,83 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
     }
     if (typeof saveGesture !== "function") return { status: 503, error: "map transaction writer is unavailable" };
     try {
-      const result = await saveGesture(writes, { operationId, area: writes[0].area, worldId: state.world.worldId, treeRevision: state.world.treeRevision });
+      const acknowledgement = gestureAcknowledgement(state, writes);
+      const result = await saveGesture(writes, {
+        operationId, area: writes[0].area, worldId: state.world.worldId, treeRevision: state.world.treeRevision,
+        /** Rejects any world that changed after validation but before this writer acquired its lock. */
+        preflight: async () => {
+          const current = await readState();
+          const expectedWorldRevision = requestedWorldRevision ?? state.world.worldRevision;
+          if (current?.world.worldId === state.world.worldId
+            && current.world.treeRevision === state.world.treeRevision
+            && current.world.worldRevision === state.world.worldRevision
+            && current.world.worldRevision === expectedWorldRevision) return null;
+          return {
+            status: 409,
+            conflict: true,
+            code: "world-race",
+            retryable: false,
+            error: "map world changed while the gesture was preparing",
+            worldId: current?.world.worldId ?? state.world.worldId,
+            treeRevision: current?.world.treeRevision ?? state.world.treeRevision,
+            worldRevision: current?.world.worldRevision ?? state.world.worldRevision,
+          };
+        },
+        /** Persists the exact projected revision before the commit can become recoverable. */
+        acknowledgement,
+      });
       const status = result.status ?? 200;
-      if (status >= 400) return { ...result, status, treeRevision: state.world.treeRevision, worldRevision: state.world.worldRevision };
-      const acknowledged = await readState();
-      return { ...result, status, worldId: acknowledged.world.worldId, treeRevision: acknowledged.world.treeRevision, worldRevision: acknowledged.world.worldRevision };
+      if (status >= 400) return {
+        ...result,
+        status,
+        gestureId,
+        treeRevision: result.treeRevision ?? state.world.treeRevision,
+        worldRevision: result.worldRevision ?? state.world.worldRevision,
+      };
+      if (result.idempotent === true && !result.acknowledgement) return {
+        ...result,
+        status: 409,
+        conflict: true,
+        code: "world-race",
+        retryable: false,
+        error: "the saved gesture needs world reconciliation",
+        gestureId,
+        worldId: state.world.worldId,
+        treeRevision: state.world.treeRevision,
+        worldRevision: state.world.worldRevision,
+      };
+      const acknowledged = result.acknowledgement ?? acknowledgement;
+      const { acknowledgement: _privateAcknowledgement, ...saved } = result;
+      return { ...saved, status, gestureId, worldId: acknowledged.worldId, treeRevision: acknowledged.treeRevision, worldRevision: acknowledged.worldRevision };
     } catch (error) {
-      return { status: 503, error: String(error?.message ?? error), operationId };
+      return { status: 503, code: "transaction-failed", retryable: true, error: String(error?.message ?? error), operationId, gestureId };
     }
+  }
+
+  /** Applies one gesture and records its classified, content-free result. */
+  async function applyGesture(request, saveGesture) {
+    const startedAt = Date.now();
+    const operationId = OPAQUE_ID.test(request?.operationId ?? "") ? request.operationId : "";
+    const gestureId = OPAQUE_ID.test(request?.gestureId ?? "") ? request.gestureId : operationId;
+    emitEvent("area_map_gesture", { operationId, gestureId, phase: "received", shardCount: Array.isArray(request?.mutations) ? request.mutations.length : 0 });
+    const result = await applyGestureCore(request, saveGesture);
+    const status = Number(result?.status ?? 200);
+    const failureKind = result?.code ?? (status === 400 ? "invalid-request" : status === 404 ? "not-found" : status === 409 ? "conflict" : status === 422 ? "validation" : status >= 500 ? "unavailable" : "none");
+    emitEvent("area_map_gesture", {
+      operationId: result?.operationId ?? operationId,
+      gestureId: result?.gestureId ?? gestureId,
+      phase: status < 400 ? "acknowledged" : "failed",
+      outcome: status < 400 ? "saved" : "not-saved",
+      status,
+      failureKind,
+      retryable: result?.retryable === true,
+      idempotent: result?.idempotent === true,
+      shardCount: Array.isArray(request?.mutations) ? request.mutations.length : 0,
+      duration: Date.now() - startedAt,
+      worldRevision: result?.worldRevision,
+      treeRevision: result?.treeRevision,
+    });
+    return result;
   }
 
   return { applyGesture, shard, snapshot };

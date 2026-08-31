@@ -15,6 +15,36 @@ test("world view state uses one atomic world-v2 file", async () => {
   assert.deepEqual(JSON.parse(await readFile(path.join(root, "world_123.world-v2.json"), "utf8")), view);
 });
 
+test("concurrent world view writes finish with the newest invocation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-world-view-"));
+  let releaseFirst;
+  const firstPaused = new Promise((resolve) => { releaseFirst = resolve; });
+  let enterFirst;
+  const firstEntered = new Promise((resolve) => { enterFirst = resolve; });
+  const entered = [];
+  const store = createAreaMapWorldViewStore({
+    root,
+    /** Holds the first replacement open so a concurrent newer write can queue. */
+    async beforeWrite(_worldId, view) {
+      entered.push(view.pan.x);
+      if (view.pan.x === 1) { enterFirst(); await firstPaused; }
+    },
+  });
+  const older = { schema: "area-map-view.v2", worldId: "world_ordered", pan: { x: 1, y: 0 }, zoom: 1, foldedAreas: [], detailAreas: [] };
+  const newest = { ...older, pan: { x: 2, y: 0 } };
+
+  const first = store.write(older.worldId, older);
+  await firstEntered;
+  const second = store.write(newest.worldId, newest);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(entered, [1], "the newer replacement waits for the active write");
+  releaseFirst();
+  await Promise.all([first, second]);
+
+  assert.deepEqual(entered, [1, 2]);
+  assert.deepEqual(await store.read(newest.worldId), newest, "the newest invocation owns the durable view");
+});
+
 test("world view state rejects traversal and ignores corrupt private state", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "tangent-world-view-"));
   const store = createAreaMapWorldViewStore({ root });

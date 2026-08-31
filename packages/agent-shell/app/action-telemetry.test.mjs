@@ -68,7 +68,9 @@ test("Area map telemetry keeps phases and migration counts without authored cont
     kind: "area-map",
     action: "area_map_recovery",
     eventStream: "area-map",
-    operationId: "operation-4",
+    operationId: "88888888-8888-4888-8888-888888888888",
+    gestureId: "99999999-9999-4999-8999-999999999999",
+    worldRevision: "QrStUvWxYz012345",
     phase: "verified",
     priorPhase: "prepared",
     outcome: "completed",
@@ -77,6 +79,10 @@ test("Area map telemetry keeps phases and migration counts without authored cont
     boundaries: 1,
     provisionalRegions: 4,
     recoveredPlacements: 1,
+    failureKind: "none",
+    retryable: false,
+    idempotent: true,
+    affectedCount: 3,
     coordinates: { x: 100, y: 200 },
     text: "private authored text",
   }, () => new Date("2026-08-30T00:00:00.000Z"));
@@ -85,15 +91,44 @@ test("Area map telemetry keeps phases and migration counts without authored cont
     at: "2026-08-30T00:00:00.000Z",
     kind: "area-map",
     action: "area_map_recovery",
-    operationId: "operation-4",
+    operationId: "88888888-8888-4888-8888-888888888888",
+    gestureId: "99999999-9999-4999-8999-999999999999",
+    worldRevision: "QrStUvWxYz012345",
     eventStream: "area-map",
     phase: "verified",
     priorPhase: "prepared",
     outcome: "completed",
+    failureKind: "none",
+    retryable: false,
+    idempotent: true,
     shardCount: 3,
     legacyCards: 2,
     boundaries: 1,
     provisionalRegions: 4,
     recoveredPlacements: 1,
+    affectedCount: 3,
   });
+});
+
+test("Area map telemetry rejects uncontrolled action names and content-shaped IDs", () => {
+  assert.equal(normalizeActionTelemetry({ kind: "area-map", action: "private authored action" }), null);
+  const entry = normalizeActionTelemetry({
+    kind: "area-map", action: "area_map_projection", eventStream: "private stream",
+    operationId: "secret_project", gestureId: "private_token", projectionId: "42", projectionKind: "controller-sync",
+    selectedRegion: "private/area", coordinates: { x: 5, y: 8 },
+  }, () => new Date("2026-08-30T00:00:00.000Z"));
+  assert.deepEqual(entry, {
+    schema: "agent-shell-action.v1", at: "2026-08-30T00:00:00.000Z",
+    kind: "area-map", action: "area_map_projection", projectionId: "42",
+    eventStream: "area-map", projectionKind: "controller-sync",
+  });
+});
+
+test("Area map telemetry retains the bounded frame sample count", () => {
+  const entry = normalizeActionTelemetry({
+    kind: "area-map", action: "area_map_gesture_solved", gestureId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    sampleCount: 42, durationMs: 9.6,
+  }, () => new Date("2026-08-30T00:00:00.000Z"));
+  assert.equal(entry.sampleCount, 42);
+  assert.equal(entry.durationMs, 10);
 });

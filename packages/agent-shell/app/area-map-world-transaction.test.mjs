@@ -26,7 +26,7 @@ function scene(label, x = 0) {
 }
 
 /** Creates a real Git vault and both repositories used by map transactions. */
-async function fixture(name, { fault = null, recordEvent = null } = {}) {
+async function fixture(name, { fault = null, recordEvent = null, wrapVault = null } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), `area-map-transaction-${name}-`));
   await runGit(["-C", root, "init", "--quiet"]);
   await runGit(["-C", root, "config", "user.email", "test@tangent.local"]);
@@ -45,8 +45,9 @@ async function fixture(name, { fault = null, recordEvent = null } = {}) {
     async commit() { throw new Error("the transaction authority must own commits"); },
   });
   const vault = createVaultRepository({ root, runGit });
+  const transactionVault = wrapVault?.(vault) ?? vault;
   const transactions = createAreaMapTransactionRepository({
-    root, repository, vault, runGit, transactionRoot, fault, recordEvent,
+    root, repository, vault: transactionVault, runGit, transactionRoot, fault, recordEvent,
     /** Keeps expected transaction failures quiet in tests. */
     reportError() {},
   });
@@ -76,9 +77,13 @@ test("one gesture writes every source shard in one exact commit and preserves un
     { area: "neara/delivery/standards", baseHash: null, canvas: scene("Standards"), reason: "Standards move" },
   ];
 
-  const saved = await value.transactions.saveMany(writes, { operationId: "gesture-1", worldId: "otto", area: "neara/delivery/standards" });
+  const acknowledgement = { worldId: "world-exact", treeRevision: "tree-exact", worldRevision: "revision-exact" };
+  const saved = await value.transactions.saveMany(writes, { operationId: "gesture-1", worldId: "otto", area: "neara/delivery/standards", acknowledgement });
 
   assert.equal(saved.committed, true);
+  assert.deepEqual(saved.acknowledgement, acknowledgement);
+  assert.ok(saved.bytes > 0);
+  assert.equal((await manifest(value.transactionRoot)).result.bytes, saved.bytes, "the complete response is journaled before the commit becomes acknowledged");
   assert.equal(String((await runGit(["-C", value.root, "rev-list", "--count", `${before}..HEAD`])).stdout).trim(), "1");
   assert.match(String((await runGit(["-C", value.root, "show", "--format=%B", "--no-patch", "HEAD"])).stdout), /Tangent-Map-Operation: gesture-1/);
   for (const write of writes) {
@@ -96,7 +101,15 @@ test("one gesture writes every source shard in one exact commit and preserves un
   assert.ok(events.filter((event) => event.name === "area_map_save_phase").every((event) => event.operationId === "gesture-1" && event.shardCount === 3 && event.duration >= 0));
 
   const head = String((await runGit(["-C", value.root, "rev-parse", "HEAD"])).stdout).trim();
-  assert.equal((await value.transactions.saveMany(writes, { operationId: "gesture-1", worldId: "otto" })).idempotent, true);
+  let repeatedPreflight = false;
+  const repeated = await value.transactions.saveMany(writes, {
+    operationId: "gesture-1", worldId: "otto",
+    /** A committed operation must resolve before a now-stale world preflight. */
+    async preflight() { repeatedPreflight = true; return { status: 409, code: "world-race" }; },
+  });
+  assert.equal(repeated.idempotent, true);
+  assert.deepEqual(repeated.acknowledgement, acknowledgement, "the committed revision descriptor survives idempotent retries");
+  assert.equal(repeatedPreflight, false);
   assert.equal(String((await runGit(["-C", value.root, "rev-parse", "HEAD"])).stdout).trim(), head);
   const reused = await value.transactions.saveMany([{ ...writes[0], canvas: scene("Changed") }], { operationId: "gesture-1", worldId: "otto" });
   assert.equal(reused.status, 409);
@@ -263,6 +276,98 @@ test("a target edit after prepare aborts before the branch ref or worktree is ov
   assert.deepEqual((await value.repository.read("neara")).scene, external);
   assert.equal(String((await runGit(["-C", value.root, "rev-parse", "HEAD"])).stdout).trim(), before);
   assert.equal((await manifest(value.transactionRoot)).state, "conflict");
+});
+
+test("an unrelated commit during prepare is a retryable head race, not permanent recovery", async () => {
+  let value;
+  let advanced = false;
+  value = await fixture("head-race", {
+    /** Advances the branch with unrelated durable work after the map commit was prepared. */
+    async fault(phase) {
+      if (phase !== "prepared" || advanced) return;
+      advanced = true;
+      await writeFile(path.join(value.root, "unrelated-race.md"), "unrelated durable work\n");
+      await runGit(["-C", value.root, "add", "unrelated-race.md"]);
+      await runGit(["-C", value.root, "commit", "--quiet", "-m", "unrelated race"]);
+    },
+  });
+  const writes = [{ area: "neara", baseHash: null, canvas: scene("Gesture") }];
+
+  const raced = await value.transactions.saveMany(writes, { operationId: "head-race", worldId: "otto" });
+
+  assert.deepEqual({ status: raced.status, code: raced.code, retryable: raced.retryable }, { status: 409, code: "head-race", retryable: true });
+  assert.equal((await manifest(value.transactionRoot)).state, "aborted");
+  await value.transactions.waitForReadable();
+  assert.deepEqual((await value.repository.read("neara")).scene.elements, [], "the failed pre-ref attempt did not change map authority");
+
+  const retried = await value.transactions.saveMany(writes, { operationId: "head-race", worldId: "otto" });
+  assert.equal(retried.committed, true, "the same idempotency key can safely reprepare on the new head");
+  assert.equal((await value.repository.read("neara")).scene.elements[0].text, "Gesture");
+  assert.equal(await readFile(path.join(value.root, "unrelated-race.md"), "utf8"), "unrelated durable work\n");
+});
+
+test("a lost update-ref success enters recovery instead of aborting the installed commit", async () => {
+  let lost = false;
+  const value = await fixture("lost-ref-success", {
+    /** Simulates a wrapper losing the successful response after update-ref became durable. */
+    wrapVault(vault) {
+      return {
+        ...vault,
+        /** Installs the commit, then loses the first successful acknowledgement. */
+        async installPreparedCommit(prepared) {
+          await vault.installPreparedCommit(prepared);
+          if (!lost) { lost = true; throw new Error("lost update-ref success response"); }
+        },
+      };
+    },
+  });
+  const writes = [{ area: "neara", baseHash: null, canvas: scene("Installed Neara") }];
+  const acknowledgement = { worldId: "world-lost", treeRevision: "tree-lost", worldRevision: "revision-lost" };
+
+  const interrupted = await value.transactions.saveMany(writes, { operationId: "lost-ref-success", worldId: "otto", acknowledgement });
+
+  assert.deepEqual({ status: interrupted.status, code: interrupted.code, retryable: interrupted.retryable }, { status: 503, code: "install-interrupted", retryable: true });
+  assert.equal((await manifest(value.transactionRoot)).state, "prepared", "the installed ref remains recoverable instead of becoming an ignored abort");
+  await value.transactions.waitForReadable();
+  assert.equal((await manifest(value.transactionRoot)).state, "committed");
+  assert.equal((await value.repository.read("neara")).scene.elements[0].text, "Installed Neara");
+  const recovered = await value.transactions.saveMany(writes, { operationId: "lost-ref-success", worldId: "otto" });
+  assert.equal(recovered.idempotent, true);
+  assert.deepEqual(recovered.acknowledgement, acknowledgement, "recovery retains the descriptor that was journaled before update-ref");
+});
+
+test("the transaction preflight rejects a stale world before prepare while holding the writer lock", async () => {
+  const value = await fixture("preflight-lock");
+  let releasePreflight;
+  const preflightPaused = new Promise((resolve) => { releasePreflight = resolve; });
+  let preflightEntered;
+  const preflightStarted = new Promise((resolve) => { preflightEntered = resolve; });
+  const first = value.transactions.saveMany([
+    { area: "neara", baseHash: null, canvas: scene("Stale Neara") },
+  ], {
+    operationId: "preflight-first", worldId: "otto",
+    /** Holds the stale-world decision open so a later writer proves lock ownership. */
+    async preflight() {
+      preflightEntered();
+      await preflightPaused;
+      return { status: 409, conflict: true, code: "world-race", retryable: false, error: "map world changed while the gesture was preparing" };
+    },
+  });
+  await preflightStarted;
+  let secondFinished = false;
+  const second = value.transactions.saveMany([
+    { area: "neara/delivery", baseHash: null, canvas: scene("Fresh Delivery") },
+  ], { operationId: "preflight-second", worldId: "otto" }).then((result) => { secondFinished = true; return result; });
+
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(secondFinished, false, "a later writer cannot pass the stale-world preflight boundary");
+  releasePreflight();
+  const [rejected, saved] = await Promise.all([first, second]);
+  assert.deepEqual({ status: rejected.status, code: rejected.code, retryable: rejected.retryable }, { status: 409, code: "world-race", retryable: false });
+  assert.equal(rejected.operationId, "preflight-first");
+  assert.deepEqual((await value.repository.read("neara")).scene.elements, [], "the stale gesture never reaches preparation");
+  assert.equal(saved.committed, true);
+  assert.equal((await value.repository.read("neara/delivery")).scene.elements[0].text, "Fresh Delivery");
 });
 
 test("recovery refuses to overwrite unrelated target bytes", async () => {

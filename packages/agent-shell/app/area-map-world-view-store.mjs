@@ -10,7 +10,9 @@ export function validAreaMapWorldId(worldId) {
 }
 
 /** Creates the private, world-keyed Area-map view store. */
-export function createAreaMapWorldViewStore({ root }) {
+export function createAreaMapWorldViewStore({ root, beforeWrite = null }) {
+  const writeQueues = new Map();
+
   /** Returns the one view-state file for a validated world ID. */
   function file(worldId) {
     if (!validAreaMapWorldId(worldId)) throw Object.assign(new Error("worldId is invalid"), { status: 400 });
@@ -30,16 +32,26 @@ export function createAreaMapWorldViewStore({ root }) {
   }
 
   /** Atomically replaces one validated private world view. */
-  async function write(worldId, view) {
-    if (view?.schema !== VIEW_SCHEMA || view.worldId !== worldId) {
-      throw Object.assign(new Error("area-map-view.v2 with a matching worldId is required"), { status: 400 });
-    }
-    const target = file(worldId);
+  async function replace(worldId, view, target) {
+    await beforeWrite?.(worldId, view);
     await mkdir(root, { recursive: true });
     const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(view)}\n`, "utf8");
     await rename(temporary, target);
     return view;
+  }
+
+  /** Serializes writes per world so the newest invocation remains authoritative. */
+  async function write(worldId, view) {
+    if (view?.schema !== VIEW_SCHEMA || view.worldId !== worldId) {
+      throw Object.assign(new Error("area-map-view.v2 with a matching worldId is required"), { status: 400 });
+    }
+    const target = file(worldId);
+    const previous = writeQueues.get(worldId) ?? Promise.resolve();
+    const task = previous.catch(() => {}).then(() => replace(worldId, view, target));
+    writeQueues.set(worldId, task);
+    try { return await task; }
+    finally { if (writeQueues.get(worldId) === task) writeQueues.delete(worldId); }
   }
 
   return { file, read, write };

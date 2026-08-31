@@ -274,6 +274,42 @@ test("one immutable region gesture saves and undoes with the same owner set", as
   controller.destroy();
 });
 
+test("an exhausted retryable head race is blocked for Retry instead of offered Keep mine", async () => {
+  const events = [];
+  let attempts = 0;
+  let reloads = 0;
+  const controller = createAreaMapWorldController({
+    world: fixtureWorld(), storage: memoryStorage(),
+    /** Captures the classified save and retry lifecycle. */
+    onEvent: (event) => events.push(event),
+    /** A retryable race has already exhausted the request-layer retries, then succeeds on the user's Retry. */
+    persistWorld: async () => {
+      attempts += 1;
+      if (attempts === 1) throw Object.assign(new Error("branch advanced"), {
+        status: 409,
+        payload: { code: "head-race", retryable: true, operationId: "operation-head-race" },
+      });
+      return { status: 200, hashes: { neara: "retry-saved" }, worldRevision: "world-retried", operationId: "operation-head-race" };
+    },
+    /** Must not be used for a safe head race. */
+    reloadWorld: async () => { reloads += 1; return fixtureWorld(); },
+  });
+  const changed = controller.world(); changed.areas[1].region.storedRect.x += 17;
+  controller.commitWorld(changed, { changedAreas: ["neara/delivery"] }, "pointer");
+  await controller.flush();
+
+  assert.equal(controller.snapshot().save.state, "blocked");
+  assert.equal(await controller.keepMine(), null, "a retryable race cannot enter the three-way Keep mine flow");
+  assert.equal(reloads, 0);
+  assert.ok(events.some((event) => event.name === "area_map_save" && event.phase === "failed" && event.failureKind === "head-race" && event.saveState === "blocked"));
+
+  await controller.retry();
+  await controller.flush();
+  assert.equal(controller.snapshot().save.state, "saved");
+  assert.equal(attempts, 2);
+  controller.destroy();
+});
+
 test("failed and later commands recover from world-keyed private draft storage", async () => {
   let stored = null;
   const draftStore = {
@@ -317,6 +353,171 @@ test("failed and later commands recover from world-keyed private draft storage",
   second.destroy();
 });
 
+test("draft stored, found, restored, and cleared events retain safe save correlation", async () => {
+  let stored = null;
+  const draftStore = {
+    /** Returns the last private recovery record. */
+    async load(worldId) { return stored?.worldId === worldId ? structuredClone(stored) : null; },
+    /** Stores recovery without exposing its authored body to telemetry. */
+    async save(record) { stored = structuredClone(record); },
+    /** Clears recovery after an explicit discard. */
+    async remove() { stored = null; },
+    /** Closes the in-memory recovery store. */
+    close() {},
+  };
+  const firstEvents = [];
+  const first = createAreaMapWorldController({
+    world: fixtureWorld(), storage: memoryStorage(), draftStore,
+    /** Captures draft lifecycle telemetry from the first controller. */
+    onEvent: (event) => firstEvents.push(event),
+    /** Returns one correlated unavailable result. */
+    persistWorld: async () => ({ status: 503, error: "offline", operationId: "operation-draft-1" }),
+  });
+  const changed = first.world(); changed.areas[1].region.storedRect.y += 19;
+  first.commitWorld(changed, { changedAreas: ["neara/delivery"] }, "pointer");
+  await first.flush();
+  const gestureId = stored.pending[0].command.id;
+  const storedEvent = firstEvents.find((event) => event.name === "area_map_draft" && event.phase === "stored");
+  assert.deepEqual({ operationId: storedEvent.operationId, gestureId: storedEvent.gestureId }, { operationId: "operation-draft-1", gestureId });
+  assert.equal(firstEvents.filter((event) => event.name === "area_map_draft" && event.phase === "stored").length, 1, "one failed save writes one draft");
+  first.destroy();
+
+  const recoveredEvents = [];
+  const recovered = createAreaMapWorldController({
+    world: fixtureWorld(), storage: memoryStorage(), draftStore,
+    /** Captures draft lifecycle telemetry from the recovered controller. */
+    onEvent: (event) => recoveredEvents.push(event),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const found = recoveredEvents.find((event) => event.name === "area_map_draft" && event.phase === "found");
+  assert.deepEqual({ operationId: found.operationId, gestureId: found.gestureId }, { operationId: "operation-draft-1", gestureId });
+  assert.equal(recovered.restoreDraft(), true);
+  const restored = recoveredEvents.find((event) => event.name === "area_map_draft" && event.phase === "restored");
+  assert.deepEqual({ operationId: restored.operationId, gestureId: restored.gestureId }, { operationId: "operation-draft-1", gestureId });
+  recovered.discardDraft();
+  await recovered.flush();
+  const cleared = recoveredEvents.find((event) => event.name === "area_map_draft" && event.phase === "cleared");
+  assert.deepEqual({ operationId: cleared.operationId, gestureId: cleared.gestureId }, { operationId: "operation-draft-1", gestureId });
+  recovered.destroy();
+});
+
+test("a stale startup draft cannot reappear after newer work saves", async () => {
+  let finishLoad;
+  const calls = [];
+  const stale = {
+    schema: "area-map-draft.v1", worldId: "world", savedAt: "2026-08-01T00:00:00.000Z",
+    locatedArea: "neara/delivery", world: fixtureWorld(), pending: [], history: { undo: [], redo: [] },
+  };
+  const draftStore = {
+    /** Holds the startup read until a newer save has cleared recovery. */
+    load: () => new Promise((resolve) => { finishLoad = resolve; }),
+    /** Records any unexpected new recovery write. */
+    async save() { calls.push("save"); },
+    /** Records the durable clear after the authored command saves. */
+    async remove() { calls.push("remove"); },
+    /** Closes the in-memory recovery store. */
+    close() {},
+  };
+  const controller = createAreaMapWorldController({
+    world: fixtureWorld(), storage: memoryStorage(), draftStore,
+    /** Acknowledges the newer authored command. */
+    persistWorld: async () => ({ status: 200, hashes: { neara: "newer" }, worldRevision: "world-newer" }),
+  });
+  const changed = controller.world(); changed.areas[1].region.storedRect.x += 20;
+  controller.commitWorld(changed, { changedAreas: ["neara/delivery"] }, "pointer");
+  await controller.flush();
+  finishLoad(stale);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(calls, ["remove"]);
+  assert.equal(controller.snapshot().save.state, "saved");
+  assert.equal(controller.snapshot().draft, null, "the older startup read cannot resurrect cleared recovery");
+  controller.destroy();
+});
+
+test("draft save and clear stay ordered through immediate map teardown", async () => {
+  let finishDraftWrite;
+  const events = [];
+  const draftStore = {
+    /** Starts with no prior recovery. */
+    async load() { return null; },
+    /** Holds the failed-command draft write across retry and teardown. */
+    async save() {
+      events.push("save:start");
+      await new Promise((resolve) => { finishDraftWrite = resolve; });
+      events.push("save:end");
+    },
+    /** Records the later successful clear. */
+    async remove() { events.push("remove"); },
+    /** Records recovery-store teardown. */
+    close() { events.push("close"); },
+  };
+  let attempt = 0;
+  const controller = createAreaMapWorldController({
+    world: fixtureWorld(), storage: memoryStorage(), draftStore,
+    /** Fails the original request and accepts its explicit retry. */
+    persistWorld: async () => ++attempt === 1
+      ? { status: 503, error: "temporarily unavailable" }
+      : { status: 200, hashes: { neara: "recovered" }, worldRevision: "world-recovered" },
+  });
+  const changed = controller.world(); changed.areas[1].region.storedRect.y += 20;
+  controller.commitWorld(changed, { changedAreas: ["neara/delivery"] }, "pointer");
+  for (let attempt = 0; attempt < 20 && controller.snapshot().save.state !== "blocked"; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(controller.snapshot().save.state, "blocked");
+  assert.deepEqual(events, ["save:start"]);
+
+  await controller.retry();
+  controller.destroy();
+  finishDraftWrite();
+  await controller.flush();
+  assert.deepEqual(events, ["save:start", "save:end", "remove", "close"], "a late failed-save write cannot outlive its clear or database close");
+});
+
+test("flush stops at a failed save with a later command and preserves complete recovery", async () => {
+  let stored = null;
+  let removes = 0;
+  let writes = 0;
+  let attempts = 0;
+  const draftStore = {
+    /** Starts without recovery. */
+    async load() { return null; },
+    /** Captures every ordered recovery update. */
+    async save(record) { writes += 1; stored = structuredClone(record); },
+    /** Must not clear a failed save. */
+    async remove() { removes += 1; stored = null; },
+    /** Closes the in-memory recovery store. */
+    close() {},
+  };
+  const controller = createAreaMapWorldController({
+    world: fixtureWorld(), storage: memoryStorage(), draftStore,
+    /** Leaves the first command blocked so the later command must remain recovery-only. */
+    persistWorld: async () => { attempts += 1; return { status: 503, error: "offline", operationId: "operation-failed" }; },
+  });
+  const first = controller.world(); first.areas[1].region.storedRect.x += 11;
+  controller.commitWorld(first, { changedAreas: ["neara/delivery"] }, "pointer");
+  for (let index = 0; index < 20 && controller.snapshot().save.state !== "blocked"; index += 1) await new Promise((resolve) => setImmediate(resolve));
+  const later = controller.world(); later.areas[1].region.storedRect.y += 13;
+  controller.commitWorld(later, { changedAreas: ["neara/delivery"] }, "nudge");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const settled = await Promise.race([
+    controller.flush().then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 50)),
+  ]);
+  try {
+    assert.equal(settled, true, "teardown flush cannot wait for a Retry decision");
+    assert.equal(controller.snapshot().save.state, "blocked");
+    assert.equal(attempts, 1, "the later command is not persisted ahead of the failed command");
+    assert.equal(removes, 0);
+    assert.equal(writes, 2, "the failure and later command each update recovery once; flush does not rewrite it");
+    assert.equal(stored.pending.length, 2, "the recovery draft contains the failed and later command");
+  } finally {
+    controller.destroy();
+  }
+});
+
 test("reload cancels a stale save and preserves private world view state", async () => {
   let finishSave;
   const saving = new Promise((resolve) => { finishSave = resolve; });
@@ -349,6 +550,59 @@ test("reload cancels a stale save and preserves private world view state", async
   controller.destroy();
 });
 
+test("a live preview is dirty and a changed legacy revision cannot retain a stale loaded scene", async () => {
+  const initial = fixtureWorld();
+  const loaded = initial.areas.find((node) => node.key === "neara/delivery");
+  loaded.shard.hash = null;
+  loaded.shard.revision = "legacy:old";
+  const controller = createAreaMapWorldController({ world: initial, storage: memoryStorage() });
+  const baseline = controller.world();
+  controller.beginGesture("pointer");
+  controller.preview(structuredClone(baseline), { changedOwners: ["neara/delivery"] });
+  assert.equal(controller.snapshot().save.state, "dirty", "the UI cannot claim Saved while a gesture preview is open");
+  controller.endGesture("pointer");
+  assert.equal(controller.snapshot().save.state, "saved", "a no-op release restores truthful saved status");
+
+  const fresh = structuredClone(baseline);
+  fresh.worldRevision = "world-legacy-new";
+  const deferred = fresh.areas.find((node) => node.key === "neara/delivery");
+  deferred.shard = { ...deferred.shard, hash: null, revision: "legacy:new", state: "deferred" };
+  delete deferred.shard.scene;
+  await controller.reload(fresh);
+  assert.equal(controller.world().areas.find((node) => node.key === "neara/delivery").shard.state, "deferred");
+  assert.equal(controller.world().areas.find((node) => node.key === "neara/delivery").shard.scene, undefined, "null hashes do not preserve stale legacy bytes across revisions");
+  controller.destroy();
+});
+
+test("an earlier acknowledgement cannot claim Saved over a newer open gesture", async () => {
+  let releaseFirst;
+  const firstHeld = new Promise((resolve) => { releaseFirst = resolve; });
+  let firstStarted;
+  const started = new Promise((resolve) => { firstStarted = resolve; });
+  let saves = 0;
+  const controller = createAreaMapWorldController({
+    world: fixtureWorld(), storage: memoryStorage(),
+    /** Holds only the first command while a second pointer preview opens. */
+    persistWorld: async () => {
+      saves += 1;
+      if (saves === 1) { firstStarted(); await firstHeld; }
+      return { status: 200, hashes: {}, worldRevision: `world-save-${saves}` };
+    },
+  });
+  const first = controller.world(); first.areas[1].region.storedRect.x += 10;
+  controller.commitWorld(first, { changedAreas: ["neara/delivery"] }, "pointer");
+  await started;
+  const second = controller.world(); second.areas[1].region.storedRect.y += 12;
+  controller.beginGesture("pointer"); controller.preview(second, { changedAreas: ["neara/delivery"] });
+  releaseFirst();
+  await controller.flush();
+  assert.equal(controller.snapshot().save.state, "dirty", "the first acknowledgement leaves the live second gesture pending");
+  controller.endGesture("pointer");
+  await controller.flush();
+  assert.equal(controller.snapshot().save.state, "saved");
+  controller.destroy();
+});
+
 test("a failed deferred shard stays structural and retries against the current revision", async () => {
   const world = fixtureWorld();
   const deferred = world.areas.find((node) => node.key === "neara/delivery");
@@ -371,11 +625,12 @@ test("a failed deferred shard stays structural and retries against the current r
   assert.ok(controller.snapshot().composition.scene.elements.some((element) => element.id === regionId && !element.isDeleted && !element.locked));
   assert.equal((await controller.materialize(deferred.key)).state, "ready");
   assert.deepEqual(calls.map(({ worldRevision }) => worldRevision), ["world-1", "world-1"]);
-  assert.deepEqual(events.map(({ name, state }) => [name, state]), [
+  assert.deepEqual(events.map(({ name, shardState }) => [name, shardState]), [
     ["area_map_world_loaded", undefined],
     ["area_map_shard_loaded", "load-error"],
     ["area_map_shard_loaded", "ready"],
   ]);
+  assert.ok(events.filter((event) => event.name === "area_map_shard_loaded").every((event) => event.worldRevision === "world-1"));
   assert.ok(events.every((event) => !Object.hasOwn(event, "x") && !Object.hasOwn(event, "y")));
   const composition = controller.snapshot().composition;
   controller.refreshFacts({ only: true, areas: ["neara"] });

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createAreaMapWorldRoutes } from "./area-map-world-routes.mjs";
-import { symmetricOverlapClosure } from "./public/area-board.js";
+import { saveAreaMapGestureRequest, symmetricOverlapClosure } from "./public/area-board.js";
 import { createEmptyScene, createRegionElements, createShapeElement, createTextElement } from "./public/area-board-core.js";
 import { composeAreaMapWorld } from "./public/area-map-world-core.js";
 
@@ -19,14 +19,14 @@ function response() {
 }
 
 /** Creates one JSON request stream. */
-function jsonRequest(value) {
+function jsonRequest(value, method = "POST") {
   const request = Readable.from([JSON.stringify(value)]);
-  request.method = "POST";
+  request.method = method;
   return request;
 }
 
 /** Creates a source-backed map index for mutation-route tests. */
-function mutationFixture({ legacyOverlap = false } = {}) {
+function mutationFixture({ legacyOverlap = false, recordEvent = null } = {}) {
   const root = createEmptyScene();
   root.elements.push(...createRegionElements({ id: "child-region", ref: "root/child/child.md", title: "Child", x: 80, y: 90 }));
   root.elements.push(...createRegionElements({ id: "peer-region", ref: "root/peer/peer.md", title: "Peer", x: legacyOverlap ? 180 : 680, y: 90 }));
@@ -36,7 +36,7 @@ function mutationFixture({ legacyOverlap = false } = {}) {
   const hashes = new Map([["@root", "root-map-hash"], ["root", "parent-hash"], ["root/child", "child-hash"], ["root/peer", "peer-hash"]]);
   /** Lists the source fixture's Areas. */
   async function listAreas() { return ["root", "root/child", "root/peer"]; }
-  const index = createAreaMapWorldIndex({ root: "/vault", listAreas, repository: {
+  const index = createAreaMapWorldIndex({ root: "/vault", listAreas, recordEvent, repository: {
     /** Reads one canonical source fixture. */
     async read(area) { return { area, file: `${area}/${area.split("/").at(-1)}.excalidraw`, exists: true, ok: true, hash: hashes.get(area), scene: scenes.get(area) }; },
   } });
@@ -45,7 +45,7 @@ function mutationFixture({ legacyOverlap = false } = {}) {
 
 /** Builds one valid source gesture. */
 function gesture(world, mutations) {
-  return { schema: "area-map-gesture.v1", operationId: "gesture-1", worldId: world.worldId, treeRevision: world.treeRevision, reason: "test map gesture", mutations };
+  return { schema: "area-map-gesture.v1", operationId: "gesture-1", worldId: world.worldId, treeRevision: world.treeRevision, worldRevision: world.worldRevision, reason: "test map gesture", mutations };
 }
 
 test("returns the complete hierarchy from one world request", async () => {
@@ -78,10 +78,13 @@ test("loads and saves private view state by world identity", async () => {
   const worldResult = response();
   await routes.handle({ method: "GET" }, worldResult, new URL("http://local/api/areas/map-world?located=otto"));
   assert.deepEqual(JSON.parse(worldResult.body).view, view);
-  const saveResult = response();
-  await routes.handle(jsonRequest({ worldId: "world_123", view }), saveResult, new URL("http://local/api/areas/map-view"));
-  assert.equal(saveResult.status, 200);
-  assert.deepEqual(writes, [{ worldId: "world_123", value: view }]);
+  const putResult = response();
+  await routes.handle(jsonRequest({ worldId: "world_123", view }, "PUT"), putResult, new URL("http://local/api/areas/map-view"));
+  assert.equal(putResult.status, 200);
+  const postResult = response();
+  await routes.handle(jsonRequest({ worldId: "world_123", view }), postResult, new URL("http://local/api/areas/map-view"));
+  assert.equal(postResult.status, 200, "POST remains compatible with an older browser");
+  assert.deepEqual(writes, [{ worldId: "world_123", value: view }, { worldId: "world_123", value: view }]);
 });
 
 test("loads a deferred shard only against the matching world revision", async () => {
@@ -91,6 +94,67 @@ test("loads a deferred shard only against the matching world revision", async ()
   const stale = response();
   await routes.handle({ method: "GET" }, stale, new URL("http://local/api/areas/map-shard?area=otto&located=neara&worldRevision=stale"));
   assert.equal(stale.status, 409);
+});
+
+test("retries a classified head race with one correlated operation envelope", async () => {
+  const calls = [];
+  const events = [];
+  let attempt = 0;
+  /** Fails one safe pre-ref race, then acknowledges the same idempotent request. */
+  async function api(path, options) {
+    calls.push({ path, options });
+    attempt += 1;
+    if (attempt === 1) throw Object.assign(new Error("branch advanced"), { status: 409, payload: { code: "head-race", retryable: true } });
+    return { status: 200, operationId: "operation-retry", worldRevision: "revision-retry" };
+  }
+  const request = {
+    schema: "area-map-gesture.v1", operationId: "operation-retry", gestureId: "gesture-retry",
+    worldId: "world-retry", treeRevision: "tree-retry", worldRevision: "revision-before-retry", mutations: [{ owner: "root", put: [], remove: [] }],
+  };
+  const result = await saveAreaMapGestureRequest(api, request, {
+    /** Captures correlated retry and save phases. */
+    onEvent: (name, fields) => events.push({ name, ...fields }),
+    now: (() => { let value = 10; return () => value += 5; })(),
+  });
+
+  assert.equal(result.worldRevision, "revision-retry");
+  assert.equal(calls.length, 2);
+  assert.equal(JSON.parse(calls[0].options.body).worldRevision, "revision-before-retry");
+  assert.deepEqual(calls.map((call) => call.options.headers["x-tangent-operation-id"]), ["operation-retry", "operation-retry"]);
+  assert.equal(calls[0].options.body, calls[1].options.body, "a safe retry reuses exact content and idempotency identity");
+  assert.deepEqual(events.map(({ name, phase, retryAttempt, failureKind }) => ({ name, phase, retryAttempt, failureKind })), [
+    { name: "area_map_save_phase", phase: "request", retryAttempt: 0, failureKind: undefined },
+    { name: "area_map_retry", phase: "scheduled", retryAttempt: 1, failureKind: "head-race" },
+    { name: "area_map_save_phase", phase: "retry", retryAttempt: 1, failureKind: undefined },
+    { name: "area_map_save_phase", phase: "acknowledged", retryAttempt: 1, failureKind: undefined },
+  ]);
+});
+
+test("retries ambiguous acknowledgement loss with the exact idempotent request", async () => {
+  const calls = [];
+  const events = [];
+  /** Simulates a committed request whose first response was lost in transport. */
+  async function api(path, options) {
+    calls.push({ path, options });
+    if (calls.length === 1) throw Object.assign(new Error("response connection closed"), { kind: "transport", status: 0 });
+    return { status: 200, operationId: "operation-ack-loss", worldRevision: "revision-after", idempotent: true };
+  }
+  const request = {
+    schema: "area-map-gesture.v1", operationId: "operation-ack-loss", gestureId: "gesture-ack-loss",
+    worldId: "world-ack-loss", treeRevision: "tree-before", worldRevision: "revision-before",
+    mutations: [{ owner: "root", put: [], remove: [] }],
+  };
+
+  const result = await saveAreaMapGestureRequest(api, request, {
+    /** Captures correlated retry and save phases. */
+    onEvent: (name, fields) => events.push({ name, ...fields }),
+  });
+
+  assert.equal(result.idempotent, true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].options.body, calls[1].options.body);
+  assert.deepEqual(calls.map((call) => call.options.headers["x-tangent-operation-id"]), ["operation-ack-loss", "operation-ack-loss"]);
+  assert.ok(events.some((event) => event.name === "area_map_retry" && event.failureKind === "transport" && event.retryable === true));
 });
 
 test("applies source mutations to complete canonical shards through the transaction adapter", async () => {
@@ -107,13 +171,99 @@ test("applies source mutations to complete canonical shards through the transact
   const result = response();
   await routes.handle(jsonRequest(gesture(world, [{ owner: "root/child", baseHash: "child-hash", put: [added], remove: [] }])), result, new URL("http://local/api/areas/map-gestures"));
   assert.equal(result.status, 200);
-  assert.equal(JSON.parse(result.body).worldRevision, world.worldRevision, "the response acknowledges the revision for later deferred loads");
+  assert.equal(JSON.parse(result.body).worldRevision, saved[0].options.acknowledgement.worldRevision, "the response acknowledges the projected revision for later deferred loads");
+  assert.notEqual(saved[0].options.acknowledgement.worldRevision, world.worldRevision);
   assert.equal(saved.length, 1);
   assert.deepEqual(saved[0].writes[0].canvas.elements.map((element) => element.id), ["before", "added"]);
   assert.equal(saved[0].writes[0].area, "root/child");
   assert.equal(saved[0].writes[0].baseHash, "child-hash");
   assert.equal(saved[0].options.operationId, "gesture-1");
   assert.equal(saved[0].options.worldId, world.worldId);
+  assert.equal(world.areas.find((node) => node.key === "root/child").shard.revision, "child-hash", "every shard descriptor exposes its opaque retention revision");
+});
+
+test("uses the revision captured inside the save transaction instead of a later mixed world", async () => {
+  const events = [];
+  const { hashes, index, scenes } = mutationFixture({
+    /** Captures privacy-safe server gesture telemetry. */
+    recordEvent: (event) => events.push(event),
+  });
+  const world = await index.snapshot("root/child");
+  let transactionAcknowledgement = null;
+  /** Captures the durable descriptor, then simulates a later non-overlapping shard change. */
+  async function saveGesture(writes, options) {
+    scenes.set(writes[0].area, structuredClone(writes[0].canvas));
+    hashes.set(writes[0].area, "saved-child");
+    transactionAcknowledgement = options.acknowledgement;
+    hashes.set("root/peer", "later-peer");
+    return { committed: true, operationId: options.operationId, hashes: { "root/child": "saved-child" }, acknowledgement: transactionAcknowledgement };
+  }
+  const added = createTextElement({ id: "atomic-ack", text: "Atomic", x: 160, y: 190, width: 100, height: 40 });
+  const result = response();
+  await createAreaMapWorldRoutes({ index, saveGesture }).handle(
+    jsonRequest({ ...gesture(world, [{ owner: "root/child", baseHash: "child-hash", put: [added], remove: [] }]), gestureId: "gesture-atomic" }),
+    result,
+    new URL("http://local/api/areas/map-gestures"),
+  );
+
+  const body = JSON.parse(result.body);
+  assert.equal(body.worldRevision, transactionAcknowledgement.worldRevision);
+  assert.notEqual(body.worldRevision, (await index.snapshot("root/child")).worldRevision, "a later shard change has a distinct world revision");
+  assert.ok(events.some((event) => event.name === "area_map_gesture" && event.phase === "acknowledged" && event.gestureId === "gesture-atomic" && event.status === 200));
+});
+
+test("rejects a non-mutated shard interleaving before the save transaction commits", async () => {
+  const { hashes, index } = mutationFixture();
+  const world = await index.snapshot("root/child");
+  let committed = false;
+  /** Advances a different shard after gesture validation, then enters the transaction preflight. */
+  async function saveGesture(_writes, options) {
+    hashes.set("root/peer", "intervening-peer");
+    const conflict = await options.preflight();
+    if (conflict) return conflict;
+    committed = true;
+    return { committed: true, operationId: options.operationId, hashes: { "root/child": "saved-child" } };
+  }
+  const added = createTextElement({ id: "interleaved", text: "Interleaved", x: 170, y: 210, width: 100, height: 40 });
+  const result = response();
+  await createAreaMapWorldRoutes({ index, saveGesture }).handle(
+    jsonRequest({ ...gesture(world, [{ owner: "root/child", baseHash: "child-hash", put: [added], remove: [] }]), gestureId: "gesture-interleaved" }),
+    result,
+    new URL("http://local/api/areas/map-gestures"),
+  );
+
+  const body = JSON.parse(result.body);
+  assert.equal(result.status, 409);
+  assert.deepEqual({ code: body.code, retryable: body.retryable, conflict: body.conflict }, { code: "world-race", retryable: false, conflict: true });
+  assert.notEqual(body.worldRevision, world.worldRevision, "the conflict identifies the current world instead of acknowledging a mixed client state");
+  assert.equal(committed, false, "the stale gesture does not commit after the different shard interleaves");
+});
+
+test("rejects a client world revision that was stale before request validation", async () => {
+  const { hashes, index } = mutationFixture();
+  const clientWorld = await index.snapshot("root/child");
+  hashes.set("root/peer", "already-newer-peer");
+  let committed = false;
+  /** Runs the same transaction preflight used by the production repository. */
+  async function saveGesture(_writes, options) {
+    const conflict = await options.preflight();
+    if (conflict) return conflict;
+    committed = true;
+    return { committed: true, operationId: options.operationId, hashes: { "root/child": "saved-child" } };
+  }
+  const added = createTextElement({ id: "stale-client", text: "Stale client", x: 180, y: 220, width: 100, height: 40 });
+  const result = response();
+  await createAreaMapWorldRoutes({ index, saveGesture }).handle(
+    jsonRequest({ ...gesture(clientWorld, [{ owner: "root/child", baseHash: "child-hash", put: [added], remove: [] }]), gestureId: "gesture-stale-client" }),
+    result,
+    new URL("http://local/api/areas/map-gestures"),
+  );
+
+  const body = JSON.parse(result.body);
+  assert.equal(result.status, 409);
+  assert.deepEqual({ code: body.code, retryable: body.retryable, conflict: body.conflict }, { code: "world-race", retryable: false, conflict: true });
+  assert.notEqual(body.worldRevision, clientWorld.worldRevision);
+  assert.equal(committed, false, "a stale client cannot receive a combined acknowledgement for its different-shard world");
 });
 
 test("rejects a gesture from a stale Area tree revision", async () => {

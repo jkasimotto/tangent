@@ -73,6 +73,13 @@ function permitsOverlap(regions, left, right) {
     && regions.get(right)?.layout?.overlapWith?.includes(left);
 }
 
+/** Reports complete containment with the Area layout clearance. */
+function containsWithGap(parent, child, gap = 60) {
+  return child.x >= parent.x + gap && child.y >= parent.y + gap
+    && child.x + child.width + gap <= parent.x + parent.width
+    && child.y + child.height + gap <= parent.y + parent.height;
+}
+
 test("seeded containment properties hold for mixed trees and large pointer jumps", () => {
   for (let seed = 1; seed <= 120; seed += 1) {
     try {
@@ -124,6 +131,42 @@ test("seeded containment properties hold for mixed trees and large pointer jumps
       throw error;
     }
   }
+});
+
+test("outlying descendant ink expands every ancestor without becoming a sibling wall", () => {
+  const areas = ["root", "root/parent", "root/parent/leaf", "root/parent/sibling", "root/other"];
+  const regions = provisionalRegions(areas, new Map([
+    ["@root>root", { x: 0, y: 0, width: 300, height: 220 }],
+    ["root>root/parent", { x: 60, y: 60, width: 300, height: 220 }],
+    ["root/parent>root/parent/leaf", { x: 60, y: 60, width: 300, height: 220 }],
+    ["root/parent>root/parent/sibling", { x: 500, y: 60, width: 300, height: 220 }],
+    ["root>root/other", { x: 1_000, y: 60, width: 300, height: 220 }],
+  ]));
+  const world = { locatedArea: "root/parent/leaf", areas: areas.map((key) => ({
+    key,
+    parent: regions.get(key).owner,
+    children: areas.filter((candidate) => regions.get(candidate).owner === key),
+    region: regions.get(key),
+    shard: {
+      state: "ready",
+      scene: {
+        elements: key === "root/parent/leaf"
+          ? [{ id: "far-ink", type: "rectangle", x: -800, y: -600, width: 1_720, height: 1_320, groupIds: [], frameId: null }]
+          : [],
+        files: {},
+      },
+    },
+  })) };
+
+  const composed = composeAreaMapWorld(world);
+  const leaf = composed.regionRects.get("root/parent/leaf");
+  const parent = composed.regionRects.get("root/parent");
+  const root = composed.regionRects.get("root");
+  assert.ok(containsWithGap(parent, leaf), `the direct parent contains the complete drawn leaf: ${JSON.stringify({ parent, leaf })}`);
+  assert.ok(containsWithGap(root, parent), `the root recursively contains the expanded parent: ${JSON.stringify({ root, parent })}`);
+  assert.ok(containsWithGap(root, leaf), `every ancestor contains the complete drawn leaf: ${JSON.stringify({ root, leaf })}`);
+  assert.deepEqual(composed.geometry.get("root/parent/sibling").layoutOffset, { x: 0, y: 0 }, "free ink does not move the leaf's sibling");
+  assert.deepEqual(composed.geometry.get("root/other").layoutOffset, { x: 0, y: 0 }, "propagated free ink does not move the parent's sibling");
 });
 
 test("compose and split is lossless for unchanged authored elements", () => {

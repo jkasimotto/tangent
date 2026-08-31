@@ -10,6 +10,11 @@ const EXCALIDRAW_UI_OPTIONS = Object.freeze({
   tools: { image: false },
   canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false },
 });
+const PROJECTION_KINDS = new Set([
+  "additive-pointer-selection", "additive-selection-repair", "area-pointer-preview", "area-selection", "area-transform-rejected",
+  "camera-selection", "claim", "claimed-nudge", "no-change", "placed-block-selection", "pointer-down-selection",
+  "pointer-release-selection", "projection", "selection-repair", "stale-text-repair",
+]);
 
 /** Keeps Excalidraw mounted while the outer world controller repaints its overlays. */
 const StableWorldCanvas = React.memo(function StableWorldCanvas({ initialData, handlers }) {
@@ -124,6 +129,7 @@ function solverBaseline(world) {
 
 /** Renders the controller-owned world in one Excalidraw instance. */
 export function AreaMapWorld({ host, bridge, options }) {
+  const ownsControllerRef = useRef(!options.controller);
   const controllerRef = useRef(null);
   if (!controllerRef.current) controllerRef.current = options.controller ?? createAreaMapWorldController({
     world: options.world,
@@ -204,6 +210,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Applies one exact controller projection and fences its matching callback. */
   function projectCanvas(update, reason = "unknown") {
     if (!api) return null;
+    const startedAt = performance.now();
     const elements = update.elements ?? api.getSceneElements?.() ?? state.scene.elements;
     const selection = Object.hasOwn(update.appState ?? {}, "selectedElementIds")
       ? selectedIds({ selectedElementIds: update.appState.selectedElementIds })
@@ -212,8 +219,11 @@ export function AreaMapWorld({ host, bridge, options }) {
       id: ++projectionTokenRef.current,
       fingerprint: boardCore.authoredFingerprint(elements),
       selection: selectionKey(selection),
-      reason,
+      projectionKind: PROJECTION_KINDS.has(reason) ? reason : "unknown",
       includesElements: Boolean(update.elements),
+      affectedCount: update.elements?.length ?? 0,
+      elementCount: elements.length,
+      startedAt,
     };
     expectedProjectionsRef.current.push(token);
     if (expectedProjectionsRef.current.length > 32) expectedProjectionsRef.current.splice(0, expectedProjectionsRef.current.length - 32);
@@ -222,6 +232,10 @@ export function AreaMapWorld({ host, bridge, options }) {
       fingerprintRef.current = token.fingerprint;
       projectionFenceRef.current = token.id;
     }
+    controller.recordEvent("area_map_projection", {
+      projectionId: token.id, phase: "request", projectionKind: token.projectionKind,
+      affectedCount: token.affectedCount, elementCount: token.elementCount,
+    });
     api.updateScene(update);
     if (token.includesElements) setTimeout(() => {
       if (projectionFenceRef.current === token.id) projectionFenceRef.current = 0;
@@ -238,6 +252,10 @@ export function AreaMapWorld({ host, bridge, options }) {
     const [token] = expectedProjectionsRef.current.splice(index, 1);
     fingerprintRef.current = fingerprint;
     if (token.includesElements) appliedProjectionRef.current = fingerprint;
+    controller.recordEvent("area_map_projection", {
+      projectionId: token.id, phase: "consumed", projectionKind: token.projectionKind,
+      affectedCount: token.affectedCount, elementCount: elements.length, duration: performance.now() - token.startedAt,
+    });
     return true;
   }
 
@@ -589,11 +607,12 @@ export function AreaMapWorld({ host, bridge, options }) {
     const pointerCommand = areaMapPointerCommand(pointerDownState);
     pointerStateRef.current = { ...pointerDownState, origin, command: pointerCommand }; pointerCurrentRef.current = origin;
     const liveSelection = controller.snapshot().selection;
-    if (liveSelection.size) stableSelectionRef.current = new Set(liveSelection);
+    stableSelectionRef.current = new Set(liveSelection);
     const zoom = api?.getAppState?.().zoom?.value ?? 1;
-    const additive = Boolean(pointerDownState.shiftKey || pointerDownState.hit?.wasAddedToSelection || pointerDownState.withCmdOrCtrl);
+    const additive = Boolean(pointerDownState.shiftKey || pointerDownState.withCmdOrCtrl);
     const baselineElements = new Map(pointerCompositionRef.current.scene.elements.map((element) => [element.id, element]));
-    const rawHitElement = additive ? [...pointerCompositionRef.current.scene.elements].reverse().find((element) => element.customData?.tangent?.role !== "area-region" && !ephemeral(element) && pointerHits(element, origin, zoom)) : null;
+    const spatialAuthoredHit = [...pointerCompositionRef.current.scene.elements].reverse().find((element) => element.customData?.tangent?.role !== "area-region" && !ephemeral(element) && pointerHits(element, origin, zoom));
+    const rawHitElement = additive ? spatialAuthoredHit : null;
     const boundContainer = rawHitElement?.containerId ? baselineElements.get(rawHitElement.containerId) : null;
     const hitElement = boundContainer && boardCore.tangentOf(boundContainer) ? boundContainer : rawHitElement;
     if (hitElement) {
@@ -602,9 +621,18 @@ export function AreaMapWorld({ host, bridge, options }) {
       controller.setSelection(nextSelection); programmaticSelectionRef.current = nextSelection;
       projectCanvas({ appState: { selectedElementIds: Object.fromEntries([...nextSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" }, "additive-pointer-selection");
     }
+    const deepest = areaAtPoint(pointerCompositionRef.current, origin, null, state.scopedAreas);
+    const hitRegionElement = !additive && !spatialAuthoredHit && deepest
+      ? pointerCompositionRef.current.scene.elements.find((element) => element.customData?.tangent?.role === "area-region" && element.customData.tangent.area === deepest)
+      : null;
+    if (hitRegionElement && !stableSelectionRef.current.has(hitRegionElement.id)) {
+      const nextSelection = new Set([hitRegionElement.id]);
+      stableSelectionRef.current = nextSelection; additiveSelectionRef.current = null;
+      controller.setSelection(nextSelection); programmaticSelectionRef.current = nextSelection;
+      projectCanvas({ appState: { selectedElementIds: { [hitRegionElement.id]: true } }, captureUpdate: "NEVER" }, "pointer-down-selection");
+    }
     const selectedElements = pointerCompositionRef.current.scene.elements.filter((element) => stableSelectionRef.current.has(element.id));
     const hitBlock = selectedElements.some((element) => element.customData?.tangent?.role !== "area-region" && pointerHits(element, origin, zoom));
-    const deepest = areaAtPoint(pointerCompositionRef.current, origin, null, state.scopedAreas);
     const selectedRegion = selectedElements.find((element) => element.customData?.tangent?.role === "area-region");
     const hitRegion = Boolean(selectedRegion) && (pointerCommand.kind === "resize"
       || selectedRegion.customData.tangent.area === deepest && pointerHits(selectedRegion, origin, zoom));
@@ -616,7 +644,11 @@ export function AreaMapWorld({ host, bridge, options }) {
       announce("Area outlines cannot rotate");
       projectCanvas({ elements: controller.snapshot().scene.elements, captureUpdate: "NEVER" }, "area-transform-rejected");
     }
-    controller.recordEvent("area_map_pointer_down", { selectedCount: pointerSelectedRef.current.size, selectedRegion: selectedRegion?.customData?.tangent?.area ?? null, deepestArea: deepest, handle: pointerCommand.handle, command: pointerCommand.kind });
+    controller.recordEvent("area_map_pointer_down", {
+      gestureKind: pointerCommand.kind === "resize" ? "region-resize" : pointerCommand.kind === "move" ? "region-move" : "selection",
+      selectedCount: pointerSelectedRef.current.size,
+      depth: deepest ? deepest.split("/").length : 0,
+    });
   }
 
   /** Solves one region preview from the pointer-down world, independent of canvas hit mode. */
@@ -633,8 +665,10 @@ export function AreaMapWorld({ host, bridge, options }) {
       selectedAreas: [...selected], handle: pointerHandleRef.current,
       desiredWorldDelta: { x: pointer.x - pointerStateRef.current.origin.x, y: pointer.y - pointerStateRef.current.origin.y },
     });
-    controller.recordEvent("area_map_gesture_solved", { gestureKind: pointerHandleRef.current ? "region-resize" : "region-move", depth: Math.max(...[...selected].map((value) => value.split("/").length)), previewCount: selected.size, maximumTime: performance.now() - solveStarted, wallArea: preview.wall ?? null });
-    if (!preview.valid) controller.recordEvent("area_map_invariant_failed", { gestureId: "pointer", invariantName: "finite-containment", affectedAreas: [...selected].sort() });
+    const depth = Math.max(...[...selected].map((value) => value.split("/").length));
+    const gestureKind = pointerHandleRef.current ? "region-resize" : "region-move";
+    controller.recordEvent("area_map_gesture_solved", { gestureKind, depth, previewCount: selected.size, maximumTime: performance.now() - solveStarted });
+    if (!preview.valid) controller.recordEvent("area_map_invariant_failed", { gestureKind, invariantName: "finite-containment", affectedCount: selected.size, depth });
     const changedAreas = new Set([...selected, ...(preview.changedAreas ?? [])]);
     const nextWorld = controller.world();
     for (const area of changedAreas) {
@@ -755,8 +789,10 @@ export function AreaMapWorld({ host, bridge, options }) {
       } : { x: first.x - old.x, y: first.y - old.y });
       const solveStarted = performance.now();
       const preview = worldCore.solveAreaMapGesture(getSolverBaseline(), { selectedAreas: [...selected], handle: handle || null, desiredWorldDelta });
-      controller.recordEvent("area_map_gesture_solved", { gestureKind: handle ? "region-resize" : "region-move", depth: Math.max(...[...selected].map((value) => value.split("/").length)), previewCount: selected.size, maximumTime: performance.now() - solveStarted, wallArea: preview.wall ?? null });
-      if (!preview.valid) controller.recordEvent("area_map_invariant_failed", { gestureId: "pointer", invariantName: "finite-containment", affectedAreas: [...selected].sort() });
+      const depth = Math.max(...[...selected].map((value) => value.split("/").length));
+      const gestureKind = handle ? "region-resize" : "region-move";
+      controller.recordEvent("area_map_gesture_solved", { gestureKind, depth, previewCount: selected.size, maximumTime: performance.now() - solveStarted });
+      if (!preview.valid) controller.recordEvent("area_map_invariant_failed", { gestureKind, invariantName: "finite-containment", affectedCount: selected.size, depth });
       for (const changedArea of new Set([...selected, ...(preview.changedAreas ?? [])])) {
         const node = nextWorld.areas.find((entry) => entry.key === changedArea);
         const solved = preview.regions.get(changedArea);
@@ -924,8 +960,9 @@ export function AreaMapWorld({ host, bridge, options }) {
         owner, kind: "block", rect: group, remainingBlockHull,
         desiredWorldDelta: { x: first.x - firstOriginal.x - motion.x, y: first.y - firstOriginal.y - motion.y },
       });
-      controller.recordEvent("area_map_gesture_solved", { gestureKind: "block-move", depth: owner.split("/").length, previewCount: blocks.length, maximumTime: performance.now() - solveStarted, wallArea: solved.wall ?? null });
-      if (!solved.valid) controller.recordEvent("area_map_invariant_failed", { gestureId: "pointer", invariantName: "owned-block-containment", affectedAreas: [owner] });
+      const depth = owner.split("/").length;
+      controller.recordEvent("area_map_gesture_solved", { gestureKind: "block-move", depth, previewCount: blocks.length, maximumTime: performance.now() - solveStarted });
+      if (!solved.valid) controller.recordEvent("area_map_invariant_failed", { gestureKind: "block-move", invariantName: "owned-block-containment", affectedCount: 1, depth });
       for (const element of blocks) {
         const original = baselineElements.get(element.id);
         const corrected = { x: original.x + motion.x + solved.appliedDelta.x, y: original.y + motion.y + solved.appliedDelta.y };
@@ -1166,7 +1203,14 @@ export function AreaMapWorld({ host, bridge, options }) {
     bridge.appState = () => api?.getAppState?.() ?? null;
     bridge.fitArea = (area, settings) => scrollToArea(area, settings);
     bridge.selectArea = (area) => selectArea(area);
-    bridge.flush = async () => { await waitForPointerSettle(); return controller.flush(); };
+    bridge.flush = async () => {
+      if (pointerBaselineRef.current && pointerSettlingRef.current) {
+        pointerSettleTokenRef.current += 1;
+        settlePointerCommand();
+      }
+      await waitForPointerSettle();
+      return controller.flush();
+    };
     bridge.refreshFacts = (documentsOrFocus, maybeFocus) => controller.refreshFacts(maybeFocus ?? (Array.isArray(documentsOrFocus) ? controller.snapshot().focus : documentsOrFocus));
     bridge.setFocus = (focus) => controller.setFocus(focus);
     bridge.reload = () => controller.reload();
@@ -1182,9 +1226,13 @@ export function AreaMapWorld({ host, bridge, options }) {
 
   useEffect(() => () => {
     nonPointerSettleRef.current += 1; finishNonPointer();
-    resolvePointerSettleWaiters();
+    pointerSettleTokenRef.current += 1;
+    if (pointerBaselineRef.current) settlePointerCommand();
+    else resolvePointerSettleWaiters();
     if (pasteTimerRef.current !== null) clearTimeout(pasteTimerRef.current);
-    controller.destroy();
+    if (ownsControllerRef.current) {
+      void Promise.resolve(controller.flush()).catch(() => null).finally(() => controller.destroy());
+    }
   }, [controller]);
 
   const visibleNodes = state.world.areas.filter((node) => state.scopedAreas.has(node.key) && ![...state.folded].some((root) => node.key.startsWith(`${root}/`)));
@@ -1289,7 +1337,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       return;
     }
     if (textEditRef.current) cancelDeferredCanvasUpdate();
-    else if (initializingRef.current) return;
+    else if (initializingRef.current && !userCommand) return;
     if (pointerSettlingRef.current && !textEditRef.current) return;
     let sourceElements = elements;
     if (textEditRef.current) {
@@ -1363,7 +1411,7 @@ export function AreaMapWorld({ host, bridge, options }) {
         return <button type="button" key={node.key} data-area-map-label={node.key} className={findCurrent ? "find-match-current" : ""} style={{ left: `${(box.x + state.camera.scrollX) * state.camera.zoom + 12}px`, top: `${(box.y + state.camera.scrollY) * state.camera.zoom + 10}px` }} onClick={() => selectArea(node.key)} onDoubleClick={() => scrollToArea(node.key)} aria-label={accessibleAreaName(node)}><strong>{name}</strong>{state.folded.has(node.key) && <span>folded · Space</span>}{["loading", "deferred", "unreadable", "load-error"].includes(node.shard.state) && <span>{node.shard.state === "unreadable" ? "map file unreadable" : node.shard.state === "load-error" ? "load failed · click to retry" : node.shard.state}</span>}{summary && <span>{summary}</span>}</button>;
       })}
     </div>
-    <div className={`tangent-map-save ${state.save.state}`}>{state.save.state === "saving" ? "Saving…" : state.save.state === "dirty" ? "Saved ·" : state.save.state === "conflict" ? <>Not saved <button type="button" onClick={() => controller.reload().catch((error) => announce(String(error?.message ?? error)))}>Reload</button><button type="button" onClick={() => controller.keepMine()}>Keep mine</button></> : state.save.state === "blocked" ? <>Not saved <button type="button" onClick={() => controller.retry()}>Retry</button></> : "Saved"}</div>
+    <div className={`tangent-map-save ${state.save.state}`}>{state.save.state === "saving" ? "Saving…" : state.save.state === "dirty" ? "Pending save…" : state.save.state === "conflict" ? <>Not saved <button type="button" onClick={() => controller.reload().catch((error) => announce(String(error?.message ?? error)))}>Reload</button><button type="button" onClick={() => controller.keepMine()}>Keep mine</button></> : state.save.state === "blocked" ? <>Not saved <button type="button" onClick={() => controller.retry()}>Retry</button></> : state.draft && !state.draft.restored ? "Saved · Recovery available" : "Saved"}</div>
     {notice && <div className="tangent-map-location" aria-hidden="true">{notice}</div>}
     {announcement.text && <div key={announcement.id} className="tangent-map-live" role="status" aria-live="polite" aria-atomic="true">{announcement.text}</div>}
     {findOpen && <section className="tangent-map-find" role="search" aria-label="Find on the map">

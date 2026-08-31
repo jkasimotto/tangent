@@ -6,7 +6,7 @@ import { clip, escapeHtml } from "./text-format.js";
 
 /** Creates the Area directory from owned shell, Work, Document, and Program ports. */
 export function createAreaDirectoryView({ shell, documents, work, programs }) {
-  const { state, api, post, paint, refresh, showToast, screen } = shell;
+  const { state, api, post, actionTelemetry, paint, refresh, showToast, screen } = shell;
   const { openDocument, openDocumentPeek = openDocument } = documents;
   const {
     selectGoal, allGoals, goalTrees, goalTreeState, goalTreeIsActive, goalByFile, goalNeedsYou, goalWorkFinished,
@@ -193,6 +193,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
         area, ...authority, documents: state.vault.documents ?? [],
         /** Returns current vault facts without remounting the map. */
         getDocuments: () => state.vault?.documents ?? [], api,
+        onEvent: actionTelemetry?.recordAreaMap,
         focus: { areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly },
         /** Routes one semantic map action through the existing shell surface. */
         onEntityVerb(action) {

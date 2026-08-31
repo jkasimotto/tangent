@@ -24,7 +24,6 @@ const productCommands: Record<string, ProductCommand> = {
   goal: { module: "@tangent/agent-shell/cli", exportName: "runGoalCli", installHint: "goal" },
   job: { module: "@tangent/agent-shell/cli", exportName: "runJobCli", installHint: "job" },
   harness: { module: "@tangent/agent-shell/cli", exportName: "runHarnessCli", installHint: "harness" },
-  handover: { module: "@tangent/agent-shell/cli", exportName: "runHandoverCli", installHint: "handover" },
   send: { module: "@tangent/agent-shell/cli", exportName: "runSendCli", installHint: "send" },
   process: { module: "@tangent/agent-shell/cli", exportName: "runProcessCli", installHint: "process" },
   document: { module: "@tangent/agent-shell/cli", exportName: "runDocumentCli", installHint: "document" },
@@ -64,8 +63,7 @@ const tangentCommandSpec: CliCommandSpec = {
     { name: "shell", description: "Rebuild and restart the Agent Shell server", args: "<rebuild>" },
     { name: "goal", description: "Create, list, start, append to, and close Goals", args: "<create|list|show|start|append|done|wont-do|park|reopen>" },
     { name: "harness", description: "List harnesses and resolved Area launch defaults", args: "<list>" },
-    { name: "send", description: "Send a note to your brain (--done, --blocked, --question), a live session, or an Area brain", args: "<brain|session|area> <note...>" },
-    { name: "handover", description: "Replaced by tangent send brain; kept as an alias", args: "<facts...>", hidden: true },
+    { name: "send", description: "Send a plain note to a live session or an Area", args: "<session|area> <note...>" },
     { name: "document", description: "List and resolve Julian's comments inside a vault Document", args: "<comments|resolve>" },
     { name: "study", description: "Start the study partner: an interactive agent session beside nvim", args: "<contract>" },
     { name: "vault", description: "Commit vault edits with provenance", args: "<commit>" },
@@ -212,7 +210,7 @@ function help(): void {
   const lines = ["tangent", "", tangentCommandSpec.description ?? "", ""];
   for (const group of HELP_GROUPS) {
     lines.push(`${group.title}:`);
-    if (group.title === "Workers") lines.push('  A worker has one command. Send the brain a note, or finish with --done, --blocked, or --question.');
+    if (group.title === "Workers") lines.push("  A worker has one command. Send a plain note to the exact Area path in the prompt.");
     lines.push(...helpRows(group.commands), "");
   }
   lines.push("Run tangent <command> --help for the exact flags.");
@@ -222,7 +220,7 @@ Examples:
   tangent goal list otto/dnd
   tangent goal create --area otto/dnd --title "Connect chosen ramp faces" --start --path ~/Projects/dnd --instruction "Connect the chosen faces at the dragged width."
   tangent goal done connect-chosen-ramp-faces --note "The ramp test passes."
-  tangent send brain "Done: the faces connect. Proved by the ramp test." --done
+  tangent send otto/dnd "The faces connect. The ramp test passes."
   tangent area show otto/dnd
   tangent vault commit otto/dnd/dnd.md -m "update: otto/dnd rewrite Current"
   tangent process list

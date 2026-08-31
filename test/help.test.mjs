@@ -47,8 +47,9 @@ test("tangent brain --help and tangent goal --help match the commands that exist
   const create = await tangent("goal", "create", "--help");
   for (const flag of ["--start", "--path", "--launch", "--verify", "--instruction", "--instruction-file", "--done-when"]) assert.match(create, new RegExp(flag), `goal create --help names ${flag}`);
   assert.match(create, /^tangent goal create$/m);
-  const alias = await tangent("handover", "--help");
-  assert.match(alias, /Replaced by tangent send brain/);
+  const alias = await execFileAsync(process.execPath, [cli, "handover", "--help"])
+    .then(() => "", (failure) => String(failure.stderr));
+  assert.match(alias, /Unknown command/);
 });
 
 test("tangent process start|stop|restart|close still reach tangent service, with a hint", async () => {

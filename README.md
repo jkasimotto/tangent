@@ -38,7 +38,7 @@ npm --prefix packages/agent-shell/app install
 npm --prefix packages/agent-shell/app run app
 ```
 
-Open a Goal's Start agent control and type the steps, for example design, review, implement, each with its own harness, model, and effort. Every step is an open tmux conversation; the step agent finishes with `tangent send brain --done "<note>"` and the brain starts the next step.
+Open a Goal's Start agent control and enter the steps, such as design, review, and implementation. Each step has a harness, model, and effort. Each step runs in a tmux conversation. The worker sends one plain note to the Area path in its prompt. Tangent stores the note before the brain starts the next step.
 
 ## Create your own eval
 

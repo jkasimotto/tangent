@@ -43,16 +43,17 @@ test("a worker submission links its exact queue result to one pending Area notic
   assert.equal(workerHandoverReceipt(record, step, input.workerSession, input.idempotencyKey)?.notice.id, "n7");
 });
 
-test("a mismatched controller cannot create routing evidence", () => {
+test("the recorded organizer Area owns a cross-Area handover receipt", () => {
   const { record, step } = fixture();
-  record.controllerArea = "neara";
-  assert.throws(() => appendWorkerHandoverReceipt(record, step, {
+  record.organizerArea = "neara";
+  const result = appendWorkerHandoverReceipt(record, step, {
     workerSession: "portland-rules-worker",
     idempotencyKey: "report-1",
     reportType: "implementation-result",
     queueRevisionBefore: 3,
     noticeText: "Report accepted.",
-  }), /destination-mismatch/);
+  });
+  assert.equal(result.receipt.destinationArea, "neara");
 });
 
 test("receipt normalization preserves the notice link and rejects foreign records", () => {

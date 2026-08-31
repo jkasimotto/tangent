@@ -19,7 +19,7 @@ export function appendWorkerHandoverReceipt(record, step, input) {
   const existing = (step.handoverReceipts ?? []).find((receipt) => receipt.id === id);
   if (existing) return { receipt: existing, duplicate: true };
   const destinationArea = String(record.organizerArea ?? record.controllerArea ?? record.area ?? "");
-  if (!destinationArea || destinationArea !== record.area) throw new Error("worker-handover-destination-mismatch");
+  if (!destinationArea) throw new Error("worker-handover-destination-mismatch");
   const receipt = {
     schema: WORKER_HANDOVER_RECEIPT_SCHEMA,
     id,

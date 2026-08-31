@@ -36,17 +36,11 @@ test("an Area note uses ordinary delivery and reports live or saved", async (con
   assert.deepEqual(lines, ["Saved for otto/dnd. It reads this when it runs.", "Sent to otto/dnd."]);
 });
 
-test("old done and blocked flags become ordinary words for one release", async (context) => {
-  const { requests } = capture(context, () => ({ status: "queued", to: "otto/dnd", target: "area", live: false }));
-  await runSendCli(["otto/dnd", "--done", "All checks pass.", "--session", "worker-a"]);
-  await runSendCli(["otto/dnd", "--blocked", "Port is taken.", "--session", "worker-a"]);
-  assert.deepEqual(requests.map((item) => item.body.text), ["done: All checks pass.", "blocked: Port is taken."]);
-});
-
-test("magic brain and removed worker flags fail before HTTP", async (context) => {
+test("magic brain and all removed worker flags fail before HTTP", async (context) => {
   const { requests } = capture(context, () => ({}));
   await assert.rejects(() => runSendCli(["brain", "Done.", "--session", "worker-a"]), /brain is not a send target/);
-  await assert.rejects(() => runSendCli(["otto/dnd", "--question", "Which?", "--session", "worker-a"]), /worker send flags are gone/);
-  await assert.rejects(() => runSendCli(["otto/dnd", "Done.", "--present", "x.md", "--session", "worker-a"]), /worker send flags are gone/);
+  for (const flag of ["--done", "--blocked", "--question", "--present"]) {
+    await assert.rejects(() => runSendCli(["otto/dnd", flag, "Done.", "--session", "worker-a"]), /worker send flags are gone/);
+  }
   assert.equal(requests.length, 0);
 });

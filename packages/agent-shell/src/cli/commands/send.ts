@@ -8,9 +8,8 @@ import { sendCommandSpec } from "../spec.js";
  * Handles one ordinary note to a live session or durable Area inbox.
  */
 export async function runSendCli(argv = process.argv.slice(2)): Promise<void> {
-  const legacy = argv.find((value) => ["--done", "--blocked"].includes(value));
-  if (argv.some((value) => ["--question", "--present"].includes(value))) throw new Error('worker send flags are gone. Use: tangent send <brain-area> "<plain note>"');
-  const args = parseArgs(argv.filter((value) => value !== legacy));
+  if (argv.some((value) => ["--done", "--blocked", "--question", "--present"].includes(value))) throw new Error('worker send flags are gone. Use: tangent send <brain-area> "<plain note>"');
+  const args = parseArgs(argv);
   if (args.help) {
     console.log(renderCommandHelp(sendCommandSpec));
     console.log(examples());
@@ -19,9 +18,8 @@ export async function runSendCli(argv = process.argv.slice(2)): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const to = requiredString(args._[0], "tangent send needs a live session name or an Area path.");
   if (to === "brain") throw new Error('brain is not a send target. Use the Area path in the worker prompt.');
-  let text = args._.slice(1).map(String).join(" ").trim();
+  const text = args._.slice(1).map(String).join(" ").trim();
   if (!text) throw new Error("tangent send needs the note text after the target.");
-  if (legacy) text = `${legacy.slice(2)}: ${text}`;
   const from = stringArg(args.session) || stringArg(args.from) || (await currentTmuxSession());
   const result = await postJson(server, "/api/agents/send", { to, text, from });
   console.log(sendResultLine(result));

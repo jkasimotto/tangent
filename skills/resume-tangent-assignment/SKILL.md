@@ -14,7 +14,7 @@ tangent agent context --json
 Use `tangent agent context <session> --json` when recovering another named session.
 
 - If `role` is `brain`, use the founding instruction, checkpoint, rebuilt `prompt`, and every `unreadNotices` entry. Treat the notices as current even when the terminal never displayed them. Continue as that Area brain.
-- If `role` is `worker`, read the Goal file, done condition, current assignment instruction, prior notes, reports, and rebuilt `prompt`. Continue only when `current` is true. Finish with `tangent send brain` as that prompt says.
+- If `role` is `worker`, read the Goal file, done condition, current Assignment, prior notes, reports, and rebuilt prompt. Continue only when `current` is true. Finish with the exact Area-path send in that prompt.
 - If `promptError` is present, continue from the durable fields and use `tangent send --help` for the syntax. Do not treat a prompt rebuild failure as a lost assignment.
 - If `current` is false, report that this is historical context. Do not resume or mutate the current work.
 - If `role` is `unassigned`, or the command reports no durable context, stop. Do not create, own, restart, replace, or kill work to manufacture an assignment.

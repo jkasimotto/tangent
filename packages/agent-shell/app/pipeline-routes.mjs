@@ -23,7 +23,7 @@ export function createPipelineRoutes(operations) {
   async function handover(request, response) {
     const body = await readJson(request, {
       rejectMalformed: true,
-      malformedMessage: "The tangent send brain body is malformed or truncated JSON. Retry the same command unchanged. Nothing was submitted.",
+      malformedMessage: "The compatibility handover body is malformed or truncated JSON. Retry the same request unchanged. Nothing was submitted.",
     });
     if (body["continue"] === true) {
       sendJson(response, 400, { error: "Workers cannot replace themselves. Submit a typed context-risk report for the Area brain." });
@@ -34,12 +34,12 @@ export function createPipelineRoutes(operations) {
     catch (error) { sendJson(response, 400, { error: String(error.message ?? error) }); return; }
     const hasReport = Object.hasOwn(body, "report");
     if (hasReport && (!body.report || typeof body.report !== "object" || Array.isArray(body.report))) {
-      sendJson(response, 400, { error: "The report was rejected because it is not one JSON object. Correct --report and run the same tangent send brain command again. Nothing was submitted." });
+      sendJson(response, 400, { error: "The report was rejected because it is not one JSON object. Correct the report and retry the same handover request. Nothing was submitted." });
       return;
     }
     const kind = body.kind == null ? null : String(body.kind);
     if (kind !== null && !operations.isWorkerSendKind(kind)) {
-      sendJson(response, 400, { error: `Unknown send kind "${kind}". Use --done, --blocked, or no flag.` });
+      sendJson(response, 400, { error: `Unknown compatibility handover kind "${kind}".` });
       return;
     }
     const result = await operations.handoverStep(String(body.session ?? ""), text, hasReport ? body.report : null, String(body.idempotencyKey ?? ""), kind);

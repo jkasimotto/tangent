@@ -5,7 +5,7 @@ export const PROMPT_SPECIES = [
   { id: "pipeline", name: "Job Assignment", recipient: "Worker", trigger: "The Brain advances an approved Job", delivery: "Built, typed, and confirmed", shape: "Worker Assignment, current Attempt, earlier reports, continuation facts, and exit contract." },
   { id: "brain-notice", name: "Brain notice", recipient: "Controlling Area brain", trigger: "A worker reports, a request is answered, or a Document changes", delivery: "Recorded, queued, typed, and confirmed", shape: "A durable event with its Area, source identity, facts, and time." },
   { id: "brain-request", name: "Brain request", recipient: "Julian", trigger: "The brain needs plan approval, a decision, a test, or explicit approval", delivery: "Durable request record", shape: "Kind, subject, detail, question, named answers, status, and answer." },
-  { id: "handover", name: "Worker send", recipient: "Controlling Area brain", trigger: "The worker runs tangent send brain", delivery: "Recorded before delivery", shape: "A note, --done with proof, or --blocked with the real dependency that prevents progress." },
+  { id: "handover", name: "Worker send", recipient: "Organizing Area brain", trigger: "The worker sends to the exact Area path in its prompt", delivery: "Recorded before delivery", shape: "One plain note with the result, proof, and unfinished facts." },
   { id: "context", name: "Context continuation", recipient: "Fresh worker", trigger: "The brain chooses fresh context for the same assignment", delivery: "New prompt confirmed before old session ends", shape: "Original assignment plus every durable continuation handover." },
   { id: "comment", name: "Document comment notice", recipient: "Logical Area inbox", trigger: "Julian presses the Document notification button", delivery: "Durable brain notice", shape: "Document path, open comment count, and the command that reads them." },
 ];
@@ -64,7 +64,7 @@ const TRANSITIONS = {
     trigger: "The plan is approved and the brain starts an approved assignment.",
     payload: "The Goal, done condition, sources, Assignment, earlier facts, and worker communication contract.",
     knows: "The brain retains the complete plan. The worker receives only the context for this assignment.",
-    next: "The worker performs the assignment and reports through tangent send brain.",
+    next: "The worker performs the Assignment and sends one plain note to the organizer Area.",
     state: "The Goal and Job identify the running Agent and Assignment.",
     delivery: "Agent Shell waits for a ready composer, types the prompt, checks its tail, and submits it.",
     source: "server.mjs: goalPrompt and pipelineStepPrompt",

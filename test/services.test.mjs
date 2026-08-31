@@ -136,7 +136,7 @@ test("a worker session cannot start, stop, restart, or close processes", async (
   try {
     for (const action of ["start", "stop", "restart", "close"]) {
       const runner = recordingRunner(["goal\n"]);
-      await assert.rejects(runServiceCommand([action, "dev", "--area", "otto/tangent"], runner, "/nowhere"), /workers only send\. Use: tangent send brain/);
+      await assert.rejects(runServiceCommand([action, "dev", "--area", "otto/tangent"], runner, "/nowhere"), /workers only send\. Use the exact Area-path command/);
       assert.deepEqual(runner.calls, [["tmux", ["show-option", "-qv", "@tangent_kind"]]]);
     }
   } finally {

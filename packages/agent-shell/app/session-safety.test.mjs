@@ -47,7 +47,7 @@ test("the server keeps its shared session activation primitives", async () => {
 test("the server refuses every Tangent mutation from a worker session through one gate", async () => {
   const source = await readFile(path.join(here, "server.mjs"), "utf8");
   assert.match(source, /const refusal = await refuseWorkerMutation\(req, url\)/);
-  assert.equal(source.match(/workers only send\. Use: tangent send brain "<note>"/g)?.length, 1, "one literal, one gate");
+  assert.equal(source.match(/workers only send\. Use the exact Area-path command in the worker prompt\./g)?.length, 1, "one literal, one gate");
   const gated = source.match(/const WORKER_REFUSED_ROUTES = new Set\(\[[\s\S]*?\]\)/)?.[0] ?? "";
   for (const route of ["/api/goals/edit", "/api/goals/create", "/api/goals/own", "/api/goals/release", "/api/goals/start", "/api/pipelines/append", "/api/areas/new", "/api/areas/status", "/api/document/resolve", "/api/brains/start", "/api/brains/requests"]) {
     assert.ok(gated.includes(`"${route}"`), `${route} is gated`);
@@ -55,6 +55,13 @@ test("the server refuses every Tangent mutation from a worker session through on
   for (const route of ["/api/goals/handover", "/api/agents/send", "/api/goals/show"]) {
     assert.ok(!gated.includes(`"${route}"`), `${route} stays open`);
   }
+});
+
+test("an exact Job Goal path bypasses the vault-wide Goal scan", async () => {
+  const source = await readFile(path.join(here, "server.mjs"), "utf8");
+  const resolver = source.match(/async function jobGoal\(requested\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(resolver, /const exact = await readExactGoal\(requested\)/);
+  assert.ok(resolver.indexOf("readExactGoal(requested)") < resolver.indexOf("goalsByFile()"));
 });
 
 test("the package starts the single-owner gateway and keeps terminal transport out of the controller", async () => {

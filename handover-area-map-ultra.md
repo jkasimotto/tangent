@@ -595,7 +595,7 @@ The replacement must not run Tangent discovery, service, Goal, Area, or vault co
 At successful completion, run only this Tangent command:
 
 ```bash
-tangent send brain --done "<scoped commits, exact proofs, and live 4321 result>"
+tangent send otto/tangent "<scoped commits, exact proofs, and live 4321 result>"
 ```
 
 No new design document was created during implementation. No `--present` argument is required.

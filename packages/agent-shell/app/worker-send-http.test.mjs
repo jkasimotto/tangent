@@ -1,5 +1,5 @@
 // The worker contract (D5, D6): a worker has one command, `tangent send
-// brain`, and the server refuses every other Tangent mutation from it.
+// <organizer-area>`, and the server refuses every other Tangent mutation.
 
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -62,7 +62,7 @@ async function readQueue(root, worker) {
   return readPipeline(path.join(root, "pipelines"), area, worker.slug);
 }
 
-test("a worker sends notes, blocked reports, and done to its brain, and nothing else", async (context) => {
+test("a worker's exact Area send records a handover receipt, and nothing else can mutate work", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "worker-send-"));
   const { trees, workspace } = await buildVault(root);
   const openedSessions = [];
@@ -78,12 +78,15 @@ test("a worker sends notes, blocked reports, and done to its brain, and nothing 
 
   // A plain note: kept on the assignment, told to the brain, no status change.
   const worker = await startWorker(base, brain.body.session, openedSessions, "Send probe");
+  const brief = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(worker.goal)}&mode=pipeline&step=1`).then((response) => response.json());
+  assert.match(brief.markdown, new RegExp(`tangent send ${area.replace("/", "\\/")} "<note>"`));
+  assert.doesNotMatch(brief.markdown, /tangent send brain|--done|--blocked/);
   const before = await readQueue(root, worker);
-  const note = await post(base, "/api/agents/send", { to: "brain", from: worker.session, text: "Parser wired. Next: the route." });
+  const note = await post(base, "/api/agents/send", { to: area, from: worker.session, text: "Parser wired. Next: the route." });
   assert.equal(note.status, 200, JSON.stringify(note.body));
-  assert.equal(note.body.status, "queued");
-  assert.equal(note.body.kind, "note");
-  assert.equal(note.body.to, brain.body.session, "the note names the brain that controls the worker's Goal");
+  assert.equal(note.body.status, "sent");
+  assert.equal(note.body.target, "area");
+  assert.equal(note.body.to, area, "the response names the organizer Area from the worker prompt");
   const afterNote = await readQueue(root, worker);
   assert.equal(afterNote.steps[0].status, "running", "a note changes no assignment status");
   assert.equal(afterNote.revision, before.revision, "a note changes no queue revision");
@@ -94,7 +97,7 @@ test("a worker sends notes, blocked reports, and done to its brain, and nothing 
   assert.match(noteNotice.text, /^note: Parser wired/);
 
   // The same note again is an exact retry: one receipt, one notice.
-  const again = await post(base, "/api/agents/send", { to: "brain", from: worker.session, text: "Parser wired. Next: the route." });
+  const again = await post(base, "/api/agents/send", { to: area, from: worker.session, text: "Parser wired. Next: the route." });
   assert.equal(again.status, 200, JSON.stringify(again.body));
   assert.equal(again.body.state, "repeated");
   assert.equal((await readQueue(root, worker)).steps[0].handoverReceipts.length, 1);
@@ -157,17 +160,17 @@ test("a worker sends notes, blocked reports, and done to its brain, and nothing 
   assert.equal(unknown.status, 400);
   const fromBrain = await post(base, "/api/agents/send", { to: "brain", from: currentBrain.body.session, text: "Hello." });
   assert.equal(fromBrain.status, 400);
-  assert.equal(fromBrain.body.error, "tangent send brain works inside a worker session. Name a session or an Area path.");
+  assert.equal(fromBrain.body.error, "Name a live session or an Area path.");
 
   // D6: a worker session gets 403 on every other mutation and 200 on reads.
   const refused = await post(base, "/api/goals/edit", { file: worker.goal, status: "done", session: worker.session }, worker.session);
   assert.equal(refused.status, 403);
-  assert.equal(refused.body.error, 'workers only send. Use: tangent send brain "<note>"');
+  assert.equal(refused.body.error, "workers only send. Use the exact Area-path command in the worker prompt.");
   const created = await post(base, "/api/goals/create", { area, caller: worker.session, goal: { title: "Sneaky", doneWhen: "Never." } }, worker.session);
   assert.equal(created.status, 403);
   const pausedProcess = await post(base, "/api/processes/control", { slug: "anything", action: "pause" }, worker.session);
   assert.equal(pausedProcess.status, 403, "a worker cannot pause or resume a process");
-  assert.equal(pausedProcess.body.error, 'workers only send. Use: tangent send brain "<note>"');
+  assert.equal(pausedProcess.body.error, "workers only send. Use the exact Area-path command in the worker prompt.");
   for (const route of ["/api/processes/create", "/api/processes/remove"]) {
     const answer = await post(base, route, { area, slug: "worker-loop", every: "20m", message: "No." }, worker.session);
     assert.equal(answer.status, 403, `${route} refuses a worker`);
@@ -192,7 +195,7 @@ test("a worker sends notes, blocked reports, and done to its brain, and nothing 
   for (const route of refusedRoutes) {
     const answer = await post(base, route, { area, file: third.goal, goal: third.goal, caller: third.session, session: third.session }, third.session);
     assert.equal(answer.status, 403, `${route} refuses a worker: ${JSON.stringify(answer.body)}`);
-    assert.equal(answer.body.error, 'workers only send. Use: tangent send brain "<note>"', route);
+    assert.equal(answer.body.error, "workers only send. Use the exact Area-path command in the worker prompt.", route);
   }
   const noHandover = await fetch(`${base}/api/brains/handover`, { method: "POST", headers: { "content-type": "application/json", "x-tangent-session": third.session }, body: "{}" });
   assert.equal(noHandover.status, 404, "the brain handover route is gone, not gated");

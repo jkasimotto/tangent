@@ -51,7 +51,7 @@ test("pipeline routes reject a report value that is not an object", async () => 
     const output = response();
     await routes.handle(request("POST", { session: "worker", text: "facts", report }), output, new URL("http://shell/api/goals/handover"));
     assert.equal(output.status, 400);
-    assert.match(output.body.error, /Correct --report.*Nothing was submitted/);
+    assert.match(output.body.error, /Correct the report.*Nothing was submitted/);
   }
   assert.equal(called, false, "a malformed report never reaches the queue controller");
 });

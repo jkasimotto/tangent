@@ -340,8 +340,7 @@ const REPAIR_CREW_LIMIT = Math.max(1, Number(process.env.TANGENT_REPAIR_CREW_LIM
 const REPAIR_GRACE_MS = Math.max(0, Number(process.env.TANGENT_REPAIR_GRACE_MINUTES ?? 3) * 60_000);
 /**
  * The closing section of every worker prompt: the one Tangent command a
- * worker has (D5). The same three lines close a review step; --done on a
- * review step means the review passed.
+ * worker has (D5). The organizer reads this durable note before it advances.
  */
 function workerSendSection(organizerArea) {
   return (
@@ -998,33 +997,28 @@ function subgoalsOrder(text) {
 /**
  * Reads the Goal files in one Area directory. The index derives their order.
  */
-async function readAreaGoals(area) {
+async function readAreaGoals(area, knownBrainSessions = null) {
   let entries;
   try {
     entries = await readdir(path.join(TREES_ROOT, area));
   } catch {
     return [];
   }
-  const goals = [];
-  const brainSessions = brainSessionNames(await readAllBrains(BRAINS_ROOT));
-  for (const f of entries.filter((f) => /^(?:goal|outcome)-[a-z0-9-]+\.md$/.test(f))) {
-    let text;
-    try {
-      text = await readFile(path.join(TREES_ROOT, area, f), "utf8");
-    } catch {
-      continue;
-    }
+  const brainSessions = knownBrainSessions ?? brainSessionNames(await readAllBrains(BRAINS_ROOT));
+  const files = entries.filter((f) => /^(?:goal|outcome)-[a-z0-9-]+\.md$/.test(f));
+  const goals = await mapWithConcurrency(files, 24, async (f) => {
+    const absolute = path.join(TREES_ROOT, area, f);
+    const [text, info] = await Promise.all([
+      readFile(absolute, "utf8").catch(() => null),
+      stat(absolute).catch(() => null),
+    ]);
+    if (text == null) return null;
     const fm = parseFrontmatter(text);
-    if (!["goal", "outcome"].includes(fm.type)) continue;
+    if (!["goal", "outcome"].includes(fm.type)) return null;
     const slug = f.replace(/^(?:goal|outcome)-/, "").slice(0, -".md".length);
-    const info = await stat(path.join(TREES_ROOT, area, f)).catch(() => null);
-    const mtime = info?.mtimeMs ?? 0;
-    const projectedBinding = withoutBrainGoalBinding({
-      status: normalizeGoalStatus(fm.status || "open"),
-      session: fm.session || null,
-    }, brainSessions);
-    goals.push({
-      mtime,
+    const projectedBinding = withoutBrainGoalBinding({ status: normalizeGoalStatus(fm.status || "open"), session: fm.session || null }, brainSessions);
+    return {
+      mtime: info?.mtimeMs ?? 0,
       birthtime: info?.birthtimeMs ?? 0,
       created: fm.created || null,
       area,
@@ -1047,22 +1041,18 @@ async function readAreaGoals(area) {
       process: fm.process || null,
       subgoals: subgoalsOrder(text),
       dependencySlugs: dependencySlugs(text),
-    });
-  }
-  return goals;
+    };
+  });
+  return goals.filter(Boolean);
 }
 
 /** Reads one exact Goal path without scanning unrelated Areas or Goals. */
 async function readExactGoal(file) {
   const safe = safeMarkdownPath(TREES_ROOT, String(file ?? ""));
   if (!safe || !/^(?:goal|outcome)-[a-z0-9-]+\.md$/.test(path.posix.basename(safe.relative))) return null;
-  const text = await readFile(safe.absolute, "utf8").catch(() => null);
-  if (text == null) return null;
-  const fm = parseFrontmatter(text);
-  if (!["goal", "outcome"].includes(fm.type)) return null;
   const area = path.posix.dirname(safe.relative);
-  const slug = path.posix.basename(safe.relative, ".md").replace(/^(?:goal|outcome)-/, "");
-  return { area, slug, file: safe.relative, title: text.match(/^# (.+)$/m)?.[1]?.trim() ?? slug, status: normalizeGoalStatus(fm.status || "open"), session: fm.session || null };
+  const fileName = path.posix.basename(safe.relative);
+  return (await readAreaGoals(area)).find((goal) => path.posix.basename(goal.file) === fileName) ?? null;
 }
 
 /**
@@ -2045,7 +2035,7 @@ async function pipelineStepPrompt(area, o, record, index, extras = [], sessionNa
   return (
     `${assignment}\n\n` +
     `## Your step\n\n` +
-    `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}${step.kind === "review" ? " This is the review step. --done means the review passed." : ""}\n\n` +
+    `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}${step.kind === "review" ? " This is the review step. State the review result in your final note." : ""}\n\n` +
     (earlier.length ? `## Handovers so far\n\n${earlier.join("\n\n")}\n\n` : "") +
     (continuationEntries.length ? `${continuationSection({ index, total, entries: continuationEntries, subject: "step" })}\n\n` : "") +
     workerSendSection(record.organizerArea)
@@ -2786,10 +2776,11 @@ const CLOSED_GOAL = new Set(["done", "dropped", "parked"]);
 
 /** Every goal in the vault keyed by its vault-relative file path. */
 async function goalsByFile() {
+  const brainSessions = brainSessionNames(await readAllBrains(BRAINS_ROOT));
+  const areas = flattenAreaPaths(await readTree(TREES_ROOT));
+  const groups = await mapWithConcurrency(areas, 16, (area) => readAreaGoals(area, brainSessions));
   const map = new Map();
-  for (const area of flattenAreaPaths(await readTree(TREES_ROOT))) {
-    for (const o of await readAreaGoals(area)) map.set(o.file, o);
-  }
+  for (const goals of groups) for (const goal of goals) map.set(goal.file, goal);
   return map;
 }
 
@@ -3295,9 +3286,8 @@ function workerHandoverOperationId(sessionName, text, report, idempotencyKey, ki
 const WORKER_SEND_KINDS = new Set(["note", "done", "blocked"]);
 
 /**
- * Builds the stored report for one `tangent send brain` flag. Existing readers
- * keep working because the shapes are the typed reports they already know.
- * A review step's --done is a passed review at the current Goal revision.
+ * Builds a stored report for the hidden compatibility handover transport.
+ * Existing readers keep working because they already know these shapes.
  */
 function reportFromSendKind(record, step, kind, text) {
   if (kind === "blocked") return { type: "failed", summary: text };
@@ -3311,7 +3301,7 @@ function reportFromSendKind(record, step, kind, text) {
 /** One actionable refusal for a typed report that the queue did not accept. */
 function workerReportRejection(error) {
   const reason = String(error?.message ?? error);
-  return `The typed report was rejected (${reason}). Correct --report and run the same tangent send brain command again. Tangent recorded no report or brain notice.`;
+  return `The typed report was rejected (${reason}). Correct the report and retry the same handover request. Tangent recorded no report or brain notice.`;
 }
 
 /**
@@ -3337,10 +3327,11 @@ async function settleWorkerHandoverNotice(record, receipt) {
     .find((step) => step.id === receipt.assignmentId)
     ?.handoverReceipts?.find((candidate) => candidate.id === receipt.id) ?? receipt;
   receipt = storedReceipt();
-  if (receipt.destinationArea !== record.area || (record.organizerArea ?? record.controllerArea) !== record.area) {
+  const organizerArea = record.organizerArea ?? record.controllerArea ?? record.area;
+  if (receipt.destinationArea !== organizerArea) {
     return {
       status: 503,
-      error: `The Goal queue recorded submission ${receipt.id}, but its exact-Area destination is inconsistent. Keep this worker open and ask the ${record.area} brain to repair the queue. Tangent sent no notice.`,
+      error: `The Goal queue recorded submission ${receipt.id}, but its organizer destination is inconsistent. Keep this worker open and ask the ${organizerArea} brain to repair the queue. Tangent sent no notice.`,
     };
   }
   let route = null;
@@ -3355,7 +3346,7 @@ async function settleWorkerHandoverNotice(record, receipt) {
       console.error("worker handover notice:", error?.message ?? error);
       return {
         status: 503,
-        error: `The Goal queue recorded submission ${receipt.id}, but its exact-Area brain notice is not durable yet. Run the same tangent send brain command again, unchanged. Tangent will repair and deduplicate the notice.`,
+        error: `The Goal queue recorded submission ${receipt.id}, but its organizer notice is not durable yet. Run the same Area send again, unchanged. Tangent will repair and deduplicate the notice.`,
       };
   }
   return { status: 200, receipt, route };
@@ -3376,7 +3367,7 @@ async function handoverPipelineStep(sessionName, text, report = null, idempotenc
   const movedTo = await swappedAwayNaming(sessionName);
   if (movedTo) return { status: 409, error: `This assignment moved to ${movedTo}. Submit from that live worker session instead. Nothing was recorded.` };
   const live = (await listSessions()).find((session) => session.name === sessionName && session.kind === "goal" && session.goal);
-  if (!live) return { status: 404, error: "This session is not a running Goal worker. Run tangent send brain inside the assigned worker session. Nothing was recorded." };
+  if (!live) return { status: 404, error: "This session is not a running Goal worker. Use the exact Area command in the assigned worker prompt. Nothing was recorded." };
   const goal = (await goalsByFile()).get(live.goal);
   if (!goal) return { status: 404, error: "This worker has no Goal assignment. Read tangent goal show, then report from the assigned session. Nothing was recorded." };
   return withGoalQueueMutation(goal.file, () => handoverPipelineStepUnlocked(sessionName, text, report, idempotencyKey, kind));
@@ -3448,7 +3439,7 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
   let found = await pipelineStepForSession(sessionName);
   if (!found) {
     const live = (await listSessions()).find((session) => session.name === sessionName && session.kind === "goal" && session.goal);
-    if (!live) return { status: 404, error: "This session is not a running Goal worker. Run tangent send brain inside the assigned worker session. Nothing was recorded." };
+    if (!live) return { status: 404, error: "This session is not a running Goal worker. Use the exact Area command in the assigned worker prompt. Nothing was recorded." };
     const goal = (await goalsByFile()).get(live.goal);
     if (!goal) return { status: 404, error: "This worker has no Goal assignment. Read tangent goal show, then report from the assigned session. Nothing was recorded." };
     const migrated = await migrateLiveSoloExecution(goal, await listSessions());
@@ -3456,7 +3447,7 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
     if (!step) return { status: 409, error: `${migrated?.migrationProblem ?? "The legacy Goal could not become an authoritative queue"}. Nothing was recorded.` };
     found = { record: migrated, step };
   }
-  if (found.record.migrationProblem || found.record.status === "paused" || (found.record.organizerArea ?? found.record.controllerArea) !== found.record.area) {
+  if (found.record.migrationProblem || found.record.status === "paused") {
     return { status: 409, error: `The authoritative Goal queue is paused: ${found.record.migrationProblem ?? "it needs repair"}. Keep this worker session open and repair the queue for ${found.record.area}. Nothing was recorded.` };
   }
   const effectiveReport = report ?? reportFromSendKind(found.record, found.step, kind, text);
@@ -4256,7 +4247,7 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
   for (const record of await readAllPipelines(PIPELINES_ROOT)) {
     let changed = queueNormalizationChanged(record) || reclaimLiveSteps(record, byName);
     if (queueNormalizationChanged(record)) {
-      const inbox = await readInbox(BRAINS_ROOT, record.area);
+      const inbox = await readInbox(BRAINS_ROOT, record.organizerArea ?? record.controllerArea ?? record.area);
       let inboxChanged = false;
       for (const step of record.steps) {
         for (const receipt of step.handoverReceipts ?? []) {
@@ -4274,8 +4265,9 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
       }
     }
     for (const { receipt } of pendingWorkerHandoverReceipts(record)) {
-      if (receipt.destinationArea !== record.area || (record.organizerArea ?? record.controllerArea) !== record.area) {
-        console.error("worker handover reconcile:", JSON.stringify({ goal: record.goal, receipt: receipt.id, error: "exact-Area destination mismatch" }));
+      const organizerArea = record.organizerArea ?? record.controllerArea ?? record.area;
+      if (receipt.destinationArea !== organizerArea) {
+        console.error("worker handover reconcile:", JSON.stringify({ goal: record.goal, receipt: receipt.id, error: "organizer destination mismatch" }));
         continue;
       }
       try {
@@ -4358,12 +4350,12 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
         changed = recovered.changed || changed;
       }
       const wallNotice = workerWallNotice(record, step, live.observation);
-      if (wallNotice) await routeBrainNotice(record.area, wallNotice.text, { idempotencyKey: wallNotice.sourceId });
+      if (wallNotice) await routeBrainNotice(record.organizerArea ?? record.area, wallNotice.text, { idempotencyKey: wallNotice.sourceId });
       const shellExit = latestAttemptReport(step) ? null : workerShellExitNotice(record, step, live);
       const resumeTried = liveAttempt?.recovery?.some((item) => item.kind === "resume-in-place") ?? false;
       if (shellExit && resumeTried && shellExitNoticed.get(key) !== shellExit.sourceId) {
         try {
-          await routeBrainNotice(record.area, shellExit.text, { idempotencyKey: shellExit.sourceId });
+          await routeBrainNotice(record.organizerArea ?? record.area, shellExit.text, { idempotencyKey: shellExit.sourceId });
           shellExitNoticed.set(key, shellExit.sourceId);
         } catch (error) {
           console.error("worker shell recovery notice:", JSON.stringify({ goal: record.goal, step: step.index, error: String(error?.message ?? error) }));
@@ -4433,7 +4425,8 @@ async function runAttemptRecovery(record, assignment, session, action) {
   let terminal = false;
   try {
     if (action.kind === "nudge") {
-      const text = `You stopped 3 minutes ago and sent no note. If the work is done: tangent send brain --done "<what changed, how you proved it>". If a real dependency prevents progress: tangent send brain --blocked "<dependency and what cannot continue>". Otherwise send an ordinary note and continue.`;
+      const organizerArea = record.organizerArea ?? record.area;
+      const text = `You stopped 3 minutes ago and sent no note. Send the organizer an update with tangent send ${organizerArea} "<what happened and what comes next>". Then continue or stop as appropriate.`;
       const delivered = await messages.dispatch(session, { from: "tangent", area: record.area, text, durable: true, queuedAt: new Date().toISOString() });
       if (delivered.status !== 200) throw new Error(delivered.error);
     } else if (action.kind === "resume-in-place") {
@@ -4670,7 +4663,7 @@ async function routeBrainNotice(area, text, { idempotencyKey = null, sender = nu
 
 /**
  * The routes a worker session cannot call (D6). A worker has one command,
- * `tangent send brain`; every other Tangent mutation belongs to the brain.
+ * `tangent send <organizer-area>`; every other Tangent mutation belongs to the brain.
  */
 const WORKER_REFUSED_ROUTES = new Set([
   "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/edit", "/api/goals/start",
@@ -4686,9 +4679,9 @@ const WORKER_REFUSED_ROUTES = new Set([
   "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
 
-const WORKER_MUTATION_REFUSAL = 'workers only send. Use: tangent send brain "<note>"';
+const WORKER_MUTATION_REFUSAL = 'workers only send. Use the exact Area-path command in the worker prompt.';
 /** The 403 text when a worker sends to anything but its brain (D5). */
-const WORKER_SEND_TARGET_REFUSAL = 'workers only send to their brain. Use: tangent send brain "<note>"';
+const WORKER_SEND_TARGET_REFUSAL = 'workers only send to their recorded organizer Area.';
 const REPAIR_REFUSED_ROUTES = new Set([
   "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/start",
   "/api/goals/depend", "/api/goals/undepend", "/api/goals/accept", "/api/goals/understanding", "/api/goals/cleanup",
@@ -5229,8 +5222,8 @@ async function reconcileBrainSuccessions() {
 function repairFirstMessage(area, brainState, waiting, notices) {
   const lines = [
     `Repair crew for ${area}. The Area brain is ${brainState.word.toLowerCase()} since ${new Date(brainState.since).toISOString()}.`,
-    `You are not the brain. Finish the live work below, then run: tangent send brain --done "<what you did>".`,
-    `If you cannot finish, run: tangent send brain --blocked "<why>".`,
+    `You are not the brain. Finish the live work below, then run: tangent send ${area} "I am done. <what you did>".`,
+    `If you cannot finish, run: tangent send ${area} "I cannot continue. <why>".`,
     "",
     "Work that waits for a brain:",
   ];
@@ -5309,7 +5302,7 @@ async function endRepairCrewUnlocked(area, result, report = "") {
 function repairWaitingWork(area, pipelines, sessions, brain, repair, now = Date.now()) {
   const byName = new Map(sessions.map((session) => [session.name, session]));
   const waiting = [];
-  for (const queue of pipelines.filter((item) => item.area === area)) {
+  for (const queue of pipelines.filter((item) => (item.organizerArea ?? item.controllerArea ?? item.area) === area)) {
     for (const assignment of queue.steps ?? []) {
       const report = latestAttemptReport(assignment);
       const live = assignment.session ? byName.get(assignment.session) : null;
@@ -5354,7 +5347,7 @@ async function reconcileRepairs(sessions) {
     const waiting = repairWaitingWork(repairRecord.area, pipelines, sessions, brain ? { ...brain, live: Boolean(brainSession) } : null, repairRecord, now);
     const lastCrewOutput = Number(session?.observation?.activity?.lastOutputAt) || Number(session?.observation?.transcript?.lastEventAt) || Date.parse(repair.startedAt);
     if (!result && waiting.length > 0 && session?.observation?.composer === "idle" && now - lastCrewOutput >= 180_000 && !repair.idleNudgedAt) {
-      const nudge = await messages.dispatch(session, { from: "tangent", area: repairRecord.area, text: "You stopped 3 minutes ago. Finish the waiting work, then send --done or --blocked.", durable: true, queuedAt: new Date().toISOString() });
+      const nudge = await messages.dispatch(session, { from: "tangent", area: repairRecord.area, text: `You stopped 3 minutes ago. Finish the waiting work, then send ${repairRecord.area} "I am done. <result>" or "I cannot continue. <reason>".`, durable: true, queuedAt: new Date().toISOString() });
       if (nudge.status === 200) {
         repair.idleNudgedAt = new Date(now).toISOString();
         await writeRepair(REPAIRS_ROOT, repairRecord);
@@ -5363,7 +5356,7 @@ async function reconcileRepairs(sessions) {
     if (!result && waiting.length === 0 && session?.observation?.composer === "idle") {
       repair.settleSince ??= new Date(now).toISOString();
       if (!repair.nudgedAt) {
-        const nudge = await messages.dispatch(session, { from: "tangent", area: repairRecord.area, text: "No live work now waits for the brain. Finish with tangent send brain --done, or report a block.", durable: true, queuedAt: new Date().toISOString() });
+        const nudge = await messages.dispatch(session, { from: "tangent", area: repairRecord.area, text: `No live work now waits for the brain. Finish with tangent send ${repairRecord.area} "I am done. <result>".`, durable: true, queuedAt: new Date().toISOString() });
         if (nudge.status === 200) repair.nudgedAt = new Date(now).toISOString();
       }
       await writeRepair(REPAIRS_ROOT, repairRecord);
@@ -6307,9 +6300,9 @@ const pipelineRoutes = createPipelineRoutes({
 
 /** Resolves a Goal slug or exact file and rejects ambiguous slugs. */
 async function jobGoal(requested) {
-  const goals = [...(await goalsByFile()).values()];
-  const exact = goals.find((goal) => goal.file === requested);
+  const exact = await readExactGoal(requested);
   if (exact) return { goal: exact };
+  const goals = [...(await goalsByFile()).values()];
   const matches = goals.filter((goal) => goal.slug === requested);
   if (matches.length === 1) return { goal: matches[0] };
   if (matches.length > 1) return { error: `Goal ${requested} is ambiguous: ${matches.map((goal) => goal.file).join(", ")}` };
@@ -6599,26 +6592,22 @@ const agentRouteOperations = {
     }
     return { ...projected, ...await rebuiltAgentPrompt(async () => goalPrompt(goal.area, goal, recoveredExtraGoals(projected, goalIndex), [], null, await promptWorkFolder(goal.area, projected.attempt))) };
   },
-  /**
-   * A worker's `tangent send brain`: the note lands on the worker's own
-   * assignment and in the inbox of the brain that controls it. Only a worker
-   * has a brain to resolve; anyone else names a session or an Area.
-   */
+  /** Retains the hidden worker-handover transport for old local clients. */
   async sendToBrain(body) {
     const text = normalizeMessage(body.text);
     const session = String(body.from ?? "").trim();
     const kind = body.kind == null ? null : String(body.kind);
-    if (kind !== null && !WORKER_SEND_KINDS.has(kind)) return { status: 400, error: `Unknown send kind "${kind}". Use --done, --blocked, or no flag.` };
+    if (kind !== null && !WORKER_SEND_KINDS.has(kind)) return { status: 400, error: `Unknown send kind "${kind}".` };
     const actor = await commandProvenance(session);
     if (actor.role === "repair") {
-      if (!actor.area || !["done", "blocked"].includes(kind)) return { status: 400, error: "the repair crew finishes with tangent send brain --done or --blocked" };
+      if (!actor.area || !["done", "blocked"].includes(kind)) return { status: 400, error: "the repair result is invalid" };
       const result = kind === "done" ? "done" : "blocked";
       const ended = await withBrainMutation(actor.area, () => endRepairCrewUnlocked(actor.area, result, text));
       if (!ended || ended.session !== session) return { status: 409, error: "this repair crew is no longer current" };
       return { status: 200, value: { status: "sent", to: actor.area, kind, state: result, repair: ended.id } };
     }
     const queued = session && (await readAllPipelines(PIPELINES_ROOT)).some((record) => record.steps.some((step) => step.session === session || step.attempts?.some((attempt) => attempt.session === session)));
-    if (actor.role !== "worker" && !queued) return { status: 400, error: "tangent send brain works inside a worker session. Name a session or an Area path." };
+    if (actor.role !== "worker" && !queued) return { status: 400, error: "Name a live session or an Area path." };
     const goal = await workerGoalForSession(session);
     const requestedPresentations = Array.isArray(body.present) ? body.present.map(String).filter(Boolean) : [];
     const resolvedPresentations = [];
@@ -6655,10 +6644,33 @@ const agentRouteOperations = {
     // assignment. The caller cannot spoof a different Area or assignment.
     if (sender.role === "worker") {
       const record = (await readAllPipelines(PIPELINES_ROOT)).find((queue) => queue.steps.some((step) => step.session === sender.session || step.attempts?.some((attempt) => attempt.session === sender.session)));
-      if (!record || requested !== record.organizerArea) {
-        return { status: 403, error: `this worker reports only to ${record?.organizerArea ?? "its recorded organizer"}: tangent send ${record?.organizerArea ?? "<brain-area>"} \"<plain note>\"` };
+      const organizerArea = record?.organizerArea ?? record?.controllerArea ?? record?.area;
+      if (!record || requested !== organizerArea) {
+        return { status: 403, error: `this worker reports only to ${organizerArea ?? "its recorded organizer"}: tangent send ${organizerArea ?? "<brain-area>"} \"<plain note>\"` };
       }
       if (target && target !== requested) return { status: 403, error: "a worker must name its organizer Area, not a session" };
+      const result = await handoverPipelineStep(sender.session, text, null, String(body.idempotencyKey ?? body.operationId ?? ""), "note");
+      if (result.status !== 200) return { status: result.status, error: result.error };
+      await recordRuntimeEvent("job.assignment.reported", { operationId: body.idempotencyKey ?? body.operationId, address: result.pipeline?.goal, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: sender.session, assignmentId: result.receipt?.assignmentId ?? null, outcome: "note" });
+      const delivery = result.route;
+      return {
+        status: 200,
+        value: {
+          status: delivery?.addressed ? "sent" : "queued",
+          to: organizerArea,
+          target: "area",
+          live: Boolean(delivery?.addressed),
+          state: result.state,
+          receipt: result.receipt,
+          pipeline: result.pipeline,
+        },
+      };
+    }
+    if (sender.role === "repair" && requested === sender.area && /^(?:I am done\.|I cannot continue\.)/i.test(text)) {
+      const result = /^I am done\./i.test(text) ? "done" : "blocked";
+      const ended = await withBrainMutation(sender.area, () => endRepairCrewUnlocked(sender.area, result, text));
+      if (!ended || ended.session !== sender.session) return { status: 409, error: "this repair crew is no longer current" };
+      return { status: 200, value: { status: "sent", to: sender.area, target: "area", live: true, state: result, repair: ended.id } };
     }
     if (sender.role === "repair" && live?.kind === "goal" && live.area !== sender.area) return { status: 403, error: REPAIR_REFUSAL };
     const entry = { from: sender.session ?? "unknown sender", area: sender.area, text, durable: true, queuedAt: new Date().toISOString() };

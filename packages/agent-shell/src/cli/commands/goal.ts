@@ -602,7 +602,7 @@ Examples:
   tangent goal replace-agent pipelines-demo --launch codex/sol/high
   tangent goal park pipelines-demo --reason "Revisit after the current release."
   tangent goal reopen pipelines-demo
-  tangent send brain "Design written: ~/.tangent/trees/otto/tangent/design-x.md. Unresolved: none."
+  tangent send otto/tangent "Design written: ~/.tangent/trees/otto/tangent/design-x.md. Unresolved: none."
 `);
 }
 

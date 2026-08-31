@@ -21,7 +21,7 @@ export async function currentTmuxSession(): Promise<string | undefined> {
 }
 
 /** The refusal every Tangent mutation gives a worker session (D6). */
-export const WORKER_MUTATION_REFUSAL = 'workers only send. Use: tangent send brain "<note>"';
+export const WORKER_MUTATION_REFUSAL = "workers only send. Use the exact Area-path command in the worker prompt.";
 
 /**
  * Whether the current tmux session is a worker (`@tangent_kind goal`). The

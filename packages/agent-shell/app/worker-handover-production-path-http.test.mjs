@@ -251,7 +251,7 @@ test("neara/portland worker handovers survive delay, rollover, restart, and exac
     await chmod(childBrainDirectory, 0o700);
   }
   assert.equal(interrupted.status, 503, JSON.stringify(interrupted.body));
-  assert.match(interrupted.body.error, /queue recorded submission.*notice is not durable yet.*Run the same tangent send brain command again, unchanged/i);
+  assert.match(interrupted.body.error, /queue recorded submission.*notice is not durable yet.*Run the same Area send again, unchanged/i);
   const pendingRepair = await readQueue(root, repair);
   assert.equal(pendingRepair.steps[0].reports.length, 1, "queue acceptance survives the notice interruption");
   assert.equal(pendingRepair.steps[0].handoverReceipts[0].notice.id, null);
@@ -274,7 +274,7 @@ test("neara/portland worker handovers survive delay, rollover, restart, and exac
   }
 });
 
-test("the nearest live ancestor receives a child handover and a no-live handover stays queued", async (context) => {
+test("the recorded organizer receives its handover and a no-live handover stays queued", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "worker-handover-ancestor-"));
   const { trees, workspace } = await buildVault(root);
   const openedSessions = [];
@@ -295,19 +295,11 @@ test("the nearest live ancestor receives a child handover and a no-live handover
   assert.equal(stoppedChild.status, 200, JSON.stringify(stoppedChild.body));
   const routed = await sendWorker(base, routedWorker.session, "done", "The child work is complete.");
   assert.equal(routed.status, 200, JSON.stringify(routed.body));
-  assert.equal(routed.body.status, "queued");
-  assert.equal(routed.body.to, parent.body.session);
-  assert.equal(routed.body.brainArea, "neara");
+  assert.equal(routed.body.status, "deferred");
+  assert.equal(routed.body.to, null);
+  assert.equal(routed.body.brainArea, null);
   assert.equal(routed.body.sourceArea, area);
   assert.equal(routed.body.receipt.queue.assignmentStatus, "complete");
-  assert.equal((await post(base, "/api/brains/stop", { area: "neara", expectedAttemptId: parent.body.session, operationId: "parent-route-restart" })).status, 200);
-  const routedParent = await post(base, "/api/brains/start", { area: "neara", resume: true, instruction: "Consume routed child work." });
-  assert.equal(routedParent.status, 200, JSON.stringify(routedParent.body));
-  openedSessions.push(routedParent.body.session);
-  await waitFor("the replacement parent route", async () => {
-    const log = await readFile(path.join(root, "messages.jsonl"), "utf8");
-    return log.includes(`\"to\":\"${routedParent.body.session}\"`) && log.includes("unread notices") ? true : null;
-  });
   const routedNotice = workerNotices(await readInbox(path.join(root, "brains"), area))
     .find((item) => item.id === routed.body.receipt.notice.id);
   assert.equal(routedNotice.deliveredAt, null, "the source notice stays unread until prompt transport acknowledges it");
@@ -317,9 +309,11 @@ test("the nearest live ancestor receives a child handover and a no-live handover
   const resumedChild = await post(base, "/api/brains/start", { area, resume: true, instruction: "Create the deferred case." });
   assert.equal(resumedChild.status, 200, JSON.stringify(resumedChild.body));
   openedSessions.push(resumedChild.body.session);
+  const resumedChildPrompt = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(resumedChild.body.session)}`).then((response) => response.json());
+  assert.match(resumedChildPrompt.prompt, /The child work is complete/);
   const deferredWorker = await startWorker(base, resumedChild.body.session, openedSessions, "Portland deferred route");
   assert.equal((await post(base, "/api/brains/stop", { area, expectedAttemptId: resumedChild.body.session, operationId: "deferred-child-stop" })).status, 200);
-  assert.equal((await post(base, "/api/brains/stop", { area: "neara", expectedAttemptId: routedParent.body.session, operationId: "deferred-parent-stop" })).status, 200);
+  assert.equal((await post(base, "/api/brains/stop", { area: "neara", expectedAttemptId: parent.body.session, operationId: "deferred-parent-stop" })).status, 200);
   const deferred = await sendWorker(base, deferredWorker.session, "blocked", "No active brain exists yet.");
   assert.equal(deferred.status, 200, JSON.stringify(deferred.body));
   assert.equal(deferred.body.status, "deferred");
@@ -368,7 +362,7 @@ test("malformed, truncated, shell-quoted, and rejected reports cannot look succe
     report: `'${JSON.stringify({ type: "implementation-result", status: "complete", summary: "Done." })}'`,
   });
   assert.equal(quoted.status, 400);
-  assert.match(quoted.body.error, /not one JSON object.*run the same tangent send brain command again.*Nothing was submitted/i);
+  assert.match(quoted.body.error, /not one JSON object.*retry the same handover request.*Nothing was submitted/i);
 
   const rejected = await post(base, "/api/goals/handover", {
     session: worker.session,
@@ -376,7 +370,7 @@ test("malformed, truncated, shell-quoted, and rejected reports cannot look succe
     report: { type: "implementation-result", status: "complete" },
   });
   assert.equal(rejected.status, 409);
-  assert.match(rejected.body.error, /report-summary-required.*Correct --report.*recorded no report or brain notice/i);
+  assert.match(rejected.body.error, /report-summary-required.*Correct the report.*recorded no report or brain notice/i);
 
   const afterFailures = await readQueue(root, worker);
   assert.equal(afterFailures.revision, before.revision);

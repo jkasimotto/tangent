@@ -446,7 +446,8 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.deepEqual(options.harnesses[0].efforts, [{ id: "high", label: "High", args: "--effort high", command: "fake-agent --effort high" }]);
   assert.match(serverSource, /## Your step/);
   assert.match(serverSource, /## When you finish/);
-  assert.match(serverSource, /tangent send brain "<note>"/);
+  assert.match(serverSource, /tangent send \$\{organizerArea\} "<note>"/);
+  assert.doesNotMatch(serverSource, /tangent send brain|--done means/);
   assert.doesNotMatch(serverSource, /tangent goal handover/, "worker prompts use the one send command");
   assert.match(serverSource, /design-<slug>\.md/);
   assert.match(serverSource, /name: "material Operation events"/, "material Operation delivery runs without a browser poll");

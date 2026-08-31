@@ -55,7 +55,7 @@ const RESTART_MAX_MS = Number(process.env.TANGENT_CONTROLLER_RESTART_MAX_MS ?? 1
 // vault can legitimately exceed 8 MiB, so keep a generous bounded allowance
 // rather than misclassifying a valid controller response as a restart.
 const MAX_SNAPSHOT_BYTES = Number(process.env.TANGENT_GATEWAY_SNAPSHOT_MAX_BYTES ?? 32 * 1024 * 1024);
-const MAX_WORK_BYTES = Number(process.env.TANGENT_GATEWAY_WORK_MAX_BYTES ?? 2 * 1024 * 1024);
+const MAX_WORK_BYTES = Number(process.env.TANGENT_GATEWAY_WORK_MAX_BYTES ?? 8 * 1024 * 1024);
 const MAX_CONTROLLER_REQUESTS = Number(process.env.TANGENT_GATEWAY_CONTROLLER_REQUESTS ?? 64);
 
 startEventLoopWatchdog({

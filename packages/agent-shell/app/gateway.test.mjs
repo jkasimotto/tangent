@@ -144,6 +144,26 @@ test("gateway caches compact Work as opaque bytes across controller recovery", a
   assert.equal(await cached.text(), body);
 });
 
+test("gateway accepts a Work projection above the old 2 MiB limit", async (context) => {
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") return context.skip("local listeners are not permitted");
+    throw error;
+  }
+  await startGateway(context, port, { TANGENT_GATEWAY_FIXTURE_WORK_BYTES: String(3 * 1024 * 1024) });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForHealth(base, (health) => health.controller.state === "ready");
+
+  const response = await fetch(`${base}/api/work`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("x-tangent-stale"), "0");
+  const work = await response.json();
+  assert.equal(work.schema, "agent-shell-work.v1");
+  assert.equal(work.fixture.length, 3 * 1024 * 1024);
+});
+
 test("gateway names an oversized Work projection without reporting a restart", async (context) => {
   let port;
   try {

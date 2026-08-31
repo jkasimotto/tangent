@@ -19,7 +19,7 @@ The immediate correction increased the bounded gateway allowance to 32 MiB. This
 
 - The initial Work response contains current list and row state only.
 - The current vault produces a Work response of less than 512 KiB.
-- The gateway rejects any Work response larger than 2 MiB.
+- The gateway rejects any Work response larger than 8 MiB.
 - A normal refresh does not include historical handovers, reports, attempts, notices, or brain generations.
 - Goal and brain detail remain available through targeted requests.
 - Controller recovery keeps terminal connections and the last valid Work response available.
@@ -212,7 +212,7 @@ ETag: <work revision>
 
 The controller includes its boot in the payload for diagnostics. The browser treats the headers as the authority for cache freshness.
 
-The gateway buffers at most 2 MiB for `/api/work`. It stores the buffer only after a complete successful response.
+The gateway buffers at most 8 MiB for `/api/work`. It stores the buffer only after a complete successful response.
 
 During controller recovery, the gateway returns the stored buffer with `X-Tangent-Stale: 1`. Mutations continue to return a named 503 response.
 
@@ -288,13 +288,13 @@ The implementation must add these regression signals:
 - Goal detail still returns that handover for its exact Goal.
 - Controller replacement serves the last Work response with stale headers.
 - An unchanged revision returns 304 with no response body.
-- The gateway rejects a Work response larger than 2 MiB without losing terminals.
+- The gateway rejects a Work response larger than 8 MiB without losing terminals.
 
 ## Risks and unknowns
 
 **Unknown:** The current Work views can depend on fields that are not obvious from direct `state.pipelines` references. Implementation tests must record all render inputs before field removal.
 
-**Risk:** A single combined Work response can still grow with the number of open Goals. The 2 MiB limit forces a later paginated list if measured growth reaches that boundary.
+**Risk:** A single combined Work response can still grow with the number of open Goals. The 8 MiB limit forces a later paginated list if measured growth reaches that boundary.
 
 **Risk:** ETag revisions must include live session changes. A durable Git revision alone is not sufficient.
 

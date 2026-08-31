@@ -1078,14 +1078,21 @@ async function buildVaultIndex() {
     }
   };
   await walk(await readTree(TREES_ROOT));
-  const entries = [];
   const bySlug = new Map();
-  for (const n of flat) {
+  // A cold disposable worker has no `currentSectionChanges` cache. Run the
+  // independent Area reads with a bound so a larger vault does not serialize
+  // dozens of `git log -S` lookups past the projection deadline.
+  const entries = await mapWithConcurrency(flat, 12, async (n) => {
     const note = await areaNote(n.path);
-    const own = await readAreaGoals(n.path);
-    const documents = await readAreaDocuments(n.path);
-    const signal = noteSignal(note, note ? await currentSectionChangedAt(areaNoteFile(n.path), note) : null);
-    entries.push({ n, note, own, documents, signal });
+    const [own, documents, currentChangedAt] = await Promise.all([
+      readAreaGoals(n.path),
+      readAreaDocuments(n.path),
+      note ? currentSectionChangedAt(areaNoteFile(n.path), note) : null,
+    ]);
+    const signal = noteSignal(note, currentChangedAt);
+    return { n, note, own, documents, signal };
+  });
+  for (const { own } of entries) {
     for (const o of own) if (!bySlug.has(o.slug)) bySlug.set(o.slug, o);
   }
   projectGoalDependencies(entries.flatMap(({ own }) => own));
@@ -1384,7 +1391,10 @@ if (process.env.AGENT_SHELL_INDEX_WORKER === "1") {
   }
 }
 
-const vaultProjection = createVaultProjectionController({ fingerprint: vaultFingerprint, build: buildVaultIndexInWorker });
+// Keep the replaceable worker bounded below the gateway's 30-second response
+// deadline. A cold index of the full vault can legitimately take over the
+// controller's historical 10-second default even with bounded parallel reads.
+const vaultProjection = createVaultProjectionController({ fingerprint: vaultFingerprint, build: buildVaultIndexInWorker, timeoutMs: 20_000 });
 const vaultIndex = vaultProjection.get;
 
 /** True for a vault-relative Area path with no traversal. */

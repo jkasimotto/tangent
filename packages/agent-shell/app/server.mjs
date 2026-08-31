@@ -349,6 +349,9 @@ const ARMED_ROOT = process.env.TANGENT_ARMED_ROOT ?? path.join(os.homedir(), ".t
 
 if (!existsSync(WORKSPACE)) mkdirSync(WORKSPACE, { recursive: true });
 
+/** Awaitable pause shared by session boot and prompt-delivery paths. */
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const legacyWorkflowClaims = new Set();
 
 /** Claims pre-marker live work only when its durable record and tmux tags agree. */

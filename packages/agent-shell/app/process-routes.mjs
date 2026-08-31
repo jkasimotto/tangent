@@ -8,6 +8,10 @@ export function createProcessRoutes(operations) {
     ["POST /api/processes/remove", remove],
     ["POST /api/processes/control", control],
     ["POST /api/processes/check", check],
+    ["POST /api/processes/request-start", requestStart],
+    ["POST /api/processes/start", start],
+    ["POST /api/processes/defer", defer],
+    ["POST /api/processes/skip", skip],
   ]);
 
   /** Handles one matching request and reports whether this router owned it. */
@@ -37,13 +41,22 @@ export function createProcessRoutes(operations) {
   async function check(request, response) {
     await mutate(request, response, operations.check);
   }
+  /** Asks the exact Area brain to start one event. */
+  async function requestStart(request, response) { await mutate(request, response, operations.requestStart); }
+  /** Lets the exact Area brain accept and start one event. */
+  async function start(request, response) { await mutate(request, response, operations.start); }
+  /** Moves one event to an approved later instant. */
+  async function defer(request, response) { await mutate(request, response, operations.defer); }
+  /** Finishes one event without starting it. */
+  async function skip(request, response) { await mutate(request, response, operations.skip); }
 
   /** Runs one process operation and reports a refusal as 409. */
   async function mutate(request, response, operation) {
     try {
-      sendJson(response, 200, await operation(await readJson(request)));
+      const result = await operation(await readJson(request));
+      sendJson(response, Number(result?.httpStatus) || 200, result);
     } catch (error) {
-      sendJson(response, 409, { error: String(error.stderr ?? error.message ?? error) });
+      sendJson(response, Number(error.status) || 409, { code: error.code ?? "process-operation-refused", error: String(error.stderr ?? error.message ?? error) });
     }
   }
 

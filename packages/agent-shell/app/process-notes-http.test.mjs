@@ -80,13 +80,14 @@ test("process notes reach the Area page, the CLI routes, the Goal, and the brain
     assert.equal(everything.processes.length, 2, "the browser projection carries processes beside Operations");
   });
 
-  await context.test("the due note reaches the Area brain inbox and names the start command", async () => {
-    const notice = await processNotice(brains, "otto/dnd");
-    assert.ok(notice, "the scheduler lane wrote the note");
-    assert.equal(notice.text, `Process red-build is due. Start it with: tangent goal create --area otto/dnd --title "Red Build" --start --instruction-file ${path.join(area, "process-red-build.md")} --path ~/Projects/dnd`);
+  await context.test("a due ask Process waits on its row without inventing a brain Request", async () => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const inbox = await readInbox(brains, "otto/dnd");
+    const notice = (inbox?.notices ?? []).find((item) => /^Process /.test(item.text)) ?? null;
+    assert.equal(notice, null, "ask policy writes no inbox notice before Julian starts it");
     const listed = await get(base, "/api/processes?area=otto%2Fdnd");
     const red = listed.processes.find((item) => item.slug === "red-build");
-    assert.equal(red.state, "Due, brain not running");
+    assert.equal(red.state, "Start it?");
     assert.equal(red.due, true);
   });
 

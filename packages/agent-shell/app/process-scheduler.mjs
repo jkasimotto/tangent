@@ -6,13 +6,110 @@
 // `~/.tangent/agent-shell/processes/<area>/<slug>.json`.
 
 import { existsSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { describeWhen, latestSlotAtOrBefore, nextSlotAfter, parseProcessNote, processSlugFromFile } from "./process-note.mjs";
+import { describeWhen, latestSlotAtOrBefore, nextSlotAfter, parseProcessNote, processSlugFromFile, scheduleSlotsBetween } from "./process-note.mjs";
 
 const TREE_SKIP = new Set([".git", ".obsidian", "shared", "node_modules"]);
 const OPEN_STATUSES = new Set(["open", "active", "verify"]);
 const processLocks = new Map();
+export const PROCESS_START_WINDOW_MS = 10 * 60_000;
+export const PROCESS_AUTO_FAILURE_LIMIT = 3;
+
+/** Returns one stable base64url identity for NUL-separated fields. */
+function digest(...parts) {
+  return createHash("sha256").update(parts.join("\0")).digest("base64url");
+}
+
+/** Hashes the complete Process note without exposing its bytes. */
+export function processDefinitionRevision(note) { return digest(note.raw ?? ""); }
+
+/** Converts absent and compatibility state into the runtime v2 value without writing it. */
+export function normalizeProcessState(value = {}, note = null, now = new Date()) {
+  if (value?.schema === "process-state.v2") return {
+    ...value, revision: Number(value.revision) || 0,
+    auto: { consecutiveFailedSlots: 0, disabledAt: null, ...value.auto },
+  };
+  const firstSeenAt = value.firstSeenAt ?? now.toISOString();
+  let currentEvent = null;
+  if (value.lastNoticeAt && (!value.lastGoalAt || value.lastGoalAt < value.lastNoticeAt) && note && !note.loop) {
+    const slotAt = value.lastDueAt ?? value.lastNoticeAt;
+    currentEvent = newProcessEvent(note, "schedule", slotAt, value.lastNoticeAt, { policy: "ask" });
+  }
+  return {
+    schema: "process-state.v2", revision: 0, firstSeenAt,
+    scheduleThroughAt: value.lastDueAt ?? firstSeenAt, currentEvent, lastEvent: null, backlog: null,
+    auto: { consecutiveFailedSlots: 0, disabledAt: null },
+    lastCheckedAt: value.lastCheckedAt ?? null, lastProbe: value.lastProbe ?? null, lastReason: value.lastReason ?? null,
+    ...Object.fromEntries(["lastDueAt", "lastNoticeAt", "lastDeliveredAt", "lastGoalAt", "lastGoalFile"].filter((key) => value[key]).map((key) => [key, value[key]])),
+  };
+}
+
+/** Creates one stable due or manual event. */
+function newProcessEvent(note, source, slotAt, observedAt, { policy = note.startPolicy ?? "ask", missed = [] } = {}) {
+  const definitionRevision = processDefinitionRevision(note);
+  return {
+    id: digest(note.file, source, slotAt), revision: 1, source, slotAt, observedAt, definitionRevision, policy,
+    status: "waiting", deferredUntil: null,
+    missed: { count: Math.max(0, missed.length - 1), since: missed.length > 1 ? missed[0].toISOString() : null },
+    currentAttemptId: null, attempts: [], plannedGoalFile: null, goalFile: null, job: null, failureCounted: false,
+    createdAt: observedAt, updatedAt: observedAt,
+  };
+}
+
+/** Advances one Process state revision and update time. */
+function bump(state, now) {
+  state.revision = (Number(state.revision) || 0) + 1;
+  if (state.currentEvent) state.currentEvent.updatedAt = new Date(now).toISOString();
+  return state;
+}
+
+/** Prepares one fenced start attempt. The caller performs Brain delivery after releasing the Process lock. */
+export function prepareProcessStart(state, note, { now = new Date(), trigger = "julian", mode = "start", operationId = randomUUID() } = {}) {
+  const next = structuredClone(normalizeProcessState(state, note, now));
+  let event = next.currentEvent;
+  if (mode === "run-again") {
+    if (event && !["finished", "skipped", "did-not-start", "could-not-start"].includes(event.status)) throw Object.assign(new Error("a Process event is already active"), { code: "process-start-in-flight" });
+    event = newProcessEvent(note, "manual", new Date(now).toISOString(), new Date(now).toISOString());
+    next.currentEvent = event;
+  }
+  if (!event) throw Object.assign(new Error("this Process has no waiting event"), { code: "stale-process-event" });
+  if (["running", "starting"].includes(event.status)) throw Object.assign(new Error("this Process is already starting or running"), { code: "process-start-in-flight" });
+  if (["finished", "skipped"].includes(event.status)) throw Object.assign(new Error("this Process event is finished"), { code: "stale-process-event" });
+  if (trigger === "julian") { next.auto.consecutiveFailedSlots = 0; next.auto.disabledAt = null; }
+  const attempt = {
+    id: digest(operationId, event.id, "attempt"), operationId, trigger, mode, status: "delivery-pending",
+    requestedAt: new Date(now).toISOString(), deadlineAt: new Date(new Date(now).getTime() + PROCESS_START_WINDOW_MS).toISOString(),
+    brain: null, error: null, updatedAt: new Date(now).toISOString(),
+  };
+  event.attempts = [...event.attempts.filter((item) => !["prepared", "delivery-pending"].includes(item.status)), attempt].slice(-10);
+  event.currentAttemptId = attempt.id;
+  event.status = "starting";
+  return { state: bump(next, now), event, attempt };
+}
+
+/** Settles the result of Brain delivery after the Process lock was released. */
+export function settleProcessDelivery(state, attemptId, outcome, now = new Date()) {
+  const next = structuredClone(state);
+  const event = next.currentEvent;
+  const attempt = event?.attempts?.find((item) => item.id === attemptId);
+  if (!attempt || event.currentAttemptId !== attemptId) throw Object.assign(new Error("the Process attempt changed"), { code: "stale-process-attempt" });
+  if (outcome.ok) {
+    attempt.status = "delivered"; attempt.brain = outcome.brain ?? null; event.status = "starting";
+    next.lastNoticeAt = attempt.requestedAt; next.lastDeliveredAt = new Date(now).toISOString();
+  } else {
+    attempt.status = "failed"; attempt.error = { code: outcome.code ?? "process-start-failed", message: outcome.error };
+    event.status = "could-not-start";
+    if (attempt.trigger === "auto" && !event.failureCounted) {
+      event.failureCounted = true;
+      next.auto.consecutiveFailedSlots += 1;
+      if (next.auto.consecutiveFailedSlots >= PROCESS_AUTO_FAILURE_LIMIT) next.auto.disabledAt = new Date(now).toISOString();
+    }
+  }
+  attempt.updatedAt = new Date(now).toISOString();
+  return bump(next, now);
+}
 
 /** Serializes scheduler and control work for one exact Area/process identity. */
 export async function withProcessLock(area, slug, operation) {
@@ -125,10 +222,9 @@ export function loopDue(note, state, now) {
 }
 
 /** The one note the brain gets when a process is due (D17). */
-export function dueNotice(note, treesRoot) {
-  const file = path.join(treesRoot, note.file);
-  const flags = [note.path ? ` --path ${note.path}` : "", note.launch ? ` --launch ${JSON.stringify(note.launch)}` : "", note.verify ? " --verify" : ""].join("");
-  return `Process ${note.slug} is due. Start it with: tangent goal create --area ${note.area} --title ${JSON.stringify(note.title)} --start --instruction-file ${file}${flags}`;
+export function dueNotice(note, _treesRoot, event = null, attempt = null) {
+  const fences = event && attempt ? ` --event ${event.id} --attempt ${attempt.id} --definition ${event.definitionRevision} --operation-id ${attempt.operationId}` : "";
+  return `Process ${note.slug} is due. Start it with: tangent process start ${note.area}/${note.slug}${fences}`;
 }
 
 /** The instant a stored ISO field names, or null. */
@@ -192,6 +288,7 @@ export async function evaluateProcess({ note, state, now = new Date(), runProbe,
   if (note.loop) return brainLive ? loopDue(note, state, now) : { due: false, reason: "brain not running", slot: null };
   if (openGoal && goalIsOpen(openGoal)) return { due: false, reason: `Goal ${openGoal.file} is still open`, slot: null, openGoal };
   if (note.schedule) return { ...scheduleDue(note, state, now) };
+  if (state.currentEvent && !["finished", "skipped", "did-not-start", "could-not-start"].includes(state.currentEvent.status)) return { due: false, reason: `event ${state.currentEvent.id} waits for the brain`, slot: null };
   if (state.lastNoticeAt && (!state.lastGoalAt || state.lastGoalAt < state.lastNoticeAt)) return { due: false, reason: `note sent ${state.lastNoticeAt}; waits for the brain`, slot: null };
   const check = probeCheckDue(note, state, now);
   if (!check.check) return { due: false, reason: check.reason, slot: null };
@@ -209,19 +306,29 @@ export async function evaluateProcess({ note, state, now = new Date(), runProbe,
  * or `archived` when the Area or an ancestor is folded away: its processes
  * are never due (area-archive Decision 7).
  */
-export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), runProbe, openGoalFor, notify, hiddenAreaStatus = async () => "", brainLive = async () => true }) {
+export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), runProbe, openGoalFor, notify, requestStart = null, hiddenAreaStatus = async () => "", brainLive = async () => true, autoStartEnabled = process.env.TANGENT_PROCESS_AUTO_START !== "0" }) {
   const results = [];
   for (const discovered of await discoverProcesses(treesRoot)) {
-    await withProcessLock(discovered.area, discovered.slug, async () => {
+    let delivery = null;
+    const result = await withProcessLock(discovered.area, discovered.slug, async () => {
     const note = (await readAreaProcesses(treesRoot, discovered.area)).find((item) => item.slug === discovered.slug);
     if (!note) return;
-    const state = await readProcessState(stateRoot, note.area, note.slug);
-    const next = { ...state };
-    if (!next.firstSeenAt) next.firstSeenAt = now.toISOString();
+    const stored = await readProcessState(stateRoot, note.area, note.slug);
+    const state = normalizeProcessState(stored, note, now);
+    let next = structuredClone(state);
     const openGoal = await openGoalFor(note);
     if (openGoal) {
       next.lastGoalFile = openGoal.file;
       if (!next.lastGoalAt || (next.lastNoticeAt && next.lastGoalAt < next.lastNoticeAt)) next.lastGoalAt = now.toISOString();
+      if (next.currentEvent && goalIsOpen(openGoal) && !["finished", "skipped"].includes(next.currentEvent.status)) {
+        next.currentEvent.status = "running";
+        next.currentEvent.goalFile = openGoal.file;
+      } else if (next.currentEvent?.status === "running") {
+        next.currentEvent.status = "finished";
+        next.lastEvent = { id: next.currentEvent.id, source: next.currentEvent.source, slotAt: next.currentEvent.slotAt, outcome: "finished", goalFile: openGoal.file, jobRun: next.currentEvent.job?.run ?? null, endedAt: now.toISOString() };
+        next.auto.consecutiveFailedSlots = 0;
+        next.auto.disabledAt = null;
+      }
     }
     let outcome;
     try {
@@ -233,17 +340,63 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
       next.lastCheckedAt = now.toISOString();
       next.lastProbe = { exitCode: outcome.exitCode, at: now.toISOString() };
     }
-    if (outcome.due) {
+    if (note.schedule && (outcome.reason === "paused" || outcome.reason.startsWith("Area is "))) {
+      const inactiveThrough = latestSlotAtOrBefore(note.schedule, now)?.toISOString() ?? now.toISOString();
+      next.scheduleThroughAt = inactiveThrough;
+      next.lastDueAt = inactiveThrough;
+    }
+    if (outcome.due && note.loop) {
       const slotAt = (outcome.slot ?? now).toISOString();
       next.lastDueAt = slotAt;
       next.lastNoticeAt = now.toISOString();
       const addressed = await notify(note.area, note.loop ? loopNotice(note) : dueNotice(note, treesRoot), { idempotencyKey: `process:${note.area}:${note.slug}:${slotAt}` });
       if (note.loop && addressed) next.lastDeliveredAt = now.toISOString();
+    } else if (outcome.due && !note.loop) {
+      const slotAt = (outcome.slot ?? now).toISOString();
+      const slots = note.schedule ? scheduleSlotsBetween(note.schedule, next.scheduleThroughAt ?? next.firstSeenAt, now) : [new Date(slotAt)];
+      next.scheduleThroughAt = slotAt;
+      next.lastDueAt = slotAt;
+      if (!next.currentEvent || ["finished", "skipped", "did-not-start", "could-not-start"].includes(next.currentEvent.status)) {
+        if (next.currentEvent) next.lastEvent = { id: next.currentEvent.id, source: next.currentEvent.source, slotAt: next.currentEvent.slotAt, outcome: next.currentEvent.status, goalFile: next.currentEvent.goalFile, jobRun: next.currentEvent.job?.run ?? null, endedAt: now.toISOString() };
+        next.currentEvent = newProcessEvent(note, note.schedule ? "schedule" : "probe", slotAt, now.toISOString(), { missed: slots.length ? slots : [new Date(slotAt)] });
+      } else if (slots.length) {
+        next.backlog = { firstSlotAt: next.backlog?.firstSlotAt ?? slots[0].toISOString(), latestSlotAt: slots.at(-1).toISOString(), count: (next.backlog?.count ?? 0) + slots.length };
+      }
+      const canAuto = note.startPolicy === "auto" && autoStartEnabled && !next.auto.disabledAt && next.currentEvent.status === "waiting" && !goalIsOpen(openGoal);
+      if (canAuto) {
+        const prepared = prepareProcessStart(next, note, { now, trigger: "auto" });
+        next = prepared.state;
+        delivery = { note, event: prepared.event, attempt: prepared.attempt };
+      }
+    }
+    const attempt = next.currentEvent?.attempts?.find((item) => item.id === next.currentEvent?.currentAttemptId);
+    if (next.currentEvent?.status === "starting" && attempt && new Date(attempt.deadlineAt).getTime() <= now.getTime()) {
+      attempt.status = "expired";
+      attempt.updatedAt = now.toISOString();
+      next.currentEvent.status = "did-not-start";
+      if (attempt.trigger === "auto" && !next.currentEvent.failureCounted) {
+        next.currentEvent.failureCounted = true;
+        next.auto.consecutiveFailedSlots += 1;
+        if (next.auto.consecutiveFailedSlots >= PROCESS_AUTO_FAILURE_LIMIT) next.auto.disabledAt = now.toISOString();
+      }
     }
     next.lastReason = outcome.reason;
-    if (JSON.stringify(next) !== JSON.stringify(state)) await writeProcessState(stateRoot, note.area, note.slug, next);
-    results.push({ note, due: outcome.due, reason: outcome.reason, state: next });
+    if (JSON.stringify(next) !== JSON.stringify(stored)) await writeProcessState(stateRoot, note.area, note.slug, bump(next, now));
+    return { note, due: outcome.due, reason: outcome.reason, state: next };
     });
+    if (!result) continue;
+    if (delivery && requestStart) {
+      let outcome;
+      try { outcome = await requestStart(delivery); }
+      catch (error) { outcome = { ok: false, code: error.code, error: String(error.message ?? error) }; }
+      result.state = await withProcessLock(delivery.note.area, delivery.note.slug, async () => {
+        const current = normalizeProcessState(await readProcessState(stateRoot, delivery.note.area, delivery.note.slug), delivery.note, now);
+        const settled = settleProcessDelivery(current, delivery.attempt.id, outcome, now);
+        await writeProcessState(stateRoot, delivery.note.area, delivery.note.slug, settled);
+        return settled;
+      });
+    }
+    results.push(result);
   }
   return results;
 }
@@ -254,27 +407,41 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
  * note waits in the inbox reads `Due, brain not running`.
  */
 export function processView(note, state, now = new Date(), { brainLive = false, openGoal = null, areaHidden = "" } = {}) {
+  const runtime = normalizeProcessState(state, note, now);
   const nextRunAt = note.schedule
     ? nextSlotAfter(note.schedule, now)?.toISOString() ?? null
     : note.loop
       ? (instant(state.lastNoticeAt) ? new Date(instant(state.lastNoticeAt).getTime() + note.everyMs) : now).toISOString()
     : note.everyMs ? new Date((instant(state.lastCheckedAt)?.getTime() ?? now.getTime()) + (instant(state.lastCheckedAt) ? note.everyMs : 0)).toISOString() : null;
   const goalOpen = openGoal && goalIsOpen(openGoal);
-  const noticeWaits = Boolean(state.lastNoticeAt) && !goalOpen && (!state.lastGoalAt || state.lastGoalAt < state.lastNoticeAt);
+  const event = runtime.currentEvent;
+  const noticeWaits = Boolean(event && !["finished", "skipped", "running"].includes(event.status));
   let stateWord = "Waiting";
+  let stateDetail = runtime.lastReason ?? "";
   if (note.error) stateWord = "Broken note";
   else if (note.status === "paused") stateWord = "Paused";
   else if (areaHidden) stateWord = `Area ${areaHidden}`;
   else if (note.loop) stateWord = brainLive ? "Loop" : "Waiting for brain";
-  else if (goalOpen) stateWord = "Running";
-  else if (noticeWaits) stateWord = brainLive ? "Due, brain told" : "Due, brain not running";
+  else if (goalOpen || event?.status === "running") stateWord = "Running";
+  else if (event?.status === "starting") { stateWord = "Starting"; stateDetail = `Sent to the brain at ${event.attempts?.find((item) => item.id === event.currentAttemptId)?.requestedAt ?? event.updatedAt}.`; }
+  else if (event?.status === "did-not-start") { stateWord = "Did not start"; stateDetail = `The brain was told at ${event.attempts?.find((item) => item.id === event.currentAttemptId)?.requestedAt ?? event.updatedAt} and started no Job.`; }
+  else if (event?.status === "could-not-start") { stateWord = "Could not start"; stateDetail = event.attempts?.find((item) => item.id === event.currentAttemptId)?.error?.message ?? "The start request failed."; }
+  else if (runtime.auto.disabledAt) { stateWord = "Needs you"; stateDetail = `Auto-start stopped after ${runtime.auto.consecutiveFailedSlots} failed runs.`; }
+  else if (event?.status === "deferred") stateWord = `Deferred to ${event.deferredUntil}`;
+  else if (event?.status === "waiting") stateWord = "Start it?";
+  const startReason = note.error ? note.error : note.status === "paused" ? "Resume the Process first." : areaHidden ? `Reopen the Area first.` : ["starting", "running"].includes(event?.status) ? "The Process is already starting or running." : null;
   return {
     area: note.area, slug: note.slug, file: note.file, title: note.title, status: note.status,
     when: describeWhen(note), schedule: note.schedule?.text ?? null, probe: note.when, every: note.every,
     launch: note.launch, path: note.path, verify: note.verify, error: note.error, loop: note.loop, body: note.loop ? note.body : undefined,
     nextRunAt: note.status === "paused" || areaHidden ? null : nextRunAt,
     lastRunAt: state.lastDueAt ?? null, lastNoticeAt: state.lastNoticeAt ?? null, lastCheckedAt: state.lastCheckedAt ?? null,
-    lastGoalFile: state.lastGoalFile ?? null, lastReason: state.lastReason ?? null,
+    startPolicy: note.startPolicy, revision: runtime.revision, eventId: event?.id ?? null, eventRevision: event?.revision ?? null,
+    stateDetail, missedCount: event?.missed?.count ?? 0, missedSince: event?.missed?.since ?? null,
+    lastGoalFile: event?.goalFile ?? runtime.lastGoalFile ?? null, lastJobRun: event?.job?.run ?? null,
+    currentAgentSession: event?.job?.agentSession ?? null,
+    actionReasons: { start: startReason, retry: startReason, defer: startReason, skip: startReason, readRun: (event?.goalFile ?? runtime.lastGoalFile) ? null : "This Process has no run yet.", stop: event?.job?.agentSession ? null : "No Process Agent is running." },
+    lastReason: runtime.lastReason ?? null,
     goalOpen: Boolean(goalOpen), due: !note.loop && noticeWaits, brainLive, state: stateWord,
   };
 }

@@ -1988,13 +1988,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const stateKind = item.error ? "waiting" : item.status === "paused" ? "complete" : item.due ? "waiting" : "working";
     const action = item.status === "paused" ? "resume" : "pause";
     const actionWord = action === "pause" ? "Pause" : "Resume";
-    const identity = `data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}"`;
+    const identity = `data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" data-process-event="${escapeHtml(item.eventId || "")}" data-process-revision="${escapeHtml(item.revision ?? 0)}"`;
     const lifecycle = item.error ? "" : `<button class="work-process-control" type="button" data-control-process data-process-action="${action}" ${identity} aria-label="${actionWord} process ${escapeHtml(item.slug)} in ${escapeHtml(areaLabel(item.area))}">${actionWord}</button>`;
     const remove = item.loop ? `<button class="work-process-control danger" type="button" data-remove-process ${identity} aria-label="Remove loop ${escapeHtml(item.slug)} from ${escapeHtml(areaLabel(item.area))}">Remove</button>` : "";
-    return `<tr class="work-process-row work-row ${item.status === "paused" ? "paused" : ""}" data-search-text="${escapeHtml(`${item.title} ${item.slug} ${item.when} ${stateText}`)}" data-work-area="${escapeHtml(item.area)}">
+    return `<tr class="work-process-row work-row ${item.status === "paused" ? "paused" : ""}" data-work-cursor="process:${escapeHtml(item.file)}" ${identity} data-search-text="${escapeHtml(`${item.title} ${item.slug} ${item.when} ${item.startPolicy || ""} ${stateText} ${item.stateDetail || ""}`)}" data-work-area="${escapeHtml(item.area)}" aria-label="Process ${escapeHtml(item.title)} in ${escapeHtml(areaLabel(item.area))}, ${escapeHtml(stateText)}">
       <th class="work-cell-work" scope="row">
         <span class="work-cell-title">${WORK_FOLD_SPACE}<button class="work-row-title" type="button" data-open-document="${escapeHtml(item.file)}" data-focus-key="process:${escapeHtml(item.file)}" aria-label="Inspect process ${escapeHtml(item.title)}">${escapeHtml(item.title)}</button><small class="work-row-path">Process</small></span>
-        <small class="work-cell-facts">${escapeHtml(item.when)}</small>
+        <small class="work-cell-facts">${escapeHtml(item.missedCount ? `${item.missedCount} runs missed since ${item.missedSince}` : item.when)}</small>
       </th>
       <td class="work-cell-agent"><span class="work-process-when" title="${escapeHtml(item.when)}">${escapeHtml(item.when)}</span></td>
       <td class="work-cell-status"><span class="desk-state ${stateKind}" title="${escapeHtml(stateText)}">${escapeHtml(stateText)}</span></td>
@@ -2185,7 +2185,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    */
   function workProcessSections(records) {
     const areas = records.flatMap((record) => [record.area.path, ...record.sections.map((section) => section.area.path)]);
-    const due = (state.programs.processes ?? []).filter((item) => item.due && !item.brainLive && areas.includes(item.area));
+    const due = (state.programs.processes ?? []).filter((item) => ["Start it?", "Did not start", "Could not start", "Needs you"].includes(item.state) && areas.includes(item.area));
     if (!due.length) return "";
     return `<div class="work-processes"><section class="area-desk-section processes">
       <div class="area-desk-section-heading"><h3>Processes due</h3><span>${due.length}</span></div>

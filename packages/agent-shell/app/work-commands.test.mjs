@@ -7,7 +7,7 @@ test("Work command records are unique, complete, and own the settled shortcuts",
   for (const command of WORK_COMMANDS) {
     assert.match(command.id, /^[a-z][A-Za-z]+$/);
     if (!["note", "chooseAreas"].includes(command.id)) assert.match(command.keyDisplay, /\S/);
-    assert.match(command.scope, /^(work|area|goal|document|card)$/);
+    assert.match(command.scope, /^(work|area|goal|process|document|card)$/);
     assert.match(command.label, /\S/);
     assert.match(command.help, /\S/);
     assert.ok(Object.isFrozen(command));
@@ -50,6 +50,7 @@ test("sheet and help consumers receive structured records", () => {
   const sheet = workCommandsFor();
   assert.equal(sheet.length, WORK_COMMANDS.length, "the ? sheet lists every command");
   assert.deepEqual(workCommandsFor({ scope: "goal" }).map((command) => command.id), ["readGoal", "resumeAttempt", "changeAgent", "goalStatus"]);
+  assert.deepEqual(workCommandsFor({ scope: "process" }).map((command) => command.id), ["readProcessRun", "processMenu"]);
   assert.equal(workCommand("stopAgent").scope, "work", "the same stop command applies to selected Areas and Goals");
   const help = workCommandHelpRows();
   assert.equal(help.length, WORK_COMMANDS.length);

@@ -859,6 +859,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   function executeWorkCommand(id, row = cursorRow()) {
     const area = commandAreaForRow(row);
     const goal = goalByFile(row?.dataset.goalAnchor ?? "");
+    const process = row?.dataset.processFile ? (state.programs.processes ?? []).find((item) => item.file === row.dataset.processFile) : null;
     if (id === "fullDocument" && row?.dataset.presentationFile) return openDocument(row.dataset.presentationFile, { presentation: row });
     if (id === "dismissPresentation" && row?.dataset.presentationFile) {
       return dismissPresentedDocument(row);
@@ -871,7 +872,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       // An Area row means exactly this Area's brain. Any other row (a Goal, a
       // sub-goal) opens the nearest active brain up the Area chain, so a Goal
       // under a sub-Area without its own brain still reaches its organiser.
-      const onAreaRow = Boolean(row?.classList.contains("work-group-row"));
+      const onAreaRow = Boolean(row?.classList.contains("work-group-row") || row?.dataset.processFile);
       const brain = onAreaRow ? activeBrainForArea(state.brains, area) : nearestActiveBrain(state.brains, area);
       const session = state.sessions.find((item) => item.name === brain?.session);
       if (session) return openSessionLayer(session, "brain");
@@ -885,6 +886,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return opened;
     }
     if (id === "stopAgent") {
+      const process = row?.dataset.processFile ? (state.programs.processes ?? []).find((item) => item.file === row.dataset.processFile) : null;
+      if (process) {
+        const processGoal = process.lastGoalFile ? goalByFile(process.lastGoalFile) : null;
+        if (!process.currentAgentSession || !processGoal) return showToast(process.actionReasons?.stop || "No Process Agent is running.");
+        rememberGoal(processGoal.file);
+        return confirmStop();
+      }
       if (goal) {
         const session = sessionForGoal(goal);
         if (!session) return showToast("This Goal has no live agent.");
@@ -923,6 +931,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (id === "collapse") return collapseWorkTree(row) || showToast(treeCommandAvailability(id, row).reason);
     if (id === "expand") return expandWorkTree(row) || showToast(treeCommandAvailability(id, row).reason);
     if (id === "readGoal") return goal ? openDocument(goal.file) : showToast("Choose a Goal row first.");
+    if (id === "readProcessRun") return process?.lastGoalFile ? openDocument(process.lastGoalFile, { heading: "job" }) : showToast(process?.actionReasons?.readRun || "This Process has no run yet.");
+    if (id === "processMenu") return process ? openObjectActions(row, true) : showToast("Choose a Process row first.");
     if (id === "changeAgent") {
       const opener = row?.contains(document.activeElement)
         ? document.activeElement
@@ -1018,18 +1028,20 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    * picking it. Row-specific outcomes without a key (End current agent, Mark
    * done, Archive) join the same list, so nothing has a second menu.
    */
-  function openObjectActions(row = cursorRow()) {
+  function openObjectActions(row = cursorRow(), processActions = false) {
     if (row) rememberWorkCursor(row);
     const area = commandAreaForRow(row);
     const goal = goalByFile(row?.dataset.goalAnchor ?? "");
+    const process = row?.dataset.processFile ? (state.programs.processes ?? []).find((item) => item.file === row.dataset.processFile) : null;
     const brain = area ? brainForAreaCard(area) : null;
     const isArea = Boolean(row?.classList.contains("work-group-row") && area);
     const searching = Boolean(state.searchPattern);
     const options = workCommandsFor().filter((command) => {
       if (command.id === "starArea") return Boolean(isArea || goal);
       if (["defaults", "messageBrain", "chooseAreas", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return isArea;
-      if (command.id === "stopAgent") return Boolean(isArea || goal);
+      if (command.id === "stopAgent") return Boolean(isArea || goal || process);
       if (["readGoal", "changeAgent", "goalStatus"].includes(command.id)) return Boolean(goal);
+      if (["readProcessRun", "processMenu"].includes(command.id)) return Boolean(process);
       if (command.id === "resumeAttempt") return Boolean(goal) && !isArea;
       if (["open", "session", "collapse", "expand"].includes(command.id)) return Boolean(row);
       return command.id !== "keys";
@@ -1038,7 +1050,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const replacement = command.id === "changeAgent" ? replacementTargetForGoal(goal) : null;
       const resumable = command.id === "resumeAttempt" ? resumeAvailabilityForGoal(goal) : null;
       const match = ["nextMatch", "previousMatch"].includes(command.id);
-      const stopLive = isArea ? Boolean(brain?.live) : Boolean(goal && sessionForGoal(goal));
+      const stopLive = process ? Boolean(process.currentAgentSession) : isArea ? Boolean(brain?.live) : Boolean(goal && sessionForGoal(goal));
       const enabled = command.id === "stopAgent" ? stopLive : replacement ? replacement.enabled : resumable ? resumable.enabled : match ? searching : tree.enabled;
       const reason = command.id === "stopAgent" && !stopLive ? (isArea ? "This Area has no live brain." : "This Goal has no live agent.") : replacement ? replacement.reason : resumable ? resumable.reason : match && !searching ? "Press / to search first." : tree.reason;
       const label = command.id === "starArea" && area && state.areaFocus.includes(area) ? "Unstar Area"
@@ -1046,6 +1058,17 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         : command.id === "activeOnly" && state.activeOnly ? "Show every Area" : command.label;
       return { value: command.id, key: command.keyDisplay, label, help: command.help, enabled, reason };
     });
+    if (process && processActions) {
+      options.splice(0, options.length,
+        { value: "processStart", key: "", label: ["Did not start", "Could not start"].includes(process.state) ? "Retry now" : process.state === "Waiting" ? "Run again" : "Start now", help: "Ask the exact Area brain to start this Process.", enabled: !process.actionReasons?.start, reason: process.actionReasons?.start },
+        { value: "processDefer", key: "", label: "Defer", help: "Move this run to a later time.", enabled: !process.actionReasons?.defer, reason: process.actionReasons?.defer },
+        { value: "processSkip", key: "", label: "Skip this run", help: "Drop this slot only. The next slot still runs.", enabled: !process.actionReasons?.skip, reason: process.actionReasons?.skip },
+        { value: "processControl", key: "", label: process.status === "paused" ? "Resume" : "Pause", help: process.status === "paused" ? "Resume scheduling." : "Stop scheduling until resumed.", enabled: true },
+        { value: "open", key: "Enter", label: "Inspect note", help: "Open the Process note.", enabled: true },
+        { value: "readProcessRun", key: "o", label: "Read run", help: "Open the last linked Job.", enabled: !process.actionReasons?.readRun, reason: process.actionReasons?.readRun },
+        { value: "processRemove", key: "", label: "Remove", help: "Remove this loop note.", enabled: Boolean(process.loop), reason: "Only loops can be removed." },
+      );
+    }
     const record = goal ? pipelineRecordForGoal(goal) : null;
     const currentAssignment = record?.steps?.find((step) => !["complete", "skipped", "ended", "replaced"].includes(step.status));
     const stoppedAssignment = currentAssignment && (currentAssignment.status === "stopped" || (currentAssignment.status === "running" && !currentAssignment.live));
@@ -1081,11 +1104,35 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         setAreaStatus(area, id === "areaDone" ? "done" : id === "archiveArea" ? "archived" : "active");
         return true;
       }
+      if (process && id === "processStart") {
+        const status = currentRow?.querySelector(".work-cell-status .desk-state");
+        const previous = status?.textContent ?? process.state;
+        if (status) status.textContent = "Starting";
+        post("/api/processes/request-start", { file: process.file, eventId: process.eventId, expectedRevision: process.revision, operationId: crypto.randomUUID(), mode: process.state === "Waiting" ? "run-again" : ["Did not start", "Could not start"].includes(process.state) ? "retry" : "start" })
+          .then(() => refresh()).then(() => showToast("The Process is starting."), (error) => { if (status) status.textContent = previous; showToast(error.message); });
+        return true;
+      }
+      if (process && id === "processControl") {
+        post("/api/processes/control", { area: process.area, slug: process.slug, file: process.file, action: process.status === "paused" ? "resume" : "pause" }).then(() => refresh(), (error) => showToast(error.message));
+        return true;
+      }
+      if (process && id === "processDefer") {
+        post("/api/processes/defer", { file: process.file, eventId: process.eventId, expectedRevision: process.revision, operationId: crypto.randomUUID(), choice: "15m" }).then(() => refresh(), (error) => showToast(error.message));
+        return true;
+      }
+      if (process && id === "processSkip") {
+        post("/api/processes/skip", { file: process.file, eventId: process.eventId, expectedRevision: process.revision, operationId: crypto.randomUUID() }).then(() => refresh(), (error) => showToast(error.message));
+        return true;
+      }
+      if (process && id === "processRemove") {
+        post("/api/processes/remove", { area: process.area, slug: process.slug, file: process.file }).then(() => refresh(), (error) => showToast(error.message));
+        return true;
+      }
       return executeWorkCommand(id, currentRow);
     };
     return openModal({
-      kicker: goal ? "Goal keys" : isArea ? "Area keys" : "Work keys",
-      title: goal?.title ?? (area ? areaLabel(area) : "Work"),
+      kicker: process ? "Process" : goal ? "Goal keys" : isArea ? "Area keys" : "Work keys",
+      title: process?.title ?? goal?.title ?? (area ? areaLabel(area) : "Work"),
       copy: "Every key for this row. Pick one to run it.",
       field: { kind: "actions", label: "Actions", options },
       confirmLabel: "",
@@ -3147,13 +3194,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (workCommandMatches(event, "activeOnly")) { event.preventDefault(); return executeWorkCommand("activeOnly", current); }
       if (workCommandMatches(event, "readGoal")) {
         event.preventDefault();
-        return executeWorkCommand("readGoal", current);
+        return executeWorkCommand(current?.dataset.processFile ? "readProcessRun" : "readGoal", current);
       }
       if (workCommandMatches(event, "changeAgent")) {
         event.preventDefault();
         return executeWorkCommand("changeAgent", current);
       }
-      if (workCommandMatches(event, "goalStatus")) { event.preventDefault(); return executeWorkCommand("goalStatus", current); }
+      if (workCommandMatches(event, "goalStatus")) { event.preventDefault(); return executeWorkCommand(current?.dataset.processFile ? "processMenu" : "goalStatus", current); }
       if (workCommandMatches(event, "search")) { event.preventDefault(); return executeWorkCommand("search", current); }
       if (state.searchPattern && workCommandMatches(event, "nextMatch")) { event.preventDefault(); return executeWorkCommand("nextMatch", current); }
       if (state.searchPattern && workCommandMatches(event, "previousMatch")) { event.preventDefault(); return executeWorkCommand("previousMatch", current); }

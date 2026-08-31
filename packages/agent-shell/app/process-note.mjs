@@ -155,6 +155,35 @@ export function nextSlotAfter(schedule, instant) {
   return slotsAround(schedule, instant).find((slot) => slot.getTime() > at) ?? null;
 }
 
+/** Every schedule slot after `after` and at or before `through`, without an arbitrary look-back limit. */
+export function scheduleSlotsBetween(schedule, after, through) {
+  const floor = new Date(after).getTime();
+  const ceiling = new Date(through).getTime();
+  if (!Number.isFinite(floor) || !Number.isFinite(ceiling) || ceiling <= floor) return [];
+  const slots = [];
+  const cursor = new Date(floor);
+  const end = new Date(ceiling);
+  const startCalendar = calendarOf(schedule, cursor);
+  const endCalendar = calendarOf(schedule, end);
+  const startDay = slotDate(schedule, startCalendar.year, startCalendar.month, startCalendar.day, { hour: 0, minute: 0 });
+  const endDay = slotDate(schedule, endCalendar.year, endCalendar.month, endCalendar.day, { hour: 0, minute: 0 });
+  for (let day = startDay; day.getTime() <= endDay.getTime(); day = slotDate(schedule, ...(() => {
+    const next = new Date(day.getTime());
+    if (schedule.utc) next.setUTCDate(next.getUTCDate() + 1); else next.setDate(next.getDate() + 1);
+    const value = calendarOf(schedule, next);
+    return [value.year, value.month, value.day, { hour: 0, minute: 0 }];
+  })())) {
+    const calendar = calendarOf(schedule, day);
+    const weekday = schedule.utc ? day.getUTCDay() : day.getDay();
+    if (!schedule.days.includes(weekday)) continue;
+    for (const time of schedule.times) {
+      const slot = slotDate(schedule, calendar.year, calendar.month, calendar.day, time);
+      if (slot.getTime() > floor && slot.getTime() <= ceiling) slots.push(slot);
+    }
+  }
+  return slots;
+}
+
 /** The title of a process: its first heading, else the slug in words. */
 function processTitle(body, slug) {
   const heading = body.match(/^#\s+(.+)$/m)?.[1]?.trim();
@@ -169,10 +198,12 @@ export function parseProcessNote(text, { file, area }) {
   const slug = processSlugFromFile(file);
   const { fields, body } = splitFrontmatter(text);
   const note = {
+    raw: String(text ?? ""),
     area, file, slug: slug ?? String(file).split("/").pop(),
     title: processTitle(body, slug ?? "process"),
     status: (fields.status || "active").toLowerCase(),
     schedule: null, when: fields.when || null, every: fields.every || null, everyMs: null, loop: false,
+    startPolicy: null,
     launch: fields.launch || null, path: fields.path || null, verify: /^(yes|true)$/i.test(fields.verify ?? ""),
     body: body.trim(),
     error: null,
@@ -191,6 +222,7 @@ export function parseProcessNote(text, { file, area }) {
       note.loop = true;
       note.everyMs = parseEvery(fields.every);
       if (note.everyMs < LOOP_FLOOR_MS) throw new Error("a loop runs every 1m or slower");
+      if (Object.hasOwn(fields, "start")) throw new Error("a loop takes no start. Remove start or add when: <shell probe>");
       const workerKeys = ["launch", "path", "verify"].filter((key) => fields[key]);
       if (workerKeys.length) throw new Error(`a loop takes no ${workerKeys.join(", ")}; add when: <shell probe> for a job that starts a worker`);
     }
@@ -198,6 +230,11 @@ export function parseProcessNote(text, { file, area }) {
     if (fields.when) {
       if (!fields.every) throw new Error("when: needs every: <duration>, such as every: 30m");
       note.everyMs = parseEvery(fields.every);
+    }
+    if (!note.loop) {
+      const policy = String(fields.start || "ask").toLowerCase();
+      if (!["ask", "auto"].includes(policy)) throw new Error(`start must be ask or auto, not ${fields.start}`);
+      note.startPolicy = policy;
     }
     if (!note.body) throw new Error(note.loop ? "the body is empty; write the message the brain gets" : "the body is empty; write the instruction the brain gives the worker");
   } catch (error) {

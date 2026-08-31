@@ -8,10 +8,11 @@ function subcommand(name) {
   return processCommandSpec.subcommands.find((entry) => entry.name === name);
 }
 
-test("process help exposes the complete loop lifecycle", () => {
-  assert.deepEqual(processCommandSpec.subcommands.map((entry) => entry.name), ["create", "list", "show", "pause", "resume", "check", "remove"]);
+test("process help exposes the complete definition and run lifecycle", () => {
+  assert.deepEqual(processCommandSpec.subcommands.map((entry) => entry.name), ["create", "list", "show", "start", "pause", "resume", "check", "remove"]);
   assert.deepEqual(subcommand("create").options.map((entry) => entry.name), ["area", "slug", "every", "message", "server", "json"]);
   assert.equal(subcommand("remove").args, "<slug|area/slug>");
+  assert.deepEqual(subcommand("start").options.map((entry) => entry.name), ["event", "attempt", "definition", "operation-id", "area", "server", "json"]);
 });
 
 test("process create and remove send exact requests and print results", async (context) => {

@@ -17,8 +17,8 @@ import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createLaunchMemory } from "./launch-memory.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
-import { discoverProcesses, evaluateProcess, goalNamesProcess, processFileExists, processView, readAreaProcesses, readProcessState, removeProcessState, sweepProcesses, withProcessLock, withProcessStatus } from "./process-scheduler.mjs";
-import { formatLoopNote, parseProcessNote, validateProcessSlug } from "./process-note.mjs";
+import { discoverProcesses, evaluateProcess, goalNamesProcess, normalizeProcessState, prepareProcessStart, processDefinitionRevision, processFileExists, processView, readAreaProcesses, readProcessState, removeProcessState, settleProcessDelivery, sweepProcesses, withProcessLock, withProcessStatus, writeProcessState } from "./process-scheduler.mjs";
+import { formatLoopNote, nextSlotAfter, parseProcessNote, validateProcessSlug } from "./process-note.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, safePresentedMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import documentComments from "./public/document-comments.js";
 import areaMapCore from "./public/area-map-core.js";
@@ -1651,9 +1651,9 @@ async function readAreaGoalsDeep(area) {
 /**
  * Creates one Goal and its optional Subgoals in one confirmed save.
  */
-async function createGoalSet(area, { goal, subgoals = [], description = "", sources = [], verify = false, process = "" }) {
+async function createGoalSet(area, { goal, subgoals = [], description = "", sources = [], verify = false, process = "", exactFile = "" }) {
   const taken = new Set([...(await goalsByFile()).values()].map((item) => item.slug));
-  const goalSlug = allocateGoalSlug(area, goal.title, taken);
+  const goalSlug = exactFile ? path.basename(exactFile, ".md").replace(/^goal-/, "") : allocateGoalSlug(area, goal.title, taken);
   const subgoalRecords = subgoals.map((subgoal) => ({
     ...subgoal,
     slug: allocateGoalSlug(area, subgoal.title, taken),
@@ -1664,6 +1664,11 @@ async function createGoalSet(area, { goal, subgoals = [], description = "", sour
   ].map((record) => ({ ...record, file: `${area}/goal-${record.slug}.md` }));
 
   for (const record of records) {
+    if (exactFile && record.file === exactFile && existsSync(path.join(TREES_ROOT, record.file))) {
+      const existing = (await goalsByFile()).get(record.file);
+      if (existing?.process === process) continue;
+      throw Object.assign(new Error(`${record.file} belongs to different work`), { code: "process-goal-conflict" });
+    }
     await vaultRepository.writeMarkdown(record.file, renderNewGoal(record));
   }
   // Tangent never writes into the Area note (ADR-0041): a Goal is only its file.
@@ -2446,7 +2451,9 @@ const runtimeScheduler = createRuntimeScheduler([
     active: () => true,
     /** Tells the Area brain about each due process note (ADR-0043). */
     async run() {
-      await sweepProcesses({ treesRoot: TREES_ROOT, stateRoot: PROCESSES_ROOT, runProbe: runProcessProbe, openGoalFor: openGoalForProcess, notify: notifyBrain, hiddenAreaStatus, brainLive: loopBrainLive });
+      await sweepProcesses({ treesRoot: TREES_ROOT, stateRoot: PROCESSES_ROOT, runProbe: runProcessProbe, openGoalFor: openGoalForProcess, notify: notifyBrain,
+        /** Delivers one automatic Process attempt through the exact Brain service. */
+        requestStart: ({ note, event, attempt }) => deliverProcessStart({ note, event, attempt, automatic: true }), hiddenAreaStatus, brainLive: loopBrainLive });
     },
   },
   {
@@ -3157,7 +3164,7 @@ function contextFillChanged(before, after) {
 }
 
 /** Creates the record for one Goal and starts its first step. */
-async function startPipeline(file, { steps, extraFiles = [], start = true, attemptKind = "managed", brain = null } = {}) {
+async function startPipeline(file, { steps, extraFiles = [], start = true, attemptKind = "managed", brain = null, origin = null } = {}) {
   const byFile = await goalsByFile();
   const o = byFile.get(file);
   if (!o) return { status: 404, error: `no goal file ${file}` };
@@ -3180,7 +3187,7 @@ async function startPipeline(file, { steps, extraFiles = [], start = true, attem
   const error = validateSteps(steps);
   if (error) return { status: 400, error };
   const sameArea = extraFiles.map(String).filter((extra) => byFile.get(extra)?.area === o.area);
-  const fields = { goal: o.file, goalRevision: await goalContentRevision(o.file), area: o.area, organizerArea: brain?.area ?? o.area, slug: o.slug, extraFiles: sameArea, steps };
+  const fields = { goal: o.file, goalRevision: await goalContentRevision(o.file), area: o.area, organizerArea: brain?.area ?? o.area, slug: o.slug, extraFiles: sameArea, steps, origin };
   const jobFile = await readJob(PIPELINES_ROOT, o.area, o.slug);
   const record = jobFile ? createJobRun(jobFile, fields) : newPipeline(fields);
   record.instanceId = INSTANCE_ID;
@@ -4673,7 +4680,7 @@ const WORKER_REFUSED_ROUTES = new Set([
   "/api/brains/start", "/api/brains/stop", "/api/brains/reply", "/api/brains/verdict", "/api/brains/verdict/undo",
   "/api/brains/succeed",
   "/api/brains/requests", "/api/brains/requests/withdraw", "/api/brains/requests/answer", "/api/brains/requests/dismiss",
-  "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control", "/api/processes/check",
+  "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control", "/api/processes/check", "/api/processes/request-start", "/api/processes/start", "/api/processes/defer", "/api/processes/skip",
   "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions", "/api/areas/map-promotions/complete",
   "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
@@ -4690,7 +4697,7 @@ const REPAIR_REFUSED_ROUTES = new Set([
   "/api/brains/requests/answer", "/api/brains/requests/dismiss", "/api/operations/new", "/api/operations/control",
   "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control",
   "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions", "/api/areas/map-promotions/complete",
-  "/api/processes/check", "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
+  "/api/processes/check", "/api/processes/request-start", "/api/processes/start", "/api/processes/defer", "/api/processes/skip", "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
 
 /**
@@ -6355,7 +6362,10 @@ const jobOperations = {
     const brain = await liveCallingOrganizer(String(body.caller ?? body.session ?? ""), resolved.goal.area);
     if (!brain) return { status: 403, error: `only the live organizer of ${resolved.goal.area} can create a Job` };
     const steps = Array.isArray(body.steps) && body.steps.length ? body.steps : [{ instruction: String(body.instruction ?? `Complete ${resolved.goal.title}. Done when: ${resolved.goal.doneWhen}`), ...(body.launch ? { launch: body.launch } : {}), ...(body.path ? { path: body.path } : {}), ...(body.kind ? { kind: body.kind } : {}) }];
-    const result = await startPipeline(resolved.goal.file, { steps, extraFiles: body.extraFiles ?? [], start: false, brain });
+    const existing = await readJob(PIPELINES_ROOT, resolved.goal.area, resolved.goal.slug);
+    const sameOrigin = body.origin && existing?.runs?.find((run) => run.origin?.kind === "process" && run.origin.processFile === body.origin.processFile && run.origin.eventId === body.origin.eventId);
+    if (sameOrigin) return { status: 200, state: "queued", session: null, job: canonicalJob(sameOrigin), pipeline: sameOrigin, assignment: canonicalJob(sameOrigin)?.assignments?.[0] ?? null, idempotent: true };
+    const result = await startPipeline(resolved.goal.file, { steps, extraFiles: body.extraFiles ?? [], start: false, brain, origin: body.origin ?? null });
     if (result.status === 200) await recordRuntimeEvent("job.created", { operationId: body.operationId, address: resolved.goal.file, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: body.caller ?? body.session });
     return result.status === 200 ? { ...result, job: canonicalJob(result.pipeline), assignment: canonicalJob(result.pipeline)?.assignments?.[0] ?? null } : result;
   },
@@ -6807,7 +6817,7 @@ function processFileOf(instructionFile) {
 /** The open Goal a process note started, or null. Done, dropped, and parked Goals do not count. */
 async function openGoalForProcess(note) {
   const goals = (await readAreaGoals(note.area)).filter((goal) => goalNamesProcess(goal, note));
-  return goals.find((goal) => ["open", "active", "verify"].includes(goal.status)) ?? null;
+  return goals.find((goal) => ["open", "active", "verify"].includes(goal.status)) ?? goals.at(-1) ?? null;
 }
 
 /** Runs a `when:` probe in the process's folder and resolves its exit code. */
@@ -6845,6 +6855,32 @@ async function resolveProcessNote(slug, area = "") {
   if (matches.length === 1) return matches[0];
   if (!matches.length) throw new Error(`no process named ${JSON.stringify(slug)}${area ? ` in ${area}` : ""}`);
   throw new Error(`${slug} names ${matches.length} processes; use <area>/<slug>: ${matches.map((note) => `${note.area}/${note.slug}`).join(", ")}`);
+}
+
+/** Delivers one fenced Process command to the exact Area brain, waking or founding it when necessary. */
+async function deliverProcessStart({ note, event, attempt, automatic = false }) {
+  const command = `tangent process start ${note.area}/${note.slug} --event ${event.id} --attempt ${attempt.id} --definition ${event.definitionRevision} --operation-id ${attempt.operationId}`;
+  const existing = await readBrain(BRAINS_ROOT, note.area);
+  let result;
+  if (existing?.status === "active" && existing.session && await liveBrainForSession(existing.session)) {
+    const notice = await recordBrainNotice(note.area, command, { sourceId: `process:${attempt.id}` });
+    await queueBrainNotice(existing.session, { text: command, notices: [{ area: note.area, id: notice.id }], generation: existing.generation ?? null });
+    result = { status: 200, session: existing.session, generation: existing.generation };
+  } else {
+    if (automatic && existing?.recovery?.exhausted) return { ok: false, code: "brain-recovery-exhausted", error: "Automatic brain recovery is exhausted." };
+    result = await startBrain(note.area, { instruction: command, resume: Boolean(existing), automaticRecovery: automatic });
+  }
+  if (result.status !== 200) return { ok: false, code: result.code ?? (String(result.error).includes("launch") ? "launch-unavailable" : "process-start-failed"), error: result.error };
+  const brain = await readBrain(BRAINS_ROOT, note.area);
+  const fence = { area: note.area, generation: brain.generation, session: brain.session, instanceId: INSTANCE_ID, target: currentGeneration(brain)?.target ?? brain.target ?? note.area };
+  await recordRuntimeEvent("process.brain.delivered", { operationId: attempt.operationId, address: note.file, outcome: automatic ? "auto" : "julian", eventId: event.id, attemptId: attempt.id, area: note.area, brainGeneration: brain.generation });
+  return { ok: true, brain: fence };
+}
+
+/** Reserves the one deterministic Goal file owned by a Process event. */
+function processGoalFile(note, event) {
+  const title = String(note.title).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || note.slug;
+  return `${note.area}/goal-${title}-${event.id.slice(0, 10).toLowerCase()}.md`;
 }
 
 const processRoutes = createProcessRoutes({
@@ -6929,6 +6965,122 @@ const processRoutes = createProcessRoutes({
     const outcome = await evaluateProcess({ note, state, runProbe: runProcessProbe, openGoal, brainLive });
     const view = processView(note, state, new Date(), { brainLive, openGoal });
     return { due: outcome.due, reason: outcome.reason, process: view };
+  },
+  /** Julian requests delivery; this operation never creates a Goal or Job. */
+  async requestStart(body) {
+    const note = body.file ? await resolveProcessNote(String(body.file), "") : await resolveProcessNote(String(body.slug ?? ""), String(body.area ?? ""));
+    let prepared;
+    let replay = null;
+    await withProcessLock(note.area, note.slug, async () => {
+      const current = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
+      if (body.eventId && current.currentEvent?.id !== body.eventId) throw Object.assign(new Error("the Process event changed"), { code: "stale-process-event" });
+      const accepted = current.currentEvent?.attempts?.some((item) => ["accepted", "goal-created", "job-created", "started"].includes(item.status));
+      if (current.currentEvent && !accepted && current.currentEvent.definitionRevision !== processDefinitionRevision(note)) {
+        current.currentEvent.definitionRevision = processDefinitionRevision(note);
+        current.currentEvent.policy = note.startPolicy;
+        current.currentEvent.revision += 1;
+      }
+      const prior = current.currentEvent?.attempts?.find((item) => body.operationId && item.operationId === body.operationId);
+      if (prior) {
+        if (prior.mode !== (body.mode ?? "start")) throw Object.assign(new Error("the operation ID was already used with different input"), { code: "operation-conflict" });
+        replay = { state: current, event: current.currentEvent, attempt: prior }; return;
+      }
+      if (body.expectedRevision != null && Number(body.expectedRevision) !== current.revision) throw Object.assign(new Error(`the Process revision is ${current.revision}`), { code: "stale-process-revision" });
+      prepared = prepareProcessStart(current, note, { trigger: "julian", mode: body.mode ?? "start", operationId: String(body.operationId ?? randomUUID()) });
+      await writeProcessState(PROCESSES_ROOT, note.area, note.slug, prepared.state);
+    });
+    if (replay) return { httpStatus: replay.attempt.status === "delivery-pending" ? 202 : 200, process: processView(note, replay.state), eventId: replay.event.id, attemptId: replay.attempt.id, delivery: replay.attempt.status, idempotent: true };
+    const delivered = await deliverProcessStart({ note, ...prepared, automatic: false });
+    const settled = await withProcessLock(note.area, note.slug, async () => {
+      const state = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
+      const next = settleProcessDelivery(state, prepared.attempt.id, delivered);
+      await writeProcessState(PROCESSES_ROOT, note.area, note.slug, next);
+      return next;
+    });
+    await recordRuntimeEvent(delivered.ok ? "process.start.requested" : "process.start.failed", { operationId: prepared.attempt.operationId, address: note.file, eventId: prepared.event.id, area: note.area, outcome: delivered.ok ? "delivered" : delivered.code });
+    return { httpStatus: delivered.ok ? 202 : 409, process: processView(note, settled), eventId: prepared.event.id, attemptId: prepared.attempt.id, delivery: delivered.ok ? "delivered" : "failed" };
+  },
+  /** The exact current Area brain accepts one delivered attempt and starts its Goal Job. */
+  async start(body) {
+    const note = body.file ? await resolveProcessNote(String(body.file), "") : await resolveProcessNote(String(body.slug ?? ""), String(body.area ?? ""));
+    const caller = String(body.caller ?? body.session ?? "").trim();
+    if (!await liveCallingOrganizer(caller, note.area)) throw Object.assign(new Error(`only the live organizer of ${note.area} can start this Process`), { status: 403, code: "brain-authority-changed" });
+    let event;
+    let replay = null;
+    await withProcessLock(note.area, note.slug, async () => {
+      const state = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
+      event = state.currentEvent;
+      if (!event || (body.eventId && event.id !== body.eventId)) throw Object.assign(new Error("the Process event changed"), { code: "stale-process-event" });
+      const attempt = event.attempts.find((item) => item.id === (body.attemptId || event.currentAttemptId));
+      if (!attempt || !["delivered", "accepted", "goal-created", "job-created", "started"].includes(attempt.status)) throw Object.assign(new Error("the Process attempt is stale"), { code: "stale-process-attempt" });
+      if (body.definitionRevision && body.definitionRevision !== event.definitionRevision) throw Object.assign(new Error("the Process definition changed"), { code: "stale-process-definition" });
+      if (event.definitionRevision !== processDefinitionRevision(note)) throw Object.assign(new Error("the Process definition changed after delivery"), { code: "stale-process-definition" });
+      if (attempt.status === "started" && event.goalFile && event.job) { replay = { state, event, attempt }; return; }
+      attempt.status = "accepted";
+      event.plannedGoalFile ||= processGoalFile(note, event);
+      state.revision += 1;
+      await writeProcessState(PROCESSES_ROOT, note.area, note.slug, state);
+    });
+    if (replay) return { process: processView(note, replay.state), goalFile: replay.event.goalFile, job: replay.event.job, session: replay.event.job.agentSession, idempotent: true };
+    const goalFile = event.plannedGoalFile;
+    await createGoalSet(note.area, { goal: { title: note.title, doneWhen: note.title, state: "Not started." }, verify: note.verify, process: note.file, exactFile: goalFile });
+    const operationId = String(body.operationId ?? event.attempts.find((item) => item.id === (body.attemptId || event.currentAttemptId))?.operationId ?? randomUUID());
+    const step = { instruction: note.body, kind: "implementation", ...(note.path ? { path: note.path } : {}), ...(note.launch ? { launch: parseLaunch(note.launch) } : {}) };
+    const jobCreated = await jobOperations.create(goalFile, { steps: [step], caller, operationId: `${operationId}:job-create`, origin: { kind: "process", processFile: note.file, eventId: event.id, operationId } });
+    if (jobCreated.status !== 200) throw Object.assign(new Error(jobCreated.error), { status: jobCreated.status, code: "process-job-conflict" });
+    const started = await jobOperations.start(goalFile, { caller, expectedRun: jobCreated.job.run, expectedRevision: jobCreated.job.revision, operationId: `${operationId}:job-start` });
+    if (started.status !== 200) throw Object.assign(new Error(started.error), { status: started.status });
+    const state = await withProcessLock(note.area, note.slug, async () => {
+      const current = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
+      if (current.currentEvent?.id !== event.id) throw Object.assign(new Error("the Process event changed"), { code: "stale-process-event" });
+      current.currentEvent.status = "running";
+      current.currentEvent.goalFile = goalFile;
+      current.currentEvent.job = { run: jobCreated.job.run, revision: started.job?.revision ?? jobCreated.job.revision, assignmentId: jobCreated.assignment?.id ?? null, agentSession: started.session ?? null, status: "running" };
+      const attempt = current.currentEvent.attempts.find((item) => item.id === (body.attemptId || current.currentEvent.currentAttemptId));
+      if (attempt) attempt.status = "started";
+      current.auto.consecutiveFailedSlots = 0; current.auto.disabledAt = null; current.lastGoalFile = goalFile; current.lastGoalAt = new Date().toISOString(); current.revision += 1;
+      await writeProcessState(PROCESSES_ROOT, note.area, note.slug, current);
+      return current;
+    });
+    await recordRuntimeEvent("process.job.started", { operationId, address: note.file, eventId: event.id, area: note.area, goalFile, run: jobCreated.job.run, agentSession: started.session, outcome: "started" });
+    return { process: processView(note, state), goalFile, job: started.job, session: started.session };
+  },
+  /** Defers the current event to one server-calculated instant. */
+  async defer(body) {
+    const note = await resolveProcessNote(String(body.file ?? body.slug ?? ""), String(body.area ?? ""));
+    const choice = String(body.choice ?? "15m");
+    const state = await withProcessLock(note.area, note.slug, async () => {
+      const current = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
+      const event = current.currentEvent;
+      if (!event || event.id !== body.eventId) throw Object.assign(new Error("the Process event changed"), { code: "stale-process-event" });
+      if (["accepted", "goal-created", "job-created", "started"].includes(event.attempts.find((item) => item.id === event.currentAttemptId)?.status)) throw Object.assign(new Error("the Brain already accepted this run"), { code: "stale-process-attempt" });
+      const at = new Date();
+      if (choice === "15m") at.setMinutes(at.getMinutes() + 15);
+      else if (choice === "1h") at.setHours(at.getHours() + 1);
+      else if (choice === "tonight") { at.setHours(20, 0, 0, 0); if (at <= new Date()) at.setDate(at.getDate() + 1); }
+      else if (choice === "next-slot" && note.schedule) at.setTime(nextSlotAfter(note.schedule, new Date())?.getTime() ?? at.getTime());
+      else throw new Error("Choose 15m, 1h, tonight, or next-slot.");
+      event.status = "deferred"; event.deferredUntil = at.toISOString(); event.revision += 1; current.revision += 1;
+      await writeProcessState(PROCESSES_ROOT, note.area, note.slug, current);
+      return current;
+    });
+    await recordRuntimeEvent("process.event.deferred", { operationId: body.operationId, address: note.file, eventId: state.currentEvent.id, area: note.area, outcome: choice });
+    return { process: processView(note, state) };
+  },
+  /** Skips the current event before its Brain accepts it. */
+  async skip(body) {
+    const note = await resolveProcessNote(String(body.file ?? body.slug ?? ""), String(body.area ?? ""));
+    const state = await withProcessLock(note.area, note.slug, async () => {
+      const current = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
+      const event = current.currentEvent;
+      if (!event || event.id !== body.eventId) throw Object.assign(new Error("the Process event changed"), { code: "stale-process-event" });
+      if (["accepted", "goal-created", "job-created", "started"].includes(event.attempts.find((item) => item.id === event.currentAttemptId)?.status)) throw Object.assign(new Error("the Brain already accepted this run"), { code: "stale-process-attempt" });
+      event.status = "skipped"; event.revision += 1; current.lastEvent = { id: event.id, source: event.source, slotAt: event.slotAt, outcome: "skipped", goalFile: null, jobRun: null, endedAt: new Date().toISOString() }; current.revision += 1;
+      await writeProcessState(PROCESSES_ROOT, note.area, note.slug, current);
+      return current;
+    });
+    await recordRuntimeEvent("process.event.skipped", { operationId: body.operationId, address: note.file, eventId: state.currentEvent.id, area: note.area, outcome: "skipped" });
+    return { process: processView(note, state) };
   },
 });
 

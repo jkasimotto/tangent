@@ -26,11 +26,26 @@ export async function runProcessCli(argv = process.argv.slice(2)): Promise<void>
   if (subcommand === "create") return createCommand(args);
   if (subcommand === "list") return listCommand(args);
   if (subcommand === "show") return showCommand(args);
+  if (subcommand === "start") return startCommand(args);
   if (subcommand === "pause") return controlCommand(args, "pause");
   if (subcommand === "resume") return controlCommand(args, "resume");
   if (subcommand === "check") return checkCommand(args);
   if (subcommand === "remove") return removeCommand(args);
   throw new Error(`Unknown process command: ${subcommand}. Run "tangent process --help" for available commands.`);
+}
+
+/** Accepts one fenced due event as the exact Area brain. */
+async function startCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const slug = requireSlug(args, "start");
+  const caller = await currentTmuxSession();
+  const result = await postJson(server, "/api/processes/start", {
+    slug, area: stringArg(args.area) ?? "", caller,
+    eventId: stringArg(args.event), attemptId: stringArg(args.attempt), definitionRevision: stringArg(args.definition),
+    operationId: stringArg(args["operation-id"]),
+  });
+  if (booleanArg(args.json)) return void console.log(JSON.stringify(result, null, 2));
+  console.log(`${result.goalFile}: Process started${result.session ? ` in ${result.session}` : ""}`);
 }
 
 /** Creates one loop note through the server-owned vault boundary. */
@@ -162,6 +177,7 @@ Examples:
   tangent process list
   tangent process list neara/pgande
   tangent process show rebase-pgande-staging
+  tangent process start rebase-pgande-staging
   tangent process pause rebase-pgande-staging
   tangent process resume neara/pgande/rebase-pgande-staging
   tangent process check speedrun-pgande

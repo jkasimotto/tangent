@@ -227,7 +227,7 @@ export async function deletePipeline(root, area, slug) {
  * Builds a fresh record with every step pending. Throws with the
  * validateSteps message when the steps are invalid.
  */
-export function newPipeline({ goal, goalRevision = "", area, organizerArea = area, slug, extraFiles = [], steps, now = new Date().toISOString() }) {
+export function newPipeline({ goal, goalRevision = "", area, organizerArea = area, slug, extraFiles = [], steps, origin = null, now = new Date().toISOString() }) {
   const error = validateSteps(steps);
   if (error) throw new Error(error);
   const assignments = normalizeNewAssignments(steps);
@@ -244,6 +244,7 @@ export function newPipeline({ goal, goalRevision = "", area, organizerArea = are
     migrationProblem: null,
     currentAssignmentId: null,
     idempotencyKeys: [],
+    origin,
     operations: [],
     stopOperation: null,
     createdAt: now,

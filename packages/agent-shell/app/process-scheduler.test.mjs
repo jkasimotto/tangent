@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { discoverProcesses, dueNotice, evaluateProcess, goalNamesProcess, loopNotice, processView, readProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
-import { parseProcessNote } from "./process-note.mjs";
+import { discoverProcesses, dueNotice, evaluateProcess, goalNamesProcess, loopNotice, normalizeProcessState, prepareProcessStart, processView, readProcessState, settleProcessDelivery, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
+import { parseProcessNote, scheduleSlotsBetween } from "./process-note.mjs";
 
 /** A parsed scheduled process for one Area. */
 function scheduled(extra = "") {
@@ -16,13 +16,13 @@ function probed() {
   return parseProcessNote("---\ntype: process\nwhen: test -f /tmp/red\nevery: 30m\n---\nFix the red build.\n", { file: "otto/dnd/process-red-build.md", area: "otto/dnd" });
 }
 
-test("the inbox note names the command the brain runs, with path, launch, and verify", () => {
+test("the inbox note names the one Process start command", () => {
   const note = scheduled("path: /Users/j/wt\nlaunch: pi-code --model glm\nverify: yes\n");
   assert.equal(
     dueNotice(note, "/vault"),
-    'Process rebase is due. Start it with: tangent goal create --area neara/pgande --title "Rebase staging" --start --instruction-file /vault/neara/pgande/process-rebase.md --path /Users/j/wt --launch "pi-code --model glm" --verify',
+    'Process rebase is due. Start it with: tangent process start neara/pgande/rebase',
   );
-  assert.equal(dueNotice(scheduled(), "/vault"), 'Process rebase is due. Start it with: tangent goal create --area neara/pgande --title "Rebase staging" --start --instruction-file /vault/neara/pgande/process-rebase.md');
+  assert.equal(dueNotice(scheduled(), "/vault"), 'Process rebase is due. Start it with: tangent process start neara/pgande/rebase');
 });
 
 test("a scheduled process fires once per slot, coalesces missed slots, and never fires for slots before it was seen", async () => {
@@ -69,7 +69,7 @@ test("a due process is skipped while the Goal it created is still open, and paus
   assert.equal(paused.reason, "paused");
 });
 
-test("a sweep discovers process notes, writes state per process, and sends one note per due process", async () => {
+test("a sweep discovers process notes and persists ask events without sending an inferred brain request", async () => {
   const trees = await mkdtemp(path.join(os.tmpdir(), "tangent-process-trees-"));
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "tangent-process-state-"));
   try {
@@ -90,16 +90,14 @@ test("a sweep discovers process notes, writes state per process, and sends one n
     const openGoalFor = async () => null;
     const first = await sweepProcesses({ treesRoot: trees, stateRoot, now: new Date("2026-08-28T12:00:00Z"), runProbe, openGoalFor, notify });
     assert.deepEqual(first.map((item) => [item.note.slug, item.due]), [["rebase", false], ["broken", false], ["red-build", true]]);
-    assert.equal(notices.length, 1);
-    assert.match(notices[0].text, /^Process red-build is due\. Start it with: tangent goal create --area otto\/dnd --title "Red Build" --start --instruction-file /);
-    assert.equal(notices[0].options.idempotencyKey, "process:otto/dnd:red-build:2026-08-28T12:00:00.000Z");
+    assert.equal(notices.length, 0);
     const rebaseState = await readProcessState(stateRoot, "neara/pgande", "rebase");
     assert.equal(rebaseState.firstSeenAt, "2026-08-28T12:00:00.000Z");
     assert.equal(rebaseState.lastDueAt, undefined);
     const second = await sweepProcesses({ treesRoot: trees, stateRoot, now: new Date("2026-08-29T09:00:30Z"), runProbe, openGoalFor, notify });
     assert.equal(second.find((item) => item.note.slug === "rebase").due, true);
     assert.match(second.find((item) => item.note.slug === "red-build").reason, /waits for the brain/);
-    assert.equal(notices.length, 2, "a probe process with an unanswered note is not noted again");
+    assert.equal(notices.length, 0, "ask events wait on their own row and do not become brain Questions");
     assert.equal((await readProcessState(stateRoot, "neara/pgande", "rebase")).lastDueAt, "2026-08-29T09:00:00.000Z");
     /** The rebase Goal is open now. */
     const openRebase = async (note) => (note.slug === "rebase" ? { file: "neara/pgande/goal-rebase-staging.md", status: "active" } : null);
@@ -111,13 +109,30 @@ test("a sweep discovers process notes, writes state per process, and sends one n
     assert.equal(view.state, "Running");
     assert.equal(view.nextRunAt, "2026-08-31T09:00:00.000Z");
     const waiting = processView(found[0], { lastNoticeAt: "2026-08-29T09:00:30.000Z", lastDueAt: "2026-08-29T09:00:00.000Z" }, new Date("2026-08-29T10:00:00Z"), { brainLive: false });
-    assert.equal(waiting.state, "Due, brain not running");
-    assert.equal(processView(found[0], waiting, new Date("2026-08-29T10:00:00Z"), { brainLive: true }).state, "Due, brain told");
+    assert.equal(waiting.state, "Start it?");
+    assert.equal(processView(found[0], waiting, new Date("2026-08-29T10:00:00Z"), { brainLive: true }).state, "Start it?");
     assert.equal(processView(found[1], {}, new Date()).state, "Broken note");
   } finally {
     await rm(trees, { recursive: true, force: true });
     await rm(stateRoot, { recursive: true, force: true });
   }
+});
+
+test("timed policies, v2 migration, catch-up, and fenced start recovery are deterministic", () => {
+  assert.equal(scheduled().startPolicy, "ask");
+  assert.equal(scheduled("start: auto\n").startPolicy, "auto");
+  assert.match(scheduled("start: sometimes\n").error, /start must be ask or auto/);
+  assert.match(parseProcessNote("---\ntype: process\nevery: 20m\nstart: auto\n---\nPing.\n", { file: "a/process-loop.md", area: "a" }).error, /a loop takes no start/);
+  const slots = scheduleSlotsBetween(scheduled().schedule, "2026-08-25T10:00:00Z", "2026-08-28T12:00:00Z");
+  assert.deepEqual(slots.map((slot) => slot.toISOString()), ["2026-08-26T09:00:00.000Z", "2026-08-27T09:00:00.000Z", "2026-08-28T09:00:00.000Z"]);
+  const migrated = normalizeProcessState({ firstSeenAt: "2026-08-28T08:00:00Z", lastDueAt: "2026-08-28T09:00:00Z", lastNoticeAt: "2026-08-28T09:00:01Z" }, scheduled());
+  assert.equal(migrated.schema, "process-state.v2");
+  assert.equal(migrated.currentEvent.policy, "ask", "historical notices never auto-start");
+  const prepared = prepareProcessStart(migrated, scheduled(), { operationId: "same-operation", now: new Date("2026-08-28T09:01:00Z") });
+  assert.equal(prepared.event.status, "starting");
+  const delivered = settleProcessDelivery(prepared.state, prepared.attempt.id, { ok: true, brain: { area: "neara/pgande", generation: 2, session: "brain", instanceId: "i", target: "brain" } });
+  assert.equal(delivered.currentEvent.attempts[0].status, "delivered");
+  assert.equal(processView(scheduled(), delivered).state, "Starting");
 });
 
 test("pause and resume rewrite only the status line", () => {

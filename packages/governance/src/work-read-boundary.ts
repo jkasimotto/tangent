@@ -12,7 +12,7 @@ export async function lintWorkReadModelBoundary(root: string): Promise<Governanc
     "packages/agent-shell/app/work-publisher.mjs",
     "packages/agent-shell/app/work-store.mjs",
     "packages/agent-shell/app/public/work-client.js",
-    "packages/agent-shell/app/public/work-v3-view.js",
+    "packages/agent-shell/app/public/work-v3-desk-model.js",
   ];
   for (const rel of workModules) {
     const file = path.join(root, rel);

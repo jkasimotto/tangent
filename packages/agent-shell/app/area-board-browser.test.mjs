@@ -292,6 +292,13 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await page.locator('[data-open-brain="otto-tangent--brain"]').click();
     const brainFirstPane = page.locator('[data-map-brain-pane]');
     await brainFirstPane.locator('.map-brain-terminal[data-session="otto-tangent--brain"]').waitFor();
+    const brainFirstComposer = brainFirstPane.locator(".xterm-helper-textarea");
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(
+      await brainFirstComposer.evaluate((composer) => document.activeElement === composer),
+      true,
+      "opening a live Brain keeps its composer focused after workspace mount and the first resize repaint",
+    );
     const brainFirstTerminal = brainFirstPane.locator(".xterm").first();
     await brainFirstTerminal.evaluate((node) => { node.dataset.workspaceIdentity = "brain-first"; });
     const openMap = brainFirstPane.locator("[data-toggle-workspace-map]");
@@ -420,6 +427,12 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     assert.equal(await pane.isVisible(), true, "b docks the exact Area brain on a wide map");
     assert.match(await pane.locator(":scope > header").textContent(), /Brain working/);
     assert.equal(await pane.locator(".map-brain-terminal").getAttribute("data-session"), "otto-tangent--brain");
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(
+      await pane.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer),
+      true,
+      "opening the live Brain from its hidden Map companion focuses its composer",
+    );
     const widths = await page.evaluate(() => ({ pane: document.querySelector("[data-map-brain-pane]").getBoundingClientRect().width, map: document.querySelector("[data-map-column]").getBoundingClientRect().width }));
     assert.ok(widths.pane >= 550 && widths.pane <= 570, `the dock starts at 560px: ${JSON.stringify(widths)}`);
     assert.ok(widths.map >= 560, `the map keeps its usable minimum: ${JSON.stringify(widths)}`);

@@ -510,6 +510,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-caption { box-sizing: border-box; height: 24px; padding: 0 4px 8px; color: #9fa7b0; font-size: 11px; font-weight: 760; letter-spacing: .1em; line-height: 16px; text-align: left; text-transform: uppercase; }
 .work-caption-scope { display: inline-flex; align-items: center; gap: 10px; }
 .work-caption-count { color: #7c8590; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+.work-last-known { color: var(--amber); font: 11px ui-sans-serif, system-ui, sans-serif; font-weight: 650; letter-spacing: 0; text-transform: none; white-space: nowrap; }
 /* The Starred and Active switches live on the caption line, where their
    current state stays visible (work-screen-refresh D7). The old 46 px
    toolbar is gone. */

@@ -34,7 +34,7 @@ export async function settle(window, turns = 3) {
  * Renders the Work screen for one fixture and returns its window. `posts`
  * collects every mutation the page sends, so an action proof needs no server.
  */
-export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [], areaFocusOnly = false, workProjection = null, launchOptions = null, harnessRegistry = null, goalDetail = null, jobDetail = null, documentRecord = null, areaCanvas = null, postHandler = null } = {}) {
+export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [], areaFocusOnly = false, workProjection = null, cachedWork = null, workFailure = null, launchOptions = null, harnessRegistry = null, goalDetail = null, jobDetail = null, documentRecord = null, areaCanvas = null, postHandler = null } = {}) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -59,10 +59,21 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
     },
   });
   window.localStorage.setItem("agent-shell.work-filter", workFilter);
+  if (cachedWork) window.sessionStorage.setItem("agent-shell.work:unknown:agent-shell-work.v3:v3", JSON.stringify({
+    snapshot: cachedWork,
+    etag: `"${cachedWork.epoch}:${cachedWork.revision}"`,
+    epoch: cachedWork.epoch,
+    revision: cachedWork.revision,
+    publishedAt: cachedWork.publishedAt,
+    instanceId: "unknown",
+    schema: "agent-shell-work.v3",
+    rollout: "v3",
+  }));
   if (areaFocus.length) window.localStorage.setItem(AREA_FOCUS_KEY, JSON.stringify({ schema: AREA_FOCUS_SCHEMA, areas: areaFocus, ...(areaFocusOnly ? { only: true } : {}) }));
   Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
   const posts = [];
   const gets = [];
+  let remainingWorkFailures = workFailure ? 1 : 0;
   let legacyRevision = 0;
   const projectedWork = workProjection ?? (() => ({ ...legacyFixtureWork(fixture), revision: ++legacyRevision }));
   window.fetch = async (url, options = {}) => {
@@ -80,6 +91,7 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
     }
     gets.push(requestUrl.href);
     if (pathname === "/api/work") {
+      if (remainingWorkFailures > 0) { remainingWorkFailures -= 1; return jsonResponse({ error: workFailure }, { status: 503 }); }
       const snapshot = typeof projectedWork === "function" ? projectedWork(requestUrl) : projectedWork;
       return jsonResponse(snapshot, { headers: { etag: `"${snapshot.epoch}:${snapshot.revision}"`, "content-length": Buffer.byteLength(JSON.stringify(snapshot)), "x-tangent-work-state": "current", "x-tangent-work-epoch": snapshot.epoch, "x-tangent-work-revision": snapshot.revision, "x-tangent-work-published-at": snapshot.publishedAt } });
     }

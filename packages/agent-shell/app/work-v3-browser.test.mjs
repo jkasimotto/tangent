@@ -52,6 +52,15 @@ test("bounded source diagnostics stay out of the Work desk", async () => {
   assert.doesNotMatch(document.body.textContent, /Last known|source-record-invalid|brain-agent-missing|412|17 missing/);
 });
 
+test("a failed first refresh paints the cached revision as Last known", async () => {
+  const cached = snapshot();
+  const fixture = { vault: { areas: [], documents: [] }, sessions: [], brains: [], pipelines: [] };
+  const { document } = await bootWorkTable(fixture, { cachedWork: cached, workFailure: "controller unavailable", workFilter: "all" });
+  assert.match(document.body.textContent, /Build truthful Work/);
+  assert.equal(document.querySelector(".work-last-known")?.textContent, "Last known");
+  assert.equal(document.querySelector("[data-goal-anchor='otto/tangent/goal-parent.md'] .desk-state")?.textContent, "Working");
+});
+
 test("v3 rows preserve the established hierarchy, fold keys, cursor, and Agent entry", async () => {
   const fixture = { vault: { areas: [], documents: [] }, sessions: [{ name: "agent-1", area: "otto/tangent", goal: "otto/tangent/goal-parent.md", kind: "goal", state: "working" }], brains: [], pipelines: [] };
   const { window, document, gets } = await bootWorkTable(fixture, { workProjection: snapshot(), workFilter: "all" });

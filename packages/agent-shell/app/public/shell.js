@@ -50,10 +50,22 @@ const workClient = createWorkClient({
   /** Records one browser Work metric through action telemetry. */
   record: (name, value, labels) => actionTelemetry.record("work-metric", name, { value, ...labels }),
 });
+
+/** Installs one accepted v3 identity and its bounded browser view model together. */
+function installWork(result) {
+  state.work = result.snapshot;
+  state.workTransport = result.metadata;
+  const desk = workV3DeskModel(result.snapshot);
+  state.vault = desk.vault;
+  state.sessions = desk.sessions;
+  state.pipelines = desk.pipelines;
+  state.brains = desk.brains;
+  state.programs = desk.programs;
+}
+
 const hydratedWork = workClient.hydrate();
 if (hydratedWork) {
-  state.work = hydratedWork.snapshot;
-  state.workTransport = hydratedWork.metadata;
+  installWork(hydratedWork);
   state.loading = false;
 }
 
@@ -1360,14 +1372,7 @@ async function diagnoseConnection(error, trigger) {
 async function performRefresh({ initial = false, trigger = initial ? "initial" : "direct" } = {}) {
   try {
     const result = await workClient.read();
-    state.work = result.snapshot;
-    state.workTransport = result.metadata;
-    const desk = workV3DeskModel(result.snapshot);
-    state.vault = desk.vault;
-    state.sessions = desk.sessions;
-    state.pipelines = desk.pipelines;
-    state.brains = desk.brains;
-    state.programs = desk.programs;
+    installWork(result);
     noteRuntimeIdentity(result.metadata?.gatewayBoot || "", result.metadata?.controllerBoot || "");
     reconcileCurrentAreaFocus();
     state.loading = false;

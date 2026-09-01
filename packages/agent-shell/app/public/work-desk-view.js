@@ -2136,8 +2136,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // The column group carries the widths. A narrow layout hides three cells,
     // and a fixed table keeps reserving width for a column whose cells are all
     // `display: none` unless a `<col>` states that width is zero.
+    const lastKnown = state.workTransport?.state && state.workTransport.state !== "current"
+      ? `<span class="work-last-known" role="status" title="${escapeHtml(state.workTransport.staleReason || "Work is using its last validated snapshot.")}">Last known</span>`
+      : "";
     return `<table class="work-table">
-      <caption class="work-caption"><span class="work-caption-scope"><span>Work</span><span class="work-caption-count">${rowCount} ${rowCount === 1 ? "Goal" : "Goals"}</span>${starredOnlyButton()}${activeOnlyButton()}</span>${workCaptionHint()}</caption>
+      <caption class="work-caption"><span class="work-caption-scope"><span>Work</span><span class="work-caption-count">${rowCount} ${rowCount === 1 ? "Goal" : "Goals"}</span>${lastKnown}${starredOnlyButton()}${activeOnlyButton()}</span>${workCaptionHint()}</caption>
       <colgroup>${WORK_COLUMNS.map((column) => `<col class="work-col-${column.key}">`).join("")}</colgroup>
       <thead><tr>${WORK_COLUMNS.map((column) => `<th scope="col" class="work-head-${column.key}">${column.hidden ? `<span class="visually-hidden">${escapeHtml(column.label)}</span>` : escapeHtml(column.label)}</th>`).join("")}</tr></thead>
       ${bodies}

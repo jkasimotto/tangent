@@ -10,6 +10,8 @@ import { createShellState } from "./shell-state.js";
 import { shellDom } from "./shell-dom.js";
 import { createRefreshCoordinator, startRebuildRefresh, startRefreshLifecycle } from "./refresh-lifecycle.js";
 import { createWorkClient } from "./work-client.js";
+import { workV3DeskModel } from "./work-v3-desk-model.js";
+import { reconcileHtml } from "./dom-reconcile.js";
 import { FENCE_OPEN, fenceCloser, frontmatterLineCount, markdownHeadingAnchor, markdownHeadings, markdownTableAlignments, markdownTableCells, scanMarkdownBlocks, visibleMarkdown } from "./markdown-structure.js";
 import { documentCopyPayload } from "./document-copy.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
@@ -686,8 +688,6 @@ function renderKey() {
   }
   return JSON.stringify([
     state.view, state.workCursor,
-    state.work ? [state.work.epoch, state.work.revision] : null,
-    state.workTransport ? [state.workTransport.state, state.workTransport.staleReason, state.workTransport.observedAt] : null,
     state.searchPattern,
     state.caffeinate,
     state.document ? [state.document.file, state.document.hash, state.documentTrailIndex, state.documentTrail.length] : null,
@@ -930,7 +930,11 @@ function renderScreen() {
 
   const scrollPositions = rememberScreenScroll();
   const focusKey = rememberScreenFocus();
-  if (state.view === "work") screen.innerHTML = renderWork();
+  if (state.view === "work") {
+    const html = renderWork();
+    if (screen.querySelector(".work-table")) reconcileHtml(screen, html);
+    else screen.innerHTML = html;
+  }
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
   else if (state.view === "areas") screen.innerHTML = renderAreas() + launchPopover();
   else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: state.promptInspect?.goals ?? [], brains: state.promptInspect?.brains ?? [], sessions: state.promptInspect?.agents ?? [], pipelines: state.promptInspect?.jobs ?? [], programs: state.promptInspect?.processes ?? [], asks: [], inspector: state.promptInspector, selection: state.bestiarySelection });
@@ -1358,6 +1362,12 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
     const result = await workClient.read();
     state.work = result.snapshot;
     state.workTransport = result.metadata;
+    const desk = workV3DeskModel(result.snapshot);
+    state.vault = desk.vault;
+    state.sessions = desk.sessions;
+    state.pipelines = desk.pipelines;
+    state.brains = desk.brains;
+    state.programs = desk.programs;
     noteRuntimeIdentity(result.metadata?.gatewayBoot || "", result.metadata?.controllerBoot || "");
     reconcileCurrentAreaFocus();
     state.loading = false;

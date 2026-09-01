@@ -140,7 +140,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       void api(`/api/navigation/search?q=${encodeURIComponent(requested)}&limit=100`).then((result) => {
         if (!state.goTo || generation !== navigationGeneration) return;
         const rows = result.rows ?? [];
-        const areas = rows.filter((row) => row.kind === "area").map((row) => ({ path: row.area, name: row.name }));
+        const areas = result.areas ?? rows.filter((row) => row.kind === "area").map((row) => ({ path: row.area, name: row.name }));
         const documents = rows.filter((row) => ["document", "goal"].includes(row.kind)).map((row) => ({ ...row, title: row.name, kind: row.kind, file: row.file, area: row.area }));
         const brains = rows.filter((row) => row.kind === "brain").map((row) => ({ area: row.area, status: row.live ? "active" : "inactive", live: row.live, session: row.session }));
         navigation = { vault: { areas, documents }, brains };
@@ -219,10 +219,10 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
    * next nearest place. Neither starts anything.
    */
   function showWorkAt(area) {
-    if (!state.work?.areas.some((record) => record.id === area)) return showAreasAt(area);
+    if (!deskAreas().some((record) => record.area.path === area)) return showAreasAt(area);
     showWork();
     window.setTimeout(() => {
-      const card = screen.querySelector(`[data-work-group="${CSS.escape(area)}"]`);
+      const card = screen.querySelector(`[data-desk-area="${CSS.escape(area)}"]`);
       if (!card) return;
       try { card.scrollIntoView({ block: "start" }); } catch {}
       card.classList.add("flash");
@@ -325,7 +325,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     state.documentTrail = [];
     state.documentTrailIndex = -1;
     const agentId = goal.execution?.assignment?.agentId ?? null;
-    if (!agentId) return openDocument(file);
+    if (!agentId) return openGoalAgent({ returnView: "work" });
     let session;
     try {
       const result = await api(`/api/agents/show?session=${encodeURIComponent(agentId)}`);

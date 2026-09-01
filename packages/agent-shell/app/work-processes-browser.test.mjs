@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { workTableFixture } from "./work-table-fixture.mjs";
+import { legacyFixtureWork } from "./work-table-harness.mjs";
 
 const enabled = process.env.TANGENT_BROWSER_TEST === "1";
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -52,9 +53,10 @@ test("real Work browser shows, inspects, resumes, and removes exact-Area Process
     processes: [processRecord("otto/tangent", "review"), processRecord("otto/onboarding", "digest", "paused")],
   };
   const mutations = [];
+  let revision = 0;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
-    if (url.pathname === "/api/work") return sendJson(response, 404, { error: "fixture uses split projection" });
+    if (url.pathname === "/api/work") return sendJson(response, 200, { ...legacyFixtureWork(fixture), revision: ++revision });
     if (url.pathname === "/api/vault") return sendJson(response, 200, fixture.vault);
     if (url.pathname === "/api/sessions") return sendJson(response, 200, { boot: "process-proof", pipelines: fixture.pipelines, sessions: fixture.sessions, brains: fixture.brains });
     if (url.pathname === "/api/operations") return sendJson(response, 200, fixture.programs);
@@ -90,7 +92,7 @@ test("real Work browser shows, inspects, resumes, and removes exact-Area Process
     const paused = page.locator('[data-work-group="otto/onboarding"] .work-process-row', { hasText: "digest" });
     await active.waitFor();
     await paused.waitFor();
-    assert.match(await active.textContent(), /Loop/);
+    assert.match(await active.textContent(), /Brain on/);
     assert.match(await paused.textContent(), /Paused/);
 
     await active.getByRole("button", { name: "Inspect process review" }).first().click();
@@ -140,9 +142,10 @@ test("real Work browser navigates timed Processes, asks on x, and opens auto-sta
   fixture.sessions.push({ name: "auto-digest-worker", goal: linkedGoal.file, state: "working", command: "codex" });
   fixture.programs = { operations: [], problems: [], areas: [], liveCount: 0, processes: [ask, automatic] };
   const mutations = [];
+  let revision = 0;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
-    if (url.pathname === "/api/work") return sendJson(response, 404, { error: "fixture uses split projection" });
+    if (url.pathname === "/api/work") return sendJson(response, 200, { ...legacyFixtureWork(fixture), revision: ++revision });
     if (url.pathname === "/api/vault") return sendJson(response, 200, fixture.vault);
     if (url.pathname === "/api/sessions") return sendJson(response, 200, { boot: "timed-process-proof", pipelines: fixture.pipelines, sessions: fixture.sessions, brains: fixture.brains });
     if (url.pathname === "/api/operations") return sendJson(response, 200, fixture.programs);

@@ -5,7 +5,6 @@ import goToCore from "./go-to-core.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, toggleAreaFocusRoot, writeAreaFocus } from "./area-focus-core.js";
 import { workCommand, workCaptionKeys, workRowKind } from "./work-commands.js";
-import { renderWorkV3 } from "./work-v3-view.js";
 
 const PRESENTED_ROWS_PER_GOAL = 3;
 
@@ -70,7 +69,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Returns every Goal represented in the current desk projection. */
   function allGoals() {
-    return state.work?.goals ?? [];
+    const byFile = new Map();
+    for (const group of state.vault?.map ?? []) {
+      for (const goal of group.goals ?? []) byFile.set(goal.file, goal);
+    }
+    return [...byFile.values()];
   }
 
   /** Retains the vault's area grouping for a selected goal subset. */
@@ -434,7 +437,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function sessionForGoal(goal) {
     const id = goal?.execution?.assignment?.agentId;
     const agent = id ? state.work?.agents.find((row) => row.id === id && row.liveness === "live") : null;
-    return agent ? { ...agent, name: agent.id, area: agent.areaId, state: agent.activity, stateDetail: agent.activityDetail, goal: goal.id, kind: agent.role === "brain" ? "brain" : "goal", created: agent.createdAt ? Date.parse(agent.createdAt) : 0 } : null;
+    const command = agent?.launchRef ? [agent.launchRef.harness, agent.launchRef.model, agent.launchRef.effort].filter(Boolean).join("/") : "";
+    return agent ? { ...agent, name: agent.id, area: agent.areaId, state: agent.activity, stateDetail: agent.activityDetail, goal: goal.id, kind: agent.role === "brain" ? "brain" : "goal", created: agent.createdAt ? Date.parse(agent.createdAt) : 0, command } : null;
   }
 
   /** Every live session bound to one Goal, for the agent count on its card. */
@@ -470,7 +474,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** The brain record of exactly this Area, or null. A parent card never shows a child brain. */
   function brainForAreaCard(areaPath) {
     const brain = state.work?.brains.find((row) => row.areaId === areaPath);
-    return brain ? { ...brain, area: brain.areaId, session: brain.agentId, live: brain.agentId ? state.work.agents.some((agent) => agent.id === brain.agentId && agent.liveness === "live") : false, state: brain.workState, currentAttemptId: brain.attemptId } : null;
+    const agent = brain?.agentId ? state.work.agents.find((row) => row.id === brain.agentId) : null;
+    return brain ? { ...brain, area: brain.areaId, session: brain.agentId, live: agent?.liveness === "live", state: agent?.activity ?? brain.workState, stateDetail: agent?.activityDetail ?? null, currentAttemptId: brain.attemptId } : null;
   }
 
   /** The desk word for a brain's logical lifecycle and separate runtime health. */
@@ -478,7 +483,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     if (!brain) return "No brain";
     if (brain.pendingStop) return "Stopping";
     if (brain.agentState?.word) return brain.agentState.word;
-    if (brain.status === "inactive") return "Brain stopped";
+    if (brain.status === "inactive") return "Brain off";
     if (brain.live) {
       if (brain.state === "working") return "Brain working";
       if (brain.state === "waiting") return brain.stateDetail === "decision" ? "Brain needs a decision" : "Brain waiting for you";
@@ -913,7 +918,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     "Brain has a problem": "The brain's last start failed. Enter its agent with Command-Shift-Enter to see why.",
     "Brain recovering": "Tangent is bringing the brain back after a failure.",
     "Brain idle": "Nothing waits for the brain. Entering it will not help.",
-    "Brain stopped": "The brain is stopped. Its live work continues under the repair crew.",
+    "Brain off": "The brain is off. Its live work continues under the repair crew.",
     "Brain hit a wall": "The brain cannot continue. The repair crew handles its live work.",
     "Brain unknown": "Tangent's last observation is stale. Open the brain only if this state lasts for ten minutes.",
     "repair crew working": "The repair crew is finishing live work in this Area.",
@@ -940,7 +945,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const brain = brainForAreaCard(path);
     const recentRepair = brain?.repair?.history?.at(-1);
     if (!brain?.live && recentRepair?.endedAt && Date.now() - Date.parse(recentRepair.endedAt) < 60 * 60_000) {
-      return { kind: recentRepair.result === "blocked" ? "waiting" : "fact", label: `Brain stopped · repair crew ${recentRepair.result}`, title: recentRepair.report || `The repair crew ${recentRepair.result} ${shortStateAge(Date.parse(recentRepair.endedAt))} ago.` };
+      return { kind: recentRepair.result === "blocked" ? "waiting" : "fact", label: `Brain off · repair crew ${recentRepair.result}`, title: recentRepair.report || `The repair crew ${recentRepair.result} ${shortStateAge(Date.parse(recentRepair.endedAt))} ago.` };
     }
     const brainWord = brain?.agentState || brain?.live || brain?.health?.status ? brainStateLabel(brain) : "";
     if (AREA_BRAIN_PILLS[brainWord]) return { kind: brainKind(brain), label: brainWord, title: AREA_BRAIN_PILLS[brainWord] };
@@ -1505,7 +1510,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function readinessFacts() {
     const goals = allGoals();
     const byFile = new Map(goals.map((goal) => [goal.file, goal]));
-    const facts = new Map(goals.map((goal) => [goal.file, areaWorkCore.readiness(goal, byFile)]));
+    const facts = new Map(goals.map((goal) => {
+      if (!goal.blockers) return [goal.file, areaWorkCore.readiness(goal, byFile)];
+      const kind = goal.blockers.state === "cycle" ? "error" : goal.blockers.state;
+      return [goal.file, { kind, blockers: Array.from({ length: goal.blockers.count }, () => "bounded dependency") }];
+    }));
     for (const file of areaWorkCore.cycleFiles(goals)) facts.set(file, { kind: "error", blockers: ["dependency cycle"] });
     return facts;
   }
@@ -1553,7 +1562,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     if (!loops.length) return "";
     const title = loops.map((item) => `Loop every ${item.every}: ${String(item.body ?? "").split("\n")[0].slice(0, 60)}`).join("\n");
     const count = loops.length;
-    const runtime = loops[0].brainLive ? "on" : "waiting";
+    const runtime = loops[0].brainLive ? "on" : "off";
     const noun = count === 1 ? "loop" : "loops";
     const label = `${areaLabel(areaPath)} has ${count} active ${noun}, ${runtime}. Open Processes.`;
     return `<span class="work-group-loop-controls"><button class="work-group-loop" type="button" data-open-area-processes="${escapeHtml(areaPath)}" data-focus-key="loops:${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(label)}">↻ ${count} ${noun} · ${runtime}</button></span>`;
@@ -2137,13 +2146,20 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Renders the complete Work screen: the direct-ask table, then the work table. */
   function renderWork() {
-    return renderWorkV3({
-      snapshot: state.work,
-      metadata: state.workTransport,
-      filters: { areaFocus: state.areaFocus, areaFocusOnly: state.areaFocusOnly, activeOnly: state.activeOnly, workFilter: state.workFilter },
-      foldedAreas: state.foldedWorkAreas,
-      collapsedGoals: state.collapsedGoalTrees,
-    });
+    const records = deskAreas();
+    const roots = areaFocusRoots();
+    const focusNames = areaFocusLabels(roots).join(" + ");
+    const emptyCopy = `${state.areaFocusOnly ? `Starred Areas (${escapeHtml(focusNames)}): ` : ""}${state.activeOnly ? "Nothing is running. " : ""}No open work.`;
+    const content = `${records.length
+      ? workTable(records)
+      : `<div class="empty-state">${emptyCopy}</div>`}${workProcessSections(records)}`;
+
+    return `
+      <section class="work-page">
+        ${content}
+        ${launchPopover()}
+      </section>
+    `;
   }
 
   return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, toggleActiveOnly, renderWork, paintWorkCaption };

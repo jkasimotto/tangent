@@ -821,7 +821,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
   }
 
-  /** Resolves the Goal and card painted on one Work row. */
+  /** Resolves the Goal and bounded card painted on one Work row. */
   function cardForRow(row) {
     const goal = goalByFile(row?.dataset.cardGoal ?? "");
     return { goal, card: (goal?.cards ?? []).find((item) => item.id === row?.dataset.cardId) };
@@ -829,8 +829,15 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   /** Runs the primary action of one presented card. */
   async function runCardAction(row) {
-    const { goal, card } = cardForRow(row);
+    let { goal, card } = cardForRow(row);
     if (!goal || !card) return showToast("This card is no longer available.");
+    if (!card.fields) {
+      try {
+        const detail = await api(`/api/goals/detail?goal=${encodeURIComponent(goal.file)}`);
+        card = (detail.cards ?? detail.goal?.cards ?? []).find((item) => item.id === row.dataset.cardId) ?? null;
+      } catch {}
+      if (!card) return showToast("This card is no longer available.");
+    }
     if (card.kind === "copy") {
       try { await navigator.clipboard.writeText(card.fields.text); announceWork("Copied"); showToast("Copied"); }
       catch { announceWork("Could not copy"); showToast("Could not copy"); }

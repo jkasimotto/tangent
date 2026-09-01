@@ -67,6 +67,7 @@ import { createAreaPictures } from "./area-pictures.mjs";
 import { createAreaMapProposals } from "./area-map-proposals.mjs";
 import { createAreaMapPromotions } from "./area-map-promotions.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
+import { buildNavigationSearch } from "./navigation-search.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
 import { createProcessRoutes } from "./process-routes.mjs";
 import { parseSkillNote, projectSkills, routeSkills, skillSlugFromFile } from "./area-skills.mjs";
@@ -7018,32 +7019,16 @@ const areaRoutesOperations = {
   },
   /** Searches bounded Area, Goal, Document, and Brain summaries on demand. */
   async search(query, requestedLimit) {
-    const limit = Math.min(100, Math.max(1, Number(requestedLimit) || 100));
-    const needle = String(query ?? "").trim().toLocaleLowerCase();
     const tree = await readTree(TREES_ROOT);
     const areaIds = flattenAreaPaths(tree);
-    const rows = [];
-    /** Returns whether one bounded navigation row matches the query. */
-    const matches = (...values) => !needle || values.some((value) => String(value ?? "").toLocaleLowerCase().includes(needle));
-    for (const area of areaIds) {
-      if (rows.length >= limit) break;
-      if (matches(area, area.split("/").at(-1))) rows.push({ kind: "area", id: area, area, name: area.split("/").at(-1), file: `${area}/${area.split("/").at(-1)}.md` });
-      const [goals, documents] = await Promise.all([readAreaGoals(area), readAreaDocuments(area)]);
-      for (const goal of goals) {
-        if (rows.length >= limit) break;
-        if (matches(goal.title, goal.file, goal.slug)) rows.push({ kind: "goal", id: goal.file, area, name: goal.title, file: goal.file, status: goal.status });
-      }
-      for (const document of documents) {
-        if (rows.length >= limit) break;
-        if (matches(document.title, document.file)) rows.push({ kind: "document", id: document.file, area, name: document.title, file: document.file, docKind: document.docKind ?? "page" });
-      }
-    }
-    const brains = workSources.adapters.brains.rows();
-    for (const brain of brains) {
-      if (rows.length >= limit) break;
-      if (matches(brain.areaId)) rows.push({ kind: "brain", id: brain.areaId, area: brain.areaId, name: `${brain.areaId.split("/").at(-1)} brain`, live: Boolean(brain.agentId), session: brain.agentId });
-    }
-    return { schema: "agent-shell-navigation.v1", query: String(query ?? ""), limit, rows };
+    return buildNavigationSearch({
+      query,
+      requestedLimit,
+      areaIds,
+      readAreaGoals,
+      readAreaDocuments,
+      brains: workSources.adapters.brains.rows(),
+    });
   },
   /** Writes one detached audit archive. Normal product reads never use this file. */
   async legacyAudit(body) {

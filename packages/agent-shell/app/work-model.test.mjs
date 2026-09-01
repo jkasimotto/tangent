@@ -6,6 +6,7 @@ import { deriveWorkRowState, selectWorkAssignment } from "./work-row-state.mjs";
 import path from "node:path";
 import { mkdtemp, mkdir, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { newPipeline, writePipeline } from "./job-record.mjs";
 
 /** Creates one normalized retaining-adapter snapshot. */
 const fenceSource = (rows = [], condition = "current", problems = []) => ({ rows, condition, version: workSemanticHash(rows), problems });
@@ -88,6 +89,80 @@ test("a pane failure keeps complete-list liveness and marks only activity unknow
   const { rows } = (await import("./work-source-adapters.mjs")).normalizeOwnedAgents([{ name: "agent-one", target: "$1", goal: "otto/goal-one.md", run: 1, assignment: "assignment-1", fresh: false }]);
   assert.equal(rows[0].liveness, "live");
   assert.equal(rows[0].activity, "unknown");
+});
+
+test("a legacy queue remains a truthful current Job until the separate source migration", async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), "work-legacy-job-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const trees = path.join(root, "trees");
+  const runtime = path.join(root, "runtime");
+  await Promise.all([
+    mkdir(path.join(trees, "otto"), { recursive: true }),
+    mkdir(path.join(runtime, "jobs", "otto"), { recursive: true }),
+  ]);
+  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: work\nstatus: active\n---\n\n# Otto\n");
+  await writeFile(path.join(trees, "otto", "goal-one.md"), "---\ntype: goal\nstatus: active\n---\n\n# One\n");
+  await writeFile(path.join(runtime, "jobs", "otto", "one.json"), JSON.stringify({
+    schema: "area-goal-queue.v2",
+    goal: "otto/goal-one.md",
+    area: "otto",
+    organizerArea: "otto",
+    slug: "one",
+    revision: 7,
+    status: "open",
+    assignments: [{ id: "assignment-1", index: 1, kind: "implementation", status: "pending", label: "Build", instruction: "Build the result.", attempts: [], reports: [] }],
+  }));
+  const adapters = createWorkSourceAdapters({
+    treesRoot: trees,
+    jobsRoot: path.join(runtime, "jobs"),
+    brainsRoot: path.join(runtime, "brains"),
+    processesRoot: path.join(runtime, "processes"),
+    presentationsRoot: path.join(runtime, "presented"),
+    /** Returns one complete empty Agent observation. */
+    /** Returns one complete empty Agent observation. */
+    loadAgents: async () => [],
+  });
+
+  const candidate = await adapters.reconcile();
+
+  assert.equal(candidate.fence.jobs.condition, "current");
+  assert.equal(candidate.goals[0].execution.state, "open");
+  assert.equal(candidate.goals[0].execution.revision, 7);
+  assert.equal(candidate.goals[0].execution.assignment.id, "assignment-1");
+  assert.equal(candidate.goals[0].workState.code, "assignment-pending");
+});
+
+test("a canonical job.v1 uses its file-level Goal identity", async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), "work-canonical-job-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const trees = path.join(root, "trees");
+  const jobs = path.join(root, "jobs");
+  await mkdir(path.join(trees, "otto"), { recursive: true });
+  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: work\nstatus: active\n---\n\n# Otto\n");
+  await writeFile(path.join(trees, "otto", "goal-one.md"), "---\ntype: goal\nstatus: active\n---\n\n# One\n");
+  await writePipeline(jobs, newPipeline({
+    goal: "otto/goal-one.md",
+    area: "otto",
+    slug: "one",
+    now: "2026-09-01T00:00:00.000Z",
+    steps: [{ instruction: "Build the result.", launch: { harness: "codex", model: "gpt-5.6-sol", effort: "high" } }],
+  }));
+  const adapters = createWorkSourceAdapters({
+    treesRoot: trees,
+    jobsRoot: jobs,
+    brainsRoot: path.join(root, "brains"),
+    processesRoot: path.join(root, "processes"),
+    presentationsRoot: path.join(root, "presented"),
+    /** Returns one complete empty Agent observation. */
+    loadAgents: async () => [],
+  });
+
+  const candidate = await adapters.reconcile();
+
+  assert.equal(candidate.fence.jobs.condition, "current");
+  assert.equal(candidate.problems.some((problem) => problem.source === "jobs" && problem.code === "source-record-invalid"), false);
+  assert.equal(candidate.goals[0].execution.run, 1);
+  assert.equal(candidate.goals[0].execution.assignment.instructionPreview, "Build the result.");
 });
 
 test("duplicate owned Agent identities remain visible once with an explicit problem", async () => {

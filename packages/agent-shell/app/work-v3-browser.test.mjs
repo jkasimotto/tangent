@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bootWorkTable } from "./work-table-harness.mjs";
-import { renderWorkV3 } from "./public/work-v3-view.js";
+import { bootWorkTable, press, settle } from "./work-table-harness.mjs";
 import { WORK_SCHEMA } from "./work-model.mjs";
 
 /** Creates one complete browser Work fixture. */
@@ -13,7 +12,7 @@ function snapshot() {
   return {
     schema: WORK_SCHEMA,
     fence: { areas: source, goals: source, jobs: source, agents: source, brains: source, processes: source, presentations: source },
-    areas: [area("otto", null, "Otto"), area("otto/quiet", "otto", "Quiet"), { ...area("otto/tangent", "otto", "Tangent"), presented: [{ type: "card", id: "card-1", kind: "progress", title: "Read model", summary: "The v3 path is active.", presentedBy: "agent-1", presenterLive: true }] }],
+    areas: [area("otto", null, "Otto"), area("otto/quiet", "otto", "Quiet"), { ...area("otto/tangent", "otto", "Tangent"), presented: [{ type: "document", id: "document-1", file: "otto/tangent/design-read-model.md", root: "vault", repository: null, title: "Read model", note: "The v3 path is active.", presentedBy: "agent-1", presentedHash: "hash-1" }] }],
     goals: [
       { id: "otto/tangent/goal-parent.md", areaId: "otto/tangent", parentGoalId: null, title: "Build truthful Work", lifecycle: "open", verify: false, visibility: "work", rank: 0, blockers: { state: "ready", count: 0 }, startedAt: "2026-09-01T00:00:00.000Z", workState: rowState, execution: { run: 1, revision: 2, state: "open", assignment: { id: "assignment-1", index: 1, total: 1, kind: "implementation", state: "running", label: "Implement", instructionPreview: "Implement v3.", launchRef: null, agentId: "agent-1", startedAt: "2026-09-01T00:00:00.000Z", endedAt: null }, counts: { total: 1, final: 0, pending: 0 } }, presented: [], morePresentedCount: 0 },
       { id: "otto/tangent/goal-child.md", areaId: "otto/tangent", parentGoalId: "otto/tangent/goal-parent.md", title: "Prove the browser", lifecycle: "open", verify: false, visibility: "work", rank: 1, blockers: { state: "ready", count: 0 }, startedAt: null, workState: { code: "open", owner: "none", since: null, evidence: null }, execution: null, presented: [], morePresentedCount: 0 },
@@ -29,23 +28,41 @@ test("browser boot reads only v3 Work and paints every bounded row kind", async 
   const fixture = { vault: { areas: [], documents: [] }, sessions: [], brains: [], pipelines: [] };
   const { document, gets } = await bootWorkTable(fixture, { workProjection: snapshot(), workFilter: "all" });
   assert.deepEqual(gets.map((value) => new URL(value).pathname), ["/api/work"]);
-  assert.equal(document.querySelector("[data-work-schema='agent-shell-work.v3']") !== null, true);
-  assert.equal(document.querySelector("[data-goal-anchor='otto/tangent/goal-parent.md'] .work-state").textContent, "Working");
+  assert.deepEqual([...document.querySelectorAll(".work-table thead th")].map((cell) => cell.textContent.trim()), ["Goal", "Agent", "Status", "Controls"]);
+  assert.equal(document.querySelector("[data-goal-anchor='otto/tangent/goal-parent.md'] .desk-state").textContent, "Working");
   assert.equal(document.querySelector("[data-subgoal-of='otto/tangent/goal-parent.md']") !== null, true);
   assert.equal(document.querySelector("[data-process-file='otto/tangent/process-check.md']") !== null, true);
-  assert.equal(document.querySelector("[data-work-group='otto/quiet']") !== null, true);
+  assert.equal(document.querySelector("[data-work-area='otto/quiet']") !== null, true);
   assert.match(document.body.textContent, /2 questions/);
   assert.match(document.body.textContent, /Read model/);
 });
 
-test("stale transport labels the complete prior revision as Last known", () => {
-  const html = renderWorkV3({ snapshot: snapshot(), metadata: { state: "stale", staleReason: "controller-recovery" } });
-  assert.match(html, /Last known/);
-  assert.match(html, /Build truthful Work/);
+test("bounded source diagnostics stay out of the Work desk", async () => {
+  const projection = snapshot();
+  projection.problems = [
+    { code: "source-record-invalid", source: "jobs", count: 412, sampleIds: ["one", "two", "three"] },
+    { code: "brain-agent-missing", source: "brains", count: 17, sampleIds: ["otto/tangent"] },
+  ];
+  const { document } = await bootWorkTable({ vault: { areas: [], documents: [] }, sessions: [], brains: [], pipelines: [] }, { workProjection: projection });
+  assert.match(document.body.textContent, /Build truthful Work/);
+  assert.doesNotMatch(document.body.textContent, /Last known|source-record-invalid|brain-agent-missing|412|17 missing/);
 });
 
-test("collapsed v3 Goal hierarchy hides descendants without changing facts", () => {
-  const html = renderWorkV3({ snapshot: snapshot(), metadata: { state: "current" }, collapsedGoals: new Set(["otto/tangent/goal-parent.md"]) });
-  assert.match(html, /Build truthful Work/);
-  assert.doesNotMatch(html, /Prove the browser/);
+test("v3 rows preserve the established hierarchy, fold keys, cursor, and Agent entry", async () => {
+  const fixture = { vault: { areas: [], documents: [] }, sessions: [{ name: "agent-1", area: "otto/tangent", goal: "otto/tangent/goal-parent.md", kind: "goal", state: "working" }], brains: [], pipelines: [] };
+  const { window, document, gets } = await bootWorkTable(fixture, { workProjection: snapshot(), workFilter: "all" });
+  const parent = document.querySelector("[data-goal-anchor='otto/tangent/goal-parent.md']");
+  const child = document.querySelector("[data-goal-anchor='otto/tangent/goal-child.md']");
+  parent.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  parent.querySelector("[data-work-row-title]").focus();
+  press(window, "h");
+  await settle(window);
+  assert.equal(document.querySelector("[data-goal-anchor='otto/tangent/goal-child.md']").hidden, true);
+  press(window, "l");
+  await settle(window);
+  assert.equal(document.querySelector("[data-goal-anchor='otto/tangent/goal-child.md']").hidden, false);
+  press(window, "Enter", { metaKey: true, shiftKey: true });
+  await settle(window);
+  assert.ok(gets.some((value) => new URL(value).pathname === "/api/agents/show"));
+  assert.equal(document.querySelector("#session-layer").hidden, false);
 });

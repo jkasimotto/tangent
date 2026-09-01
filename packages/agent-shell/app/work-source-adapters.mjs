@@ -308,7 +308,8 @@ async function enumerateJobs(root) {
   for (const file of await readAllJobs(root)) {
     const run = jobRun(file);
     if (!run) continue;
-    if (typeof run.goal !== "string" || !run.goal) { invalidIds.push(`job-run-${Math.max(1, Number(run.run) || 1)}`); continue; }
+    const goalId = file.goal;
+    if (typeof goalId !== "string" || !goalId) { invalidIds.push(`job-run-${Math.max(1, Number(run.run) || 1)}`); continue; }
     const assignments = run.assignments ?? run.steps ?? [];
     const assignmentCandidates = assignments.map((assignment) => {
       const projected = projectWorkAssignment(assignment, assignments.length);
@@ -319,8 +320,8 @@ async function enumerateJobs(root) {
       };
     });
     rows.push({
-      id: `${run.goal}#${run.run}`,
-      goalId: run.goal,
+      id: `${goalId}#${run.run}`,
+      goalId,
       run: Math.max(1, Number(run.run) || 1),
       revision: Math.max(0, Number(run.revision ?? file.fileRevision) || 0),
       state: jobState(run.status),

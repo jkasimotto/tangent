@@ -763,7 +763,7 @@ test("a poll that changes the facts keeps focus on the same control", async () =
   await settle(window);
 
   const after = document.querySelector("tr[data-goal-anchor$='goal-compact-table.md'] .work-cell-agent .work-agent-ref");
-  assert.notEqual(after, action, "the repaint really replaced the row");
+  assert.equal(after, action, "a changed fact retains the keyed row control");
   assert.match(document.querySelector("tr[data-goal-anchor$='goal-compact-table.md'] .desk-state").textContent, /^Waiting for you$/);
   assert.equal(document.activeElement.dataset.focusKey, key, "focus stays on the same control");
 });

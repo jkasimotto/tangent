@@ -114,6 +114,7 @@ test("Go to offers an unstarted Area brain and Work has no Browse or Describe to
   assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0);
   assert.equal(window.document.querySelector("#go-to-layer").hidden, true);
   assert.ok(window.document.querySelector("[data-launch-popover] [data-launch-start]"), "the missing brain destination opens its chooser");
+  assert.equal(window.document.activeElement.closest("[data-launch-popover]") !== null && !window.document.activeElement.disabled, true, "the absent Brain gives focus to a real enabled launch control");
   assert.equal(window.document.querySelector("#brain-instruction"), null);
   dom.window.close();
 });
@@ -207,6 +208,7 @@ test("Go to opens a live Area brain in its Area workspace", async () => {
 
   assert.equal(window.document.querySelector("[data-map-brain-pane] .map-brain-terminal").dataset.session, "tangent-brain-g7");
   assert.equal(window.document.querySelector("[data-toggle-workspace-map]").textContent, "Map");
+  assert.equal(window.document.querySelector("[data-map-brain-pane]").contains(window.document.activeElement), true, "Go to hands focus to the live Brain composer");
   assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0);
   dom.window.close();
 });
@@ -225,6 +227,7 @@ test("an inactive brain wakes without a message, and Work names no generation", 
   assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0, "an inactive brain shows its chooser first");
   assert.equal(window.document.querySelector("#brain-instruction"), null, "no message box");
   assert.match(window.document.querySelector("[data-launch-start]")?.textContent ?? "", /Wake brain/, "the button says Wake");
+  assert.equal(window.document.activeElement.closest("[data-launch-popover]") !== null && !window.document.activeElement.disabled, true, "the stopped Brain gives focus to a real enabled launch control");
   const startOver = window.document.querySelector("[data-brain-start-over]");
   assert.equal(startOver?.dataset.launchKey, "n", "Start over prints its key");
   assert.match(window.document.querySelector("[data-launch-popover] header").textContent, /↵ wake · n start over/);

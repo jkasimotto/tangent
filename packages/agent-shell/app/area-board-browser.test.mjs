@@ -299,6 +299,12 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
       true,
       "opening a live Brain keeps its composer focused after workspace mount and the first resize repaint",
     );
+    await brainFirstComposer.evaluate((composer) => {
+      window.brainFocusKey = null;
+      composer.addEventListener("keydown", (event) => { window.brainFocusKey = event.key; }, { capture: true, once: true });
+    });
+    await page.keyboard.press("q");
+    assert.equal(await page.evaluate(() => window.brainFocusKey), "q", "typing immediately reaches the composer without another pointer click");
     const brainFirstTerminal = brainFirstPane.locator(".xterm").first();
     await brainFirstTerminal.evaluate((node) => { node.dataset.workspaceIdentity = "brain-first"; });
     const openMap = brainFirstPane.locator("[data-toggle-workspace-map]");
@@ -469,6 +475,8 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     assert.equal(await pane.isVisible(), false, "Close b hides only the pane");
     await page.keyboard.press("b");
     assert.equal(await pane.isVisible(), true, "b reopens the same companion");
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await pane.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer), true, "reopening Brain after Map focus returns typing to its composer");
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "close and reopen keep the map island");
     const companionTerminal = pane.locator(".xterm").first();
     await companionTerminal.evaluate((node) => { node.dataset.responsiveIdentity = "original"; });
@@ -479,6 +487,7 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await page.keyboard.press("b");
     assert.equal(await pane.isVisible(), true, "the Map key selects the mounted Brain in narrow mode");
     assert.equal(await page.locator("[data-map-column]").isVisible(), false);
+    assert.equal(await pane.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer), true, "narrow Brain activation owns the keyboard immediately");
     assert.equal(await companionTerminal.getAttribute("data-responsive-identity"), "original", "narrow selection preserves the exact xterm node");
     await page.setViewportSize({ width: 1400, height: 760 });
     await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "wide");
@@ -489,6 +498,9 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await pane.locator("[data-toggle-workspace-map]").click();
     assert.equal(await page.locator("[data-map-column]").isVisible(), true, "the Brain Map action selects the mounted Map in narrow mode");
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "narrow selection preserves the exact canvas");
+    await page.evaluate(() => { document.activeElement.dataset.pollFocusProof = "before"; });
+    await page.waitForTimeout(30_500);
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.pollFocusProof), "before", "a session poll preserves the exact Map focus instead of stealing it for Brain");
     await page.setViewportSize({ width: 1400, height: 760 });
     await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "wide");
     await pane.locator("[data-hide-workspace-brain]").click();

@@ -49,3 +49,29 @@ test("a stopped Brain refreshes its launch choices without replacing the pane", 
   assert.equal(window.document.activeElement, nextButton, "the selected launch control keeps keyboard focus");
   assert.ok(seedCount >= 2, "each stopped-Brain refresh keeps the exact Area launch options available");
 });
+
+test("stopped and absent Brain panes focus their honest launch action", () => {
+  for (const brain of [{ live: false, status: "inactive" }, null]) {
+    const { window } = new JSDOM('<main id="host"></main>');
+    const host = window.document.querySelector("#host");
+    /** Supplies a no-effect pane dependency for each lifecycle case. */
+    const noop = () => {};
+    const descriptor = createAreaBrainPane({
+      area: "otto/tangent",
+      terminalController: { disposeTerminal: noop, mountTerminal: noop, focus: noop, fit: noop },
+      /** Returns one stopped or absent lifecycle projection. */
+      projection: () => ({
+        brain, live: null, label: brain ? "Brain stopped" : "Brain not started", presentation: { kind: "start" },
+        /** Renders the enabled action that honestly represents this Brain. */
+        launchHtml: () => '<button data-launch-primary data-launch-start>Start or wake Brain</button>',
+      }),
+      escapeHtml: String,
+      onToggleMap: noop, onHideBrain: noop, onLeave: noop, onResume: noop, onSeedStart: noop,
+    });
+    const instance = descriptor.mount({ host });
+    instance.focus();
+    assert.equal(window.document.activeElement.hasAttribute("data-launch-primary"), true, `${brain ? "stopped" : "absent"} Brain focus reaches its launch action`);
+    assert.equal(window.document.activeElement.hasAttribute("data-leave-area-workspace"), false, "the pane does not pretend Work is the Brain action");
+    window.close();
+  }
+});

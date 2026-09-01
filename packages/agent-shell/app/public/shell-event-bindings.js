@@ -3275,5 +3275,5 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     for (const name of ["full", "quick"]) if (!copyOperations[name].timer) resetCopyLabel(name);
   });
 
-  return { paintWorkSearch: searchBar.paintBar };
+  return { paintWorkSearch: searchBar.paintBar, requestLaunchFocus };
 }

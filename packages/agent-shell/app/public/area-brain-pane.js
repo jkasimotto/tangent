@@ -22,9 +22,21 @@ export function createAreaBrainPane({
       host.classList.add("area-workspace-brain-pane", "map-brain-pane");
       host.dataset.mapBrainPane = "";
 
+      /** Focuses the live composer or the useful action for a stopped Brain. */
+      function focusDestination() {
+        if (host.dataset.mode?.startsWith("live:")) return terminalController.focus();
+        const content = host.querySelector(".map-brain-content");
+        const primary = content?.querySelector("[data-launch-primary]:not([disabled])");
+        const selected = content?.querySelector("[data-launch-column='harness'] .launch-option.selected:not([disabled])");
+        const control = primary ?? selected ?? content?.querySelector("input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [tabindex='0']");
+        (control ?? host).focus?.({ preventScroll: true });
+      }
+
       /** Reconciles lifecycle words without replacing a matching live terminal. */
       function update(snapshot = {}) {
         if (disposed) return;
+        const active = host.ownerDocument.activeElement;
+        const ownedFocus = host.contains(active);
         const facts = projection();
         const nextMode = facts.presentation.kind === "terminal" ? `live:${facts.presentation.session}` : facts.presentation.kind;
         const mapOpen = Boolean(snapshot.layout?.open?.has?.("map"));
@@ -41,12 +53,12 @@ export function createAreaBrainPane({
             onSeedStart(area);
             const nextMarkup = facts.launchHtml();
             if (nextMarkup !== launchMarkup) {
-              const active = host.ownerDocument.activeElement;
               const focusKey = host.contains(active) ? active.closest?.("[data-focus-key]")?.dataset.focusKey : "";
               const content = host.querySelector(".map-brain-content");
               if (content) content.innerHTML = `<div class="map-brain-start"><p>${escapeHtml(facts.label)}</p>${nextMarkup}</div>`;
               launchMarkup = nextMarkup;
               if (focusKey) [...host.querySelectorAll("[data-focus-key]")].find((item) => item.dataset.focusKey === focusKey)?.focus?.({ preventScroll: true });
+              else if (ownedFocus) focusDestination();
             }
           }
           return;
@@ -71,16 +83,14 @@ export function createAreaBrainPane({
           launchMarkup = facts.launchHtml();
           content.innerHTML = `<div class="map-brain-start"><p>${escapeHtml(facts.label)}</p>${launchMarkup}</div>`;
         }
+        if (ownedFocus) focusDestination();
       }
       update();
       return {
         id: "brain",
         update,
         /** Returns focus to xterm or the first stopped-Brain control. */
-        focus() {
-          if (host.dataset.mode?.startsWith("live:")) terminalController.focus();
-          else (host.querySelector("input, textarea, select, button") ?? host).focus?.({ preventScroll: true });
-        },
+        focus: focusDestination,
         /** Fits a visible terminal without measuring a hidden host. */
         fit() {
           if (!host.hidden && host.clientWidth > 0) terminalController.fit();

@@ -10,7 +10,7 @@ const PRESENTED_ROWS_PER_GOAL = 3;
 
 /** Creates the work desk from shell, launch, Area, and Program capabilities. */
 export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
-  const { state, api, post, paint, refresh, showToast, openModal, captureReturnPoint, saveDescribeSession, openSessionLayer, updateAreaMapFocus = null } = shell;
+  const { state, api, post, paint, refresh, showToast, openModal, captureReturnPoint, saveDescribeSession, openSessionLayer, requestLaunchFocus = null, updateAreaMapFocus = null } = shell;
   const {
     launchSelection, launchRequestFields, syncLaunchDraft, preferredArea, launchOptionsFor, pipelineForGoal,
     pipelineRecordForGoal, launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
@@ -637,7 +637,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const rect = anchor.getBoundingClientRect();
     state.launchAnchor = { top: Math.round(rect.bottom + 8), above: Math.round(rect.top - 8), right: Math.round(rect.right) };
     state.launch.open = false;
-    return paint(true);
+    const result = paint(true);
+    Promise.resolve(result).then(() => requestLaunchFocus?.(), () => {});
+    return result;
   }
 
   /**

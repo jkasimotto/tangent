@@ -464,7 +464,7 @@ function forward(read) {
 }
 
 const workDeskView = createWorkDeskView({
-  shell: { state, api, post, paint, refresh, showToast, openModal: forward(() => openModal), captureReturnPoint, saveDescribeSession, openSessionLayer: forward(() => openSessionLayer), updateAreaMapFocus: forward(() => refreshAreaMapFocus) },
+  shell: { state, api, post, paint, refresh, showToast, openModal: forward(() => openModal), captureReturnPoint, saveDescribeSession, openSessionLayer: forward(() => openSessionLayer), requestLaunchFocus: forward(() => shellBindings.requestLaunchFocus), updateAreaMapFocus: forward(() => refreshAreaMapFocus) },
   launch: {
     launchSelection: forward(() => launchSelection), launchRequestFields: forward(() => launchRequestFields),
     syncLaunchDraft: forward(() => syncLaunchDraft), preferredArea: forward(() => preferredArea),

@@ -451,7 +451,7 @@ export function normalizeOwnedAgents(sessions) {
       liveness: "live",
       activity: observed.activity,
       activityDetail: observed.activityDetail,
-      activitySince: isoOrNull(session.waitingSince ?? session.idleSince ?? (session.observedAt ? new Date(session.observedAt).toISOString() : null)),
+      activitySince: isoOrNull(session.waitingSince ?? session.idleSince),
       evidence: workText(agentEvidence(session), WORK_LIMITS.detail) || null,
       observedAt: session.observedAt ? new Date(session.observedAt).toISOString() : null,
       contextUsedTokens: Number.isFinite(session.context?.usedTokens) ? Math.max(0, Math.round(session.context.usedTokens)) : null,

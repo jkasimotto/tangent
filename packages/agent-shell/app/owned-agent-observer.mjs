@@ -20,17 +20,24 @@ export function createOwnedAgentObserver({ load, intervalMs = 1_000, now = Date.
     if (active) return active;
     const pass = ++generation;
     active = (async () => {
+      let changed = false;
       try {
         const raw = await load();
         const result = normalizeOwnedAgents(raw);
         if (pass < acceptedGeneration) return current;
         acceptedGeneration = pass;
-        current = Object.freeze({ ...result, raw: Object.freeze(raw.map(Object.freeze)), rows: Object.freeze(result.rows.map(Object.freeze)), complete: true, observedAt: new Date(now()).toISOString(), generation: pass });
+        const priorRows = new Map(current.rows.map((row) => [row.id, row]));
+        const rows = result.rows.map((row) => {
+          const prior = priorRows.get(row.id);
+          return prior && sameAgentFacts(prior, row) ? prior : Object.freeze(row);
+        });
+        changed = !current.complete || rows.length !== current.rows.length || rows.some((row) => priorRows.get(row.id) !== row) || JSON.stringify(result.problems) !== JSON.stringify(current.problems);
+        current = Object.freeze({ ...result, raw: Object.freeze(raw.map(Object.freeze)), rows: Object.freeze(rows), complete: true, observedAt: new Date(now()).toISOString(), generation: pass });
       } catch (error) {
         if (pass < acceptedGeneration) return current;
         acceptedGeneration = pass;
         report("owned Agent observation:", error?.message ?? error);
-        current = Object.freeze({
+        const next = Object.freeze({
           rows: Object.freeze(current.rows.map((row) => Object.freeze({ ...row, liveness: "unknown", activity: "unknown", activityDetail: "unknown", evidence: "The complete Agent observation failed." }))),
           raw: current.raw,
           problems: Object.freeze([{ code: "agent-observation-failed", ids: [] }]),
@@ -38,10 +45,12 @@ export function createOwnedAgentObserver({ load, intervalMs = 1_000, now = Date.
           observedAt: current.observedAt,
           generation: pass,
         });
+        changed = current.complete || JSON.stringify(next.rows) !== JSON.stringify(current.rows) || JSON.stringify(next.problems) !== JSON.stringify(current.problems);
+        current = next;
       } finally {
         active = null;
       }
-      for (const listener of listeners) listener(current);
+      if (changed) for (const listener of listeners) listener(current);
       return current;
     })();
     return active;
@@ -77,4 +86,11 @@ export function createOwnedAgentObserver({ load, intervalMs = 1_000, now = Date.
   function snapshot() { return current; }
 
   return { observe, start, stop, subscribe, snapshot };
+}
+
+/** Compares one Agent observation without its transport-only observation time. */
+function sameAgentFacts(left, right) {
+  const { observedAt: _leftObservedAt, ...leftFacts } = left;
+  const { observedAt: _rightObservedAt, ...rightFacts } = right;
+  return JSON.stringify(leftFacts) === JSON.stringify(rightFacts);
 }

@@ -34,3 +34,22 @@ test("overlapping callers share one complete observation", async () => {
   assert.equal(await first, await second);
   assert.equal(calls, 1);
 });
+
+test("transport-only observation times do not invalidate Work", async () => {
+  let pass = 0;
+  let notifications = 0;
+  const observer = createOwnedAgentObserver({
+    /** Returns equal Agent facts with a new raw observation time. */
+    load: async () => [{ ...session, observedAt: new Date(Date.UTC(2026, 8, 1, 0, 0, pass++)).toISOString() }],
+  });
+  observer.subscribe(() => { notifications += 1; });
+
+  const first = await observer.observe();
+  const second = await observer.observe();
+
+  assert.equal(notifications, 1);
+  assert.equal(second.rows[0], first.rows[0]);
+  assert.equal(second.rows[0].observedAt, first.rows[0].observedAt);
+  assert.equal(second.rows[0].activitySince, null);
+  assert.notEqual(second.observedAt, null);
+});

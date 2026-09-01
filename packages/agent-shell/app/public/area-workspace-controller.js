@@ -40,7 +40,7 @@ export function createAreaWorkspaceController({
     const current = controller.snapshot();
     if (current.open.has("brain") && current.presentation.kind === "single" && current.presentation.active !== "brain") controller.focus("brain", { moveDomFocus: true });
     else if (current.open.has("brain") && current.primary !== "brain") controller.hide("brain");
-    else if (!current.open.has("brain")) controller.show("brain");
+    else if (!current.open.has("brain")) controller.show("brain", { focus: true, moveDomFocus: true });
     else controller.focus("brain", { moveDomFocus: true });
   }
   /** Persists only reusable layout preference after an explicit resize. */

@@ -40,6 +40,7 @@ test("the split preserves exact roots and mounts once through layout changes", a
   assert.equal(controller.root("brain"), brainRoot, "order and prominence changes keep the same Brain root");
   controller.measure(800);
   assert.equal(controller.root("brain").hasAttribute("inert"), true, "the inactive narrow pane is inert without being disposed");
+  assert.equal(controller.snapshot().focused, controller.snapshot().presentation.active, "the only visible narrow pane owns keyboard focus");
   controller.measure(1200);
   assert.equal(controller.root("map"), mapRoot);
   assert.equal(controller.root("brain"), brainRoot);
@@ -60,4 +61,52 @@ test("the split preserves exact roots and mounts once through layout changes", a
   await controller.destroy();
   assert.deepEqual(calls.map.dispose, ["leave"]);
   assert.deepEqual(calls.brain.dispose, ["retarget", "leave"]);
+});
+
+test("an explicit pane reveal focuses after mount and resize repaint preserves only workspace focus", () => {
+  const { window } = new JSDOM('<button id="outside">Outside</button><main id="host"></main>');
+  const host = window.document.querySelector("#host");
+  Object.defineProperty(host, "clientWidth", { value: 1200, configurable: true });
+  let resize = null;
+  class ResizeObserverDouble {
+    constructor(callback) { resize = callback; }
+    /** Accepts the observed workspace host. */
+    observe() {}
+    /** Releases the fake observation. */
+    disconnect() {}
+  }
+  /** Creates one pane whose input records its actual keyboard destination. */
+  const descriptor = (id, minimum) => ({
+    id, label: id, minSizePx: minimum,
+    /** Mounts one focusable destination in the pane root. */
+    mount({ host: root }) {
+      const input = root.appendChild(window.document.createElement(id === "brain" ? "textarea" : "button"));
+      return {
+        /** Moves keyboard focus into this pane. */
+        focus: () => input.focus(),
+        /** Needs no geometry in this DOM-only test. */
+        fit() {},
+        /** Owns no external resource in this test. */
+        dispose() {},
+      };
+    },
+  });
+  const layout = createSplitLayout({ paneIds: ["map", "brain"], entryPane: "map", minSizePx: { map: 560, brain: 420 } });
+  const controller = createSplitWorkspaceController({
+    host,
+    descriptors: [descriptor("map", 560), descriptor("brain", 420)],
+    layout,
+    ResizeObserverClass: ResizeObserverDouble,
+  });
+
+  controller.show("brain", { focus: true, moveDomFocus: true });
+  const composer = controller.root("brain").querySelector("textarea");
+  assert.equal(window.document.activeElement, composer, "the newly attached Brain owns the keyboard");
+  resize([{ contentRect: { width: 1200 } }]);
+  assert.equal(window.document.activeElement, composer, "structural resize repaint restores the exact active descendant");
+
+  const outside = window.document.querySelector("#outside");
+  outside.focus();
+  resize([{ contentRect: { width: 1180 } }]);
+  assert.equal(window.document.activeElement, outside, "a later repaint does not steal focus from outside the workspace");
 });

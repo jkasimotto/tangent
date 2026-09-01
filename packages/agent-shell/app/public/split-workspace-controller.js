@@ -57,6 +57,8 @@ export function createSplitWorkspaceController({
   /** Applies state by moving the same pane roots. It never remounts content. */
   function apply({ fit = true, reorder = true } = {}) {
     if (destroyed) return;
+    const active = host.ownerDocument.activeElement;
+    const restoreActive = reorder && host.contains(active) ? active : null;
     for (const id of current.open) ensureMounted(id);
     if (reorder) host.replaceChildren();
     const visible = current.presentation.kind === "wide"
@@ -92,6 +94,7 @@ export function createSplitWorkspaceController({
       host.style.gridTemplateColumns = "minmax(0, 1fr)";
       separator.hidden = true;
     }
+    if (restoreActive?.isConnected && !restoreActive.closest?.("[inert]")) restoreActive.focus?.({ preventScroll: true });
     if (fit) for (const id of visible) instances.get(id)?.fit?.();
     onLayoutChange(snapshot());
   }
@@ -110,8 +113,10 @@ export function createSplitWorkspaceController({
 
   /** Opens one pane without remounting an existing instance. */
   function show(id, options = {}) {
-    current = showSplitPane(current, id, { ...options, availableWidth, minSizePx, separatorPx });
+    const { moveDomFocus = false, ...layoutOptions } = options;
+    current = showSplitPane(current, id, { ...layoutOptions, availableWidth, minSizePx, separatorPx });
     apply();
+    if (moveDomFocus) instances.get(id)?.focus?.();
   }
   /** Hides one companion without disposing its instance. */
   function hide(id) {

@@ -97,7 +97,7 @@ export function reconcileSplitPresentation(layout, availableWidth, minSizePx, se
   const active = open.includes(previous) ? previous : open.includes(next.primary) ? next.primary : open[0];
   next.presentation = { kind: "single", active };
   next.lastSinglePane = active;
-  next.focused = open.includes(next.focused) ? next.focused : active;
+  next.focused = active;
   return next;
 }
 

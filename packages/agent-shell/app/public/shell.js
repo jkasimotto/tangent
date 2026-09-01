@@ -1807,12 +1807,12 @@ function openMapBrainSession(session) {
   if (state.view !== "area-workspace" || !activeAreaWorkspace) return false;
   state.sessionPeek = null;
   if (session?.area === activeAreaWorkspace.area) {
-    activeAreaWorkspace.show("brain", { focus: activeAreaWorkspace.snapshot().primary === "brain" });
+    activeAreaWorkspace.show("brain", { focus: true, moveDomFocus: true });
     refreshAreaWorkspace();
     return true;
   }
   void activeAreaWorkspace.replace(areaBrainPane(session.area)).then(() => {
-    activeAreaWorkspace?.show("brain", { focus: true });
+    activeAreaWorkspace?.show("brain", { focus: true, moveDomFocus: true });
     refreshAreaWorkspace();
   });
   return true;

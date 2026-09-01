@@ -44,6 +44,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   let navigation = null;
   let navigationQuery = null;
   let navigationGeneration = 0;
+  let navigationRequest = null;
 
   /** Opens, closes, or toggles the shell menu. */
   async function toggleShellMenu(open = shellMenu.hidden) {
@@ -117,6 +118,10 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   function closeGoTo() {
     if (!state.goTo) return;
     const focus = state.goTo.returnFocus;
+    navigationRequest?.abort();
+    navigationRequest = null;
+    navigationQuery = null;
+    navigationGeneration += 1;
     state.goTo = null;
     goToLayer.hidden = true;
     goToList.innerHTML = "";
@@ -135,20 +140,41 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     const requested = state.goTo.query.trim();
     if (requested !== navigationQuery) {
       navigationQuery = requested;
+      navigationRequest?.abort();
+      const request = new AbortController();
+      navigationRequest = request;
       const generation = ++navigationGeneration;
       goToList.innerHTML = `<li class="go-to-empty" role="status">Searching…</li>`;
-      void api(`/api/navigation/search?q=${encodeURIComponent(requested)}&limit=100`).then((result) => {
-        if (!state.goTo || generation !== navigationGeneration) return;
+      void api(`/api/navigation/search?q=${encodeURIComponent(requested)}&limit=100`, { signal: request.signal }).then((result) => {
+        if (!state.goTo || generation !== navigationGeneration || request !== navigationRequest) return;
+        navigationRequest = null;
         const rows = result.rows ?? [];
         const areas = result.areas ?? rows.filter((row) => row.kind === "area").map((row) => ({ path: row.area, name: row.name }));
-        const documents = rows.filter((row) => ["document", "goal"].includes(row.kind)).map((row) => ({ ...row, title: row.name, kind: row.kind, file: row.file, area: row.area }));
+        const documents = rows.filter((row) => ["document", "goal", "note", "area"].includes(row.kind)).map((row) => ({
+          ...row,
+          title: row.name,
+          kind: row.kind === "area" ? "note" : row.kind,
+          docKind: row.kind === "area" ? "note" : row.docKind,
+          missing: false,
+          file: row.file,
+          area: row.area,
+        }));
         const brains = rows.filter((row) => row.kind === "brain").map((row) => ({ area: row.area, status: row.live ? "active" : "inactive", live: row.live, session: row.session }));
         navigation = { vault: { areas, documents }, brains };
         const areaSelect = document.querySelector("#go-to-area");
-        if (areaSelect) areaSelect.innerHTML = `<option value="">All Areas</option>${areas.map((item) => `<option value="${escapeHtml(item.path)}">${escapeHtml(areaLabel(item.path))}</option>`).join("")}`;
+        const kindSelect = document.querySelector("#go-to-kind");
+        if (areaSelect) {
+          areaSelect.innerHTML = `<option value="">All Areas</option>${areas.map((item) => `<option value="${escapeHtml(item.path)}">${escapeHtml(areaLabel(item.path))}</option>`).join("")}`;
+          areaSelect.value = state.goTo.area;
+        }
+        if (kindSelect) {
+          kindSelect.innerHTML = `<option value="">All kinds</option>${(result.kinds ?? []).map((kind) => `<option value="${escapeHtml(kind)}">${escapeHtml(kind)}</option>`).join("")}`;
+          kindSelect.value = state.goTo.kind;
+        }
         renderGoToList();
       }).catch((error) => {
-        if (!state.goTo || generation !== navigationGeneration) return;
+        if (!state.goTo || generation !== navigationGeneration || request !== navigationRequest || error?.kind === "abort") return;
+        navigationRequest = null;
         goToList.innerHTML = `<li class="go-to-empty go-to-error" role="alert">${escapeHtml(error.message)}</li>`;
       });
       return;

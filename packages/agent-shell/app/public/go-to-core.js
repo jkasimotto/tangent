@@ -92,10 +92,12 @@
         }
       }
       if (!keep) continue;
-      scored.push({ row, allInName, startsName: bareName.startsWith(words[0]) });
+      const startsSlug = words.length > 1 && joinedSlug.startsWith(words.join(""));
+      scored.push({ row, startsSlug, allInName, startsName: bareName.startsWith(words[0]) });
     }
     scored.sort((left, right) =>
-      Number(right.allInName) - Number(left.allInName)
+      Number(right.startsSlug) - Number(left.startsSlug)
+      || Number(right.allInName) - Number(left.allInName)
       || Number(right.startsName) - Number(left.startsName)
       || Number(right.row.live) - Number(left.row.live)
       || Number(right.row.changedAt ?? 0) - Number(left.row.changedAt ?? 0)

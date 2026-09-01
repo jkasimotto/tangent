@@ -54,6 +54,14 @@ test("a file-name slug finds a Document whose title differs", () => {
   assert.deepEqual(names(core.matchRows(rows, "design-done-goals", 12)), ["The timeline: what got done and what happened, day by day"]);
 });
 
+test("an exact multi-word file-name query stays visible above many title matches", () => {
+  const rows = [
+    ...Array.from({ length: 20 }, (_, index) => row({ name: `Design standards background ${index}`, file: `neara/team-${index}/reference-${index}.md`, changedAt: index + 1 })),
+    row({ name: "Standards handbook", file: "neara/delivery/standards/design-standards-handbook.md", changedAt: 1 }),
+  ];
+  assert.equal(core.matchRows(rows, "design-standards", 12)[0].file, "neara/delivery/standards/design-standards-handbook.md");
+});
+
 test("a title match ranks above a file-name-slug-only match", () => {
   const rows = [
     row({ name: "Design", file: "otto/tangent/plan-x.md", changedAt: 1 }),

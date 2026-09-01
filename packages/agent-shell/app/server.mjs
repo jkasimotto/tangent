@@ -17,7 +17,7 @@ import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createLaunchMemory } from "./launch-memory.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
-import { discoverProcesses, evaluateProcess, goalNamesProcess, normalizeProcessState, prepareProcessStart, processDefinitionRevision, processFileExists, processView, readAreaProcesses, readProcessState, recordProcessStartPhase, recoverableProcessStart, removeProcessState, settleProcessDelivery, sweepProcesses, withProcessLock, withProcessStatus, writeProcessState as writeProcessStateRecord } from "./process-scheduler.mjs";
+import { dismissProcessOccurrence, discoverProcesses, evaluateProcess, goalNamesProcess, normalizeProcessState, prepareProcessStart, processDefinitionRevision, processFileExists, processView, readAreaProcesses, readProcessState, recordProcessStartPhase, recoverableProcessStart, removeProcessState, restoreProcessOccurrence, settleProcessDelivery, sweepProcesses, withProcessLock, withProcessStatus, writeProcessState as writeProcessStateRecord } from "./process-scheduler.mjs";
 import { formatLoopNote, nextSlotAfter, parseProcessNote, validateProcessSlug } from "./process-note.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, safePresentedMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import documentComments from "./public/document-comments.js";
@@ -67,7 +67,8 @@ import { createAreaPictures } from "./area-pictures.mjs";
 import { createAreaMapProposals } from "./area-map-proposals.mjs";
 import { createAreaMapPromotions } from "./area-map-promotions.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
-import { buildNavigationSearch } from "./navigation-search.mjs";
+import { navigationIndexFromRecords, queryNavigationIndex } from "./navigation-search.mjs";
+import { createFingerprintCache } from "./vault-index-cache.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
 import { createProcessRoutes } from "./process-routes.mjs";
 import { parseSkillNote, projectSkills, routeSkills, skillSlugFromFile } from "./area-skills.mjs";
@@ -1435,6 +1436,68 @@ async function vaultFingerprint(dir = TREES_ROOT, rel = "") {
   return parts.join("\n");
 }
 
+/** Lists the Area directories and Markdown files needed by the lightweight finder. */
+async function navigationEntries() {
+  const entries = await readdir(TREES_ROOT, { recursive: true, withFileTypes: true }).catch(() => []);
+  const visible = entries.map((entry) => {
+    const absolute = path.join(entry.parentPath ?? entry.path ?? TREES_ROOT, entry.name);
+    const relative = path.relative(TREES_ROOT, absolute).split(path.sep).join("/");
+    return { entry, absolute, relative };
+  }).filter(({ relative }) => relative && !relative.split("/").some((part) => part.startsWith(".") || TREE_SKIP.has(part)));
+  return {
+    areas: visible.filter(({ entry }) => entry.isDirectory()).map(({ relative }) => relative).sort(),
+    markdown: visible.filter(({ entry }) => entry.isFile() && entry.name.endsWith(".md")),
+  };
+}
+
+/** Fingerprints only the finder corpus, using one recursive listing and bounded stats. */
+async function navigationFingerprint() {
+  const entries = await navigationEntries();
+  const files = await mapWithConcurrency(entries.markdown, 64, async ({ absolute, relative }) => {
+    const info = await stat(absolute).catch(() => null);
+    return info ? `${relative}:${info.mtimeMs}:${info.size}` : `${relative}:missing`;
+  });
+  return [...entries.areas.map((area) => `dir:${area}`), ...files].join("\n");
+}
+
+/** Reads all finder records in one recursive pass with bounded file reads. */
+async function buildNavigationCorpus() {
+  const entries = await navigationEntries();
+  const records = await mapWithConcurrency(entries.markdown, 48, async ({ absolute, relative, entry }) => {
+    const area = path.posix.dirname(relative);
+    if (!area || area === ".") return null;
+    const name = entry.name;
+    const areaName = area.split("/").at(-1);
+    if (INSTRUCTION_LINK_NAMES.has(name) || /^(?:goal|outcome)-/.test(name)) return null;
+    const [text, info] = await Promise.all([readFile(absolute, "utf8").catch(() => null), stat(absolute).catch(() => null)]);
+    if (text == null) return null;
+    if (name === `${areaName}.md`) return {
+      kind: "note",
+      id: relative,
+      area,
+      name: markdownTitle(text, areaName),
+      file: relative,
+      status: parseFrontmatter(text).status ?? "",
+      docKind: "note",
+      changedAt: info?.mtimeMs ?? 0,
+    };
+    return {
+      kind: "document",
+      file: relative,
+      area,
+      title: markdownTitle(text, name.slice(0, -3)),
+      mtime: info?.mtimeMs ?? 0,
+      links: wikiLinks(text),
+    };
+  });
+  const present = records.filter(Boolean);
+  return navigationIndexFromRecords({
+    areaIds: entries.areas,
+    documents: present.filter((record) => record.kind === "document"),
+    notes: present.filter((record) => record.kind === "note"),
+  });
+}
+
 /**
  * The vault index every Document, Goal, and map request reads, built once per
  * vault change instead of once per request. See vault-index-cache.mjs for why.
@@ -1490,6 +1553,10 @@ if (process.env.AGENT_SHELL_INDEX_WORKER === "1") {
 // controller's historical 10-second default even with bounded parallel reads.
 const vaultProjection = createVaultProjectionController({ fingerprint: vaultFingerprint, build: buildVaultIndexInWorker, timeoutMs: 20_000 });
 const vaultIndex = vaultProjection.get;
+const navigationIndex = createFingerprintCache({
+  fingerprint: navigationFingerprint,
+  build: buildNavigationCorpus,
+});
 
 /** True for a vault-relative Area path with no traversal. */
 function validAreaPath(area) {
@@ -4863,7 +4930,7 @@ const WORKER_REFUSED_ROUTES = new Set([
   "/api/brains/start", "/api/brains/stop", "/api/brains/reply", "/api/brains/verdict", "/api/brains/verdict/undo",
   "/api/brains/succeed",
   "/api/brains/requests", "/api/brains/requests/withdraw", "/api/brains/requests/answer", "/api/brains/requests/dismiss",
-  "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control", "/api/processes/check", "/api/processes/request-start", "/api/processes/start", "/api/processes/defer", "/api/processes/skip",
+  "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control", "/api/processes/check", "/api/processes/request-start", "/api/processes/start", "/api/processes/defer", "/api/processes/dismiss", "/api/processes/restore", "/api/processes/skip",
   "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions", "/api/areas/map-promotions/complete",
   "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
@@ -4880,7 +4947,7 @@ const REPAIR_REFUSED_ROUTES = new Set([
   "/api/brains/requests/answer", "/api/brains/requests/dismiss", "/api/operations/new", "/api/operations/control",
   "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control",
   "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions", "/api/areas/map-promotions/complete",
-  "/api/processes/check", "/api/processes/request-start", "/api/processes/start", "/api/processes/defer", "/api/processes/skip", "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
+  "/api/processes/check", "/api/processes/request-start", "/api/processes/start", "/api/processes/defer", "/api/processes/dismiss", "/api/processes/restore", "/api/processes/skip", "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
 
 /**
@@ -7017,16 +7084,12 @@ const areaRoutesOperations = {
     if (!area || !areas.includes(area)) return null;
     return querySubtreeMilestones({ root: BRAINS_ROOT, area, areas, ...options });
   },
-  /** Searches bounded Area, Goal, Document, and Brain summaries on demand. */
+  /** Searches the cached Document, Area-note, and Brain navigation corpus. */
   async search(query, requestedLimit) {
-    const tree = await readTree(TREES_ROOT);
-    const areaIds = flattenAreaPaths(tree);
-    return buildNavigationSearch({
+    return queryNavigationIndex({
+      index: await navigationIndex(),
       query,
       requestedLimit,
-      areaIds,
-      readAreaGoals,
-      readAreaDocuments,
       brains: workSources.adapters.brains.rows(),
     });
   },
@@ -8762,6 +8825,10 @@ if (!IS_CONTROLLER) {
 // Every Area has its note and its AGENTS.md links before the first request,
 // so a brain that starts at once opens on a complete chain.
 await sweepAreaNoteLinks().catch((err) => console.error("area note links:", err.message ?? err));
+// The finder is a deliberate, latency-sensitive action. Warm its lightweight
+// corpus before the server advertises readiness so the first typed query does
+// not pay for a whole-vault title scan.
+await navigationIndex().catch((err) => console.error("navigation index:", err.message ?? err));
 
 server.listen(PORT, HOST, () => {
   const address = server.address();

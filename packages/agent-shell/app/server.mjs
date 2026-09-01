@@ -583,8 +583,13 @@ const sessionObservation = createObservationCache({
 
 const workTelemetry = createWorkTelemetry();
 const ownedAgentObserver = createOwnedAgentObserver({
-  /** Reads a complete fresh owned-session observation. */
-  load: () => listSessions({ fresh: true }),
+  /** Reads a complete fresh owned-session observation without accepting the session cache's degraded fallback as a complete tmux list. */
+  load: async () => {
+    const sessions = await listSessions({ fresh: true });
+    const observationError = sessionObservation.status().error;
+    if (observationError) throw new Error(`tmux observation failed: ${observationError}`);
+    return sessions;
+  },
   intervalMs: Number(process.env.TANGENT_WORK_AGENT_INTERVAL_MS ?? 1_000),
 });
 const workSources = createWorkSourceAdapters({

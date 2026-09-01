@@ -436,6 +436,7 @@ export function normalizeOwnedAgents(sessions) {
     const owner = ownerOf(session);
     const role = roleOf(session);
     if (owner.kind === "unresolved") problems.push({ code: "agent-owner-unresolved", ids: [session.name] });
+    if (session.fresh === false) problems.push({ code: "agent-pane-failed", ids: [session.name] });
     const observed = workAgentActivity(session);
     rows.push({
       id: workText(session.name, WORK_LIMITS.identity),

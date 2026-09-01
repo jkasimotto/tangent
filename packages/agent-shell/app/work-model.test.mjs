@@ -87,9 +87,10 @@ test("row state precedence keeps verification and user decisions truthful", () =
 });
 
 test("a pane failure keeps complete-list liveness and marks only activity unknown", async () => {
-  const { rows } = (await import("./work-source-adapters.mjs")).normalizeOwnedAgents([{ name: "agent-one", target: "$1", goal: "otto/goal-one.md", run: 1, assignment: "assignment-1", fresh: false }]);
+  const { rows, problems } = (await import("./work-source-adapters.mjs")).normalizeOwnedAgents([{ name: "agent-one", target: "$1", goal: "otto/goal-one.md", run: 1, assignment: "assignment-1", fresh: false }]);
   assert.equal(rows[0].liveness, "live");
   assert.equal(rows[0].activity, "unknown");
+  assert.deepEqual(problems, [{ code: "agent-pane-failed", ids: ["agent-one"] }]);
 });
 
 test("a legacy queue remains a truthful current Job until the separate source migration", async (context) => {

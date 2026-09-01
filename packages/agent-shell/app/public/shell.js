@@ -700,6 +700,7 @@ function renderKey() {
   }
   return JSON.stringify([
     state.view, state.workCursor,
+    [state.workTransport?.state, state.workTransport?.staleReason],
     state.searchPattern,
     state.caffeinate,
     state.document ? [state.document.file, state.document.hash, state.documentTrailIndex, state.documentTrail.length] : null,

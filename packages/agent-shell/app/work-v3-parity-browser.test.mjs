@@ -74,15 +74,31 @@ test("real browser keeps the pre-cutover Work surface stable on bounded v3 facts
     { kind: "area", id: "neara", area: "neara", name: "neara", file: "neara/neara.md" },
     ...Array.from({ length: 98 }, (_, index) => ({ kind: "goal", id: `otto/goal-root-${index}.md`, area: "otto", name: `Root goal ${index}`, file: `otto/goal-root-${index}.md`, status: "active" })),
   ];
+  let workState = "current";
+  let workFailure = false;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
-    if (url.pathname === "/api/work") return sendJson(response, snapshot, {
-      etag: `"${snapshot.epoch}:${snapshot.revision}"`,
-      "x-tangent-work-state": "current",
-      "x-tangent-work-epoch": snapshot.epoch,
-      "x-tangent-work-revision": String(snapshot.revision),
-      "x-tangent-work-published-at": snapshot.publishedAt,
-    });
+    if (url.pathname === "/api/work") {
+      if (workFailure) {
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "controller unavailable" }));
+        return;
+      }
+      const headers = {
+        etag: `"${snapshot.epoch}:${snapshot.revision}"`,
+        "x-tangent-work-state": workState,
+        "x-tangent-work-stale-reason": workState === "current" ? "" : "controller-recovery",
+        "x-tangent-work-epoch": snapshot.epoch,
+        "x-tangent-work-revision": String(snapshot.revision),
+        "x-tangent-work-published-at": snapshot.publishedAt,
+      };
+      if (request.headers["if-none-match"] === headers.etag) {
+        response.writeHead(304, headers);
+        response.end();
+        return;
+      }
+      return sendJson(response, snapshot, headers);
+    }
     if (url.pathname === "/api/navigation/search") return sendJson(response, {
       schema: "agent-shell-navigation.v1",
       query: url.searchParams.get("q") ?? "",
@@ -157,6 +173,16 @@ test("real browser keeps the pre-cutover Work surface stable on bounded v3 facts
     assert.equal(await row.evaluate((element) => element === window.__workParityRow), true, "changed facts reconcile the keyed row in place");
     assert.equal(await control.evaluate((element) => element === window.__workParityControl && element === document.activeElement), true, "changed facts retain focus");
     assert.match(await row.locator(".desk-state").textContent(), /Needs your decision/);
+
+    workState = "stale";
+    await page.evaluate(async () => { await (await import("/shell.js")).refresh(); });
+    assert.equal(await page.locator(".work-last-known").textContent(), "Last known", "a stale 304 marks the retained revision");
+    const retainedTitle = await row.locator(".work-row-title").textContent();
+    workFailure = true;
+    await page.evaluate(async () => { await (await import("/shell.js")).refresh(); });
+    assert.equal(await row.locator(".work-row-title").textContent(), retainedTitle, "a failed refresh keeps the visible row");
+    assert.equal(await page.locator(".work-last-known").textContent(), "Last known", "a failed refresh keeps the stale label visible");
+    workFailure = false;
 
     await page.getByRole("button", { name: /Go to/ }).click();
     await page.locator("#go-to-area option").last().waitFor({ state: "attached" });

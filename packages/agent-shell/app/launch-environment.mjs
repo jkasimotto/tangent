@@ -148,6 +148,11 @@ export function launchMatches(pattern, ref) {
     && (!pattern.effort || pattern.effort === ref.effort);
 }
 
+/** True when one launch satisfies every effective Area policy restriction. */
+export function launchAllowedByPolicy(policy, ref) {
+  return (policy.restrictions ?? []).every((entry) => entry.allow.some((pattern) => launchMatches(pattern, ref)));
+}
+
 /** Expands the registry into concrete launches in registry order. */
 export function registeredLaunches(registry) {
   const launches = [];
@@ -193,6 +198,7 @@ export async function areaLaunchPolicy(area, readAreaNote, registry, readAreaHar
     area,
     allow: declarations[0]?.allow ?? [],
     declaredBy: declarations.map((entry) => entry.area),
+    restrictions: declarations.map((entry) => ({ area: entry.area, allow: entry.allow })),
     aliases: Object.assign({}, ...declarations.slice().reverse().map((entry) => entry.aliases)),
     contracts,
     health: contracts.some((entry) => entry.state === "stale") ? "stale" : contracts.some((entry) => entry.state === "missing") ? "missing" : contracts.some((entry) => entry.state === "legacy") ? "legacy" : "valid",

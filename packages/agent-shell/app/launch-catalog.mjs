@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  applyLaunchAliases, areaHarnessContractText, areaLaunchPolicy, harnessEfforts, harnessModels, launchMatches, launchRef, modelEfforts, parseAreaHarnessContract, parseEnvironmentBlock, parseHarnessRegistry, parseLaunch, resolveLaunch, upsertHarnessRegistry,
+  applyLaunchAliases, areaHarnessContractText, areaLaunchPolicy, harnessEfforts, harnessModels, launchAllowedByPolicy, launchMatches, launchRef, modelEfforts, parseAreaHarnessContract, parseEnvironmentBlock, parseHarnessRegistry, parseLaunch, resolveLaunch, upsertHarnessRegistry,
   validateHarnessRegistry,
 } from "./launch-environment.mjs";
 
@@ -34,7 +34,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     if (canonical.error) return canonical;
     const resolved = resolveLaunch(await registry(), canonical);
     if (resolved.error) return resolved;
-    if (policy.launches.some((entry) => launchRef(entry) === launchRef(resolved))) return { ...resolved, policy };
+    if (launchAllowedByPolicy(policy, resolved)) return { ...resolved, policy };
     return { error: `launch ${launchRef(ref)} is not allowed in ${area}`, code: "launch-not-allowed", launch: launchRef(ref), area, allowed: policy.allow.map(launchRef) };
   }
 
@@ -46,7 +46,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     const ancestors = String(area).split("/").map((_, index, parts) => parts.slice(0, parts.length - index).join("/"));
     for (const source of ancestors) {
       const ref = saved[source]?.[kind];
-      if (ref && policy.launches.some((entry) => launchRef(entry) === launchRef(ref))) return { ...ref, source };
+      if (ref && launchAllowedByPolicy(policy, ref)) return { ...ref, source };
     }
     const fallback = policy.unrestricted ? null : policy.launches[0] ?? null;
     return fallback ? { harness: fallback.harness, ...(fallback.model ? { model: fallback.model } : {}), ...(fallback.effort ? { effort: fallback.effort } : {}), source: null } : null;
@@ -106,7 +106,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     const policy = area ? await policyFor(area) : { unrestricted: true, launches: [] };
     if (policy.error) return policy;
     /** True when the requested catalog entry is in the filtered policy. */
-    const accepted = (ref) => !area || policy.launches.some((entry) => launchRef(entry) === launchRef(ref));
+    const accepted = (ref) => !area || launchAllowedByPolicy(policy, ref);
     const harnesses = current.harnesses.map((harness) => ({
       id: harness.id,
       label: harness.label || harness.id,

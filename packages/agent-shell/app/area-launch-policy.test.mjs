@@ -89,6 +89,38 @@ test("explicit Area harness contracts expose valid, stale, missing, and invalid 
   assert.equal((await catalog.policyFor("otto/invalid")).code, "harness-contract-invalid");
 });
 
+test("empty child contracts preserve the parent allowlist for an effort-capable launch", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-harness-empty-inheritance-"));
+  const current = {
+    version: 2,
+    modelSets: { claude: [{ id: "fable-5", effortSet: "claude" }] },
+    effortSets: { claude: [{ id: "low" }, { id: "high" }] },
+    harnesses: [{ id: "claude", command: "claude", modelSet: "claude" }],
+  };
+  for (const area of ["neara", "neara/delivery", "neara/delivery/standards", "neara/delivery/cli", "neara/restricted"]) {
+    await mkdir(path.join(root, area), { recursive: true });
+  }
+  await writeFile(path.join(root, "harnesses.md"), `\`\`\`tangent.harnesses.v2\n${JSON.stringify(current)}\n\`\`\``);
+  await writeFile(path.join(root, "neara", "harnesses.md"), areaHarnessContractText({ allow: ["claude"], registry: current }));
+  await writeFile(path.join(root, "neara", "delivery", "harnesses.md"), areaHarnessContractText({ registry: current }));
+  await writeFile(path.join(root, "neara", "delivery", "standards", "harnesses.md"), areaHarnessContractText({ registry: current }));
+  await writeFile(path.join(root, "neara", "delivery", "cli", "harnesses.md"), areaHarnessContractText({ registry: current }));
+  await writeFile(path.join(root, "neara", "restricted", "harnesses.md"), areaHarnessContractText({ allow: ["claude/fable-5/high"], registry: current }));
+  /** Supplies no legacy declarations to the current-contract fixture. */
+  const readAreaNote = async () => "";
+  const catalog = createLaunchCatalog({ root, readAreaNote });
+
+  for (const area of ["neara/delivery/standards", "neara/delivery/cli"]) {
+    const policy = await catalog.policyFor(area);
+    assert.deepEqual(policy.declaredBy, ["neara"]);
+    assert.equal(policy.health, "valid");
+    assert.equal((await catalog.allowed(area, { harness: "claude", model: "fable-5" })).command, "claude");
+  }
+  assert.equal((await catalog.allowed("neara/restricted", { harness: "claude", model: "fable-5", effort: "high" })).command, "claude");
+  assert.equal((await catalog.allowed("neara/restricted", { harness: "claude", model: "fable-5" })).code, "launch-not-allowed");
+  assert.equal((await catalog.allowed("neara/restricted", { harness: "claude", model: "fable-5", effort: "low" })).code, "launch-not-allowed");
+});
+
 test("repair creates a child contract and migrates legacy allow and aliases without widening it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-harness-contract-repair-"));
   await mkdir(path.join(root, "otto"), { recursive: true });

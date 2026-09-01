@@ -70,7 +70,7 @@ export function actionName(target) {
   for (const attribute of ACTION_ATTRIBUTES) {
     if (!control.hasAttribute(attribute)) continue;
     const value = control.getAttribute(attribute);
-    return value && /^(accept|reject|undo|start|stop|restart|pause|resume|run|close|skip|retry|end|next)$/.test(value)
+    return value && /^(accept|reject|undo|start|stop|restart|pause|resume|run|close|skip|dismiss|restore|retry|end|next)$/.test(value)
       ? `${attribute.slice(5)}:${value}`
       : attribute.slice(5);
   }

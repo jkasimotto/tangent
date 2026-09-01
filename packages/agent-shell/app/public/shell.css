@@ -637,6 +637,9 @@ button.work-agent-ref:hover, button.work-agent-ref:focus-visible { color: #fff; 
 .work-group-loop-controls { display: inline-flex; align-items: center; gap: 4px; }
 .work-loop-control { border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--danger); padding: 2px 7px; font-size: 11px; }
 .process-controls, .work-process-controls { display: inline-flex; align-items: center; gap: 5px; }
+.process-recovery { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.process-recovery .process-control:disabled { cursor: not-allowed; }
+.process-control-reason { max-width: 220px; color: var(--quiet); font-size: 10px; line-height: 1.3; }
 .work-process-controls { justify-content: flex-end; }
 .work-process-control { border: 1px solid var(--line); border-radius: 4px; background: transparent; color: #aeb7c1; padding: 2px 7px; font-size: 11px; }
 .work-process-control:hover, .work-process-control:focus-visible { border-color: #718096; color: #fff; }

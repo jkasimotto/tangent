@@ -248,6 +248,29 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     }
   }
 
+  /** Starts one current occurrence or creates one explicit manual occurrence. */
+  async function startProcess(control) {
+    if (control.disabled) return;
+    const { processArea: area, processSlug: slug, processFile: file, processEvent: eventId, processRevision: expectedRevision, processState } = control.dataset;
+    if (!area || !slug || !file) return showToast("This process control is stale.");
+    control.disabled = true;
+    control.setAttribute("aria-busy", "true");
+    control.textContent = "Starting…";
+    const mode = ["Waiting", "Dismissed"].includes(processState) ? "run-again" : ["Did not start", "Could not start"].includes(processState) ? "retry" : "start";
+    try {
+      await post("/api/processes/request-start", { file, eventId: eventId || undefined, expectedRevision: Number(expectedRevision), operationId: crypto.randomUUID(), mode });
+      await refresh().catch(() => {});
+      paint(true);
+      focusProcessControl(area, slug);
+      showToast("The Process is starting.");
+    } catch (error) {
+      await refresh().catch(() => {});
+      paint(true);
+      focusProcessControl(area, slug);
+      showToast(error.message);
+    }
+  }
+
   /** Restores focus to one process after a repaint caused by its mutation. */
   function focusProcessControl(area, slug) {
     window.setTimeout(() => [...document.querySelectorAll("[data-control-process]")]
@@ -289,6 +312,30 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     }
   }
 
+  /** Restores one exact dismissed occurrence from the durable Area table. */
+  async function restoreProcess(control) {
+    if (control.disabled) return;
+    const { processArea: area, processSlug: slug, processFile: file, processEvent: eventId, processRevision: expectedRevision } = control.dataset;
+    if (!area || !slug || !file || !eventId) return showToast("This occurrence is no longer available.");
+    control.disabled = true;
+    control.setAttribute("aria-busy", "true");
+    control.textContent = "Restoring…";
+    try {
+      const result = await post("/api/processes/restore", { file, eventId, expectedRevision: Number(expectedRevision), operationId: crypto.randomUUID() });
+      const index = (state.programs.processes ?? []).findIndex((item) => item.area === area && item.slug === slug && item.file === file);
+      if (index >= 0 && result.process) state.programs.processes[index] = result.process;
+      await refresh().catch(() => {});
+      paint(true);
+      focusProcessControl(area, slug);
+      showToast("Restored this occurrence.");
+    } catch (error) {
+      await refresh().catch(() => {});
+      paint(true);
+      focusProcessControl(area, slug);
+      showToast(error.message);
+    }
+  }
+
   /** One accessible Pause or Resume button, fenced to the row's full identity. */
   function processControl(item, compact = false) {
     if (item.error) return "";
@@ -297,10 +344,26 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     return `<button class="${compact ? "work-process-control" : "process-control"}" type="button" data-control-process data-process-action="${action}" data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" aria-label="${word} process ${escapeHtml(item.slug)} in ${escapeHtml(areaLabel(item.area))}">${word}</button>`;
   }
 
+  /** Starts bounded work explicitly; loops send their own messages. */
+  function processStartControl(item) {
+    if (item.loop || item.error || item.status === "paused") return "";
+    const reason = item.actionReasons?.start;
+    return `<button class="process-control" type="button" data-start-process data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" data-process-event="${escapeHtml(item.eventId || "")}" data-process-revision="${escapeHtml(item.revision ?? 0)}" data-process-state="${escapeHtml(item.state || "")}" aria-label="Start process ${escapeHtml(item.slug)} now"${reason ? ` title="${escapeHtml(reason)}" disabled` : ""}>Start now</button>`;
+  }
+
   /** Remove exists only for loop notes, which is the server's current authority. */
   function processRemoveControl(item, compact = false) {
     if (!item.loop) return "";
     return `<button class="${compact ? "work-process-control danger" : "process-control danger"}" type="button" data-remove-process data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" aria-label="Remove loop ${escapeHtml(item.slug)} from ${escapeHtml(areaLabel(item.area))}">Remove</button>`;
+  }
+
+  /** Restores the last dismissed occurrence, with an accessible refusal reason. */
+  function processRecoveryControl(item) {
+    if (!item.dismissedEventId) return "";
+    const reasonId = `process-restore-reason-${item.slug.replace(/[^a-z0-9_-]/gi, "-")}`;
+    const unavailable = !item.restoreAvailable;
+    const reason = item.restoreReason || "This occurrence cannot be restored.";
+    return `<span class="process-recovery"><button class="process-control" type="button" data-restore-process data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" data-process-event="${escapeHtml(item.dismissedEventId)}" data-process-revision="${escapeHtml(item.revision ?? 0)}" aria-label="Restore occurrence for process ${escapeHtml(item.slug)}"${unavailable ? ` aria-describedby="${reasonId}" title="${escapeHtml(reason)}" disabled` : ""}>Restore occurrence</button>${unavailable ? `<small id="${reasonId}" class="process-control-reason">${escapeHtml(reason)}</small>` : ""}</span>`;
   }
 
   /**
@@ -317,8 +380,8 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
         <td>${escapeHtml(item.when)}</td>
         <td>${escapeHtml(item.status === "paused" ? "–" : processMoment(item.nextRunAt))}</td>
         <td>${escapeHtml(processMoment(item.lastRunAt))}</td>
-        <td><span class="process-state ${escapeHtml(item.due ? "due" : item.loop && item.status === "active" ? "loop" : item.status)}">${escapeHtml(item.error ? `Broken note: ${item.error}` : item.state)}</span></td>
-        <td><span class="process-controls">${processControl(item)}${processRemoveControl(item)}</span></td>
+        <td><span class="process-state ${escapeHtml(item.due ? "due" : item.loop && item.status === "active" ? "loop" : item.status)}">${escapeHtml(item.error ? `Broken note: ${item.error}` : item.state)}</span>${item.lastOccurrenceOutcome === "dismissed" ? `<small>Last occurrence: Dismissed</small>` : ""}</td>
+        <td><span class="process-controls">${processRecoveryControl(item)}${processStartControl(item)}${processControl(item)}${processRemoveControl(item)}</span></td>
       </tr>`).join("");
     return `
       <section class="area-workspace-section area-processes" aria-labelledby="area-processes-heading">
@@ -512,5 +575,5 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
 
   /** Returns one program by its stable UI identity. */
 
-  return { areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, removeProcess, selectedArea, areaParent, areaTreeRows, areaProgramMark, areaGoalRow, goalAttention, orderedGoalTrees, mountAreaMap, refreshAreaMap, disposeAreaMap, areaContents, renderAreas, areaParentOptions, renderAreaEditor };
+  return { areas, allAreas, areaIsFolded, setAreaStatus, controlProcess, startProcess, restoreProcess, removeProcess, selectedArea, areaParent, areaTreeRows, areaProgramMark, areaGoalRow, goalAttention, orderedGoalTrees, mountAreaMap, refreshAreaMap, disposeAreaMap, areaContents, renderAreas, areaParentOptions, renderAreaEditor };
 }

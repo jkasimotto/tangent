@@ -11,7 +11,9 @@ export function createProcessRoutes(operations) {
     ["POST /api/processes/request-start", requestStart],
     ["POST /api/processes/start", start],
     ["POST /api/processes/defer", defer],
-    ["POST /api/processes/skip", skip],
+    ["POST /api/processes/dismiss", dismiss],
+    ["POST /api/processes/restore", restore],
+    ["POST /api/processes/skip", dismiss],
   ]);
 
   /** Handles one matching request and reports whether this router owned it. */
@@ -47,8 +49,10 @@ export function createProcessRoutes(operations) {
   async function start(request, response) { await mutate(request, response, operations.start); }
   /** Moves one event to an approved later instant. */
   async function defer(request, response) { await mutate(request, response, operations.defer); }
-  /** Finishes one event without starting it. */
-  async function skip(request, response) { await mutate(request, response, operations.skip); }
+  /** Dismisses one exact occurrence without changing its definition. */
+  async function dismiss(request, response) { await mutate(request, response, operations.dismiss); }
+  /** Restores one exact dismissed occurrence. */
+  async function restore(request, response) { await mutate(request, response, operations.restore); }
 
   /** Runs one process operation and reports a refusal as 409. */
   async function mutate(request, response, operation) {

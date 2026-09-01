@@ -375,6 +375,7 @@ async function enumerateProcessSources(treesRoot, statesRoot, now) {
       whenLabel: workText(view.when, WORK_LIMITS.label),
       loop: Boolean(note.loop),
       bodyPreview: note.loop ? workText(note.body, WORK_LIMITS.instruction) : null,
+      visibleInWork: Boolean(view.occurrenceVisible),
       due: Boolean(view.due),
       brainLive: Boolean(view.brainLive),
       eventId: view.eventId ? workText(view.eventId, WORK_LIMITS.identity) : null,

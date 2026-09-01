@@ -184,6 +184,7 @@ function deskProcess(process) {
     when: process.whenLabel,
     every: process.loop ? process.whenLabel : null,
     body: process.bodyPreview ?? "",
+    occurrenceVisible: Boolean(process.visibleInWork),
     state: process.legacyState ?? processStateLabel(process),
     error: process.state === "broken" ? process.stateDetail ?? "The process note is invalid." : null,
   };

@@ -140,6 +140,34 @@ test("process notes reach the Area page, the CLI routes, the Goal, and the brain
     assert.equal(refused.status, 409);
   });
 
+  await context.test("dismiss and restore fence one occurrence and never edit its definition", async () => {
+    const before = await readFile(path.join(area, "process-red-build.md"), "utf8");
+    const listed = await get(base, "/api/processes?area=otto%2Fdnd");
+    const red = listed.processes.find((item) => item.slug === "red-build");
+    const dismissed = await post(base, "/api/processes/dismiss", {
+      file: red.file, eventId: red.eventId, expectedRevision: red.revision, operationId: "dismiss-http-event",
+    });
+    assert.equal(dismissed.status, 200, JSON.stringify(dismissed.body));
+    assert.equal(dismissed.body.process.state, "Dismissed");
+    assert.equal(dismissed.body.process.occurrenceVisible, false);
+    assert.equal(dismissed.body.process.restoreAvailable, true);
+    assert.deepEqual(dismissed.body.returnRule, { kind: "condition-edge", nextDueAt: null });
+    assert.equal(await readFile(path.join(area, "process-red-build.md"), "utf8"), before);
+    const replay = await post(base, "/api/processes/dismiss", {
+      file: red.file, eventId: red.eventId, expectedRevision: red.revision, operationId: "dismiss-http-event",
+    });
+    assert.equal(replay.status, 200);
+    assert.equal(replay.body.idempotent, true);
+
+    const restored = await post(base, "/api/processes/restore", {
+      file: red.file, eventId: red.eventId, expectedRevision: dismissed.body.process.revision, operationId: "restore-http-event",
+    });
+    assert.equal(restored.status, 200, JSON.stringify(restored.body));
+    assert.equal(restored.body.process.eventId, red.eventId);
+    assert.equal(restored.body.process.occurrenceVisible, true);
+    assert.equal(await readFile(path.join(area, "process-red-build.md"), "utf8"), before);
+  });
+
   await context.test("create and remove own the complete loop lifecycle", async () => {
     const stateFile = path.join(root, "processes", "otto", "dnd", "review-work.json");
     await mkdir(path.dirname(stateFile), { recursive: true });

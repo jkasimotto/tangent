@@ -30,7 +30,7 @@ const records = [
   { id: "note", keyDisplay: "", ariaKeyshortcuts: null, scope: "area", kind: "action", label: "Send note", help: "Send a note to this Area brain." },
   { id: "readGoal", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "goal", kind: "action", label: "Read Goal", help: "Read this Goal and its intent. Open its Job for Assignments and Attempts.", shortcuts: [{ key: "o" }] },
   { id: "readProcessRun", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "process", kind: "action", label: "Read run", help: "Open the Job of the last run this Process started.", shortcuts: [{ key: "o" }] },
-  { id: "processMenu", keyDisplay: "x", ariaKeyshortcuts: "x", scope: "process", kind: "surface", label: "Process menu", help: "Start, retry, defer, skip, pause, resume, or remove this Process.", shortcuts: [{ key: "x" }] },
+  { id: "processMenu", keyDisplay: "x", ariaKeyshortcuts: "x", scope: "process", kind: "surface", label: "Process menu", help: "Start, retry, defer, dismiss, pause, resume, or remove this Process.", shortcuts: [{ key: "x" }] },
   { id: "fullDocument", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "document", kind: "action", label: "Full reader", help: "Open this presented Document in the full reader.", shortcuts: [{ key: "o" }] },
   { id: "dismissPresentation", keyDisplay: "x", ariaKeyshortcuts: "x", scope: "document", kind: "action", label: "Dismiss", help: "Hide this presentation until the agent presents new content.", shortcuts: [{ key: "x" }] },
   { id: "readGoalPresented", keyDisplay: "o", ariaKeyshortcuts: "o", scope: "card", kind: "action", label: "Read Goal", help: "Open the Goal reader at Presented.", shortcuts: [{ key: "o" }] },

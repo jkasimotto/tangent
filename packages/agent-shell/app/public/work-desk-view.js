@@ -251,9 +251,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return (state.programs.processes ?? []).filter((item) => item.area === areaPath && item.loop === true && item.status === "active" && !item.error);
   }
 
-  /** Active and paused process notes owned by one exact Area. */
+  /** Bounded Process occurrences and broken definitions owned by one exact Area. */
   function areaProcessesForArea(areaPath) {
-    return (state.programs.processes ?? []).filter((item) => item.area === areaPath && ["active", "paused"].includes(item.status));
+    return (state.programs.processes ?? []).filter((item) => item.area === areaPath && Boolean(item.occurrenceVisible ?? item.visibleInWork));
   }
 
   /** The Area that owns the current cursor row, read from the painted desk. */

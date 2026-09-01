@@ -233,6 +233,7 @@ export function legacyFixtureWork(fixture) {
     whenLabel: process.when ?? "",
     loop: Boolean(process.loop),
     bodyPreview: process.body ?? null,
+    visibleInWork: Boolean(process.occurrenceVisible ?? process.visibleInWork ?? (process.error || (!process.loop && process.status === "active" && process.eventId && !["Dismissed", "Waiting"].includes(process.state)))),
     due: Boolean(process.due),
     brainLive: Boolean(process.brainLive),
     eventId: process.eventId ?? null,

@@ -66,6 +66,8 @@ export const processCommandSpec: CliCommandSpec = {
     { name: "pause", description: "Set status: paused in the note and commit it", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] },
     { name: "resume", description: "Set status: active in the note and commit it", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] },
     { name: "check", description: "Evaluate due-ness now and print why", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] },
+    { name: "dismiss", description: "Dismiss the exact current occurrence without changing its definition", args: "<slug|area/slug>", options: [{ name: "event", takesValue: true, description: "Expected occurrence ID" }, { name: "revision", takesValue: true, description: "Expected Process revision" }, { name: "operation-id", takesValue: true, description: "Stable retry identity" }, areaOption, serverOption, jsonOption] },
+    { name: "restore", description: "Restore the exact last dismissed occurrence", args: "<slug|area/slug>", options: [{ name: "event", takesValue: true, description: "Dismissed occurrence ID" }, { name: "revision", takesValue: true, description: "Expected Process revision" }, { name: "operation-id", takesValue: true, description: "Stable retry identity" }, areaOption, serverOption, jsonOption] },
     { name: "remove", description: "Remove one loop note and commit the removal", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] }
   ]
 };

@@ -30,7 +30,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   } = work;
   const {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelDescribe, areaIsFolded,
-    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, removeProcess, preferredArea, areaLabel,
+    saveExpandedAreas, revealArea, setAreaStatus, controlProcess, startProcess, restoreProcess, removeProcess, preferredArea, areaLabel,
   } = areas;
   const {
     showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, currentProgram,
@@ -821,6 +821,55 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
   }
 
+  /** Formats the server-owned return rule for one dismissed occurrence. */
+  function dismissedOccurrenceMessage(rule) {
+    if (rule?.kind === "condition-edge") return "Dismissed this occurrence. It returns after the condition clears and becomes true again.";
+    const date = rule?.nextDueAt ? new Date(rule.nextDueAt) : null;
+    const next = date && !Number.isNaN(date.getTime()) ? date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "the next scheduled time";
+    return `Dismissed this occurrence. Next due ${next}.`;
+  }
+
+  /** Dismisses one exact Process occurrence and offers exact-event Undo. */
+  async function dismissProcessOccurrenceFromWork(process, row) {
+    if (!process?.eventId || !row) return showToast("This occurrence is no longer current.");
+    const started = state.workOperations.begin("dismiss", `${process.file}\0${process.eventId}`);
+    if (started.repeated) return false;
+    const operation = started.operation;
+    optimisticallyRemoveWorkRow(row, operation, "Dismissing");
+    try {
+      const result = await post("/api/processes/dismiss", {
+        file: process.file, eventId: process.eventId, expectedRevision: process.revision, operationId: operation.operationId,
+      });
+      state.workOperations.committed(operation, result);
+      Object.assign(process, result.process);
+      paint(true);
+      announceWork("Dismissed");
+      /** Restores only the event that this exact dismissal removed. */
+      const undo = async () => {
+        try {
+          const restored = await post("/api/processes/restore", {
+            file: process.file, eventId: result.eventId, expectedRevision: result.process.revision, operationId: crypto.randomUUID(),
+          });
+          Object.assign(process, restored.process);
+          await refresh({ trigger: "mutation-verify" });
+          paint(true);
+          announceWork("Occurrence restored");
+          showToast("Restored this occurrence.");
+        } catch (error) {
+          showToast(error.message);
+        }
+      };
+      showToast(dismissedOccurrenceMessage(result.returnRule), { label: "Undo", run: undo });
+      void refresh({ trigger: "mutation-verify" });
+      return true;
+    } catch (error) {
+      rollbackRemovedWorkRow(operation, error);
+      announceWork(`Dismiss failed. ${error.message}`);
+      showToast(error.message);
+      return false;
+    }
+  }
+
   /** Resolves the Goal and bounded card painted on one Work row. */
   function cardForRow(row) {
     const goal = goalByFile(row?.dataset.cardGoal ?? "");
@@ -1069,7 +1118,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       options.splice(0, options.length,
         { value: "processStart", key: "", label: ["Did not start", "Could not start"].includes(process.state) ? "Retry now" : process.state === "Waiting" ? "Run again" : "Start now", help: "Ask the exact Area brain to start this Process.", enabled: !process.actionReasons?.start, reason: process.actionReasons?.start },
         { value: "processDefer", key: "", label: "Defer", help: "Move this run to a later time.", enabled: !process.actionReasons?.defer, reason: process.actionReasons?.defer },
-        { value: "processSkip", key: "", label: "Skip this run", help: "Drop this slot only. The next slot still runs.", enabled: !process.actionReasons?.skip, reason: process.actionReasons?.skip },
+        { value: "processDismiss", key: "", label: "Dismiss this occurrence", help: "Hide this occurrence from Work. The next due occurrence returns.", enabled: !process.actionReasons?.dismiss, reason: process.actionReasons?.dismiss },
         { value: "processControl", key: "", label: process.status === "paused" ? "Resume" : "Pause", help: process.status === "paused" ? "Resume scheduling." : "Stop scheduling until resumed.", enabled: true },
         { value: "open", key: "Enter", label: "Inspect note", help: "Open the Process note.", enabled: true },
         { value: "readProcessRun", key: "o", label: "Read run", help: "Open the last linked Job.", enabled: !process.actionReasons?.readRun, reason: process.actionReasons?.readRun },
@@ -1127,8 +1176,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         post("/api/processes/defer", { file: process.file, eventId: process.eventId, expectedRevision: process.revision, operationId: crypto.randomUUID(), choice: "15m" }).then(() => refresh(), (error) => showToast(error.message));
         return true;
       }
-      if (process && id === "processSkip") {
-        post("/api/processes/skip", { file: process.file, eventId: process.eventId, expectedRevision: process.revision, operationId: crypto.randomUUID() }).then(() => refresh(), (error) => showToast(error.message));
+      if (process && id === "processDismiss") {
+        dismissProcessOccurrenceFromWork(process, currentRow);
         return true;
       }
       if (process && id === "processRemove") {
@@ -1716,6 +1765,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (state.documentPeek && documentPeekLayer.contains(target)) return handleDocumentPeekClick(event);
     const processControl = target.closest?.("[data-control-process]");
     if (processControl) return controlProcess(processControl);
+    const processStart = target.closest?.("[data-start-process]");
+    if (processStart) return startProcess(processStart);
+    const processRestore = target.closest?.("[data-restore-process]");
+    if (processRestore) return restoreProcess(processRestore);
     const processRemove = target.closest?.("[data-remove-process]");
     if (processRemove) return removeProcess(processRemove);
     if (state.view === "document") syncPointerComment(target, false);

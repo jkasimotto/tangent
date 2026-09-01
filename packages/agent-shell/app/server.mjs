@@ -7527,20 +7527,37 @@ const processRoutes = createProcessRoutes({
     await recordRuntimeEvent("process.event.deferred", { operationId: body.operationId, address: note.file, eventId: state.currentEvent.id, area: note.area, outcome: choice });
     return { process: processView(note, state) };
   },
-  /** Skips the current event before its Brain accepts it. */
-  async skip(body) {
+  /** Dismisses the exact current occurrence before its Brain accepts it. */
+  async dismiss(body) {
     const note = await resolveProcessNote(String(body.file ?? body.slug ?? ""), String(body.area ?? ""));
-    const state = await withProcessLock(note.area, note.slug, async () => {
+    const operationId = String(body.operationId ?? randomUUID());
+    const result = await withProcessLock(note.area, note.slug, async () => {
       const current = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
-      const event = current.currentEvent;
-      if (!event || event.id !== body.eventId) throw Object.assign(new Error("the Process event changed"), { code: "stale-process-event" });
-      if (["accepted", "goal-created", "job-created", "started"].includes(event.attempts.find((item) => item.id === event.currentAttemptId)?.status)) throw Object.assign(new Error("the Brain already accepted this run"), { code: "stale-process-attempt" });
-      event.status = "skipped"; event.revision += 1; current.lastEvent = { id: event.id, source: event.source, slotAt: event.slotAt, outcome: "skipped", goalFile: null, jobRun: null, endedAt: new Date().toISOString() }; current.revision += 1;
-      await writeProcessState(PROCESSES_ROOT, note.area, note.slug, current);
-      return current;
+      const dismissed = dismissProcessOccurrence(current, note, { eventId: body.eventId, expectedRevision: body.expectedRevision, operationId });
+      if (!dismissed.idempotent) await writeProcessState(PROCESSES_ROOT, note.area, note.slug, dismissed.state);
+      return dismissed;
     });
-    await recordRuntimeEvent("process.event.skipped", { operationId: body.operationId, address: note.file, eventId: state.currentEvent.id, area: note.area, outcome: "skipped" });
-    return { process: processView(note, state) };
+    const view = processView(note, result.state);
+    if (!result.idempotent) await recordRuntimeEvent("process.event.dismissed", { operationId, address: note.file, eventId: result.event.id, area: note.area, outcome: "dismissed" });
+    return {
+      process: view, eventId: result.event.id, idempotent: result.idempotent,
+      returnRule: note.schedule
+        ? { kind: "calendar", nextDueAt: view.nextRunAt }
+        : { kind: "condition-edge", nextDueAt: null },
+    };
+  },
+  /** Restores the exact dismissed occurrence when no newer occurrence exists. */
+  async restore(body) {
+    const note = await resolveProcessNote(String(body.file ?? body.slug ?? ""), String(body.area ?? ""));
+    const operationId = String(body.operationId ?? randomUUID());
+    const result = await withProcessLock(note.area, note.slug, async () => {
+      const current = normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note);
+      const restored = restoreProcessOccurrence(current, note, { eventId: body.eventId, expectedRevision: body.expectedRevision, operationId });
+      if (!restored.idempotent) await writeProcessState(PROCESSES_ROOT, note.area, note.slug, restored.state);
+      return restored;
+    });
+    if (!result.idempotent) await recordRuntimeEvent("process.event.restored", { operationId, address: note.file, eventId: result.event.id, area: note.area, outcome: "restored" });
+    return { process: processView(note, result.state), eventId: result.event.id, idempotent: result.idempotent };
   },
 });
 

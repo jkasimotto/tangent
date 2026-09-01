@@ -130,7 +130,7 @@ export function validateWorkCandidate(candidate, { hardLimit = WORK_HARD_LIMIT_B
     nonNegative(brain.attentionCount, `brains[${index}].attentionCount`, errors);
   }
   for (const [index, process] of candidate.processes.entries()) {
-    exactKeys(process, ["id", "areaId", "slug", "title", "status", "state", "stateDetail", "whenLabel", "loop", "bodyPreview", "due", "brainLive", "eventId", "revision", "missedCount", "missedSince"], `processes[${index}]`, errors);
+    exactKeys(process, ["id", "areaId", "slug", "title", "status", "state", "stateDetail", "whenLabel", "loop", "bodyPreview", "visibleInWork", "due", "brainLive", "eventId", "revision", "missedCount", "missedSince"], `processes[${index}]`, errors);
     bounded(process.id, WORK_LIMITS.identity, `processes[${index}].id`, errors);
     if (!areaIds.has(process.areaId)) errors.push(`processes[${index}].areaId is missing`);
     bounded(process.slug, WORK_LIMITS.label, `processes[${index}].slug`, errors);
@@ -140,7 +140,7 @@ export function validateWorkCandidate(candidate, { hardLimit = WORK_HARD_LIMIT_B
     nullableBounded(process.stateDetail, WORK_LIMITS.detail, `processes[${index}].stateDetail`, errors);
     bounded(process.whenLabel, WORK_LIMITS.label, `processes[${index}].whenLabel`, errors);
     nullableBounded(process.bodyPreview, WORK_LIMITS.instruction, `processes[${index}].bodyPreview`, errors);
-    for (const name of ["loop", "due", "brainLive"]) if (typeof process[name] !== "boolean") errors.push(`processes[${index}].${name} must be a boolean`);
+    for (const name of ["loop", "visibleInWork", "due", "brainLive"]) if (typeof process[name] !== "boolean") errors.push(`processes[${index}].${name} must be a boolean`);
     nullableBounded(process.eventId, WORK_LIMITS.identity, `processes[${index}].eventId`, errors);
     nullableTime(process.missedSince, `processes[${index}].missedSince`, errors);
     nonNegative(process.revision, `processes[${index}].revision`, errors);

@@ -6,6 +6,7 @@
 
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, stringArg, type Args } from "@tangent/core/cli";
+import { randomUUID } from "node:crypto";
 
 import { currentTmuxSession, postJson, resolveServerUrl, vaultFetch } from "../client.js";
 import { processCommandSpec } from "../spec.js";
@@ -16,6 +17,7 @@ type ProcessView = {
   nextRunAt: string | null; lastRunAt: string | null; lastNoticeAt: string | null; lastGoalFile: string | null;
   lastReason: string | null; state: string; error: string | null; launch: string | null; path: string | null; verify: boolean;
   loop?: boolean; body?: string; every?: string | null;
+  revision?: number; eventId?: string | null; dismissedEventId?: string | null;
 };
 
 /** Dispatches `tangent process` subcommands. */
@@ -30,6 +32,8 @@ export async function runProcessCli(argv = process.argv.slice(2)): Promise<void>
   if (subcommand === "pause") return controlCommand(args, "pause");
   if (subcommand === "resume") return controlCommand(args, "resume");
   if (subcommand === "check") return checkCommand(args);
+  if (subcommand === "dismiss") return occurrenceCommand(args, "dismiss");
+  if (subcommand === "restore") return occurrenceCommand(args, "restore");
   if (subcommand === "remove") return removeCommand(args);
   throw new Error(`Unknown process command: ${subcommand}. Run "tangent process --help" for available commands.`);
 }
@@ -133,6 +137,25 @@ async function checkCommand(args: Args): Promise<void> {
   console.log(`  next run: ${item.nextRunAt ?? "none"}`);
 }
 
+/** Dismisses or restores one exact bounded occurrence through the server. */
+async function occurrenceCommand(args: Args, action: "dismiss" | "restore"): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const item = await findProcess(server, args);
+  const eventId = stringArg(args.event) ?? (action === "restore" ? item.dismissedEventId : item.eventId);
+  if (!eventId) throw new Error(`tangent process ${action} found no occurrence to ${action}.`);
+  const expectedRevision = stringArg(args.revision) ?? item.revision;
+  const result = await postJson(server, `/api/processes/${action}`, {
+    file: item.file, eventId, expectedRevision,
+    operationId: stringArg(args["operation-id"]) ?? randomUUID(),
+  });
+  if (booleanArg(args.json)) return void console.log(JSON.stringify(result, null, 2));
+  if (action === "restore") return void console.log(`${item.file}: occurrence restored`);
+  const rule = result.returnRule as { kind?: string; nextDueAt?: string | null } | undefined;
+  console.log(rule?.kind === "calendar"
+    ? `${item.file}: occurrence dismissed; next due ${rule.nextDueAt ?? "unknown"}`
+    : `${item.file}: occurrence dismissed; it returns after the condition clears and becomes true again`);
+}
+
 /** The slug argument, or a usage error. */
 function requireSlug(args: Args, action: string): string {
   const slug = String(args._[1] ?? "").trim();
@@ -181,6 +204,8 @@ Examples:
   tangent process pause rebase-pgande-staging
   tangent process resume neara/pgande/rebase-pgande-staging
   tangent process check speedrun-pgande
+  tangent process dismiss speedrun-pgande
+  tangent process restore speedrun-pgande
   tangent process remove neara/pgande/review-work
 `);
 }

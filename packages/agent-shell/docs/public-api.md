@@ -20,6 +20,8 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 
 `GET /api/work` returns `agent-shell-work.v3` from the gateway's immutable memory buffer. It contains bounded Area, Goal, Agent, Brain, Process, presentation, and problem rows. It excludes Request bodies, prompt inputs, document indexes, Program rows, and durable histories. The response supports `ETag` and `If-None-Match`. Every `200` and `304` reports the Work identity, gateway and controller boots, publication time, observation time, and freshness state. A valid store never enters controller admission.
 
+Each Process row includes `visibleInWork`. This field is true for a bounded occurrence or a broken definition.
+
 Non-Work screens load their own bounded routes. These include `/api/navigation/search`, `/api/shell/status`, `/api/prompts/inspect`, exact `/api/brains/show`, exact `/api/agents/show`, and Area-scoped Process and Operation reads.
 
 `GET /api/areas/map-world?located=<area>` returns the complete Area structure and the planned eager shards. It includes one world revision.

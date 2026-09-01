@@ -19,7 +19,10 @@ function snapshot() {
     ],
     agents: [{ id: "agent-1", target: "$1", role: "worker", areaId: "otto/tangent", owner: { kind: "assignment", goalId: "otto/tangent/goal-parent.md", run: 1, assignmentId: "assignment-1" }, liveness: "live", activity: "working", activityDetail: "none", activitySince: "2026-09-01T00:00:00.000Z", evidence: "The Agent pane has current activity.", observedAt: "2026-09-01T00:00:01.000Z", contextUsedTokens: 100, cwd: "/tmp/work", launchRef: null, createdAt: "2026-09-01T00:00:00.000Z", workTitle: null }],
     brains: [{ areaId: "otto/tangent", status: "active", generation: 1, attemptId: "attempt-1", agentId: null, workState: "unknown", attentionCount: 2 }],
-    processes: [{ id: "otto/tangent/process-check.md", areaId: "otto/tangent", slug: "check", title: "Check Work", status: "active", state: "waiting", stateDetail: null, whenLabel: "every hour", loop: false, bodyPreview: null, due: false, brainLive: false, eventId: null, revision: 1, missedCount: 0, missedSince: null }],
+    processes: [
+      { id: "otto/tangent/process-check.md", areaId: "otto/tangent", slug: "check", title: "Check Work", status: "active", state: "waiting", stateDetail: null, whenLabel: "every hour", loop: false, bodyPreview: null, visibleInWork: false, due: false, brainLive: false, eventId: null, revision: 1, missedCount: 0, missedSince: null },
+      { id: "otto/tangent/process-due.md", areaId: "otto/tangent", slug: "due", title: "Due Work", status: "active", state: "waiting-for-brain", stateDetail: null, whenLabel: "daily", loop: false, bodyPreview: null, visibleInWork: true, due: true, brainLive: false, eventId: "due-event", revision: 2, missedCount: 0, missedSince: null },
+    ],
     problems: [], epoch: "11111111-1111-4111-8111-111111111111", revision: 7, publishedAt: "2026-09-01T00:00:02.000Z",
   };
 }
@@ -31,7 +34,8 @@ test("browser boot reads only v3 Work and paints every bounded row kind", async 
   assert.deepEqual([...document.querySelectorAll(".work-table thead th")].map((cell) => cell.textContent.trim()), ["Goal", "Agent", "Status", "Controls"]);
   assert.equal(document.querySelector("[data-goal-anchor='otto/tangent/goal-parent.md'] .desk-state").textContent, "Working");
   assert.equal(document.querySelector("[data-subgoal-of='otto/tangent/goal-parent.md']") !== null, true);
-  assert.equal(document.querySelector("[data-process-file='otto/tangent/process-check.md']") !== null, true);
+  assert.equal(document.querySelector("[data-process-file='otto/tangent/process-check.md']"), null, "a future definition is not Work");
+  assert.equal(document.querySelector("[data-process-file='otto/tangent/process-due.md']") !== null, true, "a due occurrence is Work");
   assert.equal(document.querySelector("[data-work-area='otto/quiet']") !== null, true);
   assert.match(document.body.textContent, /2 questions/);
   assert.match(document.body.textContent, /Read model/);

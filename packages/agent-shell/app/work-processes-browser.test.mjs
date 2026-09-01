@@ -42,7 +42,7 @@ function timedProcess(area, slug, state = "Start it?") {
     when: "Daily 09:00 UTC", state, stateDetail: "", due: state !== "Running",
     revision: 4, eventId: `${slug}-event`, missedCount: 0,
     lastGoalFile: null, lastJobRun: null, currentAgentSession: null,
-    actionReasons: { start: null, retry: null, defer: null, skip: null, readRun: "This Process has no run yet.", stop: "No Process Agent is running." },
+    actionReasons: { start: null, retry: null, defer: null, dismiss: null, readRun: "This Process has no run yet.", stop: "No Process Agent is running." },
   };
 }
 
@@ -58,6 +58,16 @@ test("real Work browser shows, inspects, resumes, and removes exact-Area Process
     const url = new URL(request.url, "http://127.0.0.1");
     if (url.pathname === "/api/work") return sendJson(response, 200, { ...legacyFixtureWork(fixture), revision: ++revision });
     if (url.pathname === "/api/vault") return sendJson(response, 200, fixture.vault);
+    if (url.pathname === "/api/tree") return sendJson(response, 200, { root: "/fixture", areas: fixture.vault.areas });
+    if (url.pathname === "/api/areas/show") {
+      const area = url.searchParams.get("area");
+      const item = fixture.vault.areas.find((candidate) => candidate.path === area);
+      return sendJson(response, 200, { ...item, goals: item?.goals ?? [], documents: [], processes: fixture.programs.processes.filter((process) => process.area === area) });
+    }
+    if (url.pathname === "/api/processes") {
+      const area = url.searchParams.get("area");
+      return sendJson(response, 200, { processes: fixture.programs.processes.filter((process) => !area || process.area === area) });
+    }
     if (url.pathname === "/api/sessions") return sendJson(response, 200, { boot: "process-proof", pipelines: fixture.pipelines, sessions: fixture.sessions, brains: fixture.brains });
     if (url.pathname === "/api/operations") return sendJson(response, 200, fixture.programs);
     if (url.pathname === "/api/document") {
@@ -88,23 +98,26 @@ test("real Work browser shows, inspects, resumes, and removes exact-Area Process
     const page = await browser.newPage({ viewport: { width: 1400, height: 800 } });
     await page.goto(`http://127.0.0.1:${server.address().port}/`, { waitUntil: "networkidle" });
 
-    const active = page.locator('[data-work-group="otto/tangent"] .work-process-row', { hasText: "review" });
-    const paused = page.locator('[data-work-group="otto/onboarding"] .work-process-row', { hasText: "digest" });
+    assert.equal(await page.locator(".work-process-row").count(), 0, "loop and paused definitions do not become occurrence rows");
+    await page.locator('[data-open-area-processes="otto/tangent"]').evaluate((element) => element.click());
+    let active = page.locator(".process-row", { hasText: "review" });
     await active.waitFor();
-    await paused.waitFor();
     assert.match(await active.textContent(), /Brain on/);
-    assert.match(await paused.textContent(), /Paused/);
 
-    await active.getByRole("button", { name: "Inspect process review" }).first().click();
+    await active.locator(".process-open").click();
     await page.locator(".document-reader").waitFor();
     assert.match(await page.locator(".document-reader").textContent(), /Review the work/);
     await page.keyboard.press("Escape");
 
+    await page.locator('[data-select-area="otto/onboarding"]').click();
+    const paused = page.locator(".process-row", { hasText: "digest" });
     const resume = paused.getByRole("button", { name: "Resume process digest in Otto / Onboarding" });
     await resume.focus();
     await page.keyboard.press("Enter");
     await paused.getByRole("button", { name: "Pause process digest in Otto / Onboarding" }).waitFor();
 
+    await page.locator('[data-select-area="otto/tangent"]').click();
+    active = page.locator(".process-row", { hasText: "review" });
     page.once("dialog", (dialog) => dialog.accept());
     await active.getByRole("button", { name: "Remove loop review from Otto / Tangent" }).click();
     await active.waitFor({ state: "detached" });
@@ -112,7 +125,7 @@ test("real Work browser shows, inspects, resumes, and removes exact-Area Process
       { path: "/api/processes/control", body: { area: "otto/onboarding", slug: "digest", file: "otto/onboarding/process-digest.md", action: "resume" } },
       { path: "/api/processes/remove", body: { area: "otto/tangent", slug: "review", file: "otto/tangent/process-review.md" } },
     ]);
-    assert.equal(await page.locator('[data-focus-key="area:otto/tangent"]').evaluate((element) => element === document.activeElement), true);
+    assert.equal(await page.locator('[data-select-area="otto/tangent"]').evaluate((element) => element === document.activeElement || element.closest(".area-tree-row")?.classList.contains("selected")), true);
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));
@@ -206,6 +219,131 @@ test("real Work browser navigates timed Processes, asks on x, and opens auto-sta
     await page.locator(".document-reader").waitFor();
     assert.match(await page.locator(".document-reader").textContent(), /Linked Process run/);
     assert.match(await page.locator(".document-reader").textContent(), /Run auto digest/);
+  } finally {
+    await browser?.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("real Work browser dismisses one occurrence, restores it, and returns the Area at the next slot", { skip: !enabled, timeout: 90_000 }, async () => {
+  const fixture = workTableFixture();
+  const area = { path: "otto/occurrence", name: "occurrence", goals: [], documents: [] };
+  fixture.vault.areas.push(area);
+  fixture.vault.map.push({ path: area.path, name: area.name, goals: [] });
+  const occurrence = timedProcess(area.path, "daily-review");
+  occurrence.occurrenceVisible = true;
+  occurrence.nextRunAt = "2026-09-02T09:00:00.000Z";
+  fixture.programs = { operations: [], problems: [], areas: [], liveCount: 0, processes: [occurrence] };
+  const mutations = [];
+  let revision = 0;
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    if (url.pathname === "/api/work") return sendJson(response, 200, { ...legacyFixtureWork(fixture), revision: ++revision });
+    if (url.pathname === "/api/vault") return sendJson(response, 200, fixture.vault);
+    if (url.pathname === "/api/tree") return sendJson(response, 200, { root: "/fixture", areas: fixture.vault.areas });
+    if (url.pathname === "/api/sessions") return sendJson(response, 200, { boot: "dismiss-proof", pipelines: fixture.pipelines, sessions: fixture.sessions, brains: fixture.brains });
+    if (url.pathname === "/api/operations") return sendJson(response, 200, fixture.programs);
+    if (url.pathname === "/api/areas/show") return sendJson(response, 200, { ...area, processes: [occurrence] });
+    if (url.pathname === "/api/processes") return sendJson(response, 200, { processes: [occurrence] });
+    if (request.method === "POST" && url.pathname === "/api/processes/dismiss") {
+      const body = await readJson(request);
+      mutations.push({ path: url.pathname, body });
+      if (body.eventId !== occurrence.eventId || Number(body.expectedRevision) !== occurrence.revision) return sendJson(response, 409, { error: "the Process event changed" });
+      occurrence.occurrenceVisible = false;
+      occurrence.state = "Dismissed";
+      occurrence.due = false;
+      occurrence.dismissedEventId = occurrence.eventId;
+      occurrence.lastOccurrenceOutcome = "dismissed";
+      occurrence.restoreAvailable = true;
+      occurrence.restoreReason = null;
+      occurrence.revision += 1;
+      return sendJson(response, 200, { process: occurrence, eventId: occurrence.eventId, returnRule: { kind: "calendar", nextDueAt: occurrence.nextRunAt } });
+    }
+    if (request.method === "POST" && url.pathname === "/api/processes/restore") {
+      const body = await readJson(request);
+      mutations.push({ path: url.pathname, body });
+      if (!occurrence.restoreAvailable || body.eventId !== occurrence.dismissedEventId || Number(body.expectedRevision) !== occurrence.revision) return sendJson(response, 409, { error: "A newer occurrence exists." });
+      occurrence.occurrenceVisible = true;
+      occurrence.state = "Start it?";
+      occurrence.due = true;
+      occurrence.dismissedEventId = null;
+      occurrence.lastOccurrenceOutcome = null;
+      occurrence.restoreAvailable = false;
+      occurrence.restoreReason = "There is no dismissed occurrence to restore.";
+      occurrence.revision += 1;
+      return sendJson(response, 200, { process: occurrence, eventId: occurrence.eventId });
+    }
+    if (request.method === "POST" && url.pathname === "/test/next") {
+      const replacedEventId = occurrence.dismissedEventId;
+      occurrence.eventId = "daily-review-event-2";
+      occurrence.occurrenceVisible = true;
+      occurrence.state = "Start it?";
+      occurrence.due = true;
+      occurrence.dismissedEventId = replacedEventId;
+      occurrence.lastOccurrenceOutcome = "dismissed";
+      occurrence.restoreAvailable = false;
+      occurrence.restoreReason = "A newer occurrence exists.";
+      occurrence.revision += 1;
+      return sendJson(response, 200, { ok: true });
+    }
+    if (url.pathname.startsWith("/api/")) return sendJson(response, 200, { ok: true });
+    await serveStaticAsset(url, response, here);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  let browser = null;
+  try {
+    browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath(), headless: true });
+    const page = await browser.newPage({ viewport: { width: 1400, height: 800 } });
+    await page.addInitScript(() => localStorage.setItem("agent-shell.active-only", "true"));
+    await page.goto(`http://127.0.0.1:${server.address().port}/`, { waitUntil: "networkidle" });
+
+    /** Dismisses the current row through the real x menu. */
+    const dismiss = async () => {
+      const row = page.locator(`[data-work-cursor="process:${occurrence.file}"]`);
+      await row.locator(".work-cell-status").click();
+      await page.keyboard.press("x");
+      const menu = page.getByRole("dialog", { name: "daily-review" });
+      const action = menu.getByRole("menuitem", { name: "Dismiss this occurrence" });
+      assert.match(await menu.textContent(), /Hide this occurrence from Work\. The next due occurrence returns\./);
+      await action.click();
+      await page.locator(`[data-work-group="${area.path}"]`).waitFor({ state: "detached" });
+    };
+
+    await dismiss();
+    assert.match(await page.locator("#toast").textContent(), /Dismissed this occurrence\. Next due/);
+    assert.match(await page.locator("#filter-count").textContent(), /Dismissed/);
+    const focusedCursor = await page.evaluate(() => document.activeElement?.closest?.("[data-work-cursor]")?.getAttribute("data-work-cursor") || "");
+    assert.notEqual(focusedCursor, `process:${occurrence.file}`, "focus moves to a surviving Work row");
+    assert.notEqual(focusedCursor, "");
+    await page.locator("#toast").getByRole("button", { name: "Undo" }).click();
+    await page.locator(`[data-work-cursor="process:${occurrence.file}"]`).waitFor();
+    assert.equal(mutations.at(-1).path, "/api/processes/restore");
+
+    await dismiss();
+    await page.locator("#areas-tab").evaluate((element) => element.click());
+    await page.locator(`[data-select-area="${area.path}"]`).click();
+    const processRow = page.locator(".process-row", { hasText: "daily-review" });
+    assert.match(await processRow.textContent(), /Last occurrence: Dismissed/);
+    await processRow.getByRole("button", { name: "Start process daily-review now" }).waitFor();
+    const restore = processRow.getByRole("button", { name: "Restore occurrence for process daily-review" });
+    await restore.click();
+    for (let attempt = 0; attempt < 40 && mutations.at(-1)?.path !== "/api/processes/restore"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(mutations.at(-1)?.path, "/api/processes/restore", "the Area-table button uses the exact restore route");
+    await page.reload({ waitUntil: "networkidle" });
+    await page.locator(`[data-work-cursor="process:${occurrence.file}"]`).waitFor();
+
+    await dismiss();
+    await page.evaluate(async () => { await fetch("/test/next", { method: "POST" }); });
+    await page.reload({ waitUntil: "networkidle" });
+    const returned = page.locator(`[data-work-cursor="process:${occurrence.file}"]`);
+    await returned.waitFor();
+    assert.equal(await returned.getAttribute("data-process-event"), "daily-review-event-2", "the next scheduled slot returns without Resume");
+    await page.locator("#areas-tab").evaluate((element) => element.click());
+    await page.locator(`[data-select-area="${area.path}"]`).click();
+    const unavailable = page.getByRole("button", { name: "Restore occurrence for process daily-review" });
+    assert.equal(await unavailable.isDisabled(), true);
+    const reasonId = await unavailable.getAttribute("aria-describedby");
+    assert.equal(await page.locator(`#${reasonId}`).textContent(), "A newer occurrence exists.");
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

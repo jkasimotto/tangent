@@ -18,6 +18,8 @@ export const PROCESS_START_WINDOW_MS = 10 * 60_000;
 export const PROCESS_AUTO_FAILURE_LIMIT = 3;
 export const PROCESS_START_PHASES = Object.freeze(["accepted", "goal-created", "job-created", "started"]);
 const PROCESS_START_PHASE_INDEX = new Map(PROCESS_START_PHASES.map((phase, index) => [phase, index]));
+const DISMISSIBLE_PROCESS_EVENT_STATES = new Set(["waiting", "deferred", "did-not-start", "could-not-start"]);
+const WORK_PROCESS_EVENT_STATES = new Set(["waiting", "deferred", "starting", "did-not-start", "could-not-start", "running"]);
 
 /** Returns one stable base64url identity for NUL-separated fields. */
 function digest(...parts) {
@@ -32,6 +34,9 @@ export function normalizeProcessState(value = {}, note = null, now = new Date())
   if (value?.schema === "process-state.v2") return {
     ...value, revision: Number(value.revision) || 0,
     auto: { consecutiveFailedSlots: 0, disabledAt: null, ...value.auto },
+    whenRearm: { waitingForFalse: false, dismissedEventId: null, clearedAt: null, ...value.whenRearm },
+    dismissedOccurrence: value.dismissedOccurrence ?? null,
+    operations: Array.isArray(value.operations) ? value.operations : [],
   };
   const firstSeenAt = value.firstSeenAt ?? now.toISOString();
   let currentEvent = null;
@@ -43,9 +48,82 @@ export function normalizeProcessState(value = {}, note = null, now = new Date())
     schema: "process-state.v2", revision: 0, firstSeenAt,
     scheduleThroughAt: value.lastDueAt ?? firstSeenAt, currentEvent, lastEvent: null, backlog: null,
     auto: { consecutiveFailedSlots: 0, disabledAt: null },
+    whenRearm: { waitingForFalse: false, dismissedEventId: null, clearedAt: null },
+    dismissedOccurrence: null, operations: [],
     lastCheckedAt: value.lastCheckedAt ?? null, lastProbe: value.lastProbe ?? null, lastReason: value.lastReason ?? null,
     ...Object.fromEntries(["lastDueAt", "lastNoticeAt", "lastDeliveredAt", "lastGoalAt", "lastGoalFile"].filter((key) => value[key]).map((key) => [key, value[key]])),
   };
+}
+
+/** Returns an accepted start phase for an event, or null before Brain acceptance. */
+function acceptedProcessAttempt(event) {
+  return event?.attempts?.find((item) => ["accepted", "goal-created", "job-created", "started"].includes(item.status)) ?? null;
+}
+
+/** Returns one saved operation replay, or refuses reuse with different input. */
+function processOperationReplay(state, operationId, action, eventId) {
+  const prior = state.operations.find((item) => item.id === operationId);
+  if (!prior) return null;
+  if (prior.action !== action || prior.eventId !== eventId) {
+    throw Object.assign(new Error("the operation ID was already used with different input"), { code: "operation-conflict" });
+  }
+  return prior;
+}
+
+/** Records one bounded idempotent Process operation. */
+function recordProcessOperation(state, { id, action, eventId, at }) {
+  state.operations = [...state.operations.filter((item) => item.id !== id), { id, action, eventId, at }].slice(-20);
+}
+
+/** Dismisses one exact actionable occurrence without changing its Process definition. */
+export function dismissProcessOccurrence(state, note, { eventId, expectedRevision, operationId = randomUUID(), now = new Date() } = {}) {
+  const next = structuredClone(normalizeProcessState(state, note, now));
+  const replay = processOperationReplay(next, operationId, "dismiss", eventId);
+  if (replay) return { state: next, event: next.currentEvent, idempotent: true };
+  if (expectedRevision != null && Number(expectedRevision) !== next.revision) {
+    throw Object.assign(new Error(`the Process revision is ${next.revision}`), { code: "stale-process-revision" });
+  }
+  if (note.loop) throw Object.assign(new Error("a loop has no bounded occurrence to dismiss"), { code: "process-loop-has-no-occurrence" });
+  const event = next.currentEvent;
+  if (!event || event.id !== eventId) throw Object.assign(new Error("the Process event changed"), { code: "stale-process-event" });
+  if (acceptedProcessAttempt(event) || ["starting", "running"].includes(event.status)) {
+    throw Object.assign(new Error("This occurrence already started."), { code: "process-occurrence-started" });
+  }
+  if (!DISMISSIBLE_PROCESS_EVENT_STATES.has(event.status)) {
+    throw Object.assign(new Error("this occurrence is no longer actionable"), { code: "stale-process-event" });
+  }
+  const dismissedAt = new Date(now).toISOString();
+  next.dismissedOccurrence = { event: structuredClone(event), dismissedAt, replacedAt: null };
+  event.status = "skipped";
+  event.deferredUntil = null;
+  event.revision += 1;
+  next.lastEvent = { id: event.id, source: event.source, slotAt: event.slotAt, outcome: "skipped", goalFile: null, jobRun: null, endedAt: dismissedAt };
+  if (event.source === "probe") next.whenRearm = { waitingForFalse: true, dismissedEventId: event.id, clearedAt: null };
+  recordProcessOperation(next, { id: operationId, action: "dismiss", eventId: event.id, at: dismissedAt });
+  return { state: bump(next, now), event, idempotent: false };
+}
+
+/** Restores the exact last dismissed occurrence when no newer occurrence exists. */
+export function restoreProcessOccurrence(state, note, { eventId, expectedRevision, operationId = randomUUID(), now = new Date() } = {}) {
+  const next = structuredClone(normalizeProcessState(state, note, now));
+  const replay = processOperationReplay(next, operationId, "restore", eventId);
+  if (replay) return { state: next, event: next.currentEvent, idempotent: true };
+  if (expectedRevision != null && Number(expectedRevision) !== next.revision) {
+    throw Object.assign(new Error(`the Process revision is ${next.revision}`), { code: "stale-process-revision" });
+  }
+  const dismissed = next.dismissedOccurrence;
+  if (!dismissed || dismissed.event?.id !== eventId) {
+    throw Object.assign(new Error("the dismissed occurrence is no longer available"), { code: "stale-process-event" });
+  }
+  if (next.currentEvent?.id !== eventId || next.currentEvent.status !== "skipped") {
+    throw Object.assign(new Error("A newer occurrence exists."), { code: "newer-process-occurrence" });
+  }
+  next.currentEvent = structuredClone(dismissed.event);
+  next.currentEvent.revision = Math.max(1, Number(next.currentEvent.revision) || 0) + 1;
+  next.dismissedOccurrence = null;
+  if (next.whenRearm.dismissedEventId === eventId) next.whenRearm = { waitingForFalse: false, dismissedEventId: null, clearedAt: null };
+  recordProcessOperation(next, { id: operationId, action: "restore", eventId, at: new Date(now).toISOString() });
+  return { state: bump(next, now), event: next.currentEvent, idempotent: false };
 }
 
 /** Creates one stable due or manual event. */
@@ -335,6 +413,14 @@ export async function evaluateProcess({ note, state, now = new Date(), runProbe,
   if (note.loop) return brainLive ? loopDue(note, state, now) : { due: false, reason: "brain not running", slot: null };
   if (openGoal && goalIsOpen(openGoal)) return { due: false, reason: `Goal ${openGoal.file} is still open`, slot: null, openGoal };
   if (note.schedule) return { ...scheduleDue(note, state, now) };
+  if (state.whenRearm?.waitingForFalse) {
+    const check = probeCheckDue(note, state, now);
+    if (!check.check) return { due: false, reason: check.reason, slot: null };
+    const exitCode = await runProbe(note);
+    return exitCode === 0
+      ? { due: false, reason: "the dismissed condition is still true", slot: null, checked: true, exitCode }
+      : { due: false, reason: `probe exited ${exitCode}; the condition cleared`, slot: null, checked: true, exitCode, rearmCleared: true };
+  }
   if (state.currentEvent && !["finished", "skipped", "did-not-start", "could-not-start"].includes(state.currentEvent.status)) return { due: false, reason: `event ${state.currentEvent.id} waits for the brain`, slot: null };
   if (state.lastNoticeAt && (!state.lastGoalAt || state.lastGoalAt < state.lastNoticeAt)) return { due: false, reason: `note sent ${state.lastNoticeAt}; waits for the brain`, slot: null };
   const check = probeCheckDue(note, state, now);
@@ -363,6 +449,13 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
     const stored = await readProcessState(stateRoot, note.area, note.slug);
     const state = normalizeProcessState(stored, note, now);
     let next = structuredClone(state);
+    let deferredReady = false;
+    if (next.currentEvent?.status === "deferred" && instant(next.currentEvent.deferredUntil)?.getTime() <= now.getTime()) {
+      next.currentEvent.status = "waiting";
+      next.currentEvent.deferredUntil = null;
+      next.currentEvent.revision += 1;
+      deferredReady = true;
+    }
     const openGoal = await openGoalFor(note);
     if (openGoal) {
       next.lastGoalFile = openGoal.file;
@@ -387,6 +480,7 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
       next.lastCheckedAt = now.toISOString();
       next.lastProbe = { exitCode: outcome.exitCode, at: now.toISOString() };
     }
+    if (outcome.rearmCleared) next.whenRearm = { waitingForFalse: false, dismissedEventId: null, clearedAt: now.toISOString() };
     if (note.schedule && (outcome.reason === "paused" || outcome.reason.startsWith("Area is "))) {
       const inactiveThrough = latestSlotAtOrBefore(note.schedule, now)?.toISOString() ?? now.toISOString();
       next.scheduleThroughAt = inactiveThrough;
@@ -404,7 +498,10 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
       next.scheduleThroughAt = slotAt;
       next.lastDueAt = slotAt;
       if (!next.currentEvent || ["finished", "skipped", "did-not-start", "could-not-start"].includes(next.currentEvent.status)) {
-        if (next.currentEvent) next.lastEvent = { id: next.currentEvent.id, source: next.currentEvent.source, slotAt: next.currentEvent.slotAt, outcome: next.currentEvent.status, goalFile: next.currentEvent.goalFile, jobRun: next.currentEvent.job?.run ?? null, endedAt: now.toISOString() };
+        if (next.currentEvent) {
+          next.lastEvent = { id: next.currentEvent.id, source: next.currentEvent.source, slotAt: next.currentEvent.slotAt, outcome: next.currentEvent.status, goalFile: next.currentEvent.goalFile, jobRun: next.currentEvent.job?.run ?? null, endedAt: now.toISOString() };
+          if (next.dismissedOccurrence?.event?.id === next.currentEvent.id) next.dismissedOccurrence.replacedAt = now.toISOString();
+        }
         next.currentEvent = newProcessEvent(note, note.schedule ? "schedule" : "probe", slotAt, now.toISOString(), { missed: slots.length ? slots : [new Date(slotAt)] });
       } else if (slots.length) {
         next.backlog = { firstSlotAt: next.backlog?.firstSlotAt ?? slots[0].toISOString(), latestSlotAt: slots.at(-1).toISOString(), count: (next.backlog?.count ?? 0) + slots.length };
@@ -415,6 +512,11 @@ export async function sweepProcesses({ treesRoot, stateRoot, now = new Date(), r
         next = prepared.state;
         delivery = { note, event: prepared.event, attempt: prepared.attempt };
       }
+    }
+    if (deferredReady && !delivery && note.startPolicy === "auto" && autoStartEnabled && !next.auto.disabledAt && !goalIsOpen(openGoal)) {
+      const prepared = prepareProcessStart(next, note, { now, trigger: "auto" });
+      next = prepared.state;
+      delivery = { note, event: prepared.event, attempt: prepared.attempt };
     }
     const attempt = next.currentEvent?.attempts?.find((item) => item.id === next.currentEvent?.currentAttemptId);
     if (next.currentEvent?.status === "starting" && attempt && ["prepared", "delivery-pending", "delivered"].includes(attempt.status) && new Date(attempt.deadlineAt).getTime() <= now.getTime()) {
@@ -471,6 +573,11 @@ export function processView(note, state, now = new Date(), { brainLive = false, 
   const goalOpen = openGoal && goalIsOpen(openGoal);
   const event = runtime.currentEvent;
   const noticeWaits = Boolean(event && !["finished", "skipped", "running"].includes(event.status));
+  const occurrenceVisible = Boolean(note.error || (!note.loop && note.status === "active" && !areaHidden && WORK_PROCESS_EVENT_STATES.has(event?.status)));
+  const dismissed = runtime.dismissedOccurrence;
+  const restoreAvailable = Boolean(dismissed?.event?.id && event?.id === dismissed.event.id && event.status === "skipped");
+  const restoreReason = !dismissed?.event?.id ? "There is no dismissed occurrence to restore."
+    : restoreAvailable ? null : "A newer occurrence exists.";
   let stateWord = "Waiting";
   let stateDetail = runtime.lastReason ?? "";
   if (note.error) stateWord = "Broken note";
@@ -484,7 +591,11 @@ export function processView(note, state, now = new Date(), { brainLive = false, 
   else if (runtime.auto.disabledAt) { stateWord = "Needs you"; stateDetail = `Auto-start stopped after ${runtime.auto.consecutiveFailedSlots} failed runs.`; }
   else if (event?.status === "deferred") stateWord = `Deferred to ${event.deferredUntil}`;
   else if (event?.status === "waiting") stateWord = "Start it?";
+  else if (event?.status === "skipped" && dismissed?.event?.id === event.id) { stateWord = "Dismissed"; stateDetail = "The Process definition is active. The next due occurrence returns."; }
   const startReason = note.error ? note.error : note.status === "paused" ? "Resume the Process first." : areaHidden ? `Reopen the Area first.` : ["starting", "running"].includes(event?.status) ? "The Process is already starting or running." : null;
+  const dismissReason = note.loop ? "A loop has no bounded occurrence."
+    : acceptedProcessAttempt(event) || ["starting", "running"].includes(event?.status) ? "This occurrence already started."
+      : DISMISSIBLE_PROCESS_EVENT_STATES.has(event?.status) ? null : "This occurrence is no longer actionable.";
   return {
     area: note.area, slug: note.slug, file: note.file, title: note.title, status: note.status,
     when: describeWhen(note), schedule: note.schedule?.text ?? null, probe: note.when, every: note.every,
@@ -492,10 +603,12 @@ export function processView(note, state, now = new Date(), { brainLive = false, 
     nextRunAt: note.status === "paused" || areaHidden ? null : nextRunAt,
     lastRunAt: state.lastDueAt ?? null, lastNoticeAt: state.lastNoticeAt ?? null, lastCheckedAt: state.lastCheckedAt ?? null,
     startPolicy: note.startPolicy, revision: runtime.revision, eventId: event?.id ?? null, eventRevision: event?.revision ?? null,
+    occurrenceVisible, dismissedEventId: dismissed?.event?.id ?? null, lastOccurrenceOutcome: dismissed?.event?.id ? "dismissed" : runtime.lastEvent?.outcome ?? null,
+    restoreAvailable, restoreReason, conditionRearmWaiting: Boolean(runtime.whenRearm.waitingForFalse),
     stateDetail, missedCount: event?.missed?.count ?? 0, missedSince: event?.missed?.since ?? null,
     lastGoalFile: event?.goalFile ?? runtime.lastGoalFile ?? null, lastJobRun: event?.job?.run ?? null,
     currentAgentSession: event?.job?.agentSession ?? null,
-    actionReasons: { start: startReason, retry: startReason, defer: startReason, skip: startReason, readRun: (event?.goalFile ?? runtime.lastGoalFile) ? null : "This Process has no run yet.", stop: event?.job?.agentSession ? null : "No Process Agent is running." },
+    actionReasons: { start: startReason, retry: startReason, defer: startReason, dismiss: dismissReason, restore: restoreReason, readRun: (event?.goalFile ?? runtime.lastGoalFile) ? null : "This Process has no run yet.", stop: event?.job?.agentSession ? null : "No Process Agent is running." },
     lastReason: runtime.lastReason ?? null,
     goalOpen: Boolean(goalOpen), due: !note.loop && noticeWaits, brainLive, state: stateWord,
   };

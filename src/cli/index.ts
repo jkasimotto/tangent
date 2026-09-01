@@ -51,7 +51,7 @@ const tangentCommandSpec: CliCommandSpec = {
         { name: "close", description: "Close a service session and remove its row", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] }
       ]
     },
-    { name: "process", description: "Read, pause, resume, and check repeatable work (process-<slug>.md notes)", args: "<list|show|pause|resume|check>" },
+    { name: "process", description: "Read and control repeatable work (process-<slug>.md notes)", args: "<list|show|pause|resume|check|dismiss|restore>" },
     { name: "job", description: "Create, inspect, and control durable Goal execution", args: "<create|show|start|append|advance|stop|replace>" },
     productCommandSpec("usage", "Inspect coding-agent activity"),
     productCommandSpec("rollup", "Generate private rollup notes"),

@@ -98,6 +98,23 @@ test("agent lint rejects retired solo execution writers", async () => {
   }
 });
 
+test("agent lint keeps Work on the direct gateway v3 boundary", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeMinimalRootAgentDocs(root);
+    const app = path.join(root, "packages", "agent-shell", "app");
+    await mkdir(path.join(app, "public"), { recursive: true });
+    await writeFile(path.join(app, "work-source-adapters.mjs"), "const rows = await vaultIndex();\n", "utf8");
+    await writeFile(path.join(app, "gateway.mjs"), 'if (url.pathname.startsWith("/api/")) proxy();\n', "utf8");
+    const result = await lintGovernance({ root, groups: ["agents"] });
+    const findings = result.findings.filter((candidate) => candidate.rule === "agent-shell/work-read-boundary");
+    assert.equal(findings.some((finding) => finding.file.endsWith("work-source-adapters.mjs")), true);
+    assert.equal(findings.some((finding) => finding.file.endsWith("gateway.mjs")), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("agent lint rejects every retired capture artifact", async () => {
   const artifacts = [
     "/api/areas/journal",

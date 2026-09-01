@@ -5,6 +5,7 @@ import goToCore from "./go-to-core.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, toggleAreaFocusRoot, writeAreaFocus } from "./area-focus-core.js";
 import { workCommand, workCaptionKeys, workRowKind } from "./work-commands.js";
+import { renderWorkV3 } from "./work-v3-view.js";
 
 const PRESENTED_ROWS_PER_GOAL = 3;
 
@@ -69,11 +70,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Returns every Goal represented in the current desk projection. */
   function allGoals() {
-    const byFile = new Map();
-    for (const group of state.vault?.map ?? []) {
-      for (const goal of group.goals ?? []) byFile.set(goal.file, goal);
-    }
-    return [...byFile.values()];
+    return state.work?.goals ?? [];
   }
 
   /** Retains the vault's area grouping for a selected goal subset. */
@@ -425,7 +422,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Finds one indexed goal by its vault-relative file. */
   function goalByFile(file) {
-    return allGoals().find((goal) => goal.file === file) || null;
+    return allGoals().find((goal) => (goal.id ?? goal.file) === file) || null;
   }
 
   /** Returns the goal selected in the shell. */
@@ -435,31 +432,15 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Finds the live session bound to one goal. */
   function sessionForGoal(goal) {
-    if (!goal || ["done", "dropped", "parked", "deferred"].includes(goal.status)) return null;
-    const record = pipelineRecordForGoal(goal);
-    if (record) {
-      const current = record.steps?.find((step) => step.id === record.currentAssignmentId && ["running", "waiting"].includes(step.status))
-        ?? record.steps?.find((step) => ["running", "waiting"].includes(step.status));
-      if (!current) return null;
-      const attempt = current.attempts?.findLast?.((item) => !item.endedAt) ?? current.attempts?.at?.(-1);
-      // A Job is authoritative over the Goal's old Markdown binding. Once its
-      // current Assignment is complete, that old pane remains history and
-      // must not replace the next pending Assignment's state.
-      return state.sessions.find((session) => session.kind !== "brain" && session.name === attempt?.session)
-        ?? state.sessions.find((session) => session.kind !== "brain" && session.name === current.session)
-        ?? null;
-    }
-    const bound = state.sessions.filter((session) => session.kind !== "brain" && (session.goal === goal.file || session.name === goal.session));
-    return bound.find((session) => session.name === goal.session)
-      ?? bound.find((session) => session.name === state.agentSessionName)
-      ?? bound[0]
-      ?? null;
+    const id = goal?.execution?.assignment?.agentId;
+    const agent = id ? state.work?.agents.find((row) => row.id === id && row.liveness === "live") : null;
+    return agent ? { ...agent, name: agent.id, area: agent.areaId, state: agent.activity, stateDetail: agent.activityDetail, goal: goal.id, kind: agent.role === "brain" ? "brain" : "goal", created: agent.createdAt ? Date.parse(agent.createdAt) : 0 } : null;
   }
 
   /** Every live session bound to one Goal, for the agent count on its card. */
   function sessionsForGoal(goal) {
-    if (!goal || ["done", "dropped", "parked", "deferred"].includes(goal.status)) return [];
-    return state.sessions.filter((session) => session.goal === goal.file || session.name === goal.session);
+    const session = sessionForGoal(goal);
+    return session ? [session] : [];
   }
 
   /** Returns every live conversation that is defining work, newest first. */
@@ -488,7 +469,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** The brain record of exactly this Area, or null. A parent card never shows a child brain. */
   function brainForAreaCard(areaPath) {
-    return (state.brains ?? []).find((brain) => brain.area === areaPath) ?? null;
+    const brain = state.work?.brains.find((row) => row.areaId === areaPath);
+    return brain ? { ...brain, area: brain.areaId, session: brain.agentId, live: brain.agentId ? state.work.agents.some((agent) => agent.id === brain.agentId && agent.liveness === "live") : false, state: brain.workState, currentAttemptId: brain.attemptId } : null;
   }
 
   /** The desk word for a brain's logical lifecycle and separate runtime health. */
@@ -532,10 +514,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** Opens the brain's terminal in the shared session layer. */
-  function openBrainSession(name) {
+  async function openBrainSession(name) {
     if (state.sessionPeek?.session === name) return;
-    const session = brainSessions().find((item) => item.name === name);
-    if (!session) return showToast("The brain session is not live.");
+    let session = brainSessions().find((item) => item.name === name);
+    if (!session) {
+      try { session = (await api(`/api/agents/show?session=${encodeURIComponent(name)}`)).agent?.summary; }
+      catch { return showToast("The brain session is not live."); }
+    }
     openSessionLayer(session, "brain", captureReturnPoint());
   }
 
@@ -551,6 +536,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    */
   async function openOrStartBrain(area, trigger = null) {
     const existing = brainForAreaCard(area);
+    if (existing?.live && existing.agentId) return openBrainSession(existing.agentId);
     const live = brainSessions().find((session) => session.name === existing?.repair?.current?.session || (session.area === area && session.kind === "brain") || session.name === existing?.session);
     if (live) return openBrainSession(live.name);
     // A brain the record still calls live lost its process, not its orders.
@@ -834,119 +820,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         </span>
         <span class="work-state">${escapeHtml(describeWorkStateLabel(session))}</span>
       </button>
-    `;
-  }
-
-  /** Renders one selectable goal row. */
-  function workCard(goal, className = "", { grouped = false, depthBase = 0, label = "" } = {}) {
-    const session = sessionForGoal(goal);
-    const depth = Math.max(0, Number(goal.depth || 0) - depthBase);
-    return `
-      <button class="work-card ${className} ${depth ? "nested" : ""}" style="--goal-depth: ${depth}" type="button" data-select-goal="${escapeHtml(goal.file)}">
-        <span>
-          ${grouped ? "" : `<span class="work-area">${escapeHtml(areaLabel(goal.area))}</span>`}
-          <span class="work-title">${escapeHtml(goal.title)}</span>
-          <span class="work-goal">${escapeHtml(clip(goal.doneWhen, 180))}</span>
-        </span>
-        <span class="work-state">${escapeHtml(label || stateLabel(goal, session))}</span>
-      </button>
-    `;
-  }
-
-  /** Describes attention anywhere inside one Goal tree. */
-  function goalTreeLabel(tree) {
-    const stateName = goalTreeState(tree);
-    const count = tree.goals.map(sessionForGoal).filter(Boolean).length;
-    if (stateName === "waiting") return count > 1 ? `${count} runs · needs you` : "Waiting for you";
-    if (stateName === "working") return count > 1 ? `${count} agents working` : "Agent working";
-    if (stateName === "open") return count > 1 ? `${count} sessions open` : "Session open";
-    return stateLabel(tree.root, sessionForGoal(tree.root));
-  }
-
-  /** Renders one Goal and its collapsible Subgoal chain. */
-  function goalTreeCard(tree, className = "") {
-    const subgoals = tree.goals.slice(1);
-    const hasActiveSubgoal = subgoals.some((goal) => sessionForGoal(goal));
-    return `
-      <section class="goal-tree">
-        ${workCard(tree.root, className, { grouped: true, label: goalTreeLabel(tree) })}
-        ${subgoals.length ? `
-          <details class="goal-subgoals" ${hasActiveSubgoal ? "open" : ""}>
-            <summary><span>To do that</span><small>${subgoals.length} ${subgoals.length === 1 ? "Subgoal" : "Subgoals"}</small></summary>
-            <div class="work-list">${subgoals.map((goal) => workCard(goal, className, { grouped: true, depthBase: 0 })).join("")}</div>
-          </details>` : ""}
-      </section>`;
-  }
-
-  /** Renders complete Goal trees under one Area path. */
-  function goalTreeAreaGroup(path, trees, className = "") {
-    return `
-      <details class="area-work-group" open>
-        <summary class="area-work-heading"><span>${escapeHtml(areaLabel(path))}</span><span>${trees.length}</span></summary>
-        <div class="goal-tree-list">${trees.map((tree) => goalTreeCard(tree, className)).join("")}</div>
-      </details>`;
-  }
-
-  /** Renders Goal trees and defining conversations together under one Area. */
-  function workAttentionAreaGroup(path, trees, descriptions, className = "") {
-    const count = trees.length + descriptions.length;
-    return `
-      <details class="area-work-group" open>
-        <summary class="area-work-heading"><span>${escapeHtml(areaLabel(path))}</span><span>${count}</span></summary>
-        <div class="goal-tree-list">
-          ${descriptions.map((session) => describeWorkCard(session, className)).join("")}
-          ${trees.map((tree) => goalTreeCard(tree, className)).join("")}
-        </div>
-      </details>`;
-  }
-
-  /** Renders one attention group containing Goal runs and work-definition agents. */
-  function workAttentionSection(title, trees, descriptions = [], className = "") {
-    if (!trees.length && !descriptions.length) return "";
-    const byPath = new Map();
-    for (const tree of trees) {
-      if (!byPath.has(tree.path)) byPath.set(tree.path, { trees: [], descriptions: [] });
-      byPath.get(tree.path).trees.push(tree);
-    }
-    for (const session of descriptions) {
-      if (!byPath.has(session.area)) byPath.set(session.area, { trees: [], descriptions: [] });
-      byPath.get(session.area).descriptions.push(session);
-    }
-    return `
-      <section class="work-section">
-        <div class="section-heading"><h2>${escapeHtml(title)}</h2><span>${trees.length + descriptions.length}</span></div>
-        <div class="area-work-list">${[...byPath].map(([path, items]) => workAttentionAreaGroup(path, items.trees, items.descriptions, className)).join("")}</div>
-      </section>`;
-  }
-
-  /** Renders one attention group as complete, collapsible Goal trees. */
-  function goalTreeSection(title, trees, className = "") {
-    return workAttentionSection(title, trees, [], className);
-  }
-
-  /** Renders the goals that belong to one area group. */
-  function workAreaGroup(group, className = "") {
-    const depthBase = Math.min(...group.goals.map((goal) => Number(goal.depth || 0)));
-    return `
-      <section class="area-work-group">
-        <div class="area-work-heading">
-          <span>${escapeHtml(areaLabel(group.path))}</span>
-          <span>${group.goals.length}</span>
-        </div>
-        <div class="work-list">${group.goals.map((goal) => workCard(goal, className, { grouped: true, depthBase })).join("")}</div>
-      </section>
-    `;
-  }
-
-  /** Renders one status section of grouped work. */
-  function workSection(title, goals, className = "", note = "") {
-    if (!goals.length) return "";
-    const groups = goalGroups(goals);
-    return `
-      <section class="work-section">
-        <div class="section-heading"><h2>${escapeHtml(title)}</h2><span>${escapeHtml(note || String(goals.length))}</span></div>
-        <div class="area-work-list">${groups.map((group) => workAreaGroup(group, className)).join("")}</div>
-      </section>
     `;
   }
 
@@ -1248,7 +1121,15 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** Opens the explicit Questions review without changing the Work cursor. */
-  function openQuestionsReview(area = "") {
+  async function openQuestionsReview(area = "") {
+    const areas = area
+      ? [area]
+      : (state.work?.brains ?? []).filter((brain) => brain.attentionCount > 0).map((brain) => brain.areaId);
+    const loaded = await Promise.all(areas.slice(0, 100).map(async (areaId) => {
+      try { return (await api(`/api/brains/show?area=${encodeURIComponent(areaId)}`)).brain; }
+      catch { return null; }
+    }));
+    state.brains = loaded.filter(Boolean);
     const questions = (state.brains ?? []).filter((brain) => !area || brain.area === area || brain.area.startsWith(`${area}/`))
       .flatMap((brain) => (brain.requests ?? []).filter((request) => request.status === "open").map((request) => ({ area: brain.area, request })));
     if (!questions.length) {
@@ -2156,30 +2037,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** Renders the Programs of one Area as a compact operational shelf. */
-  function deskProgramShelf(programs) {
-    return `<div class="desk-programs">${programs.map((program) => {
-      return `
-        <div class="desk-program ${programIsLive(program) ? "live" : ""}">
-          <button type="button" data-select-program="${escapeHtml(program.id)}">
-            <span aria-hidden="true">${escapeHtml(String(program.mode ?? "on-demand").toUpperCase())}</span>
-            <strong>${escapeHtml(program.label)}</strong>
-            <em>${escapeHtml(program.problem ? clip(program.problem, 80) : programState(program))}</em>
-          </button>
-          ${programRowControls(program).map((control) => `<button class="desk-icon-action" type="button" data-program-action="${control.action}" data-program-id="${escapeHtml(program.id)}" aria-label="${escapeHtml(control.label)} ${escapeHtml(program.label)}">${escapeHtml(control.label)}</button>`).join("")}
-        </div>`;
-    }).join("")}</div>`;
-  }
-
-  /** Renders Programs once under the Area that owns them. */
-  function deskProgramSection(area, programs, { root = false } = {}) {
-    if (!programs?.length) return "";
-    const title = root ? "Operation problems" : `${humanName(area.name)} · Operation problems`;
-    return `<section class="area-desk-section programs" data-program-area="${escapeHtml(area.path)}">
-      <div class="area-desk-section-heading"><h3>${escapeHtml(title)}</h3><span>${programs.length}</span></div>
-      ${deskProgramShelf(programs)}
-    </section>`;
-  }
-
   /**
    * The processes on the screen whose due note waits for a brain that is
    * not running (D17). A waiting or running process is a fact the Area page
@@ -2211,17 +2068,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * problem can change what Julian does, so only a problem earns space here
    * and the whole shelf disappears when every Operation is quiet.
    */
-  function workProgramSections(records) {
-    /** Keeps only the Operations whose state is a problem. */
-    const problems = (programs) => (programs ?? []).filter((program) => program.state === "problem" || program.problem);
-    const sections = records.flatMap((record) => [
-      deskProgramSection(record.area, problems(record.programs), { root: true }),
-      ...record.sections.map((section) => deskProgramSection(section.area, problems(section.programs))),
-    ]).filter(Boolean).join("");
-    if (!sections) return "";
-    return `<div class="work-programs">${sections}</div>`;
-  }
-
   /**
    * Shows or hides one parent Goal's Subgoal rows. The state is local to the
    * browser and survives a repaint, so a poll never reopens a chain Julian
@@ -2291,21 +2137,14 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Renders the complete Work screen: the direct-ask table, then the work table. */
   function renderWork() {
-    const records = deskAreas();
-    const roots = areaFocusRoots();
-    const focusNames = areaFocusLabels(roots).join(" + ");
-    const emptyCopy = `${state.areaFocusOnly ? `Starred Areas (${escapeHtml(focusNames)}): ` : ""}${state.activeOnly ? "Nothing is running. " : ""}No open work.`;
-    const content = `${records.length
-      ? workTable(records)
-      : `<div class="empty-state">${emptyCopy}</div>`}${workProcessSections(records)}`;
-
-    return `
-      <section class="work-page">
-        ${content}
-        ${launchPopover()}
-      </section>
-    `;
+    return renderWorkV3({
+      snapshot: state.work,
+      metadata: state.workTransport,
+      filters: { areaFocus: state.areaFocus, areaFocusOnly: state.areaFocusOnly, activeOnly: state.activeOnly, workFilter: state.workFilter },
+      foldedAreas: state.foldedWorkAreas,
+      collapsedGoals: state.collapsedGoalTrees,
+    });
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, toggleActiveOnly, renderWork, paintWorkCaption };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, toggleAreaStar, toggleStarredOnly, toggleActiveOnly, renderWork, paintWorkCaption };
 }

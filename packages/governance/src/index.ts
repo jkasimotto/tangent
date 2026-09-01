@@ -17,9 +17,8 @@ import {
 } from "./walk.js";
 import { lintPackageInstallability, packageDependencyInfos } from "./package-installability.js";
 import { lintRetiredCaptureVocabulary } from "./retired-capture.js";
-
+import { lintWorkReadModelBoundary } from "./work-read-boundary.js";
 export type GovernanceLintGroup = "all" | "docs" | "deps" | "agents" | "shared" | "hooks" | "files";
-
 export type GovernanceLintOptions = {
   root?: string;
   groups?: GovernanceLintGroup[];
@@ -110,6 +109,7 @@ type LintContext = {
 async function lintAgentShellWorkflowContracts(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
   findings.push(...await lintRetiredCaptureVocabulary(ctx.root));
+  findings.push(...await lintWorkReadModelBoundary(ctx.root));
   const areaMapTargets = [
     "packages/agent-shell/app/public/area-map-world-core.js",
     "packages/agent-shell/app/public/area-map-world-controller.js",

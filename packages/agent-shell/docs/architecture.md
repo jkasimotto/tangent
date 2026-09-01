@@ -13,15 +13,15 @@ Dependencies: `@tangent/core`, `@tangent/agent-runtime`, and `@tangent/repo`. Th
 
 ## Application boundaries
 
-`app/gateway.mjs` is the stable public process edge. It alone owns port 4321, `/api/health`, static assets, SSE, and terminal WebSockets. It supervises `app/server.mjs` over IPC and an ephemeral loopback port. A controller heartbeat failure restarts only that controller. The gateway retains terminals and the last valid session snapshot (ADR-0032).
+`app/gateway.mjs` is the stable public process edge. It alone owns port 4321, `/api/health`, static assets, SSE, terminal WebSockets, and the persisted Work store. It supervises `app/server.mjs` over IPC and an ephemeral loopback port. A controller heartbeat failure restarts only that controller. The gateway retains terminals, the diagnostic session snapshot, and the immutable Work buffer (ADR-0032, ADR-0056).
 
 Gateway and controller share one stable Agent Shell instance identity. The gateway passes this identity to each replacement controller and verifies the ready message.
 
 `app/session-ownership.mjs` owns tmux process authority. It sets `@tangent_agent_shell_instance` and stores a durable owner sidecar for each created session. It claims and terminates the immutable tmux session ID. Foreign sessions are never attached, terminated, or recovered. Markerless legacy sessions stay isolated, except an explicit resume can claim the exact brain whose durable identity matches its live brain tags (ADR-0036).
 
-`app/public/refresh-lifecycle.js` serializes all complete browser projection reads. It keeps one trailing refresh when triggers overlap and owns projection retry timing. The browser probes gateway health only after a material projection error. Gateway and controller boot identities remain separate, so only a gateway replacement reloads browser assets.
+`app/public/refresh-lifecycle.js` serializes all conditional Work reads. It keeps one trailing refresh when triggers overlap and owns retry timing. SSE reconnect performs one read. A 30-second poll repairs lost events. The browser probes gateway health only after a material Work error. Gateway and controller boot identities remain separate, so only a gateway replacement reloads browser assets.
 
-The browser refreshes through compact `GET /api/work` v2. Goals and Jobs are separate collections joined by exact Goal file. The model excludes full report, notice, prompt, Attempt, and generation bodies; targeted Job, Agent, Goal, and Brain routes own detail. A deprecated v1 projection protects old browser assets for one release. The controller gives the response a content ETag, and the gateway can serve the last valid bytes during recovery.
+The browser refreshes through `GET /api/work` v3 only. The controller reads seven exact source classes and derives one bounded candidate. The gateway validates and atomically publishes it before it changes the public buffer. Work excludes reports, notices, prompts, Attempt history, generation history, Request bodies, document indexes, and complete Program rows. Targeted Job, Agent, Goal, Brain, Area, Process, navigation, shell-status, and prompt routes own that detail. Work has a content ETag. Transport headers can mark equal bytes stale, degraded, or current.
 
 `app/native/install-launch-agent.sh` installs the one outer gateway supervisor. Launchd restarts only unsuccessful exits and applies a ten-second throttle. The native app validates `/api/health`, asks launchd to start the job, and uses a re-probing exponential-backoff fallback only when the job is not installed.
 

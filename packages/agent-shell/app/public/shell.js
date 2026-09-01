@@ -8,7 +8,8 @@ import areaBoardCore from "./area-board-core.js";
 import { createApiClient } from "./api-client.js";
 import { createShellState } from "./shell-state.js";
 import { shellDom } from "./shell-dom.js";
-import { createRefreshCoordinator, readProjection, startRebuildRefresh, startRefreshLifecycle } from "./refresh-lifecycle.js";
+import { createRefreshCoordinator, startRebuildRefresh, startRefreshLifecycle } from "./refresh-lifecycle.js";
+import { createWorkClient } from "./work-client.js";
 import { FENCE_OPEN, fenceCloser, frontmatterLineCount, markdownHeadingAnchor, markdownHeadings, markdownTableAlignments, markdownTableCells, scanMarkdownBlocks, visibleMarkdown } from "./markdown-structure.js";
 import { documentCopyPayload } from "./document-copy.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
@@ -43,6 +44,16 @@ actionTelemetry.observe();
 const { api, post } = createApiClient(undefined, actionTelemetry);
 const { api: healthApi } = createApiClient(undefined, actionTelemetry, 3_000);
 const { requestedArea, requestedDocument, requestedGoal, state } = createShellState();
+const workClient = createWorkClient({
+  /** Records one browser Work metric through action telemetry. */
+  record: (name, value, labels) => actionTelemetry.record("work-metric", name, { value, ...labels }),
+});
+const hydratedWork = workClient.hydrate();
+if (hydratedWork) {
+  state.work = hydratedWork.snapshot;
+  state.workTransport = hydratedWork.metadata;
+  state.loading = false;
+}
 
 const {
   screen, "back-button": backButton, "work-tab": workTab, "areas-tab": areasTab, "prompts-tab": promptsTab, "bar-context": barContext,
@@ -591,7 +602,7 @@ const shellCoordinator = createShellCoordinator({
 });
 const {
   toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges,
-  selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt,
+  selectGoal, rememberGoal, openGoalRun, openAgentById, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt,
   selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath,
   confirmAreaMove, addDescribeSource, showDescribe,
   openDescribeSession, cancelDescribe, showDecision,
@@ -675,6 +686,8 @@ function renderKey() {
   }
   return JSON.stringify([
     state.view, state.workCursor,
+    state.work ? [state.work.epoch, state.work.revision] : null,
+    state.workTransport ? [state.workTransport.state, state.workTransport.staleReason, state.workTransport.observedAt] : null,
     state.searchPattern,
     state.caffeinate,
     state.document ? [state.document.file, state.document.hash, state.documentTrailIndex, state.documentTrail.length] : null,
@@ -920,7 +933,7 @@ function renderScreen() {
   if (state.view === "work") screen.innerHTML = renderWork();
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
   else if (state.view === "areas") screen.innerHTML = renderAreas() + launchPopover();
-  else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, sessions: state.sessions, pipelines: state.pipelines, programs: state.programs.operations, asks: areaQuestions("").map((item) => ({ area: item.area, subject: item.request.subject, question: item.request.question })), inspector: state.promptInspector, selection: state.bestiarySelection });
+  else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: state.promptInspect?.goals ?? [], brains: state.promptInspect?.brains ?? [], sessions: state.promptInspect?.agents ?? [], pipelines: state.promptInspect?.jobs ?? [], programs: state.promptInspect?.processes ?? [], asks: [], inspector: state.promptInspector, selection: state.bestiarySelection });
   else if (state.view === "area-edit") screen.innerHTML = renderAreaEditor();
   else if (state.view === "program-detail") screen.innerHTML = renderProgramDetail(currentProgram());
   else if (state.view === "program-create") screen.innerHTML = renderProgramCreate();
@@ -1131,7 +1144,8 @@ const returnPointLabel = goToCore.returnPointLabel;
 
 /** Removes stale Focus roots from the current vault and updates the local preference. */
 function reconcileCurrentAreaFocus() {
-  const reconciled = reconcileAreaFocus(state.areaFocus, (state.vault?.areas ?? []).map((area) => area.path));
+  const areaIds = state.work?.schema === "agent-shell-work.v3" ? state.work.areas.map((area) => area.id) : (state.vault?.areas ?? []).map((area) => area.path);
+  const reconciled = reconcileAreaFocus(state.areaFocus, areaIds);
   if (JSON.stringify(reconciled) === JSON.stringify(state.areaFocus)) return;
   state.areaFocus = reconciled;
   if (!reconciled.length) state.areaFocusOnly = false;
@@ -1338,33 +1352,13 @@ async function diagnoseConnection(error, trigger) {
   return recoveryDelay();
 }
 
-/** Refreshes the vault, program, and session projections from the server. */
+/** Refreshes the immutable Work snapshot and keeps prior facts on every error. */
 async function performRefresh({ initial = false, trigger = initial ? "initial" : "direct" } = {}) {
   try {
-    const [vault, sessionPayload, programs] = await readProjection(api);
-    const merged = state.workOperations.merge(vault, sessionPayload.sessions || []);
-    state.vault = merged.vault;
-    state.sessions = merged.sessions;
-    state.pipelines = sessionPayload.pipelines || [];
-    state.brains = sessionPayload.brains || [];
-    forgetVerdictLines();
-    state.programs = {
-      operations: programs.operations || [],
-      processes: programs.processes || [],
-      problems: programs.problems || [],
-      areas: programs.areas || [],
-      liveCount: Number(programs.liveCount || 0),
-    };
-    state.caffeinate = Boolean(sessionPayload.caffeinate);
-    state.pendingCommits = sessionPayload.pendingCommits || [];
-    state.deployedCommit = sessionPayload.deployedCommit || "";
-    state.currentCommit = sessionPayload.currentCommit || "";
-    state.updateAvailable = Boolean(sessionPayload.sourceChanged);
-    state.rebuild = sessionPayload.rebuild || null;
-    state.goalCleanups = sessionPayload.goalCleanups || [];
-    state.rebuilding = ["building", "restarting", "reconnecting"].includes(state.rebuild?.phase);
-    const gatewayRuntime = sessionPayload.runtime?.gateway;
-    noteRuntimeIdentity(gatewayRuntime?.boot || sessionPayload.boot || "", gatewayRuntime?.controller?.boot || sessionPayload.boot || "");
+    const result = await workClient.read();
+    state.work = result.snapshot;
+    state.workTransport = result.metadata;
+    noteRuntimeIdentity(result.metadata?.gatewayBoot || "", result.metadata?.controllerBoot || "");
     reconcileCurrentAreaFocus();
     state.loading = false;
     state.error = "";
@@ -1372,19 +1366,10 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
     state.connection.retryAttempt = 0;
     state.connection.nextRetryAt = null;
     transitionConnection("online", trigger);
-    if (state.view === "program-session" && !currentProgram()?.session) {
-      disposeTerminal();
-      state.view = currentProgram() ? "program-detail" : "areas";
-      state.renderedKey = "";
-    }
-    if (initial && state.currentFile && !goalByFile(state.currentFile)) {
+    if (initial && state.currentFile && !state.work.goals.some((goal) => goal.id === state.currentFile)) {
       state.currentFile = "";
       state.view = "work";
       localStorage.removeItem("agent-shell.current-goal");
-    }
-    if (state.view === "areas") {
-      if (!areas().some((area) => area.path === state.areaSelection)) state.areaSelection = preferredArea();
-      revealArea(state.areaSelection);
     }
     updateStatusPill();
     if (state.goTo) renderGoToList();
@@ -1392,14 +1377,10 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
     return null;
   } catch (error) {
     state.loading = false;
-    if (error?.status === 429) {
-      if (!state.vault) {
-        state.error = error.message;
-        paint(true);
-      }
-      return { retryAfterMs: error.retryAfterMs || 250 };
-    }
-    if (state.vault) {
+    if (state.work) {
+      state.workTransport = { ...(state.workTransport ?? {}), state: "stale", staleReason: error.kind === "timeout" ? "request-timeout" : "refresh-error" };
+      actionTelemetry.record("work", "retained-on-error", { kind: error.kind ?? "unknown", revision: state.work.revision });
+      paint(true);
       return { retryAfterMs: await diagnoseConnection(error, trigger) };
     }
     state.error = error.message;
@@ -1492,9 +1473,18 @@ async function toggleAwake() {
 }
 
 /** Opens the top-level prompt bestiary. */
-function showPrompts() {
+async function showPrompts() {
   state.view = "prompts";
   state.renderedKey = "";
+  paint(true);
+  try {
+    const inspect = await api("/api/prompts/inspect");
+    state.promptInspect = inspect;
+    state.brains = inspect.brains ?? [];
+    state.sessions = inspect.agents ?? [];
+    state.pipelines = inspect.jobs ?? [];
+    state.programs = { ...state.programs, operations: inspect.processes ?? [] };
+  } catch (error) { showToast(`Prompt examples did not load: ${error.message}`); }
   paint(true);
 }
 
@@ -1832,7 +1822,7 @@ shellBindings = bindShellEvents({
     selectModelMode, selectModelConcept,
   },
   work: {
-    selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
+    selectGoal, rememberGoal, openGoalRun, openAgentById, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, confirmStopBrain, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource,
     openGoalAgent, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
@@ -1876,11 +1866,8 @@ void (async () => {
   await refresh({ initial: true });
   if (requestedDocument) await openDocument(requestedDocument);
   else if (requestedGoal) selectGoal(requestedGoal);
-  else if (state.view === "areas") window.setTimeout(() => {
-    const input = document.querySelector("#area-search");
-    input?.focus();
-    input?.select();
-  }, 0);
+  else if (state.view === "areas") await showAreas();
+  else if (state.view === "prompts") await showPrompts();
 })();
 // Mutations and reconciliation push invalidations. The slow timer is only a
 // recovery path for a suspended browser or a dropped event stream.

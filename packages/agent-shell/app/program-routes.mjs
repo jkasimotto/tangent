@@ -17,13 +17,13 @@ export function createProgramRoutes(operations) {
   async function handle(request, response, url) {
     const route = routes.get(`${request.method} ${url.pathname}`);
     if (!route) return false;
-    await route(request, response);
+    await route(request, response, url);
     return true;
   }
 
   /** Returns every configured program and its live status. */
-  async function list(_request, response) {
-    sendJson(response, 200, await operations.list());
+  async function list(_request, response, url) {
+    sendJson(response, 200, await operations.list(url.searchParams.get("area") ?? ""));
   }
 
   /** Creates one process or command. */

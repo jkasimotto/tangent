@@ -2,6 +2,20 @@ import { clip, escapeHtml } from "./text-format.js";
 import { rebuildCommitRows } from "./rebuild-commit-list.js";
 import { rewriteAreaFocus, writeAreaFocus } from "./area-focus-core.js";
 
+/** Flattens the bounded Area tree for the directory while preserving row facts. */
+function flattenAreaRows(rows) {
+  const result = [];
+  /** Adds one Area and its descendants. */
+  const visit = (row) => {
+    if (!row || typeof row !== "object") return;
+    const path = row.path ?? row.area ?? "";
+    if (path) result.push({ ...row, path, name: row.name ?? path.split("/").at(-1) });
+    for (const child of row.children ?? []) visit(child);
+  };
+  for (const row of rows) visit(row);
+  return [...new Map(result.map((row) => [row.path, row])).values()].sort((left, right) => left.path.localeCompare(right.path));
+}
+
 /** Coordinates navigation between capability-owned browser features. */
 export function createShellCoordinator({ shell, chrome, work, areasFeature, programs, launch, documents }) {
   const { state, api, post, actionTelemetry, paint, refresh, showToast } = shell;
@@ -27,12 +41,21 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   const { openDocument, refreshDocument, rememberDocumentPosition, documentGoal, openDocumentPeek, closeDocumentPeek } = documents;
   let modalConfirm = null;
   let modalReturnPoint = null;
+  let navigation = null;
+  let navigationQuery = null;
+  let navigationGeneration = 0;
 
   /** Opens, closes, or toggles the shell menu. */
-  function toggleShellMenu(open = shellMenu.hidden) {
+  async function toggleShellMenu(open = shellMenu.hidden) {
     if (!open) {
       shellMenu.hidden = true;
       return;
+    }
+    if (!state.shellStatusLoaded) {
+      try {
+        const status = await api("/api/shell/status");
+        Object.assign(state, status, { updateAvailable: Boolean(status.sourceChanged), rebuilding: ["building", "restarting", "reconnecting"].includes(status.rebuild?.phase), shellStatusLoaded: true });
+      } catch (error) { showToast(`Shell status is unavailable: ${error.message}`); }
     }
     const awakeItem = shellMenu.querySelector("#menu-awake");
     if (awakeItem) awakeItem.textContent = state.caffeinate ? "Let Mac sleep normally" : "Keep Mac awake";
@@ -54,7 +77,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
    * exists, and every Area brain. Null while the vault is still loading.
    */
   function goToRows() {
-    return buildGoToRows({ vault: state.vault, brains: state.brains, query: state.goTo.query, area: state.goTo.area, kind: state.goTo.kind, view: state.goTo.view, areaLabel, brainStateLabel });
+    return navigation ? buildGoToRows({ vault: navigation.vault, brains: navigation.brains, query: state.goTo.query, area: state.goTo.area, kind: state.goTo.kind, view: state.goTo.view, areaLabel, brainStateLabel }) : null;
   }
 
   /** Opens the finder over the current screen, or closes it when ⌘K repeats. */
@@ -66,8 +89,8 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     goToInput.value = "";
     const areaSelect = document.querySelector("#go-to-area");
     const kindSelect = document.querySelector("#go-to-kind");
-    areaSelect.innerHTML = `<option value="">All Areas</option>${(state.vault?.areas ?? []).filter((item) => item.path).sort((a, b) => a.path.localeCompare(b.path)).map((item) => `<option value="${escapeHtml(item.path)}">${escapeHtml(areaLabel(item.path))}</option>`).join("")}`;
-    const kinds = [...new Set((state.vault?.documents ?? []).filter((item) => item.kind === "document").map((item) => item.docKind ?? "page"))].sort();
+    areaSelect.innerHTML = `<option value="">All Areas</option>`;
+    const kinds = [];
     kindSelect.innerHTML = `<option value="">All kinds</option>${kinds.map((kind) => `<option value="${escapeHtml(kind)}">${escapeHtml(kind)}</option>`).join("")}`;
     document.querySelector("#go-to-view").textContent = "Graph";
     document.querySelector("#go-to-view").setAttribute("aria-pressed", "false");
@@ -109,6 +132,27 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   function renderGoToList() {
     if (!state.goTo) return;
     goToInput.removeAttribute("aria-activedescendant");
+    const requested = state.goTo.query.trim();
+    if (requested !== navigationQuery) {
+      navigationQuery = requested;
+      const generation = ++navigationGeneration;
+      goToList.innerHTML = `<li class="go-to-empty" role="status">Searching…</li>`;
+      void api(`/api/navigation/search?q=${encodeURIComponent(requested)}&limit=100`).then((result) => {
+        if (!state.goTo || generation !== navigationGeneration) return;
+        const rows = result.rows ?? [];
+        const areas = rows.filter((row) => row.kind === "area").map((row) => ({ path: row.area, name: row.name }));
+        const documents = rows.filter((row) => ["document", "goal"].includes(row.kind)).map((row) => ({ ...row, title: row.name, kind: row.kind, file: row.file, area: row.area }));
+        const brains = rows.filter((row) => row.kind === "brain").map((row) => ({ area: row.area, status: row.live ? "active" : "inactive", live: row.live, session: row.session }));
+        navigation = { vault: { areas, documents }, brains };
+        const areaSelect = document.querySelector("#go-to-area");
+        if (areaSelect) areaSelect.innerHTML = `<option value="">All Areas</option>${areas.map((item) => `<option value="${escapeHtml(item.path)}">${escapeHtml(areaLabel(item.path))}</option>`).join("")}`;
+        renderGoToList();
+      }).catch((error) => {
+        if (!state.goTo || generation !== navigationGeneration) return;
+        goToList.innerHTML = `<li class="go-to-empty go-to-error" role="alert">${escapeHtml(error.message)}</li>`;
+      });
+      return;
+    }
     const rows = goToRows();
     if (rows === null) {
       state.goTo.rows = [];
@@ -175,10 +219,10 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
    * next nearest place. Neither starts anything.
    */
   function showWorkAt(area) {
-    if (!deskAreas().some((record) => record.area.path === area)) return showAreasAt(area);
+    if (!state.work?.areas.some((record) => record.id === area)) return showAreasAt(area);
     showWork();
     window.setTimeout(() => {
-      const card = screen.querySelector(`[data-desk-area="${CSS.escape(area)}"]`);
+      const card = screen.querySelector(`[data-work-group="${CSS.escape(area)}"]`);
       if (!card) return;
       try { card.scrollIntoView({ block: "start" }); } catch {}
       card.classList.add("flash");
@@ -266,7 +310,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     state.currentFile = file;
     localStorage.setItem("agent-shell.current-goal", file);
     const goal = goalByFile(file);
-    if (goal?.area) localStorage.setItem("agent-shell.last-area", goal.area);
+    if (goal?.area || goal?.areaId) localStorage.setItem("agent-shell.last-area", goal.area ?? goal.areaId);
     return goal;
   }
 
@@ -280,10 +324,25 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     state.goalDetail = null;
     state.documentTrail = [];
     state.documentTrailIndex = -1;
-    const session = sessionForGoal(goal);
-    if (!session) return openGoalAgent({ returnView: "work" });
+    const agentId = goal.execution?.assignment?.agentId ?? null;
+    if (!agentId) return openDocument(file);
+    let session;
+    try {
+      const result = await api(`/api/agents/show?session=${encodeURIComponent(agentId)}`);
+      session = result.agent?.summary ?? { name: agentId, area: goal.areaId, goal: goal.id, kind: "goal" };
+    } catch { return openDocument(file); }
     state.agentReturnView = "work";
     openSessionLayer(session, "agent", state.agentReturn ?? captureReturnPoint());
+  }
+
+  /** Opens one Work Agent after the exact detail route confirms its identity. */
+  async function openAgentById(id) {
+    if (!id) return;
+    try {
+      const result = await api(`/api/agents/show?session=${encodeURIComponent(id)}`);
+      const agent = result.agent;
+      openSessionLayer(agent.summary ?? { name: agent.session, area: agent.context?.area ?? "", kind: agent.role }, "agent", captureReturnPoint());
+    } catch (error) { showToast(`The Agent did not open: ${error.message}`); }
   }
 
   /** Returns to the work list. */
@@ -297,8 +356,25 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   }
 
   /** Opens the temporary area hierarchy. */
-  function showAreas() {
-    if (!areas().some((area) => area.path === state.areaSelection)) state.areaSelection = preferredArea();
+  async function showAreas() {
+    state.view = "areas";
+    paint(true);
+    try {
+      const tree = await api("/api/tree");
+      const flattened = flattenAreaRows(tree.areas ?? []);
+      const preferred = flattened.some((area) => area.path === state.areaSelection) ? state.areaSelection : flattened.find((area) => area.path)?.path ?? "";
+      state.areaSelection = preferred;
+      if (preferred) {
+        const [detail, processResult, operationResult] = await Promise.all([
+          api(`/api/areas/show?area=${encodeURIComponent(preferred)}`),
+          api(`/api/processes?area=${encodeURIComponent(preferred)}&exact=1`),
+          api(`/api/operations?area=${encodeURIComponent(preferred)}`),
+        ]);
+        const selected = { ...(flattened.find((area) => area.path === preferred) ?? {}), ...detail, path: preferred, name: preferred.split("/").at(-1) };
+        state.vault = { root: tree.root, areas: flattened.map((area) => area.path === preferred ? selected : area), documents: detail.documents ?? [], map: [{ path: preferred, goals: detail.goals ?? [] }] };
+        state.programs = { operations: operationResult.operations ?? operationResult.programs ?? [], problems: operationResult.problems ?? [], areas: operationResult.areas ?? [], liveCount: Number(operationResult.liveCount ?? 0), processes: processResult.processes ?? detail.processes ?? [] };
+      } else state.vault = { root: tree.root, areas: [], documents: [], map: [] };
+    } catch (error) { showToast(`Areas did not load: ${error.message}`); }
     revealArea(state.areaSelection);
     state.areaEdit = null;
     state.view = "areas";
@@ -331,9 +407,9 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   }
 
   /** Returns to the Areas surface with one Area selected. */
-  function showAreasAt(path) {
-    if (path && areas().some((area) => area.path === path)) state.areaSelection = path;
-    showAreas();
+  async function showAreasAt(path) {
+    if (path) state.areaSelection = path;
+    await showAreas();
   }
 
   /** Opens one program without changing its runtime. */
@@ -482,11 +558,16 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
    * start one. Everything starts through the brain (D8), so a Goal without a
    * session gets a message in the composer, never a direct start.
    */
-  function openGoalAgent({ returnView = "work" } = {}) {
+  async function openGoalAgent({ returnView = "work" } = {}) {
     const goal = currentGoal();
     if (!goal) return;
-    const session = sessionForGoal(goal);
-    if (!session) return askBrainToStart(goal);
+    const agentId = goal.execution?.assignment?.agentId ?? sessionForGoal(goal)?.name ?? null;
+    if (!agentId) return askBrainToStart(goal);
+    let session;
+    try {
+      const result = await api(`/api/agents/show?session=${encodeURIComponent(agentId)}`);
+      session = result.agent?.summary ?? { name: agentId, area: goal.areaId ?? goal.area, goal: goal.id ?? goal.file, kind: "goal" };
+    } catch { return askBrainToStart(goal); }
     const returnPoint = returnView === "work" && state.view === "work" ? captureReturnPoint() : null;
     state.agentReturnView = returnView;
     state.agentReturn = returnPoint;
@@ -495,7 +576,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Opens the Area brain composer with a request to start an agent on one Goal. */
   function askBrainToStart(goal) {
-    showDescribe({ area: goal.area, description: `Start an agent on ${goal.title} (${goal.file})` });
+    showDescribe({ area: goal.areaId ?? goal.area, description: `Start an agent on ${goal.title} (${goal.id ?? goal.file})` });
     return true;
   }
 
@@ -794,5 +875,5 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Toggles the server-owned macOS sleep assertion. */
 
-  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, openGoalAgent, openReaderAgent, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
+  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, openAgentById, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, openGoalAgent, openReaderAgent, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
 }

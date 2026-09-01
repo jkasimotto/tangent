@@ -23,8 +23,8 @@ Inspect the public identity:
 curl -s http://127.0.0.1:4321/api/health
 ```
 
-The response includes `instanceId`. The session projection includes
-`runtime.instanceId` and `runtime.ownershipKey`.
+The response includes `instanceId`. The session diagnostic includes the same
+runtime identity.
 
 ## Inspect a live session
 
@@ -94,7 +94,28 @@ termination outside `session-ownership.mjs`.
 
 `job.v1` remains under the historical `pipelines/<area>/<slug>.json` path. Old `area-goal-queue.v2` and `agent-pipeline.v1` files are read in memory as run 1. Their first mutation writes `job.v1` with all Attempt and report history. Do not roll a state root that contains `job.v1` back past the compatibility foundation release.
 
-Work v2 publishes `runtime.problems` for multiple mutable runs, crossed Brain authority, invalid Goal bindings, Attempts on terminal Goals, expired staged successors, and promoted successions whose outgoing Agent is still live. Resolve these before enabling live conversion on another state root.
+Work v3 publishes bounded source and model problems. Use the exact Goal, Job,
+Agent, Brain, Process, or Area route to inspect a problem. Work does not contain
+the complete diagnostic record.
+
+## Inspect Work freshness
+
+`GET /api/health` reports the Work state, epoch, revision, bytes, age, source
+conditions, last rejection, reconciliation state, and bounded metrics.
+
+`GET /api/work` is a gateway memory read. A valid store returns `200` or `304`.
+It does not wait for the controller. `x-tangent-work-state` is `current`,
+`degraded`, or `stale`. A stale or degraded response keeps the last complete
+body.
+
+The store is under `~/.tangent/agent-shell/work/`. Do not edit it. A corrupt
+envelope is quarantined and the controller builds a new epoch.
+
+Pi harness debug logs are under
+`~/.tangent/agent-shell/harness-logs/pi/`. Agent Shell rotates a log above
+8 MiB and keeps at most 64 log files. A Pi launch can leave a project-local
+`.pi/debug/log.jsonl` symbolic link. The link points to the bounded runtime
+store. Vault enumeration ignores hidden directories.
 
 ## Succession recovery
 

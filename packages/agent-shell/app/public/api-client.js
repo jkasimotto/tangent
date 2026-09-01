@@ -17,12 +17,11 @@ function retryAfterMs(value, now = Date.now()) {
 }
 
 /** Creates the browser's small JSON client around a fetch implementation. */
-export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), telemetry = null, deadlineMs = 20_000, workDeadlineMs = Math.max(deadlineMs, 30_000)) {
-  let workCache = null;
+export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), telemetry = null, deadlineMs = 20_000) {
   /** Calls one JSON endpoint and turns non-success replies into errors. */
   async function api(path, options = {}) {
     const method = String(options.method ?? "GET").toUpperCase();
-    const responseDeadlineMs = method === "GET" && path === "/api/work" ? workDeadlineMs : deadlineMs;
+    const responseDeadlineMs = deadlineMs;
     const startedAt = telemetry?.start?.() ?? 0;
     let response;
     const controller = new AbortController();
@@ -38,7 +37,6 @@ export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), t
     else callerSignal?.addEventListener("abort", callerAborted, { once: true });
     try {
       const headers = { ...(options.headers ?? {}) };
-      if (method === "GET" && path === "/api/work" && workCache?.etag) headers["if-none-match"] = workCache.etag;
       response = await fetchJson(path, { ...options, headers, signal: controller.signal });
     } catch (error) {
       telemetry?.apiFinished?.(method, path, startedAt, 0, false);
@@ -50,7 +48,6 @@ export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), t
       callerSignal?.removeEventListener("abort", callerAborted);
     }
     telemetry?.apiFinished?.(method, path, startedAt, response.status, response.ok);
-    if (response.status === 304 && method === "GET" && path === "/api/work" && workCache) return workCache.data;
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new ApiError(data.error || `Agent Shell returned ${response.status}.`, {
@@ -77,9 +74,6 @@ export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), t
           capturedAt: response.headers?.get?.("x-tangent-captured-at") ?? "",
         },
       });
-    }
-    if (method === "GET" && path === "/api/work") {
-      workCache = { etag: response.headers?.get?.("etag") ?? "", data };
     }
     return data;
   }

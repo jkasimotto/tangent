@@ -1,6 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createRefreshCoordinator, readProjection, startRebuildRefresh } from "./public/refresh-lifecycle.js";
+import { createRefreshCoordinator, startRebuildRefresh, startRefreshLifecycle } from "./public/refresh-lifecycle.js";
+
+test("event reconnects and the 30-second recovery poll each request one conditional Work read", () => {
+  const listeners = new Map();
+  const triggers = [];
+  let interval;
+  let delay;
+  class Events {
+    /** Saves one event listener. */
+    addEventListener(name, callback) { listeners.set(name, callback); }
+    /** Closes the fixture event stream. */
+    close() {}
+  }
+  const lifecycle = startRefreshLifecycle((options) => { triggers.push(options.trigger); }, {
+    EventSource: Events,
+    /** Saves the recovery interval. */
+    setInterval(callback, milliseconds) { interval = callback; delay = milliseconds; return 1; },
+    /** Clears the fixture recovery interval. */
+    clearInterval() {},
+  });
+  listeners.get("open")();
+  listeners.get("changed")();
+  interval();
+  assert.equal(delay, 30_000);
+  assert.deepEqual(triggers, ["event-open", "event", "timer"]);
+  lifecycle.stop();
+});
 
 test("active rebuilds use a dedicated 750 ms refresh", () => {
   let callback;
@@ -128,27 +154,4 @@ test("a pending trigger respects backpressure before its trailing refresh", asyn
   await Promise.resolve();
   assert.equal(calls, 2);
   coordinator.stop();
-});
-
-test("projection read unwraps one coherent compact Work response", async () => {
-  const calls = [];
-  const projection = await readProjection(async (path) => {
-    calls.push(path);
-    return { schema: "agent-shell-work.v1", vault: { areas: [] }, session: { sessions: [] }, programs: { operations: [] } };
-  });
-  assert.deepEqual(calls, ["/api/work"]);
-  assert.deepEqual(projection, [{ areas: [], map: [] }, { sessions: [], pipelines: [], brains: [] }, { operations: [] }]);
-});
-
-test("projection read keeps compatibility with a controller without compact Work", async () => {
-  const calls = [];
-  const projection = await readProjection(async (path) => {
-    calls.push(path);
-    if (path === "/api/work") return {};
-    if (path === "/api/vault") return { areas: [] };
-    if (path === "/api/sessions") return { sessions: [] };
-    return { operations: [] };
-  });
-  assert.deepEqual(calls, ["/api/work", "/api/vault", "/api/sessions", "/api/operations"]);
-  assert.deepEqual(projection, [{ areas: [] }, { sessions: [] }, { operations: [] }]);
 });

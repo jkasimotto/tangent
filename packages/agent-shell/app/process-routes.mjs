@@ -24,7 +24,7 @@ export function createProcessRoutes(operations) {
 
   /** Returns every process with its schedule, next run, last run, and state. */
   async function list(_request, response, url) {
-    sendJson(response, 200, await operations.list(url.searchParams.get("area") ?? ""));
+    sendJson(response, 200, await operations.list(url.searchParams.get("area") ?? "", ["1", "true"].includes(url.searchParams.get("exact") ?? "")));
   }
 
   /** Creates one loop process note. */

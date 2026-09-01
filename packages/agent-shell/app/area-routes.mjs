@@ -6,6 +6,7 @@ export function createAreaRoutes(operations) {
     ["GET /api/tree", tree],
     ["GET /api/areas/show", show],
     ["GET /api/areas/milestones", milestones],
+    ["GET /api/navigation/search", search],
     ["POST /api/areas/legacy-audit", legacyAudit],
     ["POST /api/areas/new", create],
     ["POST /api/areas/preview-move", previewMove],
@@ -40,6 +41,12 @@ export function createAreaRoutes(operations) {
       limit: url.searchParams.get("limit") ?? "12",
     });
     sendJson(response, result ? 200 : 404, result ?? { error: "Area not found." });
+  }
+
+  /** Returns a bounded navigation index for one deliberate search. */
+  async function search(_request, response, url) {
+    const result = await operations.search(url.searchParams.get("q") ?? "", url.searchParams.get("limit") ?? "100");
+    sendJson(response, 200, result);
   }
 
   /** Exports detached legacy coordination records for explicit audit use. */

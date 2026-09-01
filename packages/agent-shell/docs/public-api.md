@@ -18,7 +18,9 @@ Every command except `vault commit` and `study` is a thin HTTP client to the Age
 
 Requests have a response deadline and an operation ID. A failed mutation response warns that the operation can already be durable. A worker send transport failure tells the caller to retry the same command. The server deduplicates that retry and repairs a missing brain notice.
 
-`GET /api/work` returns the compact browser Work read model. It includes current Area, Goal, queue, brain, session, shell, and program summaries. It excludes durable history bodies. The response supports `ETag` and `If-None-Match`. Gateway headers report boot identity, capture time, and stale state.
+`GET /api/work` returns `agent-shell-work.v3` from the gateway's immutable memory buffer. It contains bounded Area, Goal, Agent, Brain, Process, presentation, and problem rows. It excludes Request bodies, prompt inputs, document indexes, Program rows, and durable histories. The response supports `ETag` and `If-None-Match`. Every `200` and `304` reports the Work identity, gateway and controller boots, publication time, observation time, and freshness state. A valid store never enters controller admission.
+
+Non-Work screens load their own bounded routes. These include `/api/navigation/search`, `/api/shell/status`, `/api/prompts/inspect`, exact `/api/brains/show`, exact `/api/agents/show`, and Area-scoped Process and Operation reads.
 
 `GET /api/areas/map-world?located=<area>` returns the complete Area structure and the planned eager shards. It includes one world revision.
 
@@ -98,7 +100,7 @@ An accepted handover adds one `worker-handover-receipt.v1` record to the assignm
 
 No worker report closes a Goal (ADR-0041). A passing `review-result` completes the queue; the brain reads the note and runs `tangent goal done`. Free text is a note and never closes or advances a Goal.
 
-For one release, hidden `goal start`, `goal append`, `brain advance`, `goal replace-agent`, `brain handover`, and `agent context` aliases print their canonical replacement and call the same service. Old HTTP routes are thin adapters. Work v2 includes a deprecated v1 projection. These edges emit `compat.alias.used`.
+For one release, hidden `goal start`, `goal append`, `brain advance`, `goal replace-agent`, `brain handover`, and `agent context` aliases print their canonical replacement and call the same service. Old command HTTP routes are thin adapters. These edges emit `compat.alias.used`. Work has no v1 or v2 compatibility response.
 
 ## Area brain
 
@@ -138,7 +140,7 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 
 Canonical execution routes are `GET /api/jobs/show` and `POST /api/jobs/create|start|append|advance|stop|replace`. Canonical Agent routes are `GET /api/agents`, `GET /api/agents/show`, and `POST /api/agents/stop|resume|send`. Canonical Brain routes are `GET /api/brains/show` and `POST /api/brains/stop|succeed|requests|requests/withdraw`. Every mutation takes `operationId`; Job mutations also take `expectedRun` and `expectedRevision`. Canonical responses say `job`, `assignment`, `attempt`, and `agent`. A stale Job fence returns 409 with the current revision.
 
-`GET /api/goals/detail` returns Goal intent only. `GET /api/jobs/show` returns full selected-run execution history. `GET /api/work` returns `agent-shell-work.v2` with separate `vault.areas[].goals`, `runtime.jobs`, `runtime.agents`, `runtime.brains`, `runtime.problems`, and `runtime.instanceId` fields.
+`GET /api/goals/detail` returns Goal intent only. `GET /api/jobs/show` returns full selected-run execution history. `GET /api/work` returns only `agent-shell-work.v3`. One Goal row embeds one current execution summary and one selected Assignment. Detail stays behind the exact routes.
 
 - `POST /api/goals/start`: `{ file, steps?, caller?, recovery?, extraFiles? }`. Only a live brain caller starts a worker (ADR-0041). There is no other start route: `POST /api/goals/agent` was deleted on 2026-08-28.
 - `POST /api/goals/attempts/resume`: `{ goal, attemptId?, conversationId? }`. A live attempt answers `status: "live"` with its session. A dead attempt answers `status: "resumed"` with a new `resume` session in the attempt's folder and the typed `command`. The harness needs `resume` in `harnesses.md` (ADR-0042).
@@ -153,7 +155,7 @@ Canonical execution routes are `GET /api/jobs/show` and `POST /api/jobs/create|s
 - `POST /api/brains/requests/answer`: `{ area, id, answer, note?, effectRevision? }`.
 - `GET /api/brains/show?area=<path>|session=<name>` reads one enriched brain.
 - `GET /api/agents/context?session=<name>` reads `tangent-agent-context.v1` recovery context. It is read-only and does not require an Agent Shell ownership marker.
-- `GET /api/sessions` reads the complete Work projection.
+- `GET /api/sessions` is a runtime diagnostic for existing CLI and recovery consumers. The Work browser does not read it.
 - `POST /api/kill/<session>` stops only a session owned by the responding Agent Shell instance. It returns 409 for foreign or legacy sessions.
 - `GET /api/goals?area=<path>[&subtree=1]` lists Goals. An exact-Area result also carries `scope`, `childAreas`, `descendantGoals`, and the `subtreeCommand` that reads the rest.
 - `GET /api/areas/milestones?area=<path>[&since&limit]` reads material milestones across the Area subtree.

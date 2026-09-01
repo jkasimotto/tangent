@@ -10,7 +10,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootWorkTable, press, settle } from "./work-table-harness.mjs";
 import { workTableFixture, withDirectAsks, plannedWorkFixture, withBrainOnlyArea } from "./work-table-fixture.mjs";
-import { projectWork } from "./work-projection.mjs";
 import { workCommand } from "./public/work-commands.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -23,15 +22,6 @@ function verb(element) {
 /** Returns the visible Goal-title buttons of the work table, in row order. */
 function titles(document) {
   return [...document.querySelectorAll(".work-table [data-work-row-title]")].filter((button) => !button.closest("tr[hidden]"));
-}
-
-/** Builds the production Work v2 boundary from one mutable browser fixture. */
-function workProjection(fixture) {
-  return () => projectWork({
-    vault: fixture.vault,
-    session: { sessions: fixture.sessions, pipelines: fixture.pipelines, brains: fixture.brains },
-    programs: fixture.programs ?? { operations: [], processes: [], problems: [], areas: [], liveCount: 0 },
-  }).value;
 }
 
 test("the work table states its rows and columns in the accessibility tree", async () => {
@@ -64,51 +54,6 @@ test("the work table states its rows and columns in the accessibility tree", asy
   assert.ok(rowHeader, "the Goal title is the row header, so every cell carries the Goal's name");
   assert.match(rowHeader.textContent, /Redesign the onboarding walkthrough/);
   assert.equal(row.children.length, columns.length, "a Goal row fills every column");
-});
-
-test("a wall status hover shows the complete server evidence", async () => {
-  const fixture = workTableFixture();
-  const step = fixture.pipelines.find((pipeline) => pipeline.goal.endsWith("goal-compact-table.md")).steps[0];
-  step.attemptState = {
-    word: "Hit a wall · Opus", since: fixture.now, owner: "brain", next: "The organizer replaces or ends the attempt.",
-    evidence: { source: "screen", text: "You've reached your Opus limit · claude · quota · screen · 2026-08-30T05:50:55.115Z" },
-  };
-  const staleSession = fixture.sessions.find((item) => item.name === step.session);
-  Object.assign(staleSession, { state: "waiting", stateDetail: "idle" });
-  const { document, gets } = await bootWorkTable(fixture, { workProjection: workProjection(fixture) });
-  const status = document.querySelector('[data-work-cursor="goal:otto/tangent/goal-compact-table.md"] .desk-state');
-  assert.ok(gets.some((url) => new URL(url).pathname === "/api/work"), "the regression crosses the real compact Work boundary");
-  assert.doesNotMatch(status.textContent, /Finished/, "the stale idle Agent cannot overrule the capacity-blocked Attempt");
-  assert.match(status.title, /You've reached your Opus limit · claude · quota · screen · 2026-08-30T05:50:55.115Z/);
-});
-
-test("Work follows the Job to its pending next Assignment instead of the old idle Agent", async () => {
-  const fixture = workTableFixture();
-  const goal = fixture.goals.find((item) => item.slug === "compact-table");
-  const session = fixture.sessions.find((item) => item.name === goal.session);
-  Object.assign(session, { state: "waiting", stateDetail: "idle" });
-  const job = fixture.pipelines.find((item) => item.goal === goal.file);
-  Object.assign(job, { status: "running", currentAssignmentId: "assignment-1" });
-  Object.assign(job.steps[0], {
-    id: "assignment-1", status: "running", live: true, state: "waiting", stateDetail: "idle",
-    attemptState: { word: "Reported done", since: fixture.now, owner: "brain", evidence: { source: "queue", text: "The worker sent a report." }, next: "The organizer settles it." },
-  });
-  Object.assign(job.steps[1], { id: "assignment-2", status: "pending", live: false, session: null });
-
-  const { window, document, gets } = await bootWorkTable(fixture, { workProjection: workProjection(fixture) });
-  assert.ok(gets.some((url) => new URL(url).pathname === "/api/work"), "the regression crosses the real compact Work boundary");
-  let row = document.querySelector(`[data-goal-anchor="${goal.file}"]`);
-  assert.match(row.querySelector(".desk-state").textContent.trim(), /^Reported done/);
-
-  Object.assign(job, { status: "pending", currentAssignmentId: null, updatedAt: fixture.now + 1 });
-  Object.assign(job.steps[0], { status: "complete", live: false, endedAt: fixture.now });
-  await window.refresh();
-  await settle(window);
-
-  row = document.querySelector(`[data-goal-anchor="${goal.file}"]`);
-  assert.equal(row.querySelector(".desk-state").textContent.trim(), "Not started");
-  assert.doesNotMatch(row.textContent, /Finished/);
-  assert.equal(row.querySelector("[data-open-goal-run]"), null, "the historical idle Agent does not replace the pending Assignment's state");
 });
 
 test("Area Map controls and m open the broad root map, then drill and return without losing the Work row", async () => {

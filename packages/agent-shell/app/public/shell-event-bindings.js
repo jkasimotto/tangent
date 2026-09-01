@@ -20,7 +20,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     selectModelMode, selectModelConcept,
   } = prompts;
   const {
-    selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
+    selectGoal, rememberGoal, openGoalRun, openAgentById, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, confirmStopBrain, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource,
     openGoalAgent, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
@@ -1829,6 +1829,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (transition) return selectBestiaryTransition(transition.dataset.bestiaryTransition);
     const goalRun = target.closest("[data-open-goal-run]");
     if (goalRun) return openGoalRun(goalRun.dataset.openGoalRun);
+    const workAgent = target.closest("[data-open-work-agent]");
+    if (workAgent) return openAgentById(workAgent.dataset.openWorkAgent);
     const revealGoal = target.closest("[data-reveal-goal]");
     if (revealGoal) return selectGoal(revealGoal.dataset.revealGoal);
     const stopGoal = target.closest("[data-stop-goal]");
@@ -1879,10 +1881,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const area = target.closest("[data-select-area]");
     if (area) {
       areaProcessesReturnPoint = null;
-      state.areaSelection = area.dataset.selectArea;
-      localStorage.setItem("agent-shell.last-area", state.areaSelection);
-      paint(true);
-      return window.setTimeout(() => document.querySelector("#area-work-heading")?.focus(), 0);
+      localStorage.setItem("agent-shell.last-area", area.dataset.selectArea);
+      return showAreasAt(area.dataset.selectArea).then(() => window.setTimeout(() => document.querySelector("#area-work-heading")?.focus(), 0));
     }
     const openProcesses = target.closest("[data-open-area-processes]");
     if (openProcesses) return openAreaProcesses(openProcesses.dataset.openAreaProcesses, openProcesses);

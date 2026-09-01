@@ -15,9 +15,14 @@ function response() {
 test("shell-state routes serve snapshots and the shared chat session", async () => {
   const routes = createShellStateRoutes({
     chatSession: "chat",
+    instanceId: "instance-a",
     features: { areaMapWorld: false },
     /** Returns one snapshot. */
     async snapshot() { return { sessions: [] }; },
+    /** Returns bounded shell status. */
+    async status() { return { currentCommit: "abc" }; },
+    /** Returns bounded prompt inspection. */
+    async promptInspect() { return { schema: "agent-shell-prompt-inspect.v1" }; },
   });
   const snapshot = response();
   await routes.handle({ method: "GET" }, snapshot, new URL("http://shell/api/sessions"));
@@ -26,24 +31,12 @@ test("shell-state routes serve snapshots and the shared chat session", async () 
   await routes.handle({ method: "GET" }, config, new URL("http://shell/config.js"));
   assert.match(config.body, /window\.CHAT_SESSION = "chat"/);
   assert.match(config.body, /window\.TANGENT_FEATURES = \{"areaMapWorld":false\}/);
+  assert.match(config.body, /agent-shell-work\.v3/);
   assert.equal(config.headers["content-type"], "text/javascript");
-});
-
-test("Work route serves hashed bytes and honors conditional reads", async () => {
-  const body = JSON.stringify({ schema: "agent-shell-work.v1" });
-  const routes = createShellStateRoutes({
-    chatSession: "chat",
-    /** Returns one hashed Work response. */
-    async work() { return { body, bytes: Buffer.byteLength(body), etag: '"work-1"' }; },
-  });
-  const first = response();
-  await routes.handle({ method: "GET", headers: {} }, first, new URL("http://shell/api/work"));
-  assert.equal(first.status, 200);
-  assert.equal(first.headers.etag, '"work-1"');
-  assert.equal(first.body, body);
-
-  const unchanged = response();
-  await routes.handle({ method: "GET", headers: { "if-none-match": '"work-1"' } }, unchanged, new URL("http://shell/api/work"));
-  assert.equal(unchanged.status, 304);
-  assert.equal(unchanged.body, undefined);
+  const status = response();
+  await routes.handle({ method: "GET" }, status, new URL("http://shell/api/shell/status"));
+  assert.deepEqual(JSON.parse(status.body), { currentCommit: "abc" });
+  const prompts = response();
+  await routes.handle({ method: "GET" }, prompts, new URL("http://shell/api/prompts/inspect"));
+  assert.deepEqual(JSON.parse(prompts.body), { schema: "agent-shell-prompt-inspect.v1" });
 });

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFile, fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { attachTerminalTransport } from "./terminal-transport.mjs";
@@ -16,6 +17,8 @@ import { createStateEvents } from "./state-events.mjs";
 import { startEventLoopWatchdog } from "./event-loop-watchdog.mjs";
 import { agentShellInstanceId, createSessionOwnership, SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 import { areaMapWorldEnabled } from "./public/area-map-rollout.js";
+import { createWorkStore, workResponseHeaders } from "./work-store.mjs";
+import { createWorkTelemetry } from "./work-telemetry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -51,12 +54,14 @@ const CONTROLLER_RESPONSE_TIMEOUT_MS = Number(process.env.TANGENT_CONTROLLER_RES
 const CONTROLLER_STABLE_MS = Number(process.env.TANGENT_CONTROLLER_STABLE_MS ?? 30_000);
 const RESTART_BASE_MS = Number(process.env.TANGENT_CONTROLLER_RESTART_BASE_MS ?? 250);
 const RESTART_MAX_MS = Number(process.env.TANGENT_CONTROLLER_RESTART_MAX_MS ?? 10_000);
-// Pipeline and brain history are part of the complete Work projection. A busy
-// vault can legitimately exceed 8 MiB, so keep a generous bounded allowance
-// rather than misclassifying a valid controller response as a restart.
 const MAX_SNAPSHOT_BYTES = Number(process.env.TANGENT_GATEWAY_SNAPSHOT_MAX_BYTES ?? 32 * 1024 * 1024);
-const MAX_WORK_BYTES = Number(process.env.TANGENT_GATEWAY_WORK_MAX_BYTES ?? 8 * 1024 * 1024);
 const MAX_CONTROLLER_REQUESTS = Number(process.env.TANGENT_GATEWAY_CONTROLLER_REQUESTS ?? 64);
+const WORK_STORE_ROOT = process.env.TANGENT_WORK_STORE_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "work");
+const workTelemetry = createWorkTelemetry();
+const gatewayEventLoopDelay = monitorEventLoopDelay({ resolution: 10 });
+gatewayEventLoopDelay.enable();
+const workStore = createWorkStore({ root: WORK_STORE_ROOT, instanceId: INSTANCE_ID, hardLimit: Number(process.env.TANGENT_WORK_HARD_LIMIT_BYTES ?? 1024 * 1024), metric: workTelemetry.record });
+await workStore.load();
 
 startEventLoopWatchdog({
   timeoutMs: Number(process.env.TANGENT_GATEWAY_WATCHDOG_TIMEOUT_MS ?? 15_000),
@@ -69,8 +74,8 @@ let restartAttempt = 0;
 let restartTimer = null;
 let shuttingDown = false;
 let sessionSnapshot = null;
-let workSnapshot = null;
 let activeControllerRequests = 0;
+let activeWorkReaders = 0;
 const activeReadPaths = new Set();
 
 /** Returns exponential controller restart delay with a fixed upper bound. */
@@ -90,6 +95,13 @@ function controllerStatus() {
     heartbeatAgeMs,
     restartAttempt,
   };
+}
+
+/** Makes Work stale before a read can outpace controller failure cleanup. */
+function reconcileWorkFreshnessWithController() {
+  const status = controllerStatus();
+  if (status.state !== "ready") workStore.markStale("controller-recovery", status.boot ?? "");
+  return status;
 }
 
 /** Starts one isolated controller generation. */
@@ -138,11 +150,37 @@ function startController() {
       return;
     }
     if (message.type === "agent-shell-heartbeat") generation.lastHeartbeatAt = Date.now();
+    if (message.type === "work-dirty") {
+      workStore.markStale("source-change-pending", generation.boot ?? "");
+      return;
+    }
+    if (message.type === "work-current") {
+      workStore.markCurrent({ controllerBoot: generation.boot ?? "", observedAt: message.observedAt });
+      return;
+    }
+    if (message.type === "work-candidate") {
+      void workStore.publish({ candidate: message.candidate, semanticHash: message.semanticHash, controllerBoot: generation.boot ?? "" }).then((result) => {
+        if (controller !== generation || !generation.child.connected) return;
+        const acknowledgement = { type: "work-candidate-ack", candidateId: message.candidateId, ...result, sourceWatermark: message.sourceWatermark };
+        generation.child.send(acknowledgement);
+        if (result.ok) {
+          if (result.changed) stateEvents.changed(JSON.stringify({ type: "work", epoch: result.epoch, revision: result.revision }));
+        }
+      }).catch((error) => {
+        console.error("[gateway] Work candidate:", error?.stack ?? error);
+        if (error?.code === "work-store-fatal-after-rename") {
+          process.exit(1);
+          return;
+        }
+        if (controller === generation && generation.child.connected) generation.child.send({ type: "work-candidate-ack", candidateId: message.candidateId, ok: false, code: "store-publish-failed", sourceWatermark: message.sourceWatermark });
+      });
+    }
   });
   child.on("error", (error) => console.error("[gateway] controller spawn:", error?.message ?? error));
   child.on("exit", (code, signal) => {
     if (controller !== generation) return;
     controller = null;
+    workStore.markStale("controller-recovery", generation.boot ?? "");
     console.error(`[gateway] controller exited pid=${child.pid} code=${code ?? ""} signal=${signal ?? ""}`);
     stateEvents.changed("controller-exited");
     scheduleControllerRestart();
@@ -166,6 +204,7 @@ function terminateController(reason) {
   const generation = controller;
   if (!generation || generation.terminating) return;
   generation.terminating = true;
+  workStore.markStale("controller-recovery", generation.boot ?? "");
   console.error(`[gateway] terminating controller pid=${generation.child.pid} reason=${reason}`);
   generation.child.kill("SIGTERM");
   const force = setTimeout(() => {
@@ -223,27 +262,8 @@ function sendSessionSnapshot(response, value, { stale, operationId }) {
   sendJson(response, 200, snapshot);
 }
 
-/** Serves the controller's compact Work bytes without parsing them on the terminal loop. */
-function sendWorkSnapshot(response, snapshot, { stale, operationId, reason = "" }) {
-  response.writeHead(200, {
-    ...snapshot.headers,
-    "content-length": snapshot.body.length,
-    "x-tangent-operation-id": operationId,
-    "x-tangent-gateway-boot": GATEWAY_BOOT_ID,
-    "x-tangent-controller-boot": snapshot.controllerBoot,
-    "x-tangent-stale": stale ? "1" : "0",
-    "x-tangent-stale-reason": stale ? reason || "controller-recovery" : "",
-    "x-tangent-captured-at": snapshot.capturedAt,
-  });
-  response.end(snapshot.body);
-}
-
 /** Returns cached sessions during controller recovery, or a named 503. */
 function unavailable(request, response, operationId) {
-  if (request.method === "GET" && new URL(request.url, "http://localhost").pathname === "/api/work" && workSnapshot) {
-    sendWorkSnapshot(response, workSnapshot, { stale: true, operationId });
-    return;
-  }
   if (request.method === "GET" && request.url?.startsWith("/api/sessions") && sessionSnapshot) {
     sendSessionSnapshot(response, sessionSnapshot.value, { stale: true, operationId });
     return;
@@ -303,14 +323,8 @@ function proxyController(request, response, operationId) {
       incoming.on("aborted", () => upstream.destroy(projectionError ?? new Error("controller response aborted")));
       const pathname = new URL(request.url, "http://localhost").pathname;
       const isSessions = request.method === "GET" && pathname === "/api/sessions" && incoming.statusCode === 200;
-      const isWork = request.method === "GET" && pathname === "/api/work" && incoming.statusCode === 200;
-      if (!isSessions && !isWork) {
-        const workHeaders = request.method === "GET" && pathname === "/api/work" ? {
-          "x-tangent-gateway-boot": GATEWAY_BOOT_ID,
-          "x-tangent-controller-boot": generation.boot,
-          "x-tangent-stale": "0",
-        } : {};
-        response.writeHead(incoming.statusCode ?? 502, { ...proxyHeaders(incoming.headers), ...workHeaders });
+      if (!isSessions) {
+        response.writeHead(incoming.statusCode ?? 502, proxyHeaders(incoming.headers));
         incoming.pipe(response);
         incoming.on("end", () => {
           settled = true;
@@ -324,10 +338,10 @@ function proxyController(request, response, operationId) {
       let bytes = 0;
       incoming.on("data", (chunk) => {
         bytes += chunk.length;
-        const limit = isWork ? MAX_WORK_BYTES : MAX_SNAPSHOT_BYTES;
+        const limit = MAX_SNAPSHOT_BYTES;
         if (bytes > limit) {
-          projectionError = new Error(`${isWork ? "work projection" : "session snapshot"} exceeds ${limit} bytes`);
-          projectionError.code = isWork ? "work-projection-too-large" : "session-snapshot-too-large";
+          projectionError = new Error(`session snapshot exceeds ${limit} bytes`);
+          projectionError.code = "session-snapshot-too-large";
           incoming.destroy(projectionError);
           return;
         }
@@ -339,17 +353,6 @@ function proxyController(request, response, operationId) {
         clearTimeout(deadline);
         releaseAdmission();
         try {
-          if (isWork) {
-            const body = Buffer.concat(chunks);
-            workSnapshot = {
-              body,
-              headers: proxyHeaders(incoming.headers),
-              controllerBoot: generation.boot,
-              capturedAt: new Date().toISOString(),
-            };
-            sendWorkSnapshot(response, workSnapshot, { stale: false, operationId });
-            return;
-          }
           const parseStartedAt = Date.now();
           const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           sessionSnapshot = { value, capturedAt: new Date().toISOString() };
@@ -377,11 +380,6 @@ function proxyController(request, response, operationId) {
     if (settled) return;
     settled = true;
     console.error(`[gateway] ${request.method} ${request.url} operation=${operationId}:`, error?.message ?? error);
-    if (projectionError?.code === "work-projection-too-large") {
-      if (workSnapshot) sendWorkSnapshot(response, workSnapshot, { stale: true, operationId, reason: "projection-too-large" });
-      else sendJson(response, 502, { error: "Agent Shell Work projection exceeded the gateway limit.", code: projectionError.code, operationId });
-      return;
-    }
     if (!response.headersSent) unavailable(request, response, operationId);
     else response.destroy(error);
   });
@@ -397,7 +395,37 @@ const server = http.createServer(async (request, response) => {
   const operationId = String(request.headers["x-tangent-operation-id"] ?? randomUUID()).slice(0, 128);
   response.setHeader("x-tangent-operation-id", operationId);
   try {
+    if (request.method === "GET" && url.pathname === "/api/work") {
+      const startedAt = performance.now();
+      reconcileWorkFreshnessWithController();
+      activeWorkReaders += 1;
+      workTelemetry.record("work_reader_count", activeWorkReaders);
+      response.once("close", () => {
+        activeWorkReaders = Math.max(0, activeWorkReaders - 1);
+        workTelemetry.record("work_reader_count", activeWorkReaders);
+      });
+      const snapshot = workStore.current();
+      if (!snapshot) {
+        response.setHeader("retry-after", "1");
+        sendJson(response, 503, { error: "Work is not ready.", code: "work-not-ready", operationId });
+        workTelemetry.record("work_serve_ms", performance.now() - startedAt, { status: 503 });
+        return;
+      }
+      const headers = { ...workResponseHeaders(workStore, { gatewayBoot: GATEWAY_BOOT_ID }), "x-tangent-operation-id": operationId };
+      if (request.headers["if-none-match"] === snapshot.etag) {
+        response.writeHead(304, headers);
+        response.end();
+        workTelemetry.record("work_serve_ms", performance.now() - startedAt, { status: 304 });
+        return;
+      }
+      response.writeHead(200, { ...headers, "content-type": "application/json", "content-length": snapshot.body.length });
+      response.end(snapshot.body);
+      workTelemetry.record("work_serve_ms", performance.now() - startedAt, { status: 200 });
+      if (workStore.metadata().state !== "current") workTelemetry.record("work_stale_serve_total", 1, { reason: workStore.metadata().reason || "degraded" });
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/api/health") {
+      const controllerHealth = reconcileWorkFreshnessWithController();
       sendJson(response, 200, {
         ok: true,
         service: "tangent-agent-shell-gateway",
@@ -405,9 +433,14 @@ const server = http.createServer(async (request, response) => {
         boot: GATEWAY_BOOT_ID,
         instanceId: INSTANCE_ID,
         pid: process.pid,
-        controller: controllerStatus(),
+        controller: controllerHealth,
         sessions: { cached: Boolean(sessionSnapshot), capturedAt: sessionSnapshot?.capturedAt ?? null },
-        work: { cached: Boolean(workSnapshot), capturedAt: workSnapshot?.capturedAt ?? null, bytes: workSnapshot?.body.length ?? 0 },
+        work: { ...workStore.health(), reconciliation: controller?.port ? "controller-running" : "controller-unavailable", metrics: workTelemetry.snapshot() },
+        eventLoopDelayMs: {
+          mean: Number.isFinite(gatewayEventLoopDelay.mean) ? gatewayEventLoopDelay.mean / 1e6 : 0,
+          p95: gatewayEventLoopDelay.percentile(95) / 1e6,
+          max: gatewayEventLoopDelay.max / 1e6,
+        },
         proxy: { active: activeControllerRequests, limit: MAX_CONTROLLER_REQUESTS, reads: activeReadPaths.size },
       });
       return;
@@ -418,7 +451,7 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/config.js") {
       response.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-cache" });
-      response.end(`window.CHAT_SESSION = ${JSON.stringify(CHAT_SESSION)};\nwindow.TANGENT_FEATURES = ${JSON.stringify({ areaMapWorld: AREA_MAP_WORLD_ENABLED })};\n`);
+      response.end(`window.CHAT_SESSION = ${JSON.stringify(CHAT_SESSION)};\nwindow.TANGENT_FEATURES = ${JSON.stringify({ areaMapWorld: AREA_MAP_WORLD_ENABLED })};\nwindow.TANGENT_WORK = ${JSON.stringify({ instanceId: INSTANCE_ID, schema: "agent-shell-work.v3", rollout: "v3" })};\n`);
       return;
     }
     if (url.pathname.startsWith("/api/")) {
@@ -478,6 +511,7 @@ function shutdown(signal, exitCode = 0) {
   shuttingDown = true;
   console.error(`[gateway] shutdown signal=${signal}`);
   clearInterval(controllerMonitor);
+  gatewayEventLoopDelay.disable();
   clearTimeout(restartTimer);
   restartTimer = null;
   if (controller) controller.child.kill("SIGTERM");

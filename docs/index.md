@@ -2,7 +2,7 @@
 
 Start here when changing architecture, package boundaries, or agent workflow.
 
-Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `packages/agent-shell/app/`. A stable gateway owns the UI and terminal edge while a supervised controller owns workflows (ADR-0032). Gateway and controller share one runtime identity. They can attach to or stop only tmux sessions with that identity (ADR-0036). Each exact Area has one logical brain and durable inbox. Every assignment records the organizing brain's Area path. A worker sends one plain note to that path. Tangent stores the handover and receipt before it confirms delivery. The brain accepts the note when it advances the Job. Everything starts through an Area brain, which runs until the user restarts it and reads its Area note chain as its instruction (ADR-0041). Each attempt records its harness conversation so it can be resumed (ADR-0042).
+Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `packages/agent-shell/app/`. A stable gateway owns the UI, terminal edge, and atomic Work snapshot while a supervised controller owns workflows (ADR-0032, ADR-0056). Gateway and controller share one runtime identity. They can attach to or stop only tmux sessions with that identity (ADR-0036). Each exact Area has one logical brain and durable inbox. Every assignment records the organizing brain's Area path. A worker sends one plain note to that path. Tangent stores the handover and receipt before it confirms delivery. The brain accepts the note when it advances the Job. Everything starts through an Area brain, which runs until the user restarts it and reads its Area note chain as its instruction (ADR-0041). Each attempt records its harness conversation so it can be resumed (ADR-0042).
 The root harness registry and explicit per-Area `harnesses.md` contracts jointly resolve brain and worker launches. Area contracts inherit by intersection, retain compatibility aliases, expose health, and are repaired through the shell migration path (ADR-0054).
 
 Human CLI defaults are `setup`, `status`, `service`, `usage`, `rollup`, `search`, `eval`, `doctor`, and `completion`.
@@ -34,6 +34,7 @@ Decisions:
 - decisions/ADR-0025-brain-writes-what-needs-julian.md
 - decisions/ADR-0031-agent-shell-capability-ownership.md
 - decisions/ADR-0032-agent-shell-resilient-runtime.md
+- decisions/ADR-0056-gateway-owned-work-snapshot.md
 - decisions/ADR-0036-agent-shell-process-ownership.md
 - decisions/ADR-0037-brain-attempt-launch-override.md
 - decisions/ADR-0038-agent-shell-keyboard-ownership.md

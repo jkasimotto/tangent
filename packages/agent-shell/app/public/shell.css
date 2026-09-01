@@ -546,6 +546,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-group-row:hover .work-star, .work-group-row.cursor .work-star, .work-star:focus-visible { opacity: 1; }
 .work-star:hover, .work-star:focus-visible { outline: 0; color: #fff; background: #242a31; }
 .work-fold, .work-fold-space { display: inline-grid; flex: none; width: 16px; height: 18px; place-items: center; }
+.work-goal-row > th { padding-left: calc(10px + var(--work-goal-depth, 0) * 18px); }
 .work-fold { padding: 0; border: 0; border-radius: 2px; background: transparent; color: #8b949f; cursor: pointer; font-size: 14px; line-height: 1; }
 .work-group-head .desk-state kbd { color: inherit; opacity: .7; }
 .work-fold:hover, .work-fold:focus-visible { color: #fff; background: #242a31; }

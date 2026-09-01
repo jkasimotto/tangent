@@ -20,6 +20,8 @@ export function createShellState(storage = globalThis.localStorage, href = globa
   const savedDescribeSession = storage.getItem("agent-shell.describe-session") || storedDescribeDraft?.session || "";
   const storedAreaFocus = readAreaFocus(storage);
   const state = {
+    work: null,
+    workTransport: null,
     vault: null,
     programs: { operations: [], processes: [], problems: [], areas: [], liveCount: 0 },
     sessions: [],

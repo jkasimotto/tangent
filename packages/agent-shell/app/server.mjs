@@ -5,7 +5,7 @@ import http from "node:http";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, watch } from "node:fs";
 import { execFile, fork, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -17,7 +17,7 @@ import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createLaunchMemory } from "./launch-memory.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
-import { discoverProcesses, evaluateProcess, goalNamesProcess, normalizeProcessState, prepareProcessStart, processDefinitionRevision, processFileExists, processView, readAreaProcesses, readProcessState, recordProcessStartPhase, recoverableProcessStart, removeProcessState, settleProcessDelivery, sweepProcesses, withProcessLock, withProcessStatus, writeProcessState } from "./process-scheduler.mjs";
+import { discoverProcesses, evaluateProcess, goalNamesProcess, normalizeProcessState, prepareProcessStart, processDefinitionRevision, processFileExists, processView, readAreaProcesses, readProcessState, recordProcessStartPhase, recoverableProcessStart, removeProcessState, settleProcessDelivery, sweepProcesses, withProcessLock, withProcessStatus, writeProcessState as writeProcessStateRecord } from "./process-scheduler.mjs";
 import { formatLoopNote, nextSlotAfter, parseProcessNote, validateProcessSlug } from "./process-note.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, safePresentedMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import documentComments from "./public/document-comments.js";
@@ -28,11 +28,11 @@ import { createPaneObserver } from "./pane-observer.mjs";
 import { classifyWorkingComposer } from "./pane-state.mjs";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 import { createObservationCache } from "./observation-cache.mjs";
-import { acceptCurrentAssignment, appendSteps, applyOperationReceipt, continuationSource, createJobRun, currentStep, endPipeline, goalBindingGoneFromSnapshot, jobMigration, jobRun, JobMutationError, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllJobs, readAllPipelines, readJob, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./job-record.mjs";
+import { acceptCurrentAssignment, appendSteps, applyOperationReceipt, continuationSource, createJobRun, currentStep, endPipeline, goalBindingGoneFromSnapshot, jobMigration, jobRun, JobMutationError, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllJobs, readAllPipelines, readJob, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline as writePipelineRecord } from "./job-record.mjs";
 import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
 import { continuationSection } from "./context-handover.mjs";
 import { messageBanner, noticeMessage, normalizeMessage } from "./agent-messages.mjs";
-import { beginGeneration, beginStagedGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, brainSessionNames, currentGeneration, endBrain, latestHandover, newBrain, promoteStagedGeneration, readAllBrains, readBrain, readBrainResult, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { beginGeneration, beginStagedGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, brainSessionNames, currentGeneration, endBrain, latestHandover, newBrain, promoteStagedGeneration, readAllBrains, readBrain, readBrainResult, validateInstruction, writeBrain as writeBrainRecord } from "./brain-record.mjs";
 import { resolveBrainAttemptLaunch } from "./brain-launch.mjs";
 import { refreshBrainObservation } from "./brain-lifecycle.mjs";
 import { brainAttemptAuthority, inactiveBrainAuthorityState } from "./brain-authority.mjs";
@@ -47,7 +47,7 @@ import { attachTerminalTransport } from "./terminal-transport.mjs";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { createStateEvents } from "./state-events.mjs";
 import { createBrainRoutes } from "./brain-routes.mjs";
-import { answerBrainRequest, beginRequestEffect, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, finishRequestEffect, openBrainRequests, readBrainRequests, withdrawBrainRequest, writeBrainRequests } from "./brain-requests.mjs";
+import { answerBrainRequest, beginRequestEffect, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, finishRequestEffect, openBrainRequests, readBrainRequests, withdrawBrainRequest, writeBrainRequests as writeBrainRequestsRecord } from "./brain-requests.mjs";
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createJobRoutes } from "./job-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
@@ -121,8 +121,11 @@ import { areaMapWorldEnabled } from "./public/area-map-rollout.js";
 import { workerWallNotice } from "./worker-wall-notice.mjs";
 import { dismissAreaDocument, markAreaDocumentOpened, presentAreaDocuments, projectAreaPresentations, pruneMissingAreaPresentations, readAreaPresentations, removeAreaPresentations, withdrawAreaDocument } from "./area-presentations.mjs";
 import { cardFieldsHash, cardSummary, validateCard } from "./goal-cards.mjs";
-import { projectWork } from "./work-projection.mjs";
-import { runtimeInvariantProblems } from "./runtime-invariants.mjs";
+import { createWorkSourceAdapters } from "./work-source-adapters.mjs";
+import { createOwnedAgentObserver } from "./owned-agent-observer.mjs";
+import { createWorkCandidateChannel, createWorkPublisher } from "./work-publisher.mjs";
+import { createWorkTelemetry } from "./work-telemetry.mjs";
+import { enforceHarnessLogRetention, prepareHarnessDebugLog } from "./harness-debug-logs.mjs";
 
 const rawExecFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = Number(process.env.TANGENT_TMUX_COMMAND_TIMEOUT_MS ?? 10_000);
@@ -135,6 +138,35 @@ function execFileAsync(file, args, options = {}) {
     : options);
 }
 const here = path.dirname(fileURLToPath(import.meta.url));
+let workPublisher = null;
+
+/** Writes one Job and invalidates its authoritative Work source. */
+async function writePipeline(...args) {
+  const record = await writePipelineRecord(...args);
+  workPublisher?.invalidate("jobs", record.goal ?? record.slug ?? "*");
+  return record;
+}
+
+/** Writes one Brain and invalidates its authoritative Work source. */
+async function writeBrain(...args) {
+  const record = await writeBrainRecord(...args);
+  workPublisher?.invalidate("brains", record.area ?? "*");
+  return record;
+}
+
+/** Writes one Request record and invalidates its Brain summary. */
+async function writeBrainRequests(...args) {
+  const record = await writeBrainRequestsRecord(...args);
+  workPublisher?.invalidate("brains", record.area ?? "*");
+  return record;
+}
+
+/** Writes one Process state and invalidates its authoritative Work source. */
+async function writeProcessState(root, area, slug, state) {
+  const record = await writeProcessStateRecord(root, area, slug, state);
+  workPublisher?.invalidate("processes", `${area}/${slug}`);
+  return record;
+}
 
 const PORT = Number(process.env.PORT ?? 4321);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -187,6 +219,7 @@ const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const AREA_MAP_WORLD_ENABLED = areaMapWorldEnabled(process.env.TANGENT_AREA_MAP_WORLD);
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
+const HARNESS_LOG_ROOT = process.env.TANGENT_HARNESS_LOG_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "harness-logs", "pi");
 const INSTANCE_ID = agentShellInstanceId({
   explicit: process.env.TANGENT_SHELL_INSTANCE_ID,
   host: HOST,
@@ -545,6 +578,66 @@ const sessionObservation = createObservationCache({
     observation: session.observation ? { ...session.observation, at: loadedAt || session.observation.at, fresh: false } : null,
   })),
 });
+
+const workTelemetry = createWorkTelemetry();
+const ownedAgentObserver = createOwnedAgentObserver({
+  /** Reads a complete fresh owned-session observation. */
+  load: () => listSessions({ fresh: true }),
+  intervalMs: Number(process.env.TANGENT_WORK_AGENT_INTERVAL_MS ?? 1_000),
+});
+const workSources = createWorkSourceAdapters({
+  treesRoot: TREES_ROOT,
+  jobsRoot: PIPELINES_ROOT,
+  brainsRoot: BRAINS_ROOT,
+  processesRoot: PROCESSES_ROOT,
+  presentationsRoot: PRESENTATIONS_ROOT,
+  /** Returns normalized rows from the shared Agent observer. */
+  loadAgents: async () => {
+    const observation = await ownedAgentObserver.observe();
+    return { rows: observation.rows, problems: observation.problems };
+  },
+  metric: workTelemetry.record,
+});
+const workChannel = IS_CONTROLLER ? createWorkCandidateChannel() : null;
+workPublisher = createWorkPublisher({
+  adapters: workSources,
+  controllerBoot: BOOT_ID,
+  /** Sends one candidate through the exact IPC acknowledgement channel. */
+  sendCandidate: (message) => workChannel?.publish(message) ?? Promise.resolve({ ok: false, code: "gateway-channel-unavailable" }),
+  /** Marks the gateway buffer stale when a source becomes dirty. */
+  sendDirty: (message) => process.send?.(message),
+  /** Marks the gateway buffer current after acknowledged reconciliation. */
+  sendCurrent: (message) => process.send?.(message),
+  metric: workTelemetry.record,
+});
+ownedAgentObserver.subscribe(() => workPublisher?.invalidate("agents", "observation"));
+
+/** Watches exact Work source roots. Runtime debris cannot enter these adapters. */
+function startWorkSourceWatchers() {
+  const watchers = [];
+  /** Adds one exact-root watcher with a domain classifier. */
+  const add = (root, classify) => {
+    if (!existsSync(root)) return;
+    try {
+      const watcher = watch(root, { recursive: true }, (_event, file) => {
+        const relative = String(file ?? "").split(path.sep).join("/");
+        const domain = classify(relative);
+        if (domain) workPublisher?.invalidate(domain, relative || "*");
+      });
+      watcher.on("error", (error) => console.error(`Work watcher ${root}:`, error?.message ?? error));
+      watchers.push(watcher);
+    } catch (error) { console.error(`Work watcher ${root}:`, error?.message ?? error); }
+  };
+  add(TREES_ROOT, (file) => path.basename(file).startsWith("process-") ? "processes" : /(?:^|\/)(?:goal|outcome)-[^/]+\.md$/.test(file) ? "goals" : file.endsWith(".md") ? "areas" : null);
+  add(PIPELINES_ROOT, (file) => file.endsWith(".json") ? "jobs" : null);
+  add(BRAINS_ROOT, (file) => file.endsWith(".json") ? "brains" : null);
+  add(PROCESSES_ROOT, (file) => file.endsWith(".json") ? "processes" : null);
+  add(PRESENTATIONS_ROOT, (file) => file.endsWith(".json") ? "presentations" : null);
+  return () => watchers.forEach((watcher) => watcher.close());
+}
+
+/** Stops every exact Work source watcher. */
+let stopWorkSourceWatchers = () => {};
 
 /** Creates one tmux session and records this instance before any caller can use it. */
 async function createOwnedTmuxSession(name, args) {
@@ -2500,6 +2593,7 @@ async function primeGoalSession(session, { launch = false, command = "", extraFi
   if (!command) return false;
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
+  await prepareHarnessDebugLogForSession(session, command);
   await armSession(session, { submit: launch, prompt, extraFiles, onTyped });
   await typeInto(session, withDefaultModel(command), false);
   if (launch) {
@@ -2507,6 +2601,13 @@ async function primeGoalSession(session, { launch = false, command = "", extraFi
     await sleep(250);
   }
   return true;
+}
+
+/** Prepares the external Pi log target for one exact tmux working directory. */
+async function prepareHarnessDebugLogForSession(session, command) {
+  if (!/(?:^|\s)pi-code(?:\s|$)/.test(String(command ?? ""))) return;
+  const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", `=${session}:`, "#{pane_current_path}"]);
+  await prepareHarnessDebugLog({ command, cwd: String(stdout).trim(), session, root: HARNESS_LOG_ROOT });
 }
 
 /**
@@ -4523,6 +4624,7 @@ async function runAttemptRecovery(record, assignment, session, action) {
         throw new Error(`harness ${attempt.resolvedLaunch?.ref?.harness ?? "(unknown)"} has no resumable conversation`);
       }
       const command = resumeCommand(harness, { command: attempt.resolvedLaunch?.command ?? "", id });
+      await prepareHarnessDebugLogForSession(session.name, command);
       await typeInto(session.name, command, true);
       await messages.queueDurable(session.name, { from: "tangent", area: record.area, text: "Your harness exited and Tangent reopened your conversation. Continue the assignment.", queuedAt: new Date().toISOString() });
     } else if (action.kind === "re-arm") {
@@ -5076,7 +5178,9 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     await armSession(name, { submit: true, prompt: message, onTyped: firstMessageTyped });
     armed = true;
     await writeBrain(BRAINS_ROOT, record);
-    await typeInto(name, launchWithConversation(harness, withDefaultModel(resolvedLaunch.command), conversation), false);
+    const brainCommand = launchWithConversation(harness, withDefaultModel(resolvedLaunch.command), conversation);
+    await prepareHarnessDebugLogForSession(name, brainCommand);
+    await typeInto(name, brainCommand, false);
     await execFileAsync("tmux", ["send-keys", "-t", "=" + name + ":", "Enter"]);
     await sleep(250);
     await launchCatalog.saveMemory(record.area, "brain", resolvedLaunch.ref);
@@ -5203,7 +5307,9 @@ async function succeedBrain(session, operationId) {
       /** Settles the exact receipt after the complete prompt arrives. */
       onTyped: (arrived) => settleBrainSuccessionReceipt(receiptRequest, arrived),
     });
-    await typeInto(entry.session, launchWithConversation(harness, withDefaultModel(resolvedLaunch.command), conversation), false);
+    const successionCommand = launchWithConversation(harness, withDefaultModel(resolvedLaunch.command), conversation);
+    await prepareHarnessDebugLogForSession(entry.session, successionCommand);
+    await typeInto(entry.session, successionCommand, false);
     await execFileAsync("tmux", ["send-keys", "-t", `=${entry.session}:`, "Enter"]);
     return { status: 200, state: "starting", brain: (await readBrain(BRAINS_ROOT, area)), succession: operation };
   } catch (error) {
@@ -5351,7 +5457,9 @@ async function spawnRepairSession(record, repair, firstMessage, notices) {
     };
     await armSession(repair.session, { submit: true, prompt: firstMessage, onTyped });
     armed = true;
-    await typeInto(repair.session, launchWithConversation(harness, withDefaultModel(repair.resolvedLaunch.command), conversation), false);
+    const repairCommand = launchWithConversation(harness, withDefaultModel(repair.resolvedLaunch.command), conversation);
+    await prepareHarnessDebugLogForSession(repair.session, repairCommand);
+    await typeInto(repair.session, repairCommand, false);
     await execFileAsync("tmux", ["send-keys", "-t", `=${repair.session}:`, "Enter"]);
     await messages.log({ event: "repair", action: "dispatched", area: record.area, repair: repair.id, session: repair.session, target });
     stateEvents.changed("repair-dispatched");
@@ -5971,7 +6079,9 @@ async function reconcileBrain(area, { allByName, live, index }) {
       const harness = await registryHarness(entry.resolvedLaunch?.ref?.harness);
       const id = entry.providerSession?.id;
       if (!harness?.resume || !id) throw new Error(`harness ${entry.resolvedLaunch?.ref?.harness ?? "(unknown)"} has no resumable brain conversation`);
-      await typeInto(record.session, resumeCommand(harness, { command: entry.resolvedLaunch.command, id }), true);
+      const recoveryCommand = resumeCommand(harness, { command: entry.resolvedLaunch.command, id });
+      await prepareHarnessDebugLogForSession(record.session, recoveryCommand);
+      await typeInto(record.session, recoveryCommand, true);
     } catch (error) {
       outcome = "failed";
       record.health = { status: attempts + 1 >= BRAIN_RECOVERY_LIMIT ? "failed" : "recovering", problem: String(error.message ?? error), updatedAt: new Date().toISOString() };
@@ -6066,6 +6176,27 @@ async function forJulianItems(record, index) {
     }
     return { ...item, file: hit.file, title: hit.title, goalStatus: hit.status ?? null };
   });
+}
+
+/** Resolves one Brain's visible rows without building the global vault index. */
+async function forJulianItemsExact(record) {
+  const rows = parseForJulian(await brainPlanText(record));
+  const goals = await readAreaGoals(record.area);
+  return Promise.all(rows.map(async (row) => {
+    const item = { ...row, file: null, title: null, commentCount: 0, missing: false, goalStatus: null };
+    if (row.kind === "decide" && !row.target) return { ...item, title: row.text };
+    if (row.kind !== "decide") {
+      const goal = goals.find((candidate) => candidate.slug === row.target || path.basename(candidate.file, ".md") === `goal-${row.target}`);
+      return goal ? { ...item, file: goal.file, title: goal.title, goalStatus: goal.status ?? null } : { ...item, title: row.target, missing: true };
+    }
+    const requested = String(row.target ?? "").replace(/\.md$/i, "");
+    const relative = `${requested.includes("/") ? requested : `${record.area}/${requested}`}.md`;
+    const safe = safeMarkdownPath(TREES_ROOT, relative);
+    const text = safe ? await readFile(safe.absolute, "utf8").catch(() => null) : null;
+    return text == null
+      ? { ...item, file: relative, title: row.target, missing: true }
+      : { ...item, file: safe.relative, title: markdownTitle(text, path.basename(safe.relative, ".md")), commentCount: documentComments.parseComments(text).length };
+  }));
 }
 
 /**
@@ -6343,22 +6474,43 @@ const brainRoutes = createBrainRoutes({
   },
   /** Finds one enriched brain record by Area or session. */
   async show(area, session) {
-    // The durable brain is still readable when passive tmux observation is
-    // temporarily unhealthy. In particular, do not let the inner await
-    // reject before the old `brainsView(...).catch(...)` could run: opening a
-    // brain would then return 500 even though its record and prompt were
-    // intact. Live state is optional enrichment on this read path.
-    const sessions = await listSessions().catch((error) => {
-      console.error("brain show observation:", error.message ?? error);
-      return [];
-    });
-    const brains = await brainsView(sessions);
-    const projected = brains.find((item) => (area && item.area === area) || (session && (item.session === session || item.repair?.current?.session === session))) ?? null;
-    if (projected || !area) return projected;
-    const read = await readBrainResult(BRAINS_ROOT, area);
+    const observed = ownedAgentObserver.snapshot();
+    const raw = observed.raw ?? [];
+    const requestedArea = area || raw.find((item) => item.name === session && item.kind === "brain")?.area || "";
+    if (!requestedArea) return null;
+    const read = await readBrainResult(BRAINS_ROOT, requestedArea);
+    if (read.record) {
+      const record = read.record;
+      const candidate = record.session ? raw.find((item) => item.name === record.session) : null;
+      const authority = brainAttemptAuthority(record, candidate, { instanceId: INSTANCE_ID, now: observed.observedAt ? Date.parse(observed.observedAt) : Date.now() });
+      const live = authority.live ? candidate : null;
+      const storedRepair = await readRepair(REPAIRS_ROOT, record.area);
+      const repairSession = storedRepair?.current?.session ? raw.find((item) => item.name === storedRepair.current.session) : null;
+      const repair = storedRepair?.current ? { ...storedRepair, current: { ...storedRepair.current, observation: repairSession?.observation ?? null } } : storedRepair;
+      const unread = unreadNotices(await readInbox(BRAINS_ROOT, record.area));
+      return {
+        ...record,
+        status: authority.live ? record.status : "inactive",
+        desiredStatus: record.status,
+        resolvedLaunch: currentGeneration(record)?.resolvedLaunch ?? null,
+        live: Boolean(live),
+        state: live?.state ?? null,
+        stateDetail: live?.stateDetail ?? null,
+        stateQuestion: live?.stateQuestion ?? "",
+        idleSince: live?.idleSince ?? null,
+        waitingSince: live?.waitingSince ?? null,
+        observation: live?.observation ?? null,
+        authority,
+        agentState: authority.live ? deriveBrainState({ brain: { ...record, live: true }, observation: live?.observation ?? live, unread, repair }) : inactiveBrainAuthorityState(authority, unread),
+        repair,
+        latestHandover: latestHandover(record),
+        forJulian: await forJulianItemsExact(record),
+        requests: openBrainRequests(await readBrainRequests(BRAINS_ROOT, record.area)),
+      };
+    }
     if (read.state !== "malformed") return null;
     return {
-      area, status: "inactive", session: null, live: false, malformed: true,
+      area: requestedArea, status: "inactive", session: null, live: false, malformed: true,
       recordEvidence: { source: "malformed brain record", file: read.file, error: read.error },
       agentState: { word: "Brain stopped", owner: "none", evidence: { source: "malformed brain record", text: `${read.file}: ${read.error}` } },
       forJulian: [], requests: [], repair: null,
@@ -6594,8 +6746,14 @@ const agentRouteOperations = {
   },
   /** Joins one exact live Agent with its durable Attempt or Brain generation. */
   async show(session) {
-    const [live, context, ownership] = await Promise.all([
-      agentRouteOperations.list().then((agents) => agents.find((agent) => agent.name === session) ?? null),
+    const observed = ownedAgentObserver.snapshot();
+    const raw = (observed.raw ?? []).find((agent) => agent.name === session) ?? null;
+    const live = raw ? {
+      name: raw.name, area: raw.area, kind: raw.kind, goal: raw.goalTitle ?? null,
+      state: raw.state, stateDetail: raw.stateDetail ?? null, stateQuestion: raw.stateQuestion ?? "",
+      queued: messages.queuedCount(raw.name), observation: raw.observation ?? null,
+    } : null;
+    const [context, ownership] = await Promise.all([
       agentRouteOperations.context(session),
       sessionOwnership.inspect(session),
     ]);
@@ -6841,6 +6999,7 @@ const areaRoutesOperations = {
       skills: await routeSkills(TREES_ROOT, area),
       projectSkills: await projectSkills(resolved.repository?.value ?? null),
       goals: (await readAreaGoals(area)).map(goalSummary),
+      documents: await readAreaDocuments(area),
       processes: await processViews({ area, exact: true }),
       map: canvas.ok ? {
         exists: canvas.exists,
@@ -6856,6 +7015,35 @@ const areaRoutesOperations = {
     const areas = [ROOT_AREA, ...flattenAreaPaths(await readTree(TREES_ROOT))];
     if (!area || !areas.includes(area)) return null;
     return querySubtreeMilestones({ root: BRAINS_ROOT, area, areas, ...options });
+  },
+  /** Searches bounded Area, Goal, Document, and Brain summaries on demand. */
+  async search(query, requestedLimit) {
+    const limit = Math.min(100, Math.max(1, Number(requestedLimit) || 100));
+    const needle = String(query ?? "").trim().toLocaleLowerCase();
+    const tree = await readTree(TREES_ROOT);
+    const areaIds = flattenAreaPaths(tree);
+    const rows = [];
+    /** Returns whether one bounded navigation row matches the query. */
+    const matches = (...values) => !needle || values.some((value) => String(value ?? "").toLocaleLowerCase().includes(needle));
+    for (const area of areaIds) {
+      if (rows.length >= limit) break;
+      if (matches(area, area.split("/").at(-1))) rows.push({ kind: "area", id: area, area, name: area.split("/").at(-1), file: `${area}/${area.split("/").at(-1)}.md` });
+      const [goals, documents] = await Promise.all([readAreaGoals(area), readAreaDocuments(area)]);
+      for (const goal of goals) {
+        if (rows.length >= limit) break;
+        if (matches(goal.title, goal.file, goal.slug)) rows.push({ kind: "goal", id: goal.file, area, name: goal.title, file: goal.file, status: goal.status });
+      }
+      for (const document of documents) {
+        if (rows.length >= limit) break;
+        if (matches(document.title, document.file)) rows.push({ kind: "document", id: document.file, area, name: document.title, file: document.file, docKind: document.docKind ?? "page" });
+      }
+    }
+    const brains = workSources.adapters.brains.rows();
+    for (const brain of brains) {
+      if (rows.length >= limit) break;
+      if (matches(brain.areaId)) rows.push({ kind: "brain", id: brain.areaId, area: brain.areaId, name: `${brain.areaId.split("/").at(-1)} brain`, live: Boolean(brain.agentId), session: brain.agentId });
+    }
+    return { schema: "agent-shell-navigation.v1", query: String(query ?? ""), limit, rows };
   },
   /** Writes one detached audit archive. Normal product reads never use this file. */
   async legacyAudit(body) {
@@ -7119,8 +7307,8 @@ async function recoverProcessStart({ note, event: requestedEvent, attempt: reque
 
 const processRoutes = createProcessRoutes({
   /** Lists processes, in one Area and below it when asked. */
-  async list(area) {
-    return { processes: await processViews({ area }) };
+  async list(area, exact) {
+    return { processes: await processViews({ area, exact }) };
   },
   /** Creates and commits one loop process note. */
   async create(body) {
@@ -7310,9 +7498,11 @@ const processRoutes = createProcessRoutes({
 
 const programRoutes = createProgramRoutes({
   /** Returns local programs with live status, and every process note with its run state. */
-  async list() {
+  async list(area = "") {
     const snapshot = await programsSnapshot({ treesRoot: TREES_ROOT, sessions: await listProgramSessions() });
-    return { ...await projectMaterialOperationEvents(snapshot), processes: await processViews() };
+    const operations = area ? snapshot.operations.filter((item) => item.area === area) : snapshot.operations;
+    const problems = area ? snapshot.problems.filter((item) => item.area === area) : snapshot.problems;
+    return { ...snapshot, operations, programs: operations, problems, processes: await processViews({ area, exact: Boolean(area) }) };
   },
   /** Creates one local process or command. */
   async create(body) {
@@ -7605,7 +7795,38 @@ void goalStopReceipts.pending().then((receipts) => Promise.allSettled(receipts.m
 const shellControlRoutes = createShellControlRoutes(shellControlOperations);
 const shellStateRoutes = createShellStateRoutes({
   chatSession: CHAT_SESSION,
+  instanceId: INSTANCE_ID,
   features: { areaMapWorld: AREA_MAP_WORLD_ENABLED },
+  /** Returns bounded shell chrome state without reading Agents or Work sources. */
+  async status() {
+    const [revisions, rebuild, goalCleanups] = await Promise.all([
+      commitChanges.status().catch(() => ({ deployedCommit: commitChanges.deployedCommit, currentCommit: commitChanges.deployedCommit, commits: [] })),
+      rebuildOperations.current().catch(() => null),
+      readAllGoalCleanups(GOAL_CLEANUPS_ROOT).catch(() => []),
+    ]);
+    return {
+      sourceChanged: revisions.commits.length > 0,
+      deployedCommit: revisions.deployedCommit,
+      currentCommit: revisions.currentCommit,
+      pendingCommits: revisions.commits.slice(0, 100),
+      rebuild,
+      goalCleanups: goalCleanups.slice(0, 100),
+      caffeinate: caffeinateProc !== null,
+      voice: Boolean(GROQ_KEY),
+    };
+  },
+  /** Returns bounded current examples only when the prompt screen opens. */
+  async promptInspect() {
+    const snapshot = workSources.snapshot();
+    return {
+      schema: "agent-shell-prompt-inspect.v1",
+      goals: snapshot.goals.slice(0, 200).map((goal) => ({ file: goal.id, area: goal.areaId, title: goal.title, depth: goal.parentGoalId ? 1 : 0 })),
+      brains: snapshot.brains.slice(0, 100).map((brain) => ({ area: brain.areaId, status: brain.status, live: brain.agentId != null, session: brain.agentId, generation: brain.generation, requests: [] })),
+      agents: snapshot.agents.slice(0, 200).map((agent) => ({ name: agent.id, kind: agent.role, area: agent.areaId, state: agent.activity, workTitle: agent.workTitle })),
+      jobs: snapshot.goals.filter((goal) => goal.execution).slice(0, 200).map((goal) => ({ goal: goal.id, status: goal.execution.state, run: goal.execution.run, revision: goal.execution.revision })),
+      processes: snapshot.processes.slice(0, 200).map((process) => ({ id: process.id, area: process.areaId, name: process.slug, label: process.title, state: process.state })),
+    };
+  },
   /** Returns one coherent live shell snapshot. */
   async snapshot() {
     const sessions = await listSessions();
@@ -7636,45 +7857,6 @@ const shellStateRoutes = createShellStateRoutes({
       attemptReplacements,
       brains,
     };
-  },
-  /** Returns the compact browser read model with a semantic content hash. */
-  async work() {
-    const sessions = await listSessions();
-    const [vault, session, programs] = await Promise.all([
-      (async () => {
-        const [indexed, brains] = await Promise.all([vaultIndex(), readAllBrains(BRAINS_ROOT)]);
-        const projectedVault = withoutBrainGoalBindings(indexed, brainSessionNames(brains));
-        return { ...projectedVault, projection: { ...await vaultProjection.status(), domains: { ...mutationDomainRevisions } }, desk: projectDesk(projectedVault, sessions) };
-      })(),
-      (async () => {
-        const [pipelines, brains, revisions, rebuild, attemptReplacements] = await Promise.all([
-          pipelinesView(sessions).catch(() => []),
-          brainsView(sessions).catch(() => []),
-          commitChanges.status().catch(() => ({ deployedCommit: commitChanges.deployedCommit, currentCommit: commitChanges.deployedCommit, commits: [] })),
-          rebuildOperations.current().catch(() => null),
-          readAllAttemptReplacements(ATTEMPT_REPLACEMENTS_ROOT).then(unsettledAttemptReplacements).catch(() => []),
-        ]);
-        return {
-          agent: agentCmd, boot: BOOT_ID, sourceChanged: revisions.commits.length > 0,
-          deployedCommit: revisions.deployedCommit, currentCommit: revisions.currentCommit,
-          pendingCommits: revisions.commits, rebuild, goalCleanups: await readAllGoalCleanups(GOAL_CLEANUPS_ROOT),
-          caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions,
-          runtime: { instanceId: INSTANCE_ID, ownershipKey: SESSION_OWNER_OPTION, sessions: sessionObservation.status() },
-          pipelines, attemptReplacements, brains,
-        };
-      })(),
-      (async () => {
-        const snapshot = await programsSnapshot({ treesRoot: TREES_ROOT, sessions: await listProgramSessions() });
-        return { ...await projectMaterialOperationEvents(snapshot), processes: await processViews() };
-      })(),
-    ]);
-    const [jobFiles, brainRecords, processRecords] = await Promise.all([
-      readAllJobs(PIPELINES_ROOT),
-      readAllBrains(BRAINS_ROOT),
-      discoverProcesses(TREES_ROOT).then((notes) => Promise.all(notes.map(async (note) => ({ file: note.file, area: note.area, slug: note.slug, state: normalizeProcessState(await readProcessState(PROCESSES_ROOT, note.area, note.slug), note) })))),
-    ]);
-    session.problems = runtimeInvariantProblems({ jobs: jobFiles, goals: vault.areas.flatMap((area) => area.goals ?? []), brains: brainRecords, agents: sessions, processes: processRecords });
-    return projectWork({ vault, session, programs });
   },
 });
 const voiceRoutes = createVoiceRoutes({
@@ -8033,6 +8215,7 @@ async function resumeGoalAttempt(goalFile, { attemptId = "", conversationId = ""
   await execFileAsync("tmux", ["set-option", "-t", sessionName, "@tangent_launch_command", command]);
   // Let the login shell finish drawing its prompt, then type and never submit.
   await sleep(700);
+  await prepareHarnessDebugLogForSession(sessionName, command);
   await typeInto(sessionName, command, false);
   return { status: 200, state: "resumed", session: sessionName, command };
 }
@@ -8491,7 +8674,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader("x-tangent-state-event", "1");
   try {
     if (url.pathname === "/api/health" && req.method === "GET") {
-      sendJson(res, 200, { ok: true, service: "tangent-agent-shell-controller", role: IS_CONTROLLER ? "controller" : "standalone", boot: BOOT_ID, instanceId: INSTANCE_ID, pid: process.pid });
+      sendJson(res, 200, { ok: true, service: "tangent-agent-shell-controller", role: IS_CONTROLLER ? "controller" : "standalone", boot: BOOT_ID, instanceId: INSTANCE_ID, pid: process.pid, work: { ...workPublisher.status(), metrics: workTelemetry.snapshot() } });
       return;
     }
     if (url.pathname === "/api/events" && req.method === "GET") {
@@ -8514,6 +8697,15 @@ const server = http.createServer(async (req, res) => {
           }
           const domains = url.pathname.includes("dismiss-presentation") ? ["presentation"] : url.pathname.includes("stop") ? ["session", "queue"] : url.pathname === "/api/goals/edit" ? ["goal", "queue", "presentation", "session"] : ["state"];
           for (const domain of domains) if (domain in mutationDomainRevisions) mutationDomainRevisions[domain] += 1;
+          const workDomains = url.pathname.includes("presentation")
+            ? ["presentations"]
+            : url.pathname.startsWith("/api/brains") ? ["brains", "agents"]
+              : url.pathname.startsWith("/api/process") ? ["processes", "goals", "jobs"]
+                : url.pathname.startsWith("/api/pipelines") || url.pathname.startsWith("/api/jobs") || url.pathname.startsWith("/api/launch") ? ["jobs", "agents", "goals"]
+                  : url.pathname.startsWith("/api/goals") ? ["goals", "jobs", "presentations"]
+                    : url.pathname.startsWith("/api/areas") || url.pathname.startsWith("/api/document") ? ["areas", "goals", "processes", "presentations"]
+                      : [];
+          for (const domain of workDomains) workPublisher.invalidate(domain, url.pathname, { operationId });
           stateEvents.changed(JSON.stringify({ operationId, domains, path: url.pathname }));
         }
       });
@@ -8596,6 +8788,12 @@ server.listen(PORT, HOST, () => {
     process.send({ type: "agent-shell-ready", port: listeningPort, boot: BOOT_ID, instanceId: INSTANCE_ID, pid: process.pid });
     const heartbeat = setInterval(() => process.send?.({ type: "agent-shell-heartbeat", boot: BOOT_ID, at: Date.now() }), 1_000);
     heartbeat.unref();
+    ownedAgentObserver.start();
+    void enforceHarnessLogRetention(HARNESS_LOG_ROOT).catch((error) => console.error("harness log retention:", error?.message ?? error));
+    const harnessLogRetention = setInterval(() => void enforceHarnessLogRetention(HARNESS_LOG_ROOT).catch((error) => console.error("harness log retention:", error?.message ?? error)), 60_000);
+    harnessLogRetention.unref();
+    stopWorkSourceWatchers = startWorkSourceWatchers();
+    void workPublisher.start().catch((error) => console.error("Work publisher:", error?.stack ?? error));
   }
   runtimeScheduler.wake();
   if (!IS_CONTROLLER && !process.env.AGENT_SHELL_NO_OPEN) openStandaloneWindow();
@@ -8613,7 +8811,13 @@ server.listen(PORT, HOST, () => {
   resumeAttemptReplacements().catch((err) => console.error("replacement resume:", err.message ?? err));
 });
 
-if (IS_CONTROLLER) process.once("disconnect", () => process.exit(0));
+if (IS_CONTROLLER) process.once("disconnect", () => {
+  workPublisher.stop();
+  workChannel?.close();
+  ownedAgentObserver.stop();
+  stopWorkSourceWatchers();
+  process.exit(0);
+});
 
 /**
  * Opens (or focuses) the native "Agent Shell" app (a WKWebView wrapper built

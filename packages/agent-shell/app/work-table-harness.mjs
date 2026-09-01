@@ -12,10 +12,17 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const bundle = await browserBundle();
 
 /** Creates the small JSON response shape the browser API helper reads. */
-function jsonResponse(payload) {
+function jsonResponse(payload, { status = 200, headers = {} } = {}) {
+  const textValue = JSON.stringify(payload);
   /** Returns the configured response payload. */
   async function json() { return payload; }
-  return { ok: true, status: 200, json };
+  /** Returns the serialized response payload. */
+  async function text() { return textValue; }
+  const normalized = new Map(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), String(value)]));
+  return { ok: status >= 200 && status < 300, status, json, text, headers: {
+    /** Returns one normalized response header. */
+    get: (name) => normalized.get(String(name).toLowerCase()) ?? null,
+  } };
 }
 
 /** Lets promise callbacks scheduled by the evaluated browser script finish. */
@@ -33,6 +40,7 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
   const { window } = dom;
   window.setInterval = () => 0;
   window.structuredClone = globalThis.structuredClone;
+  window.TextEncoder = globalThis.TextEncoder;
   window.HTMLCanvasElement.prototype.getContext = () => null;
   window.__TANGENT_AREA_EDITOR_LOADER__ = async () => ({
     /** Mounts a small editor boundary; Excalidraw itself has separate browser-path coverage. */
@@ -70,7 +78,8 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
     }
     gets.push(requestUrl.href);
     if (pathname === "/api/work" && workProjection) {
-      return jsonResponse(typeof workProjection === "function" ? workProjection(requestUrl) : workProjection);
+      const snapshot = typeof workProjection === "function" ? workProjection(requestUrl) : workProjection;
+      return jsonResponse(snapshot, { headers: { etag: `"${snapshot.epoch}:${snapshot.revision}"`, "content-length": Buffer.byteLength(JSON.stringify(snapshot)), "x-tangent-work-state": "current", "x-tangent-work-epoch": snapshot.epoch, "x-tangent-work-revision": snapshot.revision, "x-tangent-work-published-at": snapshot.publishedAt } });
     }
     if (pathname === "/api/sessions") {
       return jsonResponse({ boot: "boot-1", caffeinate: false, pipelines: fixture.pipelines, sessions: fixture.sessions, brains: fixture.brains });

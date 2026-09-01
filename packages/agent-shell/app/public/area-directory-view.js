@@ -11,7 +11,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
   const {
     selectGoal, allGoals, goalTrees, goalTreeState, goalTreeIsActive, goalByFile, goalNeedsYou, goalWorkFinished,
     sessionForGoal, brainForAreaCard, brainStateLabel, brainKind, humanName, areaLabel, areaPath, agentName, ageText,
-    deskBrainButton, workCard, goalTreeCard,
+    deskBrainButton,
   } = work;
   const { programRow, programKind, programIsLive } = programs;
   let inlineAreaBoard = null;

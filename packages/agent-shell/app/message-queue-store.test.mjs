@@ -55,3 +55,22 @@ test("a valid stored queue is normalized when opened", async () => {
     id: "m1", target: "worker", from: "unknown sender", area: null, text: "hello", banner: true, queuedAt: null,
   }]);
 });
+
+test("delivery checkpoints preserve the accepted immutable target", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-store-target-"));
+  /** Returns one stable fixture delivery ID. */
+  const messageId = () => "m-target";
+  const store = await openMessageQueueStore({ file: path.join(root, "queue.json"), id: messageId });
+  await store.append("worker", {
+    from: "brain",
+    area: "otto/tangent",
+    sourceRole: "brain",
+    text: "facts",
+    targetIdentity: { name: "worker", target: "$9", instanceId: "shell-1", assignment: "a1", attempt: "try-1", launchRef: "pi-code" },
+  });
+  await store.update("m-target", { deliveryState: "submitting" });
+  const [entry] = store.entries();
+  assert.equal(entry.deliveryState, "submitting");
+  assert.equal(entry.sourceRole, "brain");
+  assert.deepEqual(entry.targetIdentity, { name: "worker", target: "$9", instanceId: "shell-1", assignment: "a1", attempt: "try-1", launchRef: "pi-code" });
+});

@@ -1,4 +1,4 @@
-// Prompt arrival: the pure decision behind typePromptWhenReady in server.mjs.
+// Prompt staging and submission receipts for typePromptWhenReady in server.mjs.
 // The server types a prompt into a harness in two steps (a short probe, then
 // the remainder) and reads the pane back; this module decides whether what the
 // pane shows proves the whole prompt reached the composer. Kept apart from
@@ -35,6 +35,9 @@ const PASTED_MARKERS = [
   /^\[PastedContent\d+chars\]/, // codex
 ];
 
+const PROMPT_LINES = [/^\s*❯(?:\s|$)/, /^\s*›(?:\s|$)/, /^\s*>(?:\s|$)/];
+const FRAME_LINE = /^\s*─{10,}\s*$/;
+
 /** Splits a prompt into the probe typed first and the remainder typed after it. */
 export function splitPrompt(prompt) {
   return { probe: prompt.slice(0, PROBE_CHARS), rest: prompt.slice(PROBE_CHARS) };
@@ -53,6 +56,62 @@ export function promptArrived(paneText, prompt) {
   const tail = squash(prompt.slice(-TAIL_CHARS));
   if (tail && pane.includes(tail)) return true;
   return pastedAfterProbe(pane, squash(splitPrompt(prompt).probe));
+}
+
+/**
+ * Returns only the active editor around the cursor. Old matching output above
+ * the editor must never prove that a new attempt was staged. Prompt editors
+ * start at their nearest prompt line. Pi's editor is the framed row that owns
+ * the cursor. A wrapped editor with its prompt scrolled away is bounded to the
+ * visible rows ending at the cursor.
+ */
+export function activeComposer({ text, cursorY = 0 }) {
+  const lines = String(text ?? "").split("\n");
+  const end = Math.max(0, Math.min(lines.length - 1, Number(cursorY) || 0));
+  if (end > 0 && end + 1 < lines.length && FRAME_LINE.test(lines[end - 1]) && FRAME_LINE.test(lines[end + 1])) {
+    return { text: lines[end], start: end, end };
+  }
+  let start = end;
+  for (let index = end; index >= 0; index -= 1) {
+    if (PROMPT_LINES.some((pattern) => pattern.test(lines[index]))) {
+      start = index;
+      break;
+    }
+    // A composer can wrap, but it cannot own an arbitrary pane of output.
+    if (end - index >= 12) break;
+    start = index;
+  }
+  return { text: lines.slice(start, end + 1).join("\n"), start, end };
+}
+
+/** True only when this exact prompt is in the active editor. */
+export function promptStaged(sample, prompt) {
+  // A long draft can wrap until its prompt marker scrolls off the cursor row.
+  // That makes the generic composer classifier return null, but the bounded
+  // rows ending at the cursor still prove the exact tail. A positively empty
+  // editor remains a hard refusal, so old output above it cannot pass.
+  return sample?.composer !== "idle" && promptArrived(activeComposer(sample ?? {}).text, prompt);
+}
+
+/** Removes the active editor so a clear composer alone is not a receipt. */
+export function paneOutsideComposer(sample) {
+  const lines = String(sample?.text ?? "").split("\n");
+  const composer = activeComposer(sample ?? {});
+  lines.splice(composer.start, composer.end - composer.start + 1, "<composer>");
+  return squash(lines.join("\n"));
+}
+
+/**
+ * Classifies the observation after a submission key. Success requires both
+ * the exact draft to leave the editor and positive pane output. An empty
+ * editor by itself is ambiguous because a redraw can erase staged text.
+ */
+export function submissionReceipt(before, after, prompt) {
+  if (promptStaged(after, prompt)) return "staged";
+  if (after?.composer === "draft") return "partial";
+  const positiveMarker = /(?:SUBMITTED|esc to interrupt|Working(?:\.\.\.|…)|queued message|will be processed next)/i.test(String(after?.text ?? ""));
+  const outputChanged = paneOutsideComposer(before) !== paneOutsideComposer(after);
+  return positiveMarker || outputChanged ? "submitted" : "ambiguous";
 }
 
 /** True when a pasted-text marker follows the probe somewhere on the (squashed) pane. */

@@ -53,7 +53,7 @@ process.stdin.on("data", (chunk) => {
   for (const character of chunk) {
     if (character === "\\r") {
       enters += 1;
-      if (enters === 1) {
+      if (enters % 2 === 1) {
         process.stdout.write("\\r\\n> " + draft);
         continue;
       }
@@ -89,7 +89,7 @@ async function freePort() {
 }
 
 /** Polls until the child server accepts HTTP requests. */
-async function waitForServer(url, attempts = 80) {
+async function waitForServer(url, attempts = 200) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await fetch(url);
@@ -335,4 +335,21 @@ test("an armed step prompt retries when the harness keeps the first Enter in its
     }
   }, 100);
   assert.equal(submitted, persisted.prompt);
+
+  // Exercise the ordinary Brain-to-worker route against the same real pane.
+  // The fixture loses the first Enter for every draft. The HTTP response must
+  // wait for the second Enter's submission receipt, and the receipt must hold
+  // one banner plus one body rather than a second paste of either.
+  const followUp = "Brain follow-up reaches the exact worker once.";
+  const sent = await post(restarted, "/api/agents/send", {
+    from: brain.session,
+    to: started.session,
+    text: followUp,
+  });
+  assert.equal(sent.status, "delivered", JSON.stringify(sent));
+  const followUpReceipt = await waitFor("the Brain-to-worker submission receipt", async () => {
+    const value = await readFile(harness.receipt, "utf8").catch(() => "");
+    return value.includes(followUp) ? value : null;
+  });
+  assert.equal(followUpReceipt, `[Message from ${brain.session} (otto/${leaf})] ${followUp}`);
 });

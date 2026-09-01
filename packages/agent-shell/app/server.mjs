@@ -39,7 +39,7 @@ import { brainAttemptAuthority, inactiveBrainAuthorityState } from "./brain-auth
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, rewriteNotice, unreadNotices, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
-import { promptArrived, readyForText, splitPrompt, squash, typeChunks } from "./prompt-delivery.mjs";
+import { promptStaged, readyForText, splitPrompt, submissionReceipt, typeChunks } from "./prompt-delivery.mjs";
 import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
 import { createPaneWriteQueue } from "./pane-writes.mjs";
 import { createRuntimeScheduler } from "./runtime-scheduler.mjs";
@@ -2251,20 +2251,56 @@ function promptPending(session) {
   return armedSessions.has(session) || paneWrites.busy(session);
 }
 
-/** The pane's foreground command, "" when the session is gone. */
-async function paneCommand(session) {
-  try {
-    const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
-    return stdout.trim();
-  } catch {
-    return "";
-  }
+/** Normalizes a legacy session name or an immutable delivery descriptor. */
+function deliveryTarget(value) {
+  return typeof value === "string"
+    ? { name: value, target: null, instanceId: null, assignment: null, attempt: null, launchRef: null }
+    : {
+      name: String(value?.name ?? ""),
+      target: String(value?.target ?? "") || null,
+      instanceId: String(value?.instanceId ?? "") || null,
+      assignment: String(value?.assignment ?? "") || null,
+      attempt: String(value?.attempt ?? "") || null,
+      launchRef: String(value?.launchRef ?? "") || null,
+    };
 }
 
-/** The visible pane with all whitespace removed, so line wrapping cannot hide a match. */
-async function paneText(session) {
-  const { stdout } = await execFileAsync("tmux", ["capture-pane", "-p", "-t", "=" + session + ":"]);
-  return stdout.replace(/\s+/g, "");
+/** Uses tmux's immutable session ID when acceptance recorded one. */
+function deliveryPane(value) {
+  const target = deliveryTarget(value);
+  return target.target ? `${target.target}:` : `=${target.name}:`;
+}
+
+/** Reads and fences every fact that makes this the accepted worker. */
+async function inspectDeliveryTarget(value) {
+  const expected = deliveryTarget(value);
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", deliveryPane(expected), `#{session_id}\t#{session_name}\t#{pane_current_command}\t#{cursor_x}\t#{cursor_y}\t#{@tangent_launch_ref}\t#{@tangent_assignment}\t#{@tangent_attempt}\t#{${SESSION_OWNER_OPTION}}`]));
+  } catch (error) {
+    throw deliveryFailure("failed", `Message target ${expected.name} (${expected.target ?? "legacy target"}) is no longer available in tmux. Start the intended worker again, then resend the message. (${error?.stderr || error?.message || error})`);
+  }
+  const [target, name, command, cursorX, cursorY, launchRef, assignment, attempt, instanceId] = String(stdout).replace(/\n$/, "").split("\t");
+  const observed = { name, target, command, cursorX: Number(cursorX) || 0, cursorY: Number(cursorY) || 0, launchRef: launchRef || null, assignment: assignment || null, attempt: attempt || null, instanceId: instanceId || null };
+  for (const field of ["target", "name", "instanceId", "assignment", "attempt", "launchRef"]) {
+    if (expected[field] && expected[field] !== observed[field]) {
+      throw deliveryFailure("failed", `Message target changed before submission: expected ${expected.name} (${expected.target ?? "legacy target"}), but tmux now reports ${observed.name || "no session"} (${observed.target || "no target"}). Resend only after opening the intended worker.`);
+    }
+  }
+  return { ...expected, ...observed, launchRef: expected.launchRef ?? observed.launchRef };
+}
+
+/** Captures one exact active-composer sample. */
+async function deliverySample(value) {
+  const target = await inspectDeliveryTarget(value);
+  const { stdout: text } = await execFileAsync("tmux", ["capture-pane", "-p", "-t", deliveryPane(target)]);
+  const harness = String(target.launchRef ?? "").split("/")[0] || null;
+  return { ...target, text, harness, composer: classifyWorkingComposer({ text, cursorX: target.cursorX, cursorY: target.cursorY, harness }) };
+}
+
+/** An actionable transport error that also records its durable checkpoint. */
+function deliveryFailure(deliveryState, message) {
+  return Object.assign(new Error(message), { deliveryState });
 }
 
 /**
@@ -2277,15 +2313,18 @@ async function paneText(session) {
  * priming covers whatever starts after it.
  */
 async function waitForHarnessReady(session) {
+  const target = deliveryTarget(session);
   const deadline = Date.now() + READY_MAX_MS;
   let previous = null;
   let still = 1;
   while (Date.now() < deadline) {
     await sleep(SETTLE_MS);
-    if (SHELL_CMDS.has(await paneCommand(session))) return false;
+    let sample;
     let hash;
     try {
-      hash = await paneObserver.hash(session);
+      sample = await deliverySample(target);
+      if (SHELL_CMDS.has(sample.command)) return false;
+      hash = createHash("sha1").update(sample.text).digest("hex");
     } catch {
       return false; // session gone
     }
@@ -2297,25 +2336,6 @@ async function waitForHarnessReady(session) {
 }
 
 /**
- * The composer state of a live pane, read fresh: "idle", "draft", or null.
- * The observer's reading can be up to one sample old, which is long enough
- * for Julian to have started typing, so the working path asks again at the
- * moment it is about to type.
- */
-async function paneComposerNow(session) {
-  try {
-    const [{ stdout: text }, { stdout: at }] = await Promise.all([
-      execFileAsync("tmux", ["capture-pane", "-p", "-t", "=" + session + ":"]),
-      execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{cursor_x} #{cursor_y}"]),
-    ]);
-    const [cursorX, cursorY] = at.trim().split(/\s+/).map(Number);
-    return classifyWorkingComposer({ text, cursorX: Number.isFinite(cursorX) ? cursorX : 0, cursorY: Number.isFinite(cursorY) ? cursorY : 0 });
-  } catch {
-    return null;
-  }
-}
-
-/**
  * True when a pane can take typed text now. A booting harness is waited for;
  * one already running an agent must not be a bare shell and must still show
  * the empty composer the delivery decision found. The second check is what
@@ -2323,8 +2343,9 @@ async function paneComposerNow(session) {
  * since then would otherwise be typed over.
  */
 async function paneReadyForText(session, settle) {
-  if (settle) return waitForHarnessReady(session);
-  return readyForText({ command: await paneCommand(session), composer: await paneComposerNow(session), shellCommands: SHELL_CMDS });
+  if (settle && !(await waitForHarnessReady(session))) return false;
+  const sample = await deliverySample(session);
+  return readyForText({ command: sample.command, composer: sample.composer, shellCommands: SHELL_CMDS });
 }
 
 /**
@@ -2341,9 +2362,9 @@ async function paneReadyForText(session, settle) {
  * collapsed the remainder into a pasted-text marker (Claude Code does for any
  * large input); prompt-delivery.mjs holds both rules.
  *
- * Returns true when the whole prompt showed in the pane, false when the
- * session was gone, sat at a shell, or never took the whole prompt. A brain
- * notice counts as read only on true.
+ * Returns true only after a submitted prompt has a positive post-send pane
+ * receipt. False means the target was not ready before staging. A terminal or
+ * ambiguous submission throws an actionable error and keeps durable state.
  *
  * `settle` false skips the boot wait. The wait watches for a quiet screen,
  * which a working agent never shows, so waiting on one costs the full
@@ -2351,24 +2372,32 @@ async function paneReadyForText(session, settle) {
  * prompt: a worker's report to a busy Area brain. A working harness is
  * already up; the only thing left to prove is that its pane is not a shell.
  */
-async function typePromptWhenReady(session, prompt, submit = false, label = "agent prompt", { settle = true } = {}) {
-  return paneWrites.run(session, () => typePromptNow(session, prompt, submit, label, settle));
+async function typePromptWhenReady(session, prompt, submit = false, label = "agent prompt", options = {}) {
+  const target = deliveryTarget(session);
+  return paneWrites.run(target.target ?? target.name, () => typePromptNow(target, prompt, submit, label, { settle: true, deliveryState: "accepted", checkpoint: noop, ...options }));
 }
 
 /** Pastes one complete succession prompt through a verified named tmux buffer. */
-async function typeExactPromptWhenReady(session, prompt, receiptRequest) {
-  return paneWrites.run(session, async () => {
-    if (!(await paneReadyForText(session, true))) return false;
+async function typeExactPromptWhenReady(session, prompt, receiptRequest, options = {}) {
+  const target = deliveryTarget(session);
+  return paneWrites.run(target.target ?? target.name, async () => {
+    if (!(await paneReadyForText(target, true))) return false;
     const buffer = `tangent-succeed-${receiptRequest.operationId}`.slice(0, 120);
     await execFileAsync("tmux", ["set-buffer", "-b", buffer, "--", prompt]);
     const readback = await execFileAsync("tmux", ["show-buffer", "-b", buffer]);
     const bytes = Buffer.byteLength(readback.stdout);
     const sha256 = createHash("sha256").update(readback.stdout).digest("hex");
     if (bytes !== receiptRequest.expectedBytes || sha256 !== receiptRequest.expectedSha256) throw new Error("the succession tmux buffer failed its exact hash check");
-    await execFileAsync("tmux", ["paste-buffer", "-b", buffer, "-t", `=${session}:`, "-d"]);
-    await sleep(150);
-    await execFileAsync("tmux", ["send-keys", "-t", `=${session}:`, "Enter"]);
-    return true;
+    await inspectDeliveryTarget(target);
+    await execFileAsync("tmux", ["paste-buffer", "-b", buffer, "-t", deliveryPane(target), "-d"]);
+    await sleep(ECHO_MS);
+    const staged = await deliverySample(target);
+    if (!promptStaged(staged, prompt)) throw deliveryFailure("failed", `Succession message ${receiptRequest.operationId} was not staged completely in ${target.name}; its exact tmux buffer remains available as ${buffer}.`);
+    return submitStagedPrompt(target, prompt, staged, {
+      deliveryId: receiptRequest.operationId,
+      checkpoint: noop,
+      ...options,
+    });
   });
 }
 
@@ -2376,49 +2405,150 @@ async function typeExactPromptWhenReady(session, prompt, receiptRequest) {
  * Types one prompt into a pane that is this writer's alone. Called only from
  * typePromptWhenReady, inside that pane's write queue.
  */
-async function typePromptNow(session, prompt, submit, label, settle) {
+async function typePromptNow(session, prompt, submit, label, { settle, deliveryId = null, deliveryState = "accepted", checkpoint }) {
   const startedAt = Date.now();
+  const target = deliveryTarget(session);
+  const harness = String(target.launchRef ?? "").split("/")[0] || "unknown harness";
   /** Records delivery latency without the session name or prompt content. */
   const measured = (ok) => {
     recordActionTelemetry(ACTION_TELEMETRY_LOG, { kind: "delivery", action: label, durationMs: Date.now() - startedAt, ok }).catch(() => {});
     return ok;
   };
   try {
+    let sample = await deliverySample(target);
+    if (SHELL_CMDS.has(sample.command)) return measured(false);
+    // A restart can find the exact full draft after staging but before its
+    // checkpoint. Adopt it and submit it. Never paste a second copy.
+    if (promptStaged(sample, prompt)) {
+      await checkpoint("staged");
+      deliveryState = "staged";
+    } else if (["staged", "submitting", "ambiguous", "failed"].includes(deliveryState)) {
+      const receipt = submissionReceipt(sample, sample, prompt);
+      if (receipt === "submitted") {
+        await checkpoint("submitted");
+        return measured(true);
+      }
+      throw deliveryFailure("ambiguous", `Message ${deliveryId ?? "prompt"} cannot be proved submitted to ${target.name} (${target.target ?? "legacy target"}, ${harness}). Its recorded draft is no longer in the composer, so Tangent will not paste a duplicate. Inspect the pane and restart Agent Shell only if the message is still unsent.`);
+    }
+
+    if (deliveryState === "staging" && sample.composer !== "idle") {
+      await sendDeliveryKeys(target, ["C-u"]);
+      await sleep(RETRY_MS);
+      sample = await deliverySample(target);
+      if (sample.composer !== "idle") throw deliveryFailure("failed", `Message ${deliveryId ?? "prompt"} was interrupted while staging in ${target.name}, and the harness clear-all key did not produce an empty composer. Clear it yourself, then restart Agent Shell to retry.`);
+    }
+
     const { probe, rest } = splitPrompt(prompt);
-    for (let attempt = 1; attempt <= TYPE_ATTEMPTS; attempt++) {
-      if (!(await paneReadyForText(session, settle))) return measured(false);
-      await typeInto(session, probe, false);
+    let staged = deliveryState === "staged";
+    for (let attempt = 1; !staged && attempt <= TYPE_ATTEMPTS; attempt++) {
+      if (!(await paneReadyForText(target, settle))) return measured(false);
+      await checkpoint("staging");
+      await typeIntoTarget(target, probe);
       await sleep(ECHO_MS);
-      if ((await paneText(session)).includes(squash(probe))) {
-        await typeInto(session, rest, false);
+      sample = await deliverySample(target);
+      if (sample.composer === "draft" && promptStaged(sample, probe)) {
+        await typeIntoTarget(target, rest);
         await sleep(ECHO_MS);
-        if (promptArrived(await paneText(session), prompt)) {
-          if (submit) await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
-          return measured(true);
+        sample = await deliverySample(target);
+        if (promptStaged(sample, prompt)) {
+          await checkpoint("staged");
+          staged = true;
+          break;
         }
       }
-      console.error(`${label}: ${session} took it partially (attempt ${attempt}), clearing and retyping`);
-      // C-u is "clear the input line" in every composer the shell meets, and
-      // an unrecognised C-u costs a stray keystroke, not the prompt.
-      await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "C-u"]).catch(() => {});
+      console.error(`${label}: ${target.name} took it partially (attempt ${attempt}), verifying clear-all before retyping`);
+      await sendDeliveryKeys(target, ["C-u"]);
       await sleep(RETRY_MS);
+      sample = await deliverySample(target);
+      if (sample.composer !== "idle") {
+        throw deliveryFailure("failed", `Message ${deliveryId ?? "prompt"} was only partly staged in ${target.name} (${target.target ?? "legacy target"}, ${harness}), and the harness clear-all key did not produce an empty composer. Clear that composer yourself, then restart Agent Shell to retry the durable message.`);
+      }
     }
-    console.error(`${label}: ${session} never showed the whole prompt`);
+    if (!staged) throw deliveryFailure("failed", `Message ${deliveryId ?? "prompt"} could not be staged completely in ${target.name} (${target.target ?? "legacy target"}, ${harness}) after ${TYPE_ATTEMPTS} attempts. The durable message remains queued.`);
+    if (!submit) return measured(true);
+
+    return measured(await submitStagedPrompt(target, prompt, sample, { deliveryId, checkpoint }));
   } catch (err) {
-    console.error(`${label}:`, err.message ?? err);
+    if (err?.deliveryState) {
+      await checkpoint(err.deliveryState).catch(() => {});
+      throw err;
+    }
+    throw deliveryFailure("failed", `Message ${deliveryId ?? "prompt"} could not be submitted to ${target.name} (${target.target ?? "legacy target"}, ${harness}) because tmux delivery failed: ${err?.stderr || err?.message || err}`);
   }
-  return measured(false);
+}
+
+/** Submits one proved full draft and requires a positive post-send receipt. */
+async function submitStagedPrompt(target, prompt, staged, { deliveryId = null, checkpoint }) {
+  const harness = String(target.launchRef ?? "").split("/")[0] || "unknown harness";
+  let before = staged;
+  let sample = staged;
+  await checkpoint("submitting");
+  for (let attempt = 1; attempt <= TYPE_ATTEMPTS; attempt++) {
+    if (attempt === 2) {
+      await inspectDeliveryTarget(target);
+      await execFileAsync("tmux", ["select-pane", "-t", deliveryPane(target)]);
+    }
+    await sendDeliveryKeys(target, [submissionKey(harness, attempt)]);
+    let receipt = "staged";
+    const deadline = Date.now() + ECHO_MS;
+    while (Date.now() < deadline) {
+      await sleep(100);
+      sample = await deliverySample(target);
+      receipt = submissionReceipt(before, sample, prompt);
+      if (receipt !== "staged") break;
+    }
+    if (receipt === "submitted") {
+      await checkpoint("submitted");
+      return true;
+    }
+    if (receipt === "partial") {
+      throw deliveryFailure("ambiguous", `Message ${deliveryId ?? "prompt"} changed inside the ${target.name} composer during submission. Tangent stopped to avoid corrupting or duplicating it. Inspect that exact pane before retrying.`);
+    }
+    if (receipt === "ambiguous") {
+      await sleep(RETRY_MS);
+      sample = await deliverySample(target);
+      receipt = submissionReceipt(before, sample, prompt);
+      if (receipt === "submitted") {
+        await checkpoint("submitted");
+        return true;
+      }
+      if (receipt !== "staged") {
+        throw deliveryFailure("ambiguous", `Message ${deliveryId ?? "prompt"} left the ${target.name} composer, but ${harness} produced no submission receipt. Tangent kept the durable record and will not paste a duplicate. Inspect the exact pane before retrying.`);
+      }
+    }
+    before = sample;
+  }
+  throw deliveryFailure("failed", `Message ${deliveryId ?? "prompt"} was not submitted to ${target.name} (${target.target ?? "legacy target"}, ${harness}) after ${TYPE_ATTEMPTS} submission attempts. Its full text still exists in the worker composer. Open that pane and submit it, then restart Agent Shell so Tangent can reconcile the durable record.`);
+}
+
+/** The final retry uses each supported harness family's tested submit form. */
+function submissionKey(harness, attempt) {
+  if (attempt < TYPE_ATTEMPTS) return "Enter";
+  const family = String(harness).toLowerCase();
+  return family === "pi" || family.startsWith("pi-code") ? "Enter" : "C-m";
+}
+
+/** Types literal text only after the immutable target fence passes. */
+async function typeIntoTarget(target, text) {
+  await inspectDeliveryTarget(target);
+  for (const chunk of typeChunks(text)) await execFileAsync("tmux", ["send-keys", "-t", deliveryPane(target), "-l", "--", chunk]);
+}
+
+/** Sends one harness key sequence to the immutable target. */
+async function sendDeliveryKeys(target, keys) {
+  await inspectDeliveryTarget(target);
+  await execFileAsync("tmux", ["send-keys", "-t", deliveryPane(target), ...keys]);
 }
 
 /** Types a Goal assignment after its native harness is ready. */
-async function typeGoalPromptWhenReady(session, area, file, submit = false, extraFiles = []) {
+async function typeGoalPromptWhenReady(session, area, file, submit = false, extraFiles = [], options = {}) {
   const goals = await readAreaGoals(area);
   const o = goals.find((t) => t.file === file);
   if (!o) return false;
   const extras = (extraFiles ?? []).map((extra) => goals.find((t) => t.file === extra)).filter(Boolean);
   const folder = await promptWorkFolder(area);
   const prompt = await goalPrompt(area, o, extras, [], null, folder);
-  return typePromptWhenReady(session, prompt, submit, "goal prompt");
+  return typePromptWhenReady(session, prompt, submit, "goal prompt", options);
 }
 
 /**
@@ -2436,7 +2566,7 @@ async function tickArmedSessions() {
     ({ stdout } = await execFileAsync("tmux", [
       "list-sessions",
       "-F",
-      `#{session_name}\t#{@tangent_area}\t#{@tangent_goal}\t#{pane_current_command}\t#{${SESSION_OWNER_OPTION}}`,
+      `#{session_id}\t#{session_name}\t#{@tangent_area}\t#{@tangent_goal}\t#{pane_current_command}\t#{@tangent_launch_ref}\t#{@tangent_assignment}\t#{@tangent_attempt}\t#{${SESSION_OWNER_OPTION}}`,
     ]));
   } catch {
     armedSessions.clear(); // no tmux server: nothing to watch
@@ -2444,12 +2574,15 @@ async function tickArmedSessions() {
   }
   const live = new Set();
   for (const line of stdout.trim().split("\n").filter(Boolean)) {
-    const [name, area, file, command, instanceId] = line.split("\t");
+    const [target, name, area, file, command, launchRef, assignment, attempt, instanceId] = line.split("\t");
     if (instanceId !== INSTANCE_ID) continue;
     live.add(name);
     if (!armedSessions.has(name) || SHELL_CMDS.has(command)) continue;
     const armed = armedSessions.get(name);
     if (armed.firing) continue;
+    if (armed.failed) continue;
+    const observedTarget = { target, name, instanceId, assignment: assignment || null, attempt: attempt || null, launchRef: launchRef || null };
+    armed.targetIdentity ??= observedTarget;
     // The arm stays in the map until its prompt has settled, not until it is
     // picked up. Building a goal prompt reads the vault first, and promptPending
     // has to stay true across that read, or a notice can win the pane in the
@@ -2457,6 +2590,10 @@ async function tickArmedSessions() {
     armed.firing = true;
     /** Commits the caller's receipt before forgetting the durable arm. */
     const settle = async (arrived) => {
+      if (!arrived) {
+        armed.firing = false;
+        return;
+      }
       await (armed.onTyped ?? noop)(arrived);
       if (armedSessions.get(name) === armed) armedSessions.delete(name); // never drop a newer arm
       await clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
@@ -2464,11 +2601,25 @@ async function tickArmedSessions() {
     /** Leaves a failed receipt armed so the next pass or restart can retry it. */
     const failed = (error) => {
       armed.firing = false;
+      armed.failed = true;
       reportArmedPromptFailure(error);
     };
-    if (armed.prompt && armed.receiptRequest?.kind === "brain-succession") typeExactPromptWhenReady(name, armed.prompt, armed.receiptRequest).then(settle).catch(failed);
-    else if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt").then(settle).catch(failed);
-    else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.submit, armed.extraFiles).then(settle).catch(failed);
+    /** Persists each state before the transport performs its next tmux action. */
+    const checkpoint = async (deliveryState) => {
+      armed.deliveryState = deliveryState;
+      await writeArmedPrompt(ARMED_ROOT, name, {
+        submit: armed.submit,
+        prompt: armed.prompt,
+        extraFiles: armed.extraFiles,
+        receiptRequest: armed.receiptRequest,
+        deliveryState,
+        targetIdentity: armed.targetIdentity,
+      });
+    };
+    const deliveryOptions = { deliveryState: armed.deliveryState ?? "accepted", deliveryId: `armed:${name}`, checkpoint };
+    if (armed.prompt && armed.receiptRequest?.kind === "brain-succession") typeExactPromptWhenReady(armed.targetIdentity, armed.prompt, armed.receiptRequest, deliveryOptions).then(settle).catch(failed);
+    else if (armed.prompt) typePromptWhenReady(armed.targetIdentity, armed.prompt, armed.submit, "armed prompt", deliveryOptions).then(settle).catch(failed);
+    else if (area && file) typeGoalPromptWhenReady(armed.targetIdentity, area, file, armed.submit, armed.extraFiles, deliveryOptions).then(settle).catch(failed);
     else {
       // No goal bound yet: nothing left to type, and nobody was promised a
       // callback for a prompt that never existed.
@@ -2504,10 +2655,11 @@ function reportArmedPromptFailure(err) {
  * a restart before the harness leaves its shell still has the prompt to
  * re-arm at boot (rearmPersistedPrompts).
  */
-async function armSession(name, { submit = false, prompt = "", extraFiles = [], onTyped = null, receiptRequest = null } = {}) {
-  armedSessions.set(name, { submit, prompt, extraFiles, onTyped, receiptRequest });
+async function armSession(name, { submit = false, prompt = "", extraFiles = [], onTyped = null, receiptRequest = null, deliveryState = "accepted", targetIdentity = null } = {}) {
+  targetIdentity ??= await inspectDeliveryTarget(name).catch(() => null);
+  armedSessions.set(name, { submit, prompt, extraFiles, onTyped, receiptRequest, deliveryState, targetIdentity, failed: false });
   try {
-    await writeArmedPrompt(ARMED_ROOT, name, { submit, prompt, extraFiles, receiptRequest });
+    await writeArmedPrompt(ARMED_ROOT, name, { submit, prompt, extraFiles, receiptRequest, deliveryState, targetIdentity });
   } catch (err) {
     console.error("armed prompt persist:", err.message ?? err);
   }
@@ -2557,7 +2709,7 @@ async function rearmPersistedPrompts() {
     const onTyped = record.receiptRequest?.kind === "brain-succession"
       ? (arrived) => settleBrainSuccessionReceipt(record.receiptRequest, arrived)
       : null;
-    await armSession(record.session, { submit: record.submit, prompt, extraFiles: record.extraFiles, receiptRequest: record.receiptRequest, onTyped });
+    await armSession(record.session, { submit: record.submit, prompt, extraFiles: record.extraFiles, receiptRequest: record.receiptRequest, deliveryState: record.deliveryState, targetIdentity: record.targetIdentity, onTyped });
   }
 }
 
@@ -2581,6 +2733,12 @@ const messages = createMessageDelivery({
   /** Delivers a complete message through the prompt transport. */
   deliverText: (target, text, label, options) => typePromptWhenReady(target, text, true, label, options),
   notices: { delivered: markBrainNoticesDelivered },
+  /** Routes an asynchronous Brain-to-worker failure back to its source Brain. */
+  onFailure: async ({ target, entry, error }) => {
+    if (entry.sourceRole !== "brain" || !entry.area) return;
+    await routeBrainNotice(entry.area, String(error?.message ?? error), { idempotencyKey: `delivery-failed:${entry.deliveryId}:${entry.deliveryState}` });
+    await messages.log({ event: "failure reported", deliveryId: entry.deliveryId, to: target, sourceArea: entry.area, reason: String(error?.message ?? error) });
+  },
   /** The scheduler is constructed below; delivery begins only after this callback runs. */
   wake: () => runtimeScheduler.wake(),
 });
@@ -2653,7 +2811,7 @@ async function sessionLaunch(session) {
  * harness the user starts. A pane that is already running something is left
  * alone — priming must never type over an agent mid-conversation.
  */
-async function primeGoalSession(session, { launch = false, command = "", extraFiles = [], prompt = "", onTyped = null } = {}) {
+async function primeGoalSession(session, { launch = false, startHarness = launch, command = "", extraFiles = [], prompt = "", onTyped = null } = {}) {
   // The caller names the harness or nothing is typed. spawnGoalSession
   // refuses a start with no command, and a pane that reached its shell
   // between that check and this one must not get an Area default nobody
@@ -2664,7 +2822,7 @@ async function primeGoalSession(session, { launch = false, command = "", extraFi
   await prepareHarnessDebugLogForSession(session, command);
   await armSession(session, { submit: launch, prompt, extraFiles, onTyped });
   await typeInto(session, withDefaultModel(command), false);
-  if (launch) {
+  if (startHarness) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
     await sleep(250);
   }
@@ -2734,7 +2892,7 @@ async function spawnGoalSession(area, slug, { approved = false, launch = false, 
       ? await goalPrompt(area, o, ownExtras, continuation.entries, null, folder)
       : "";
   trace?.mark("step prompt ready", { characters: stepPrompt.length });
-  if ((pipeline || continuation) && process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") launch = false;
+  const startHarness = Boolean(launch && process.env.AGENT_SHELL_TEST_NO_LAUNCH !== "1");
   // A new launch, including one in an existing shell pane, resolves after the
   // saved Area edit. An explicit request still wins, while an agent that
   // already runs keeps its recorded launch.
@@ -2755,7 +2913,7 @@ async function spawnGoalSession(area, slug, { approved = false, launch = false, 
       if (live.state === "working") return { status: 409, error: "the agent is still working; wait before you approve another assignment" };
       await typeInto(existing, await goalPrompt(area, o, ownExtras, [], null, folder), true);
     } else {
-      primed = await primeGoalSession(existing, { launch, command, extraFiles }).catch(() => false);
+      primed = await primeGoalSession(existing, { launch, startHarness, command, extraFiles }).catch(() => false);
     }
     const rebind = [o, ...ownExtras].filter((goal) => goal.status !== "active" || goal.session !== existing);
     if (rebind.length) {
@@ -2806,14 +2964,14 @@ async function spawnGoalSession(area, slug, { approved = false, launch = false, 
     // be wiped by the redraw.
     await sleep(700);
     try {
-      const primed = await primeGoalSession(phaseName, { launch, command, extraFiles, prompt: stepPrompt, onTyped: onPrimed });
+      const primed = await primeGoalSession(phaseName, { launch, startHarness, command, extraFiles, prompt: stepPrompt, onTyped: onPrimed });
       if (!primed && onPrimed) onPrimed(false);
     } catch (err) {
       console.error("prime session:", err.message ?? err);
       if (onPrimed) onPrimed(false);
     }
   };
-  if (launch) await primeNewSession();
+  if (startHarness) await primeNewSession();
   else primeNewSession();
   trace?.mark("session primed", { session: phaseName, awaited: launch });
   if (ref) await launchCatalog.saveMemory(area, "work", parseLaunch(ref));
@@ -7008,7 +7166,7 @@ const agentRouteOperations = {
       return { status: 200, value: { status: "sent", to: sender.area, target: "area", live: true, state: result, repair: ended.id } };
     }
     if (sender.role === "repair" && live?.kind === "goal" && live.area !== sender.area) return { status: 403, error: REPAIR_REFUSAL };
-    const entry = { from: sender.session ?? "unknown sender", area: sender.area, text, durable: true, queuedAt: new Date().toISOString() };
+    const entry = { from: sender.session ?? "unknown sender", area: sender.area, sourceRole: sender.role, text, durable: true, queuedAt: new Date().toISOString() };
     const inbox = areaInboxTarget(requested, { areas: [ROOT_AREA, ...flattenAreaPaths(tree)], brains });
     if (inbox) {
       const delivery = await routeBrainNotice(inbox.area, text, {

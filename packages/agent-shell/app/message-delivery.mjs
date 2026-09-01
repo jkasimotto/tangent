@@ -3,12 +3,13 @@ import { deliveryDecision, messageBanner } from "./agent-messages.mjs";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 
 /** Owns cross-agent queues, delivery policy, and their audit log. */
-export function createMessageDelivery({ file, sessions, deliverText, notices, wake, store = null, now = () => new Date().toISOString(), report = console.error, maxPerTarget = 100, maxTotal = 1_000, concurrency = 8 }) {
+export function createMessageDelivery({ file, sessions, deliverText, notices, wake, store = null, onFailure = null, now = () => new Date().toISOString(), report = console.error, maxPerTarget = 100, maxTotal = 1_000, concurrency = 8 }) {
   const queues = new Map();
   const deliveringTargets = new Set();
   let activeDeliveries = 0;
   let ticking = null;
   let durableMutations = Promise.resolve();
+  const failedThisProcess = new Set();
 
   // Generic `tangent send` entries and brain notices live in this store
   // until they were shown (D24). Context reminders carry a live render
@@ -23,6 +24,9 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
       text: stored.text,
       banner: stored.banner,
       queuedAt: stored.queuedAt,
+      sourceRole: stored.sourceRole ?? null,
+      deliveryState: stored.deliveryState ?? "accepted",
+      targetIdentity: stored.targetIdentity ?? null,
       ...(stored.notices?.length ? { notices: stored.notices, generation: stored.generation ?? null, brainArea: stored.brainArea ?? null } : {}),
     });
     queues.set(stored.target, pending);
@@ -44,14 +48,38 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
    * never goes quiet and the harness needs no boot wait.
    */
   async function deliver(target, entry, composer = "idle") {
+    const targetName = typeof target === "string" ? target : target.name;
     const body = typeof entry.render === "function" ? entry.render() ?? entry.text : entry.text;
     const text = entry.banner === false ? body : messageBanner(entry.from, entry.area, body);
-    const arrived = await deliverText(target, text, entry.banner === false ? "pipeline step" : "agent message", { settle: composer !== "working" });
-    await log({ event: arrived ? "delivered" : "not delivered", to: target, from: entry.from, area: entry.area, text: body, banner: entry.banner !== false, queuedAt: entry.queuedAt });
+    /** Makes each transport checkpoint durable before its next tmux action. */
+    const checkpoint = async (deliveryState) => {
+      entry.deliveryState = deliveryState;
+      if (entry.durable && store?.update) await store.update(entry.deliveryId, { deliveryState });
+    };
+    const arrived = await deliverText(entry.targetIdentity ?? target, text, entry.banner === false ? "pipeline step" : "agent message", {
+      settle: composer !== "working" && composer !== "draft",
+      composer,
+      deliveryId: entry.deliveryId ?? null,
+      deliveryState: entry.deliveryState ?? "accepted",
+      checkpoint,
+    });
+    await log({ event: arrived ? "delivered" : "not delivered", deliveryId: entry.deliveryId ?? null, deliveryState: entry.deliveryState ?? "accepted", to: targetName, from: entry.from, area: entry.area, text: body, banner: entry.banner !== false, queuedAt: entry.queuedAt });
     // A notice that did not arrive stays queued and unread; the inbox marks
     // it read only after it was shown.
-    if (arrived && entry.notices?.length) await notices.delivered(entry.notices, target, entry.generation ?? null, entry.brainArea ?? null);
+    if (arrived && entry.notices?.length) await notices.delivered(entry.notices, targetName, entry.generation ?? null, entry.brainArea ?? null);
     return arrived;
+  }
+
+  /** Reports one terminal attempt once while preserving its durable record. */
+  async function fail(target, entry, error) {
+    const targetName = typeof target === "string" ? target : target?.name;
+    failedThisProcess.add(entry.deliveryId ?? entry);
+    entry.deliveryState = error?.deliveryState ?? entry.deliveryState ?? "failed";
+    if (entry.durable && store?.update) await store.update(entry.deliveryId, { deliveryState: entry.deliveryState });
+    const detail = String(error?.message ?? error);
+    await log({ event: "delivery failed", deliveryId: entry.deliveryId ?? null, deliveryState: entry.deliveryState, to: targetName, from: entry.from, area: entry.area, text: entry.text, reason: detail });
+    report("agent message:", detail);
+    if (onFailure) await onFailure({ target: targetName, entry, error }).catch((failure) => report("agent message failure notice:", failure?.message ?? failure));
   }
 
   /** Adds one entry behind existing work for a target. */
@@ -71,9 +99,10 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
 
   /** Persists one generic message before exposing it to delivery polling. */
   function queueDurably(target, entry) {
+    const targetName = typeof target === "string" ? target : target.name;
     const operation = durableMutations.then(async () => {
-      const pending = queues.get(target) ?? [];
-      const waiting = queuedCount(target);
+      const pending = queues.get(targetName) ?? [];
+      const waiting = queuedCount(targetName);
       if (waiting >= maxPerTarget || totalQueued() >= maxTotal) {
         const reason = waiting >= maxPerTarget ? `target queue limit ${maxPerTarget}` : `message queue limit ${maxTotal}`;
         await log({ event: "rejected", to: target, from: entry.from, text: entry.text, reason });
@@ -81,7 +110,11 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
         return { position: 0, reason };
       }
       if (!store?.append) throw new Error("durable agent-message storage is unavailable");
-      const stored = await store.append(target, entry);
+      const stored = await store.append(targetName, {
+        ...entry,
+        deliveryState: entry.deliveryState ?? "accepted",
+        targetIdentity: entry.targetIdentity ?? (typeof target === "object" ? target : null),
+      });
       const durable = {
         ...entry,
         durable: true,
@@ -89,8 +122,8 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
         queuedAt: stored.queuedAt,
       };
       pending.push(durable);
-      queues.set(target, pending);
-      return { position: queuedCount(target), entry: durable };
+      queues.set(targetName, pending);
+      return { position: queuedCount(targetName), entry: durable };
     });
     durableMutations = operation.catch(() => {});
     return operation;
@@ -129,27 +162,30 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
     const decision = deliveryDecision(target ?? null);
     if (decision.action === "refuse") return { status: target ? 409 : 404, error: decision.error };
     if (entry.durable) {
-      const queued = await queueDurably(target.name, entry);
+      const queued = await queueDurably(target, { ...entry, targetIdentity: entry.targetIdentity ?? target });
       if (!queued.position) return { status: 429, error: "agent message queue is full; retry after queued messages are delivered" };
       const pending = queues.get(target.name);
       if (decision.action === "deliver" && !ticking && pending?.[0] === queued.entry && !deliveringTargets.has(target.name) && activeDeliveries < concurrency) {
         deliveringTargets.add(target.name);
         activeDeliveries += 1;
-        void (async () => {
-          try {
-            const arrived = await deliver(target.name, queued.entry, decision.composer);
-            if (arrived) await settle(target.name, pending, queued.entry);
-          } catch (error) {
-            report("agent message:", error?.message ?? error);
-          } finally {
-            activeDeliveries -= 1;
-            deliveringTargets.delete(target.name);
-            wake();
+        try {
+          const arrived = await deliver(target, queued.entry, decision.composer);
+          if (arrived) {
+            await settle(target.name, pending, queued.entry);
+            failedThisProcess.delete(queued.entry.deliveryId);
+            await log({ event: "sent", to: target.name, from: entry.from, text: entry.text, disposition: "delivered" });
+            return { status: 200, state: "delivered", to: target.name, receipt: queued.entry.deliveryId };
           }
-        })();
-        const reason = "presentation is in progress";
-        await log({ event: "sent", to: target.name, from: entry.from, text: entry.text, disposition: "queued", reason });
-        return { status: 200, state: "queued", to: target.name, reason, position: queued.position };
+          const reason = "the exact target was not ready at the final composer check; the durable message will retry";
+          return { status: 200, state: "queued", to: target.name, reason, position: queued.position, receipt: queued.entry.deliveryId };
+        } catch (error) {
+          await fail(target, queued.entry, error);
+          return { status: 409, error: String(error?.message ?? error), receipt: queued.entry.deliveryId };
+        } finally {
+          activeDeliveries -= 1;
+          deliveringTargets.delete(target.name);
+          wake();
+        }
       }
       const reason = decision.action === "queue" ? decision.reason : "messages queued ahead";
       await log({ event: "sent", to: target.name, from: entry.from, text: entry.text, disposition: "queued", reason });
@@ -193,9 +229,16 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
           // A dropped brain notice is still unread in its inbox; the sweep
           // queues it again for the next live generation.
           for (const entry of pending) await log({ event: "dropped", to: target, from: entry.from, text: entry.text, reason: "session ended" });
-          const durableIds = pending.filter((entry) => entry.durable).map((entry) => entry.deliveryId);
+          const releasable = pending.filter((entry) => !entry.durable || entry.notices?.length);
+          const durableIds = releasable.filter((entry) => entry.durable).map((entry) => entry.deliveryId);
           if (durableIds.length) await store.remove(durableIds);
-          queues.delete(target);
+          for (const entry of pending.filter((item) => item.durable && !item.notices?.length)) {
+            const error = Object.assign(new Error(`Message ${entry.deliveryId} was not submitted to ${target}: the exact tmux session ended. Start the intended worker again, then resend the message.`), { deliveryState: "failed" });
+            await fail(target, entry, error);
+          }
+          const kept = pending.filter((entry) => entry.durable && !entry.notices?.length);
+          if (kept.length) queues.set(target, kept);
+          else queues.delete(target);
           return;
         }
         const brainEntry = pending[0]?.notices?.length ? pending[0] : null;
@@ -206,16 +249,23 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
           if (!pending.length) queues.delete(target);
           return;
         }
-        const decision = deliveryDecision(live);
-        if (decision.action !== "deliver") return;
         const entry = pending[0];
+        if (failedThisProcess.has(entry.deliveryId ?? entry)) return;
+        const decision = deliveryDecision(live);
+        const recovery = entry.durable && entry.deliveryState && entry.deliveryState !== "accepted";
+        if (decision.action !== "deliver" && !recovery) return;
         deliveringTargets.add(target);
         activeDeliveries += 1;
         try {
-          const arrived = await deliver(target, entry, decision.composer);
+          const arrived = await deliver(live, entry, recovery ? (live.composer ?? decision.composer) : decision.composer);
           // A durable entry keeps its head until the prompt transport proves
           // the whole presentation arrived; a memory entry is tried once.
-          if (arrived || !entry.durable) await settle(target, pending, entry);
+          if (arrived || !entry.durable) {
+            await settle(target, pending, entry);
+            failedThisProcess.delete(entry.deliveryId ?? entry);
+          }
+        } catch (error) {
+          await fail(live, entry, error);
         } finally {
           activeDeliveries -= 1;
           deliveringTargets.delete(target);
@@ -266,7 +316,10 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
 
   /** Reports whether delivery polling has work to do. */
   function active() {
-    return queues.size > 0;
+    for (const pending of queues.values()) {
+      if (pending.some((entry) => !failedThisProcess.has(entry.deliveryId ?? entry))) return true;
+    }
+    return false;
   }
 
   return { active, deliver, dispatch, log, pendingNotices, queue, queueDurable, queuedCount, retarget, tick, totalQueued };

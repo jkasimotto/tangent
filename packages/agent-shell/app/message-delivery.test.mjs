@@ -193,7 +193,7 @@ test("a worker report reaches a brain that never stops working, in order", async
   await delivery.tick();
   assert.equal(delivery.queuedCount(brain.name), 0, "nothing waits for the brain's turn to end");
   assert.deepEqual(delivered.map((call) => call.text.includes("assignment 1")), [true, false]);
-  assert.deepEqual(delivered.map((call) => call.options), [{ settle: false }, { settle: false }], "a working harness is typed into at once");
+  assert.deepEqual(delivered.map((call) => call.options.settle), [false, false], "a working harness is typed into at once");
   assert.deepEqual(read, [...report.notices, ...ready.notices]);
 });
 
@@ -287,28 +287,29 @@ test("an immediately presentable generic message stays durable until delivery se
   const target = { name: "worker", state: "waiting", stateDetail: "idle" };
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
-  let settled;
-  const settledWake = new Promise((resolve) => { settled = resolve; });
+  let entered;
+  const deliveryEntered = new Promise((resolve) => { entered = resolve; });
   const delivery = createMessageDelivery({
     file: path.join(root, "messages.jsonl"),
     store,
     /** Test helper for sessions. */
     sessions: async () => [target],
     /** Holds the presentation boundary open. */
-    deliverText: async () => { await gate; return true; },
+    deliverText: async () => { entered(); await gate; return true; },
     notices: {
       /** Test helper for delivered. */
       delivered: async () => {},
       /** Test helper for released. */
       released() {} },
-    wake: settled,
+    /** Accepts the settlement wake. */
+    wake() {},
   });
-  const result = await delivery.dispatch(target, { from: "sender", area: null, text: "facts", durable: true, queuedAt: "then" });
-  assert.equal(result.state, "queued", "acceptance does not claim presentation before the transport settles");
-  assert.equal(result.reason, "presentation is in progress");
+  const dispatched = delivery.dispatch(target, { from: "sender", area: null, text: "facts", durable: true, queuedAt: "then" });
+  await deliveryEntered;
   assert.equal(store.entries().length, 1, "the accepted message is durable while presentation is in flight");
   release();
-  await settledWake;
+  const result = await dispatched;
+  assert.equal(result.state, "delivered", "an immediate send waits for its submission receipt");
   assert.equal(store.entries().length, 0, "settlement removes the durable entry");
 });
 
@@ -336,7 +337,7 @@ test("a failed immediate presentation remains durable across restart and retries
 
   const accepted = await first.dispatch(target, { from: "sender", area: null, text: "facts", durable: true, queuedAt: "then" });
   assert.equal(accepted.state, "queued");
-  assert.equal(accepted.reason, "presentation is in progress");
+  assert.match(accepted.reason, /durable message will retry/);
   await attemptedPresentation;
   assert.equal(first.queuedCount(target.name), 1, "a false receipt leaves the live queue head pending");
   assert.equal(firstStore.entries().length, 1, "a false receipt never removes the disk record");
@@ -363,6 +364,75 @@ test("a failed immediate presentation remains durable across restart and retries
   assert.equal(delivered.length, 1);
   assert.equal(restarted.queuedCount(target.name), 0);
   assert.equal(restartedStore.entries().length, 0, "only the true retry receipt settles the record");
+});
+
+test("a terminal submission failure reports the source Brain and restarts on the immutable target", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-terminal-restart-"));
+  const queueFile = path.join(root, "message-queue.json");
+  const target = { name: "worker", target: "$17", instanceId: "controller-1", assignment: "assignment-2", attempt: "attempt-3", launchRef: "codex/sol", state: "waiting", stateDetail: "idle" };
+  const failures = [];
+  /** Returns one stable fixture delivery ID. */
+  const messageId = () => "message-1";
+  const firstStore = await openMessageQueueStore({ file: queueFile, id: messageId });
+  const first = createMessageDelivery({
+    file: path.join(root, "messages.jsonl"),
+    store: firstStore,
+    /** Returns the exact initial fixture target. */
+    sessions: async () => [target],
+    /** Simulates a proved full draft that every submission key leaves unsent. */
+    deliverText: async (_target, _text, _label, options) => {
+      await options.checkpoint("submitting");
+      throw Object.assign(new Error("Message message-1 was not submitted to worker ($17, codex) after 3 submission attempts. Its full text still exists in the worker composer."), { deliveryState: "failed" });
+    },
+    notices: {
+      /** Accepts fixture notice delivery. */
+      delivered: async () => {},
+      /** Accepts fixture notice release. */
+      released() {},
+    },
+    /** Records the source-Brain failure callback. */
+    onFailure: async (failure) => failures.push(failure),
+    /** Accepts a fixture scheduler wake. */
+    wake() {},
+    /** Suppresses the expected terminal report. */
+    report() {},
+  });
+  const result = await first.dispatch(target, { from: "brain", area: "otto/tangent", sourceRole: "brain", text: "facts", durable: true });
+  assert.equal(result.status, 409);
+  assert.match(result.error, /full text still exists in the worker composer/);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].entry.deliveryId, "message-1");
+  assert.deepEqual(firstStore.entries()[0].targetIdentity, {
+    name: "worker", target: "$17", instanceId: "controller-1", assignment: "assignment-2", attempt: "attempt-3", launchRef: "codex/sol",
+  });
+  assert.equal(firstStore.entries()[0].deliveryState, "failed");
+
+  const restartedStore = await openMessageQueueStore({ file: queueFile });
+  let retried = 0;
+  const restarted = createMessageDelivery({
+    file: path.join(root, "messages.jsonl"),
+    store: restartedStore,
+    /** Returns the same exact target with its durable draft visible. */
+    sessions: async () => [{ ...target, state: "working", composer: "draft" }],
+    /** Verifies restart recovery keeps the target and state. */
+    deliverText: async (exactTarget, _text, _label, options) => {
+      retried += 1;
+      assert.equal(exactTarget.target, "$17");
+      assert.equal(options.deliveryState, "failed");
+      return true;
+    },
+    notices: {
+      /** Accepts fixture notice delivery. */
+      delivered: async () => {},
+      /** Accepts fixture notice release. */
+      released() {},
+    },
+    /** Accepts a fixture scheduler wake. */
+    wake() {},
+  });
+  await restarted.tick();
+  assert.equal(retried, 1, "restart retries submission of the durable staged draft");
+  assert.deepEqual(restartedStore.entries(), [], "the proved retry settles exactly once");
 });
 
 test("a queued durable presentation retries after deliverText returns false", async () => {

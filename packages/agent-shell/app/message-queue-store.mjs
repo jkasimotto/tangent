@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { readJsonObject, writeJsonObject } from "./json-store.mjs";
 
-export const MESSAGE_QUEUE_SCHEMA = "agent-message-queue.v1";
+export const MESSAGE_QUEUE_SCHEMA = "agent-message-queue.v2";
+const LEGACY_MESSAGE_QUEUE_SCHEMA = "agent-message-queue.v1";
 
 /** Returns one canonical durable generic-message record, or null. */
 function normalizeEntry(value) {
@@ -10,6 +11,7 @@ function normalizeEntry(value) {
   const target = String(value.target ?? "").trim();
   const text = String(value.text ?? "").replace(/\s+/g, " ").trim();
   if (!id || !target || !text || text.length > 4000) return null;
+  const targetIdentity = normalizeTargetIdentity(value.targetIdentity, target);
   return {
     id,
     target,
@@ -20,7 +22,25 @@ function normalizeEntry(value) {
     // banner. It cannot be disabled by a stale or edited file.
     banner: true,
     queuedAt: String(value.queuedAt ?? "").trim() || null,
+    ...(["brain", "worker", "repair", "local"].includes(value.sourceRole) ? { sourceRole: value.sourceRole } : {}),
+    ...(["staging", "staged", "submitting", "ambiguous", "failed"].includes(value.deliveryState) ? { deliveryState: value.deliveryState } : {}),
+    ...(targetIdentity ? { targetIdentity } : {}),
     ...noticeFields(value),
+  };
+}
+
+/** Keeps only immutable facts used to fence one accepted tmux recipient. */
+function normalizeTargetIdentity(value, name) {
+  if (!value || typeof value !== "object") return null;
+  const target = String(value.target ?? "").trim();
+  if (!target) return null;
+  return {
+    name: String(value.name ?? name).trim() || name,
+    target,
+    instanceId: String(value.instanceId ?? "").trim() || null,
+    assignment: String(value.assignment ?? "").trim() || null,
+    attempt: String(value.attempt ?? "").trim() || null,
+    launchRef: String(value.launchRef ?? "").trim() || null,
   };
 }
 
@@ -43,7 +63,7 @@ function noticeFields(value) {
 
 /** Normalizes a missing, malformed, or partially old queue without guessing recipients. */
 export function normalizeMessageQueue(value) {
-  if (!value || typeof value !== "object" || value.schema !== MESSAGE_QUEUE_SCHEMA) {
+  if (!value || typeof value !== "object" || ![MESSAGE_QUEUE_SCHEMA, LEGACY_MESSAGE_QUEUE_SCHEMA].includes(value.schema)) {
     return { schema: MESSAGE_QUEUE_SCHEMA, entries: [] };
   }
   const seen = new Set();
@@ -95,10 +115,24 @@ export async function openMessageQueueStore({ file, now = () => new Date().toISO
       notices: entry.notices,
       generation: entry.generation,
       brainArea: entry.brainArea,
+      sourceRole: entry.sourceRole,
+      deliveryState: entry.deliveryState,
+      targetIdentity: entry.targetIdentity,
     });
     if (!stored) throw new Error("a durable agent message needs an exact target and normalized text");
     await mutate((current) => ({ ...current, entries: [...current.entries, stored] }));
     return { ...stored };
+  }
+
+
+  /** Persists a delivery checkpoint without changing order or identity. */
+  async function update(id, fields) {
+    const wanted = String(id);
+    await mutate((current) => ({
+      ...current,
+      entries: current.entries.map((entry) => entry.id === wanted ? { ...entry, ...fields, id: entry.id, target: entry.target } : entry),
+    }));
+    return entries().find((entry) => entry.id === wanted) ?? null;
   }
 
   /** Removes only entries whose current delivery attempt reached settlement. */
@@ -124,5 +158,5 @@ export async function openMessageQueueStore({ file, now = () => new Date().toISO
     });
   }
 
-  return { append, entries, remove, retarget };
+  return { append, entries, remove, retarget, update };
 }

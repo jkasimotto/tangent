@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { PROBE_CHARS, TYPE_CHUNK_CHARS, promptArrived, readyForText, splitPrompt, typeChunks } from "./prompt-delivery.mjs";
+import { PROBE_CHARS, TYPE_CHUNK_CHARS, activeComposer, promptArrived, promptStaged, readyForText, splitPrompt, submissionReceipt, typeChunks } from "./prompt-delivery.mjs";
 
 const PROMPT =
   "# Work with Julian\n\nThis session covers the complete Goal and all linked Documents.\n\n" +
@@ -65,6 +65,51 @@ test("a marker that does not follow this attempt's probe is not proof", () => {
   assert.equal(promptArrived(claudePane("[Pasted text #1 +22 lines] # Work with JulianThis"), PROMPT), false);
   // The pane shows a marker but never the probe.
   assert.equal(promptArrived(claudePane("[Pasted text #1]"), PROMPT), false);
+});
+
+test("old matching output cannot prove that the active composer holds this attempt", () => {
+  const text = [
+    `old output: ${PROMPT}`,
+    "task finished",
+    "› Ask Codex to do anything",
+    "gpt-5.6-sol high · /private/tmp/work",
+  ].join("\n");
+  const sample = { text, cursorX: 2, cursorY: text.split("\n").length - 2, composer: "idle" };
+  assert.equal(promptArrived(text, PROMPT), true, "the old whole-pane receipt would pass");
+  assert.equal(promptStaged(sample, PROMPT), false, "the active empty editor does not pass");
+  assert.equal(activeComposer(sample).text, "› Ask Codex to do anything");
+});
+
+test("a wrapped draft remains staged after its prompt marker scrolls away", () => {
+  const tail = PROMPT.slice(-40);
+  const lines = Array.from({ length: 18 }, (_, index) => `wrapped editor row ${index}`);
+  lines[17] = tail;
+  const sample = { text: lines.join("\n"), cursorX: tail.length, cursorY: 17, composer: null };
+  assert.equal(promptStaged(sample, PROMPT), true);
+});
+
+test("collapsed paste is staged until a positive post-submit receipt appears", () => {
+  const staged = {
+    text: claudePane("# Work with JulianThis[Pasted text #2 +22 lines]"),
+    cursorX: 58,
+    cursorY: 2,
+    composer: "draft",
+  };
+  assert.equal(promptStaged(staged, PROMPT), true);
+  assert.equal(submissionReceipt(staged, staged, PROMPT), "staged", "a paste marker is not a submission receipt");
+  const submitted = {
+    text: `${staged.text.replace("❯ # Work with JulianThis[Pasted text #2 +22 lines]", "SUBMITTED\n❯ ")}`,
+    cursorX: 2,
+    cursorY: 3,
+    composer: "idle",
+  };
+  assert.equal(submissionReceipt(staged, submitted, PROMPT), "submitted");
+});
+
+test("a redraw that only clears the editor is ambiguous", () => {
+  const before = { text: "> exact draft\nstatus", cursorX: 13, cursorY: 0, composer: "draft" };
+  const after = { text: "> \nstatus", cursorX: 2, cursorY: 0, composer: "idle" };
+  assert.equal(submissionReceipt(before, after, "exact draft"), "ambiguous");
 });
 
 test("a partially taken prompt is not delivered", () => {

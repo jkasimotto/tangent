@@ -149,7 +149,7 @@ test("the Area browser focuses search and leads with ready work and filterable D
   await settle(window);
   assert.equal(posts.at(-1).body.resume, true, "a stale live brain resumes instead of showing an error");
   assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 1, "a second click cannot start a duplicate generation");
-  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "tangent-brain-g2");
+  assert.equal(window.document.querySelector("[data-map-brain-pane] .map-brain-terminal").dataset.session, "tangent-brain-g2");
   releaseSessionRefresh();
   await settle(window);
   dom.window.close();

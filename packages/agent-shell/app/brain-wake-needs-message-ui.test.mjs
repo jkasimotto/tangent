@@ -196,7 +196,7 @@ test("a live brain has a direct Area stop control", async () => {
   dom.window.close();
 });
 
-test("Go to opens a live Area brain in the shared session layer", async () => {
+test("Go to opens a live Area brain in its Area workspace", async () => {
   const live = {
     area: "otto/tangent", session: "tangent-brain-g7", currentAttemptId: "tangent-brain-g7", status: "active", live: true,
     state: "working", generation: 7, foundingInstruction: { text: "Run this Area." }, requests: [],
@@ -205,8 +205,8 @@ test("Go to opens a live Area brain in the shared session layer", async () => {
 
   await chooseBrain(window);
 
-  assert.equal(window.document.querySelector("#session-layer").hidden, false);
-  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "tangent-brain-g7");
+  assert.equal(window.document.querySelector("[data-map-brain-pane] .map-brain-terminal").dataset.session, "tangent-brain-g7");
+  assert.equal(window.document.querySelector("[data-toggle-workspace-map]").textContent, "Map");
   assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 0);
   dom.window.close();
 });

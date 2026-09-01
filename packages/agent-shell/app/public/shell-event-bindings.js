@@ -13,7 +13,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
     showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap, drillAreaMap, closeAreaMap, openAreaMapFind, toggleAreaMapOnly,
-    toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane,
+    toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane, resizeAreaWorkspacePane, areaWorkspaceMapOwnsFocus,
   } = chrome;
   const {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
@@ -1702,7 +1702,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const interactive = target.closest?.("button, input, select, textarea, a, dialog, [role='dialog'], [contenteditable]:not([contenteditable='false'])");
       focusMapCompanion("map", { moveDomFocus: !interactive });
     }
-    else if (target.closest?.("[data-map-brain-pane]")) focusMapCompanion("brain");
+    else {
+      const brainPane = target.closest?.("[data-map-brain-pane]");
+      if (brainPane && !brainPane.hidden) focusMapCompanion("brain");
+    }
     if (state.documentPeek && documentPeekLayer.contains(target)) return handleDocumentPeekClick(event);
     const processControl = target.closest?.("[data-control-process]");
     if (processControl) return controlProcess(processControl);
@@ -2908,7 +2911,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    */
   function leaveCurrentSurface() {
     if (closeNearestOpenDetails()) return true;
-    if (state.view === "map") {
+    if (state.view === "area-workspace") {
       closeAreaMap();
       return true;
     }
@@ -3008,15 +3011,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     // shortcut may reinterpret its provisional key value.
     if (keyboardEventIsComposing(event)) return;
     const context = keyboardContext(event);
-    const mapFindKey = state.view === "map" && !event.altKey && !event.shiftKey && ((event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === "f" || !event.metaKey && !event.ctrlKey && event.key === "/" && context !== "text-entry");
+    const mapFindKey = areaWorkspaceMapOwnsFocus() && !event.altKey && !event.shiftKey && ((event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === "f" || !event.metaKey && !event.ctrlKey && event.key === "/" && context !== "text-entry");
     if (mapFindKey) {
       event.preventDefault(); event.stopPropagation(); openAreaMapFind(); return;
     }
-    if (state.view === "map" && context !== "text-entry" && !event.metaKey && !event.ctrlKey && !event.altKey && event.shiftKey && String(event.key).toLowerCase() === "o" && !event.target.closest?.("[data-tangent-area-map]")) {
+    if (areaWorkspaceMapOwnsFocus() && context !== "text-entry" && !event.metaKey && !event.ctrlKey && !event.altKey && event.shiftKey && String(event.key).toLowerCase() === "o" && !event.target.closest?.("[data-tangent-area-map]")) {
       event.preventDefault(); event.stopPropagation(); toggleAreaMapOnly(); return;
-    }
-    if (state.view === "map" && (event.metaKey !== event.ctrlKey) && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "h" && event.target.closest?.("[data-map-brain-pane]")) {
-      event.preventDefault(); event.stopPropagation(); focusMapCompanion("map"); return;
     }
 
     if (context === "modal") {
@@ -3076,15 +3076,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     // Command-Shift-Enter leave action. This handler runs in capture so xterm never sees
     // that one shell command first.
     if (context === "session") {
-      if (state.view === "map" && (event.metaKey !== event.ctrlKey) && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "h") {
-        event.preventDefault(); event.stopPropagation();
-        if (state.sessionPeek) closeSessionLayer(); else focusMapCompanion("map");
-        return;
-      }
-      if (shortcutMatches(event, KEYMAP.session) && state.sessionPeek) {
+      if (shortcutMatches(event, KEYMAP.session) && (state.sessionPeek || state.view === "area-workspace")) {
         event.preventDefault();
         event.stopPropagation();
-        closeSessionLayer();
+        if (state.sessionPeek) closeSessionLayer(); else closeAreaMap();
       }
       return;
     }
@@ -3122,7 +3117,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (handleGlobalShortcut(event)) return;
       if (handleCommandEnter(event)) return;
       if (event.key === "Escape") {
-        if (state.view === "map") return;
+        if (state.view === "area-workspace") return;
         event.preventDefault();
         leaveCurrentSurface();
       }
@@ -3130,17 +3125,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (handleGlobalShortcut(event)) return;
     if (handleCommandEnter(event)) return;
-    if (state.view === "map" && (event.metaKey !== event.ctrlKey) && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "l") {
-      event.preventDefault(); event.stopPropagation();
-      const pane = screen.querySelector("[data-map-brain-pane]");
-      if (pane?.hidden !== false) toggleMapBrain();
-      focusMapCompanion("brain");
-      return;
-    }
-    if (state.view === "map" && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "b" && !event.target.closest?.("[data-map-brain-pane]")) {
+    if (areaWorkspaceMapOwnsFocus() && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "b" && !event.target.closest?.("[data-map-brain-pane]")) {
       event.preventDefault(); event.stopPropagation(); toggleMapBrain(); return;
     }
-    if (state.view === "map" && event.key === "Escape") {
+    if (areaWorkspaceMapOwnsFocus() && event.key === "Escape") {
       event.preventDefault(); event.stopPropagation();
       return closeAreaMap();
     }
@@ -3243,15 +3231,15 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   screen.addEventListener("pointerdown", (event) => {
-    if (!event.target.closest?.("[data-map-brain-divider]")) return;
+    if (!event.target.closest?.("[data-split-separator]")) return;
     event.preventDefault();
     /** Applies one divider pointer position without moving column focus. */
     const move = (next) => {
-      const companion = screen.querySelector(".map-companion");
+      const companion = screen.querySelector("[data-area-workspace]");
+      const divider = screen.querySelector("[data-split-separator]");
       const rect = companion?.getBoundingClientRect();
       const width = Math.max(420, Math.min((rect?.width || window.innerWidth) / 2, (rect?.right || window.innerWidth) - next.clientX));
-      localStorage.setItem("agent-shell.map-brain-width", String(Math.round(width)));
-      companion?.style.setProperty("--map-brain-width", `${Math.round(width)}px`);
+      resizeAreaWorkspacePane(divider?.dataset.fixedPane || "brain", Math.round(width));
       try { terminalFit(); } catch {}
     };
     /** Ends this one divider drag. */

@@ -709,7 +709,7 @@ test("Command-Shift-Enter opens and closes the one session layer without destroy
   assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, row.dataset.workCursor);
 });
 
-test("an Area brain row takes the cursor and Command-Shift-Enter enters its brain", async () => {
+test("an Area brain row takes the cursor and Command-Shift-Enter enters its Brain pane", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
   const row = document.querySelector("[data-work-cursor='area:otto/tangent']");
   row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
@@ -717,9 +717,9 @@ test("an Area brain row takes the cursor and Command-Shift-Enter enters its brai
   assert.ok(document.querySelector("[data-work-cursor='area:otto/tangent']").classList.contains("cursor"), "the visible cursor sits on the Area brain row");
   press(window, "Enter", { metaKey: true, shiftKey: true });
   await settle(window);
-  assert.equal(document.querySelector("#session-layer-terminal").dataset.session, "otto-tangent--brain");
-  assert.equal(document.querySelector("#session-layer-title strong").textContent, "Otto / Tangent");
-  assert.match(document.querySelector("#session-layer-title span").textContent, /Claude · Area brain/);
+  assert.equal(document.querySelector("[data-map-brain-pane] .map-brain-terminal").dataset.session, "otto-tangent--brain");
+  assert.match(document.querySelector("[data-map-brain-pane] > header").textContent, /Brain working/);
+  assert.equal(document.querySelector("[data-toggle-workspace-map]").textContent, "Map");
 });
 
 test("Command-Shift-Enter opens the brain chooser on an inactive Area and b does nothing", async () => {

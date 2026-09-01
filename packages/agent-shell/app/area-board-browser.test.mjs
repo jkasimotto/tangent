@@ -286,6 +286,24 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     const row = page.locator('[data-work-cursor="area:otto/tangent"]');
     await row.dispatchEvent("click");
     await row.locator("[data-work-cursor-control]").focus();
+
+    // Brain-first uses the same workspace. One visible Map action opens the
+    // exact Area without replacing the mounted xterm presentation.
+    await page.locator('[data-open-brain="otto-tangent--brain"]').click();
+    const brainFirstPane = page.locator('[data-map-brain-pane]');
+    await brainFirstPane.locator('.map-brain-terminal[data-session="otto-tangent--brain"]').waitFor();
+    const brainFirstTerminal = brainFirstPane.locator(".xterm").first();
+    await brainFirstTerminal.evaluate((node) => { node.dataset.workspaceIdentity = "brain-first"; });
+    const openMap = brainFirstPane.locator("[data-toggle-workspace-map]");
+    assert.equal(await openMap.textContent(), "Map", "every Area Brain has one visible Map action");
+    await openMap.click();
+    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
+    assert.equal(await brainFirstTerminal.getAttribute("data-workspace-identity"), "brain-first", "opening Map preserves the exact xterm node");
+    assert.equal(await page.locator('[data-area-workspace="otto/tangent"]').getAttribute("data-presentation"), "wide", "1200px and wider keeps both panes beside each other");
+    await brainFirstPane.locator("[data-leave-area-workspace]").click();
+    await row.waitFor();
+    await row.dispatchEvent("click");
+    await row.locator("[data-work-cursor-control]").focus();
     await page.keyboard.press("m");
     await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
     const only = page.locator("[data-map-only]");
@@ -405,19 +423,51 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     const widths = await page.evaluate(() => ({ pane: document.querySelector("[data-map-brain-pane]").getBoundingClientRect().width, map: document.querySelector("[data-map-column]").getBoundingClientRect().width }));
     assert.ok(widths.pane >= 550 && widths.pane <= 570, `the dock starts at 560px: ${JSON.stringify(widths)}`);
     assert.ok(widths.map >= 560, `the map keeps its usable minimum: ${JSON.stringify(widths)}`);
+    await page.locator('[data-map-breadcrumb="otto"]').click();
+    assert.equal(await pane.locator(".map-brain-terminal").getAttribute("data-session"), "otto-tangent--brain", "Map drill does not close or retarget Brain");
+    assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "Map drill preserves the same Map controller");
     await page.locator("[data-map-column]").click({ position: { x: 20, y: 20 } });
-    assert.equal(await page.locator("[data-map-column]").getAttribute("class"), "map-column focused");
-    await page.keyboard.press("Control+l");
-    assert.match(await pane.getAttribute("class"), /focused/, "Control-L focuses the brain column");
-    await page.keyboard.press("Control+h");
-    assert.match(await page.locator("[data-map-column]").getAttribute("class"), /focused/, "Control-H returns focus to the map");
+    assert.match(await page.locator("[data-map-column]").getAttribute("class"), /focused/);
+    await pane.dispatchEvent("pointerdown");
+    assert.match(await pane.getAttribute("class"), /focused/, "pointer focus selects the Brain pane");
+    const terminalKeyOwnership = await page.evaluate(() => {
+      const target = document.querySelector("[data-map-brain-pane] .xterm-helper-textarea");
+      return [
+        { name: "m", key: "m" }, { name: "b", key: "b" }, { name: "Escape", key: "Escape" },
+        { name: "Control-H", key: "h", ctrlKey: true }, { name: "Control-L", key: "l", ctrlKey: true },
+      ].map((definition) => {
+        let shellPrevented = null;
+        /** Records whether the shell consumed this terminal key in capture. */
+        const probe = (event) => { shellPrevented = event.defaultPrevented; };
+        document.addEventListener("keydown", probe, { capture: true, once: true });
+        target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...definition }));
+        return [definition.name, shellPrevented];
+      });
+    });
+    assert.deepEqual(terminalKeyOwnership, [["m", false], ["b", false], ["Escape", false], ["Control-H", false], ["Control-L", false]], "Brain terminal keys reach xterm without split interception");
+    await page.locator("[data-map-column]").click({ position: { x: 20, y: 20 } });
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "focus changes never remount the canvas");
-    await pane.locator("[data-close-map-brain]").click();
+    await pane.locator("[data-hide-workspace-brain]").click();
     assert.equal(await pane.isVisible(), false, "Close b hides only the pane");
     await page.keyboard.press("b");
     assert.equal(await pane.isVisible(), true, "b reopens the same companion");
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "close and reopen keep the map island");
-    await pane.locator("[data-close-map-brain]").click();
+    const companionTerminal = pane.locator(".xterm").first();
+    await companionTerminal.evaluate((node) => { node.dataset.responsiveIdentity = "original"; });
+    await page.setViewportSize({ width: 900, height: 760 });
+    await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "single");
+    assert.equal(await page.locator("[data-split-pane]").count(), 2, "narrow presentation keeps both pane roots mounted");
+    assert.equal(await pane.isVisible(), false, "the primary Map is the initial narrow pane");
+    await page.keyboard.press("b");
+    assert.equal(await pane.isVisible(), true, "the Map key selects the mounted Brain in narrow mode");
+    assert.equal(await page.locator("[data-map-column]").isVisible(), false);
+    assert.equal(await companionTerminal.getAttribute("data-responsive-identity"), "original", "narrow selection preserves the exact xterm node");
+    await pane.locator("[data-toggle-workspace-map]").click();
+    assert.equal(await page.locator("[data-map-column]").isVisible(), true, "the Brain Map action selects the mounted Map in narrow mode");
+    assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "narrow selection preserves the exact canvas");
+    await page.setViewportSize({ width: 1400, height: 760 });
+    await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "wide");
+    await pane.locator("[data-hide-workspace-brain]").click();
     await page.getByRole("button", { name: "Outline", exact: true }).click();
     await page.getByRole("treeitem", { name: "Otto, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
     await page.getByRole("treeitem", { name: "Tangent, child of Otto, depth 2, unfolded, ready, 0 blocks" }).waitFor();

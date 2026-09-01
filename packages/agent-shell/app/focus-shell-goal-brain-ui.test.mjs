@@ -111,10 +111,10 @@ test("Goal cards open only their exact Area brain and preserve Work context", as
   const user = userEvent.setup({ document: window.document });
   rootAction.focus();
   await user.keyboard("{Enter}");
-  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "tangent-brain");
-  assert.equal(terminalFocusCount, 1, "opening from a Goal card focuses the terminal");
-  assert.equal(window.document.activeElement.tagName, "TEXTAREA");
-  click(window, "#session-layer");
+  assert.equal(window.document.querySelector("[data-map-brain-pane] .map-brain-terminal").dataset.session, "tangent-brain");
+  assert.ok(terminalFocusCount >= 1, "opening from a Goal card focuses the terminal");
+  assert.equal(window.document.querySelector("[data-map-brain-pane]").contains(window.document.activeElement), true, "keyboard focus enters the Brain pane");
+  click(window, "[data-leave-area-workspace]");
   assert.equal(window.document.querySelector("#work-search").hidden, true, "no search is kept yet");
 
   window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true }));
@@ -126,17 +126,17 @@ test("Goal cards open only their exact Area brain and preserve Work context", as
   const filteredAction = groupBrain(parent.file);
   filteredAction.focus();
   await user.keyboard(" ");
-  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "tangent-brain");
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true, bubbles: true }));
+  assert.equal(window.document.querySelector("[data-map-brain-pane] .map-brain-terminal").dataset.session, "tangent-brain");
+  window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true, bubbles: true, cancelable: true }));
   assert.equal(window.document.querySelector("#work-search-input").value, "parent", "Command-J restores the kept Work search");
 
   groupBrain(parent.file).click();
-  const terminal = window.document.querySelector("#session-layer-terminal[data-session='tangent-brain']");
+  const terminal = window.document.querySelector("[data-map-brain-pane] .map-brain-terminal[data-session='tangent-brain']");
   const repeatedAction = window.document.createElement("button");
   repeatedAction.dataset.openBrain = "tangent-brain";
   terminal.append(repeatedAction);
   repeatedAction.click();
-  click(window, "#session-layer");
+  click(window, "[data-leave-area-workspace]");
   assert.equal(window.document.querySelector("#work-search-input").value, "parent", "a duplicate activation keeps the first return point");
 
   sessionProjection.splice(sessionProjection.findIndex((item) => item.name === "tangent-brain"), 1);

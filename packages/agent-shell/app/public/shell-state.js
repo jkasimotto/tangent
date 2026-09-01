@@ -34,7 +34,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     collapsedDeskSections: new Set(storedJson("agent-shell.collapsed-desk-sections") || []),
     collapsedGoalTrees: new Set(storedJson("agent-shell.collapsed-goal-trees") || []),
     areaFocus: storedAreaFocus.areas, areaFocusOnly: storedAreaFocus.only, activeOnly: storage.getItem("agent-shell.active-only") === "true", areaFocusPicker: null, areaFocusStorageError: storedAreaFocus.error,
-    mapStates: new Map(), mapSelectFile: "", showDoneAreas: storage.getItem("agent-shell.show-done-areas") === "1", areaEdit: null,
+    mapStates: new Map(), mapSelectFile: "", mapArea: "", areaWorkspace: null, showDoneAreas: storage.getItem("agent-shell.show-done-areas") === "1", areaEdit: null,
     areaQuery: "", areaDocumentQuery: "", areaDocumentPeriod: "any", areaDocumentOrder: "newest", areaDocumentOnly: "", areaDocumentExcluded: new Set(),
     areaWorkQuery: "", areaWorkScope: "", areaWorkState: "all", areaWorkLimits: new Map(), areaHistory: false,
     programId: "", programDraft: { type: "process", area: "", name: "", command: "", cwd: "" },

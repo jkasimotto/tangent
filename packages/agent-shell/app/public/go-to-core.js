@@ -15,7 +15,7 @@
     "view", "currentFile", "agentSessionName", "agentReturnView", "decisionReturnView",
     "describeSessionName", "createReturnView", "harnessReturnView",
     "programId", "areaSelection", "searchPattern", "workFilter",
-    "areaFocus", "collapsedDeskSections", "workCursor",
+    "areaFocus", "collapsedDeskSections", "workCursor", "mapArea", "areaWorkspace",
   ];
 
   /** The Back button word for each captured view. */
@@ -32,6 +32,7 @@
     agent: "Agent",
     decision: "Next step",
     document: "Document",
+    "area-workspace": "Area workspace",
   };
 
   /** Normalizes conversational wording for forgiving local search. */

@@ -212,8 +212,8 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   assert.equal(window.document.querySelectorAll(`[data-goal-anchor="${child.file}"]`).length, 1, "overlapping staged roots do not duplicate descendant work");
 
   click(window, '[data-desk-area="otto/alpha"] [data-open-brain]');
-  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "Alpha-brain");
-  click(window, "#session-layer");
+  assert.equal(window.document.querySelector("[data-map-brain-pane] .map-brain-terminal").dataset.session, "Alpha-brain");
+  click(window, "[data-leave-area-workspace]");
   assert.equal(window.document.querySelector("[data-starred-only]").getAttribute("aria-pressed"), "true");
   assert.equal(window.document.querySelector("#work-search-input").value, "alpha");
   assert.equal(window.document.querySelector("[data-work-filter]"), null);

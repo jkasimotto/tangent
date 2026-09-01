@@ -220,6 +220,8 @@ export function createTerminalController({ state, showToast, record = null }) {
   return {
     disposeTerminal,
     mountTerminal,
+    /** Returns keyboard focus to the mounted xterm instance. */
+    focus: () => terminal?.focus?.(),
     /** Fits the terminal to its host. */
     fit: () => fitTerminal?.(),
   };

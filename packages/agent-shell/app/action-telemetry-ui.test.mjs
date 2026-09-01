@@ -171,7 +171,7 @@ test("pagehide and telemetry teardown flush without leaving a timer or listener"
 
 test("both production Area-map mounts forward client telemetry", async () => {
   const source = await readFile(new URL("./public/shell.js", import.meta.url), "utf8");
-  const dedicatedMount = source.slice(source.indexOf("function mountDedicatedAreaMap()"), source.indexOf("shellBindings = bindShellEvents"));
+  const dedicatedMount = source.slice(source.indexOf("function areaMapPane(area)"), source.indexOf("function mountAreaWorkspace()"));
   assert.match(dedicatedMount, /onEvent:\s*actionTelemetry\.recordAreaMap/);
   assert.match(source, /createAreaDirectoryView\(\{[\s\S]*shell:\s*\{[^}]*actionTelemetry/);
 });

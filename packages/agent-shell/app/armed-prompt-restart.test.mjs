@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -29,12 +29,54 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 const INSTANCE_ID = `arm-restart-${process.pid}`;
 
-// Stands in for a real harness TUI: raw mode (no canonical line-buffer limit,
-// which drops the tail of a multi-KB prompt fed straight to a plain `cat`)
-// with echo on, so the pty shows whatever gets typed into it once it is the
-// pane's foreground command.
-const HARNESS_CMD = 'sh -c "stty raw echo; exec cat"';
 const HARNESS_ID = "restart-probe";
+
+/**
+ * Writes a small TUI fixture that keeps the first submitted draft in its
+ * composer. A second Enter writes a receipt and clears the composer.
+ */
+async function makeLostEnterHarness(root) {
+  const script = path.join(root, "lost-enter-harness.mjs");
+  const receipt = path.join(root, "submission-receipt.txt");
+  await writeFile(script, `
+import { writeFileSync } from "node:fs";
+
+const receipt = process.argv[2];
+process.stdin.setRawMode?.(true);
+process.stdin.setEncoding("utf8");
+process.stdin.resume();
+
+let draft = "";
+let enters = 0;
+process.stdout.write("> ");
+process.stdin.on("data", (chunk) => {
+  for (const character of chunk) {
+    if (character === "\\r") {
+      enters += 1;
+      if (enters === 1) {
+        process.stdout.write("\\r\\n> " + draft);
+        continue;
+      }
+      writeFileSync(receipt, draft, "utf8");
+      draft = "";
+      process.stdout.write("\\r\\nSUBMITTED\\r\\n> ");
+      continue;
+    }
+    if (character === "\\u0015") {
+      draft = "";
+      process.stdout.write("\\r\\n> ");
+      continue;
+    }
+    draft += character;
+    process.stdout.write(character);
+  }
+});
+`, "utf8");
+  return {
+    command: `${JSON.stringify(process.execPath)} ${JSON.stringify(script)} ${JSON.stringify(receipt)}`,
+    receipt,
+  };
+}
 
 /** Reserves and releases one local port for the HTTP test. */
 async function freePort() {
@@ -81,7 +123,7 @@ async function killSession(name) {
 }
 
 /** Writes an Area note tree with one Area under otto. */
-async function makeTrees(root, leaf) {
+async function makeTrees(root, leaf, harnessCommand) {
   const trees = path.join(root, "trees");
   const area = path.join(trees, "otto", leaf);
   await mkdir(area, { recursive: true });
@@ -89,19 +131,14 @@ async function makeTrees(root, leaf) {
     path.join(trees, "harnesses.md"),
     `# Harnesses\n\n\`\`\`tangent.harnesses.v1\n${JSON.stringify({
       version: 1,
-      harnesses: [{ id: HARNESS_ID, label: "Restart probe", command: HARNESS_CMD }],
+      harnesses: [{ id: HARNESS_ID, label: "Restart probe", command: harnessCommand }],
     })}\n\`\`\`\n`,
     "utf8",
   );
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeFile(
     path.join(area, `${leaf}.md`),
-    `---\ntype: area\n---\n\n# ${leaf}\n\n## Resources\n\n- Repository: ${path.dirname(trees)}\n\n\`\`\`tangent.environment.v1\n${JSON.stringify({
-      defaults: {
-        launch: { harness: HARNESS_ID },
-        brain: { harness: HARNESS_ID },
-      },
-    })}\n\`\`\`\n`,
+    `---\ntype: area\n---\n\n# ${leaf}\n\n## Resources\n\n- Repository: ${path.dirname(trees)}\n`,
     "utf8",
   );
   return trees;
@@ -187,10 +224,11 @@ async function startHarness(session, command) {
   throw new Error(`the pane of ${session} never left its shell for the harness command`);
 }
 
-test("an armed step prompt survives a server restart", async (context) => {
+test("an armed step prompt retries when the harness keeps the first Enter in its composer", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-armed-restart-"));
   const leaf = `probearm${process.pid}`;
-  const trees = await makeTrees(root, leaf);
+  const harness = await makeLostEnterHarness(root);
+  const trees = await makeTrees(root, leaf, harness.command);
   const armed = path.join(root, "armed");
   const sessions = [];
   let port;
@@ -257,7 +295,7 @@ test("an armed step prompt survives a server restart", async (context) => {
   // quiet, non-shell command whose pty echo shows whatever gets typed into it
   // next. startHarness types the command itself rather than submitting the
   // leftover primed line, so a slow shell init cannot strand the pane.
-  await startHarness(started.session, HARNESS_CMD);
+  await startHarness(started.session, harness.command);
 
   // The re-armed session must not sit at 0 tokens with an empty composer:
   // real content (the prompt's opening words) reaches the pane once the
@@ -285,4 +323,16 @@ test("an armed step prompt survives a server restart", async (context) => {
   // composer holds the whole prompt, not just a fragment of it.
   const finalPane = await paneText(started.session);
   assert.ok(promptArrived(finalPane, persisted.prompt), `the whole prompt should have arrived in the pane; got:\n${finalPane}`);
+
+  // Arrival in the composer is not delivery. The first Enter is ignored by
+  // the fixture, as observed in real harness panes. Delivery must verify that
+  // the draft left the composer and retry Enter without typing a second copy.
+  const submitted = await waitFor("the harness submission receipt", async () => {
+    try {
+      return await readFile(harness.receipt, "utf8");
+    } catch {
+      return null;
+    }
+  }, 100);
+  assert.equal(submitted, persisted.prompt);
 });

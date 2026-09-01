@@ -1,3 +1,4 @@
+import { lstat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -39,16 +40,38 @@ async function commitCommand(rest: string[]): Promise<void> {
   validateCommitMessage(message);
 
   const treesRoot = tangentTreesRoot();
+  await validateKnownVaultPaths(treesRoot, paths);
+  const pathspecs = paths.map(literalVaultPathspec);
   const area = stringArg(args.area) || areaFromPath(paths[0]!);
   const trailers = [`Tangent-Area: ${area}`];
   const tmuxSession = await currentTmuxSession();
   if (tmuxSession) trailers.push(`Tangent-Tmux: ${tmuxSession}`);
 
-  // Stage exactly the named paths so new Documents (untracked files) commit too. Never `add -A`:
-  // that would take another agent's uncommitted edits.
-  await git(treesRoot, ["add", "--", ...paths]);
-  await git(treesRoot, ["commit", "-m", message, "-m", trailers.join("\n"), "--", ...paths]);
+  // Recover named deletions that another command already removed from the shared index, then
+  // stage exactly the named paths. Both commands are path-limited so unrelated edits stay put.
+  await git(treesRoot, ["reset", "-q", "HEAD", "--", ...pathspecs]);
+  await git(treesRoot, ["add", "--", ...pathspecs]);
+  await git(treesRoot, ["commit", "-m", message, "-m", trailers.join("\n"), "--", ...pathspecs]);
   console.log(`committed: ${message}`);
+}
+
+/** Accepts a present path or a missing path that names tracked content at HEAD. */
+async function validateKnownVaultPaths(treesRoot: string, paths: string[]): Promise<void> {
+  for (const relativePath of paths) {
+    try {
+      await lstat(path.join(treesRoot, relativePath));
+      continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
+    }
+    const tracked = (await git(treesRoot, ["ls-tree", "-r", "--name-only", "HEAD", "--", literalVaultPathspec(relativePath)])).stdout.trim();
+    if (!tracked) throw new Error(`Vault path does not exist and was never tracked: ${relativePath}`);
+  }
+}
+
+/** Makes Git treat a user-supplied vault path as one literal file or directory prefix. */
+function literalVaultPathspec(relativePath: string): string {
+  return `:(literal)${relativePath}`;
 }
 
 /** Rejects a commit message that does not match `<verb>: <area-path> <summary>`. */

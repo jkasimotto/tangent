@@ -7,6 +7,7 @@ import path from "node:path";
 import { mkdtemp, mkdir, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { newPipeline, writePipeline } from "./job-record.mjs";
+import { newBrain, writeBrain } from "./brain-record.mjs";
 
 /** Creates one normalized retaining-adapter snapshot. */
 const fenceSource = (rows = [], condition = "current", problems = []) => ({ rows, condition, version: workSemanticHash(rows), problems });
@@ -163,6 +164,48 @@ test("a canonical job.v1 uses its file-level Goal identity", async (context) => 
   assert.equal(candidate.problems.some((problem) => problem.source === "jobs" && problem.code === "source-record-invalid"), false);
   assert.equal(candidate.goals[0].execution.run, 1);
   assert.equal(candidate.goals[0].execution.assignment.instructionPreview, "Build the result.");
+});
+
+test("corrupt Job and Brain files retain their last truthful rows", async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), "work-corrupt-source-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const trees = path.join(root, "trees");
+  const jobs = path.join(root, "jobs");
+  const brains = path.join(root, "brains");
+  await mkdir(path.join(trees, "otto"), { recursive: true });
+  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: work\nstatus: active\n---\n\n# Otto\n");
+  await writeFile(path.join(trees, "otto", "goal-one.md"), "---\ntype: goal\nstatus: active\n---\n\n# One\n");
+  await writePipeline(jobs, newPipeline({
+    goal: "otto/goal-one.md",
+    area: "otto",
+    slug: "one",
+    now: "2026-09-01T00:00:00.000Z",
+    steps: [{ instruction: "Build the result.", launch: { harness: "codex" } }],
+  }));
+  await writeBrain(brains, newBrain({ area: "otto", instruction: "", planFile: "otto/otto.md", now: "2026-09-01T00:00:00.000Z" }));
+  const adapters = createWorkSourceAdapters({
+    treesRoot: trees,
+    jobsRoot: jobs,
+    brainsRoot: brains,
+    processesRoot: path.join(root, "processes"),
+    presentationsRoot: path.join(root, "presented"),
+    /** Returns one complete empty Agent observation. */
+    loadAgents: async () => [],
+  });
+  const before = await adapters.reconcile();
+  assert.equal(before.goals[0].execution.assignment.id, "assignment-1");
+  assert.equal(before.brains.length, 1);
+
+  await writeFile(path.join(jobs, "otto", "one.json"), "{");
+  await writeFile(path.join(brains, "otto", "brain.json"), "{");
+  const after = await adapters.reconcile(["jobs", "brains"]);
+
+  assert.equal(after.goals[0].execution.assignment.id, "assignment-1");
+  assert.equal(after.brains.length, 1);
+  assert.equal(after.fence.jobs.condition, "degraded");
+  assert.equal(after.fence.brains.condition, "degraded");
+  assert.equal(after.problems.some((item) => item.source === "jobs" && item.code === "source-record-invalid"), true);
+  assert.equal(after.problems.some((item) => item.source === "brains" && item.code === "source-record-invalid"), true);
 });
 
 test("duplicate owned Agent identities remain visible once with an explicit problem", async () => {

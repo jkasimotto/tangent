@@ -1,11 +1,13 @@
 import path from "node:path";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { readAllJobs, jobRun } from "./job-record.mjs";
-import { readAllBrains, currentGeneration } from "./brain-record.mjs";
+import { readdir, readFile } from "node:fs/promises";
+import { readJobFileResult, jobRun } from "./job-record.mjs";
+import { readBrainResult, currentGeneration } from "./brain-record.mjs";
 import { openBrainRequests, readBrainRequests } from "./brain-requests.mjs";
-import { discoverProcesses, processView, readProcessState } from "./process-scheduler.mjs";
+import { normalizeProcessState, processStatePath, processView } from "./process-scheduler.mjs";
+import { parseProcessNote, processSlugFromFile } from "./process-note.mjs";
 import { projectCards, projectPresentations, readGoalPresentations } from "./goal-presentations.mjs";
 import { projectAreaPresentations, readAreaPresentations } from "./area-presentations.mjs";
+import { readJsonObjectResult, walkJsonFiles } from "./json-store.mjs";
 import { deriveWorkRowState, projectWorkAssignment, selectWorkAssignment, workAgentActivity } from "./work-row-state.mjs";
 import { WORK_DOMAINS, WORK_LIMITS, WORK_SCHEMA, workHash, workText } from "./work-model.mjs";
 
@@ -305,11 +307,14 @@ async function enumerateGoals(treesRoot) {
 async function enumerateJobs(root) {
   const rows = [];
   const invalidIds = [];
-  for (const file of await readAllJobs(root)) {
-    const run = jobRun(file);
+  for (const file of await walkJsonFiles(root)) {
+    const sourceId = path.relative(root, file).split(path.sep).join("/");
+    const result = await readJobFileResult(file);
+    if (result.state !== "ok") { invalidIds.push(sourceId); continue; }
+    const run = jobRun(result.job);
     if (!run) continue;
-    const goalId = file.goal;
-    if (typeof goalId !== "string" || !goalId) { invalidIds.push(`job-run-${Math.max(1, Number(run.run) || 1)}`); continue; }
+    const goalId = result.job.goal;
+    if (typeof goalId !== "string" || !goalId) { invalidIds.push(sourceId); continue; }
     const assignments = run.assignments ?? run.steps ?? [];
     const assignmentCandidates = assignments.map((assignment) => {
       const projected = projectWorkAssignment(assignment, assignments.length);
@@ -320,10 +325,10 @@ async function enumerateJobs(root) {
       };
     });
     rows.push({
-      id: `${goalId}#${run.run}`,
+      id: sourceId,
       goalId,
       run: Math.max(1, Number(run.run) || 1),
-      revision: Math.max(0, Number(run.revision ?? file.fileRevision) || 0),
+      revision: Math.max(0, Number(run.revision ?? result.job.fileRevision) || 0),
       state: jobState(run.status),
       assignmentCandidates,
       counts: { total: assignments.length, final: assignments.filter((row) => FINAL_ASSIGNMENTS.has(row.status)).length, pending: assignments.filter((row) => row.status === "pending").length },
@@ -336,9 +341,13 @@ async function enumerateJobs(root) {
 
 /** Reads bounded Brain state and open Request counts. */
 async function enumerateBrains(root) {
-  const records = await readAllBrains(root);
   const rows = [];
-  for (const record of records) {
+  const invalidIds = [];
+  for (const file of (await walkJsonFiles(root)).filter((value) => path.basename(value) === "brain.json")) {
+    const area = path.relative(root, path.dirname(file)).split(path.sep).join("/");
+    const result = await readBrainResult(root, area);
+    if (result.state !== "ok") { invalidIds.push(area); continue; }
+    const record = result.record;
     const requests = openBrainRequests(await readBrainRequests(root, record.area));
     rows.push({
       id: record.area,
@@ -351,17 +360,29 @@ async function enumerateBrains(root) {
       attentionCount: requests.length,
     });
   }
-  return rows;
+  return { rows, invalidIds };
 }
 
 /** Reads Process notes and their current scheduler state. */
 async function enumerateProcessSources(treesRoot, statesRoot, now) {
-  const notes = await discoverProcesses(treesRoot);
   const rows = [];
   const invalidIds = [];
+  const notes = [];
+  for (const area of await walkAreaDirectories(treesRoot)) {
+    const directory = path.join(treesRoot, area);
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!entry.isFile() || !processSlugFromFile(entry.name)) continue;
+      const file = `${area}/${entry.name}`;
+      try { notes.push(parseProcessNote(await readFile(path.join(directory, entry.name), "utf8"), { file, area })); }
+      catch { invalidIds.push(file); }
+    }
+  }
   for (const note of notes) {
     const id = note.file;
-    const state = await readProcessState(statesRoot, note.area, note.slug);
+    const stateResult = await readJsonObjectResult(processStatePath(statesRoot, note.area, note.slug));
+    if (stateResult.state === "malformed") { invalidIds.push(id); continue; }
+    const state = stateResult.state === "ok" ? normalizeProcessState(stateResult.value, note, now) : {};
     const view = processView(note, state, now);
     if (note.error) invalidIds.push(id);
     rows.push({

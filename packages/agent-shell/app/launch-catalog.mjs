@@ -42,11 +42,13 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
   async function remembered(area, kind = "work") {
     const policy = await policyFor(area);
     if (policy.error) return policy;
+    const current = await registry();
     const saved = await memory?.read?.() ?? {};
     const ancestors = String(area).split("/").map((_, index, parts) => parts.slice(0, parts.length - index).join("/"));
     for (const source of ancestors) {
       const ref = saved[source]?.[kind];
-      if (ref && launchAllowedByPolicy(policy, ref)) return { ...ref, source };
+      const resolved = ref ? resolveLaunch(current, ref) : null;
+      if (resolved && !resolved.error && launchAllowedByPolicy(policy, resolved)) return { ...ref, source };
     }
     const fallback = policy.unrestricted ? null : policy.launches[0] ?? null;
     return fallback ? { harness: fallback.harness, ...(fallback.model ? { model: fallback.model } : {}), ...(fallback.effort ? { effort: fallback.effort } : {}), source: null } : null;

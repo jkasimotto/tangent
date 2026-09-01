@@ -65,6 +65,18 @@ test("stale exact memory falls back to the nearest valid ancestor memory", async
   assert.deepEqual(await catalog.remembered("otto/tangent", "work"), { harness: "codex", model: "sol", source: "otto" });
 });
 
+test("removed-model memory falls back through a broad inherited allow pattern", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-launch-registered-memory-"));
+  await writeFile(path.join(root, "harnesses.md"), `\`\`\`tangent.harnesses.v2\n${JSON.stringify(registry)}\n\`\`\``);
+  const memory = createLaunchMemory(path.join(root, "runtime", "launch-memory.json"));
+  const catalog = createLaunchCatalog({ root,
+    /** Reads the broad parent policy fixture. */
+    readAreaNote: async (area) => area === "otto" ? note(["claude-otto"]) : "", memory });
+  await memory.write("otto", "work", { harness: "claude-otto", model: "opus" });
+  await memory.write("otto/tangent", "work", { harness: "claude-otto", model: "removed" });
+  assert.deepEqual(await catalog.remembered("otto/tangent", "work"), { harness: "claude-otto", model: "opus", source: "otto" });
+});
+
 test("unrestricted Areas do not invent a first-use choice", async () => {
   const catalog = await fixture({});
   assert.equal(await catalog.remembered("fresh", "brain"), null);
@@ -115,6 +127,7 @@ test("empty child contracts preserve the parent allowlist for an effort-capable 
     assert.deepEqual(policy.declaredBy, ["neara"]);
     assert.equal(policy.health, "valid");
     assert.equal((await catalog.allowed(area, { harness: "claude", model: "fable-5" })).command, "claude");
+    assert.match((await catalog.allowed(area, { harness: "missing" })).error, /unknown harness "missing"/);
   }
   assert.equal((await catalog.allowed("neara/restricted", { harness: "claude", model: "fable-5", effort: "high" })).command, "claude");
   assert.equal((await catalog.allowed("neara/restricted", { harness: "claude", model: "fable-5" })).code, "launch-not-allowed");

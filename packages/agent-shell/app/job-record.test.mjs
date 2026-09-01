@@ -64,3 +64,70 @@ test("a Brain can accept a durable plain worker note before the next Assignment"
   assert.equal(record.assignments[1].status, "pending");
   assert.equal(record.currentAssignmentId, null);
 });
+
+test("a Brain can accept a recovered later Assignment before an earlier pending Assignment", () => {
+  const record = newPipeline({
+    ...fields(),
+    steps: [
+      { instruction: "Prepare.", launch },
+      { instruction: "Inspect.", launch },
+      { instruction: "Apply the required correction.", launch },
+      { instruction: "Recover the interrupted run.", launch },
+    ],
+  });
+  const [first, second, earlier, current] = record.assignments;
+  first.status = "complete";
+  second.status = "complete";
+  current.status = "running";
+  current.session = "preserved-worker-4";
+  current.attempts = [{ id: "attempt-4", session: "preserved-worker-4", endedAt: null }];
+  current.handoverReceipts = [
+    { idempotencyKey: "handover-1", reportType: "note", workerSession: "preserved-worker-4", queue: { result: "note" }, notice: { id: "notice-1" } },
+    { idempotencyKey: "handover-2", reportType: "note", workerSession: "preserved-worker-4", queue: { result: "note" }, notice: { id: "notice-2" } },
+  ];
+  record.currentAssignmentId = current.id;
+
+  const receiptsBefore = structuredClone(current.handoverReceipts);
+  const attemptsBefore = structuredClone(current.attempts);
+  const accepted = acceptCurrentAssignment(record, earlier.index, "2026-08-31T02:00:00.000Z");
+
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.receipt.notice.id, "notice-2");
+  assert.equal(current.status, "complete");
+  assert.deepEqual(current.handoverReceipts, receiptsBefore);
+  assert.deepEqual(current.attempts[0], {
+    ...attemptsBefore[0],
+    endedAt: "2026-08-31T02:00:00.000Z",
+    result: { type: "brain-accepted-note", status: "done", summary: "The organizing Brain accepted the worker's plain completion note." },
+  });
+  assert.equal(earlier.status, "pending");
+  assert.equal(record.currentAssignmentId, null);
+});
+
+test("a Brain cannot skip the first pending Assignment while accepting a recovered later Assignment", () => {
+  const record = newPipeline({
+    ...fields(),
+    steps: [
+      { instruction: "Prepare.", launch },
+      { instruction: "Apply the first correction.", launch },
+      { instruction: "Apply the second correction.", launch },
+      { instruction: "Recover the interrupted run.", launch },
+    ],
+  });
+  const [first, , later, current] = record.assignments;
+  first.status = "complete";
+  current.status = "running";
+  current.session = "preserved-worker-4";
+  current.attempts = [{ id: "attempt-4", session: "preserved-worker-4", endedAt: null }];
+  current.handoverReceipts = [
+    { reportType: "note", workerSession: "preserved-worker-4", queue: { result: "note" }, notice: { id: "notice-1" } },
+  ];
+  record.currentAssignmentId = current.id;
+
+  assert.throws(
+    () => acceptCurrentAssignment(record, later.index, "2026-08-31T02:00:00.000Z"),
+    (error) => error.code === "next-assignment-mismatch",
+  );
+  assert.equal(current.status, "running");
+  assert.equal(record.currentAssignmentId, current.id);
+});

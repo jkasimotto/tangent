@@ -298,7 +298,7 @@ export function acceptCurrentAssignment(record, nextIndex, now = new Date().toIS
   if (!current) return { accepted: false, assignment: null };
   if (!["running", "waiting"].includes(current.status)) throw new JobMutationError("current-assignment-not-running", `assignment ${current.index} is ${current.status}`);
   const next = (record.assignments ?? record.steps).find((assignment) => assignment.index === Number(nextIndex));
-  const expected = nextPendingStep(record, current.index);
+  const expected = nextPendingStep(record, 0);
   if (!next || next.status !== "pending" || expected?.id !== next.id) throw new JobMutationError("next-assignment-mismatch", `assignment ${nextIndex} is not the next pending Assignment`);
   const receipt = [...(current.handoverReceipts ?? [])].reverse().find((item) => item.reportType === "note" && item.queue?.result === "note" && item.notice?.id);
   if (!receipt) throw new JobMutationError("completion-note-required", `assignment ${current.index} needs a durable plain worker note before the Brain can accept it`);

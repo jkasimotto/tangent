@@ -5,7 +5,7 @@ Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 - Vault CLI: `tangent area`, `tangent goal`, `tangent document`, `tangent vault commit`.
 - Agent CLI: `tangent agent list|show|stop|resume|send` joins exact live sessions to durable Job Attempts or Brain generations. Root `tangent send` remains the Area-aware convenience route.
 - Worker CLI: every assignment names its organizing brain's durable Area path. Its only command is `tangent send <brain-area> "<plain note>"`. A note never changes Goal or assignment state. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
-- Brain CLI: `tangent brain request` creates durable user requests, and `tangent brain advance` starts the next approved assignment.
+- Brain CLI: `tangent brain request` creates durable user requests. Job CLI: `tangent job advance` starts the next approved Assignment.
 - Job CLI: `tangent job create|show|start|append|advance|stop|replace` owns numbered execution runs, Assignments, Attempts, reports, and recovery receipts. Goal commands own intent only.
 - Brain and server CLI: `tangent brain status|stop|request|withdraw|succeed` owns exact-Area organization. Safe succession stages the next generation without authority until exact transcript receipt, then retires the outgoing immutable target (ADR-0055). `tangent goal create --start --path <dir>` is the Brain's composite Goal-plus-Job operation. `tangent shell rebuild` rebuilds and restarts the server.
 - Study partner CLI: `tangent study` (spawns an interactive `claude-otto` session carrying the partner contract) and `tangent study contract` (prints that contract).

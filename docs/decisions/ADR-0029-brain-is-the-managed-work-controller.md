@@ -24,7 +24,7 @@ The server does not use the newest plan Request as a global gate for Goal creati
 
 Tmux identity is optional caller information. A CLI caller outside tmux can name its session explicitly.
 
-Workers use `tangent handover`. A handover reports facts to the controlling brain. In brain-controlled pipelines, it does not start the next assignment. The brain uses `tangent brain advance <goal> <step>` after it reads the report.
+Workers report facts to the controlling brain. In brain-controlled Jobs, a report does not start the next Assignment. The brain uses `tangent job advance <goal> <assignment>` after it reads the report.
 
 The brain creates durable plan, decision, test, and approval requests. Agent Shell shows these records in the existing attention surface. Answers become durable brain notices. Markdown `For Julian` rows remain readable for active legacy runs, but new brain prompts do not use them.
 

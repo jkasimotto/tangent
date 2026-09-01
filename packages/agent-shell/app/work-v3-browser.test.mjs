@@ -41,7 +41,7 @@ test("browser boot reads only v3 Work and paints every bounded row kind", async 
   assert.match(document.body.textContent, /Read model/);
 });
 
-test("bounded source diagnostics stay out of the Work desk", async () => {
+test("bounded source diagnostics appear above retained Work rows", async () => {
   const projection = snapshot();
   projection.problems = [
     { code: "source-record-invalid", source: "jobs", count: 412, sampleIds: ["one", "two", "three"] },
@@ -49,7 +49,10 @@ test("bounded source diagnostics stay out of the Work desk", async () => {
   ];
   const { document } = await bootWorkTable({ vault: { areas: [], documents: [] }, sessions: [], brains: [], pipelines: [] }, { workProjection: projection });
   assert.match(document.body.textContent, /Build truthful Work/);
-  assert.doesNotMatch(document.body.textContent, /Last known|source-record-invalid|brain-agent-missing|412|17 missing/);
+  const banner = document.querySelector(".work-problem-banner");
+  assert.match(banner.textContent, /Known rows stay visible/);
+  assert.match(banner.textContent, /jobs\s*source-record-invalid\s*412/);
+  assert.match(banner.textContent, /brains\s*brain-agent-missing\s*17/);
 });
 
 test("a failed first refresh paints the cached revision as Last known", async () => {

@@ -311,6 +311,13 @@ summary:focus-visible {
   padding: 52px 0 100px;
 }
 
+.work-problem-banner { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px 12px; margin: 0 0 14px; padding: 10px 12px; border: 1px solid rgba(232, 179, 91, .32); border-radius: 5px; background: rgba(232, 179, 91, .07); color: var(--muted); font-size: 12px; }
+.work-problem-banner > strong { color: var(--amber); }
+.work-problem-banner ul { display: flex; flex: 1 1 100%; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.work-problem-banner li { display: inline-flex; gap: 6px; align-items: baseline; padding: 3px 6px; border: 1px solid var(--line); border-radius: 3px; background: rgba(0, 0, 0, .12); }
+.work-problem-banner code { color: var(--quiet); font-size: 10px; }
+.work-problem-banner li strong { color: var(--text); }
+
 .work-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; margin-bottom: 30px; }
 .work-intro-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .work-intro-button { flex: none; margin-bottom: 5px; }

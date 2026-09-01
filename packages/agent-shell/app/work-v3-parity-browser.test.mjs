@@ -64,10 +64,6 @@ test("real browser keeps the pre-cutover Work surface stable on bounded v3 facts
     fixture.pipelines.push({ goal: goal.file, run: 1, revision: 1, status: "running", steps: [{ id: `assignment-${goal.slug}`, index: 1, status: "running", label: session.command, instruction: goal.title, session: session.name, state: session.state, stateDetail: session.stateDetail, live: true, startedAt: session.created }] });
   }
   let snapshot = legacyFixtureWork(fixture);
-  snapshot.problems = [
-    { code: "source-record-invalid", source: "jobs", count: 412, sampleIds: ["one"] },
-    { code: "brain-agent-missing", source: "brains", count: 17, sampleIds: ["two"] },
-  ];
   const allAreas = ["@root", "neara", "neara/delivery", "otto", "otto/onboarding", "otto/standards", "otto/tangent", "otto/tangent/deep"];
   const mixedRows = [
     { kind: "area", id: "@root", area: "@root", name: "@root", file: "README.md" },
@@ -144,6 +140,17 @@ test("real browser keeps the pre-cutover Work surface stable on bounded v3 facts
     const [oracle, restoredEvidence] = await Promise.all([readFile(oracleFile), readFile(restoredFile)]);
     assert.deepEqual(await pixelChannelDifference(page, parityFrame, oracle), { count: 0, bounds: null }, "the restored v3 Work screen matches every pre-cutover pixel");
     assert.deepEqual(await pixelChannelDifference(page, parityFrame, restoredEvidence), { count: 0, bounds: null }, "the checked-in restored frame matches the browser result");
+
+    snapshot = structuredClone(snapshot);
+    snapshot.revision += 1;
+    snapshot.problems = [
+      { code: "source-record-invalid", source: "jobs", count: 412, sampleIds: ["one"] },
+      { code: "brain-agent-missing", source: "brains", count: 17, sampleIds: ["two"] },
+    ];
+    await page.evaluate(async () => { await (await import("/shell.js")).refresh(); });
+    const problemBanner = page.locator(".work-problem-banner");
+    assert.match(await problemBanner.textContent(), /jobs\s*source-record-invalid\s*412/);
+    assert.match(await problemBanner.textContent(), /brains\s*brain-agent-missing\s*17/);
 
     const row = page.locator('tr[data-goal-anchor="otto/tangent/goal-compact-table.md"]');
     const control = row.locator(".work-agent-ref[data-focus-key]");

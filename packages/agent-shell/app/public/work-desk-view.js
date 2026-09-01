@@ -2147,6 +2147,17 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     </table>`;
   }
 
+  /** Shows bounded v3 source problems without replacing known Work rows. */
+  function workProblemBanner() {
+    const problems = state.work?.schema === "agent-shell-work.v3" ? state.work.problems ?? [] : [];
+    if (!problems.length) return "";
+    return `<aside class="work-problem-banner" role="status" aria-label="Work source problems">
+      <strong>Some Work facts are delayed.</strong>
+      <span>Known rows stay visible.</span>
+      <ul>${problems.map((problem) => `<li><span>${escapeHtml(problem.source)}</span><code>${escapeHtml(problem.code)}</code><strong>${escapeHtml(String(problem.count))}</strong></li>`).join("")}</ul>
+    </aside>`;
+  }
+
   /** Renders the complete Work screen: the direct-ask table, then the work table. */
   function renderWork() {
     const records = deskAreas();
@@ -2159,6 +2170,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
     return `
       <section class="work-page">
+        ${workProblemBanner()}
         ${content}
         ${launchPopover()}
       </section>

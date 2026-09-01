@@ -573,6 +573,9 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
    hides cells with `visibility`, and a second use would hide these for good. */
 .work-row-controls { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; opacity: 0; pointer-events: none; transition: opacity .12s; }
 tr.cursor .work-row-controls, tr:hover .work-row-controls, tr:focus-within .work-row-controls { opacity: 1; pointer-events: auto; }
+/* A loop is persistent Brain state, so its row-end controls stay present at
+   rest. The existing hover and focus rules still strengthen each control. */
+.work-group-controls:has(.work-group-loop) { opacity: 1; pointer-events: auto; }
 .work-group-action-menu > div { min-width: 186px; }
 .work-group-action-menu > div button { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 

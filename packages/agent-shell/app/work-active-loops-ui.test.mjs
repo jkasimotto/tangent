@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { bootWorkTable, press, settle } from "./work-table-harness.mjs";
 import { workTableFixture } from "./work-table-fixture.mjs";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 /** Builds one projected process record for a Work fixture. */
 function process(area, slug, extra = {}) {
@@ -56,6 +61,16 @@ test("Work shows active and paused Processes at their exact Areas with state and
   const scheduled = [...document.querySelectorAll("[data-work-group='otto/onboarding'] .work-process-row")]
     .find((row) => row.querySelector(".work-row-title").textContent === "scheduled");
   assert.equal(scheduled.querySelector("[data-remove-process]"), null);
+});
+
+test("a Brain row exposes its loop indicator at rest", async () => {
+  const { document } = await bootWorkTable(withProcesses([process("otto/tangent", "review")]));
+  const indicator = document.querySelector("[data-open-area-processes='otto/tangent']");
+  assert.equal(indicator.textContent, "↻ 1 loop · on");
+  assert.equal(indicator.getAttribute("aria-label"), "Otto / Tangent has 1 active loop, on. Open Processes.");
+  assert.ok(indicator.closest(".work-group-controls.work-row-controls"), "the indicator reuses the Brain row's control group");
+  const css = await readFile(path.join(here, "public", "shell.css"), "utf8");
+  assert.match(css, /\.work-group-controls:has\(\.work-group-loop\) \{ opacity: 1; pointer-events: auto; \}/, "a Brain row with a loop exposes its control group at rest");
 });
 
 test("the loop control opens Processes and Escape restores its Work focus and scroll", async () => {

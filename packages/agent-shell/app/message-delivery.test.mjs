@@ -435,6 +435,51 @@ test("a terminal submission failure reports the source Brain and restarts on the
   assert.deepEqual(restartedStore.entries(), [], "the proved retry settles exactly once");
 });
 
+test("restart settles a submitted checkpoint without replaying text or its notice", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-submitted-restart-"));
+  const queueFile = path.join(root, "message-queue.json");
+  /** Returns one stable fixture delivery ID. */
+  const messageId = () => "message-submitted";
+  const firstStore = await openMessageQueueStore({ file: queueFile, id: messageId });
+  await firstStore.append("worker", {
+    from: "brain",
+    area: "otto/tangent",
+    text: "already submitted facts",
+    notices: [{ area: "otto/tangent", id: "notice-1" }],
+    generation: 7,
+    brainArea: "otto/tangent",
+  });
+  await firstStore.update("message-submitted", { deliveryState: "submitted" });
+
+  const restartedStore = await openMessageQueueStore({ file: queueFile });
+  let sessionReads = 0;
+  let deliveryAttempts = 0;
+  const settledNotices = [];
+  const restarted = createMessageDelivery({
+    file: path.join(root, "messages.jsonl"),
+    store: restartedStore,
+    /** A terminal receipt must settle before target discovery. */
+    sessions: async () => { sessionReads += 1; return []; },
+    /** Replaying this text would duplicate the already submitted message. */
+    deliverText: async () => { deliveryAttempts += 1; return true; },
+    notices: {
+      /** Records the durable notice effect that follows submission. */
+      delivered: async (...args) => settledNotices.push(args),
+      /** Accepts fixture notice release. */
+      released() {},
+    },
+    /** Accepts a fixture scheduler wake. */
+    wake() {},
+  });
+
+  await restarted.tick();
+  assert.equal(sessionReads, 0);
+  assert.equal(deliveryAttempts, 0, "a submitted checkpoint never types or submits again");
+  assert.deepEqual(settledNotices, [[[ { area: "otto/tangent", id: "notice-1" } ], "worker", 7, "otto/tangent"]]);
+  assert.equal(restarted.queuedCount("worker"), 0);
+  assert.deepEqual(restartedStore.entries(), []);
+});
+
 test("a queued durable presentation retries after deliverText returns false", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-false-tick-"));
   const store = await openMessageQueueStore({ file: path.join(root, "message-queue.json") });

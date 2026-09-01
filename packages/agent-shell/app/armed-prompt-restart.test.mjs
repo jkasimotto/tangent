@@ -5,7 +5,7 @@
 // This test drives the real server: a pipeline step is armed, the server is
 // killed and a fresh one started against the same tmux and armed-prompts
 // root, and only then does the pane's harness "start". The prompt must
-// still arrive.
+// still arrive and submit exactly once.
 
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -18,7 +18,9 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { readAllArmedPrompts } from "./armed-prompts.mjs";
+import { readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
+import { appendNotice, newInbox, readInbox, writeInbox } from "./brain-inbox.mjs";
+import { beginStagedGeneration, currentGeneration, promoteStagedGeneration, readBrain, writeBrain } from "./brain-record.mjs";
 import { PROBE_CHARS, promptArrived, squash } from "./prompt-delivery.mjs";
 import { SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
@@ -29,52 +31,69 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 const INSTANCE_ID = `arm-restart-${process.pid}`;
 
-const HARNESS_ID = "restart-probe";
+const HARNESS_ID = "codex-paste-probe";
 
 /**
- * Writes a small TUI fixture that keeps the first submitted draft in its
- * composer. A second Enter writes a receipt and clears the composer.
+ * Writes a small Codex-shaped TUI fixture. Long input collapses behind the
+ * same pasted-content marker as Codex, and the first Enter remains in the
+ * composer. A later Enter writes the exact draft receipt and clears it.
  */
-async function makeLostEnterHarness(root) {
-  const script = path.join(root, "lost-enter-harness.mjs");
+async function makeCodexPasteHarness(root) {
+  const script = path.join(root, "codex-paste-harness.mjs");
   const receipt = path.join(root, "submission-receipt.txt");
+  const count = path.join(root, "submission-count.txt");
   await writeFile(script, `
 import { writeFileSync } from "node:fs";
 
 const receipt = process.argv[2];
+const count = process.argv[3];
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 process.stdin.resume();
 
 let draft = "";
 let enters = 0;
-process.stdout.write("> ");
+let submissions = 0;
+const probeCharacters = ${PROBE_CHARS};
+const collapseCharacters = 120;
+
+function renderComposer() {
+  const shown = draft.length >= collapseCharacters
+    ? draft.slice(0, probeCharacters) + "[Pasted Content " + (draft.length - probeCharacters) + " chars]"
+    : draft;
+  process.stdout.write("\\r\\u001b[2K› " + shown);
+}
+
+renderComposer();
 process.stdin.on("data", (chunk) => {
   for (const character of chunk) {
     if (character === "\\r") {
       enters += 1;
       if (enters % 2 === 1) {
-        process.stdout.write("\\r\\n> " + draft);
+        renderComposer();
         continue;
       }
       writeFileSync(receipt, draft, "utf8");
+      writeFileSync(count, String(++submissions), "utf8");
       draft = "";
-      process.stdout.write("\\r\\nSUBMITTED\\r\\n> ");
+      process.stdout.write("\\r\\nSUBMITTED\\r\\n");
+      renderComposer();
       continue;
     }
     if (character === "\\u0015") {
       draft = "";
-      process.stdout.write("\\r\\n> ");
+      renderComposer();
       continue;
     }
     draft += character;
-    process.stdout.write(character);
   }
+  renderComposer();
 });
 `, "utf8");
   return {
-    command: `${JSON.stringify(process.execPath)} ${JSON.stringify(script)} ${JSON.stringify(receipt)}`,
+    command: `${JSON.stringify(process.execPath)} ${JSON.stringify(script)} ${JSON.stringify(receipt)} ${JSON.stringify(count)}`,
     receipt,
+    count,
   };
 }
 
@@ -89,7 +108,7 @@ async function freePort() {
 }
 
 /** Polls until the child server accepts HTTP requests. */
-async function waitForServer(url, attempts = 200) {
+async function waitForServer(url, child, attempts = 200) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await fetch(url);
@@ -97,7 +116,7 @@ async function waitForServer(url, attempts = 200) {
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Agent Shell did not start at ${url}`);
+  throw new Error(`Agent Shell did not start at ${url}: ${child.serverOutput || `exit ${child.exitCode ?? "pending"}`}`);
 }
 
 /** Polls until the condition holds, then returns its value. */
@@ -146,7 +165,7 @@ async function makeTrees(root, leaf, harnessCommand) {
 
 /** Starts one Agent Shell server against the given roots; the pipeline step's launch is typed but never entered (AGENT_SHELL_TEST_NO_LAUNCH), so the pane sits at its shell until the test itself makes it leave. */
 function startServer(root, trees, port, label) {
-  return spawn(process.execPath, ["server.mjs"], {
+  const child = spawn(process.execPath, ["server.mjs"], {
     cwd: here,
     env: {
       ...process.env,
@@ -156,6 +175,7 @@ function startServer(root, trees, port, label) {
       TANGENT_LOOPS_ROOT: path.join(root, "loops"),
       WORKSPACE: path.join(root, "workspace"),
       AGENT_SHELL_NO_OPEN: "1",
+      AGENT_SHELL_CONTROLLER: "0",
       AGENT_SHELL_TEST_NO_LAUNCH: "1",
       TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
       TANGENT_BRAINS_ROOT: path.join(root, "brains"),
@@ -167,6 +187,9 @@ function startServer(root, trees, port, label) {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  child.serverOutput = "";
+  for (const stream of [child.stdout, child.stderr]) stream.on("data", (chunk) => { child.serverOutput = (child.serverOutput + chunk).slice(-8_000); });
+  return child;
 }
 
 /** Stops one child server and waits for it to exit. */
@@ -224,10 +247,10 @@ async function startHarness(session, command) {
   throw new Error(`the pane of ${session} never left its shell for the harness command`);
 }
 
-test("an armed step prompt retries when the harness keeps the first Enter in its composer", async (context) => {
+test("an armed step prompt submits one Codex-shaped collapsed paste after delayed readiness", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-armed-restart-"));
   const leaf = `probearm${process.pid}`;
-  const harness = await makeLostEnterHarness(root);
+  const harness = await makeCodexPasteHarness(root);
   const trees = await makeTrees(root, leaf, harness.command);
   const armed = path.join(root, "armed");
   const sessions = [];
@@ -248,7 +271,7 @@ test("an armed step prompt retries when the harness keeps the first Enter in its
     await rm(root, { recursive: true, force: true });
   });
   const base = `http://127.0.0.1:${port}`;
-  await waitForServer(base);
+  await waitForServer(base, child);
 
   const goal = await post(base, "/api/goals/create", {
     area: `otto/${leaf}`,
@@ -288,7 +311,7 @@ test("an armed step prompt retries when the harness keeps the first Enter in its
   const nextPort = await freePort();
   child = startServer(root, trees, nextPort, "arm-restart-2");
   const restarted = `http://127.0.0.1:${nextPort}`;
-  await waitForServer(restarted);
+  await waitForServer(restarted, child);
 
   // Only after the restart does the harness "start" (the priming step never
   // launches it under AGENT_SHELL_TEST_NO_LAUNCH): the pane moves onto a
@@ -319,9 +342,10 @@ test("an armed step prompt retries when the harness keeps the first Enter in its
     return records.every((record) => record.session !== started.session) ? true : null;
   }, 4800);
 
-  // The same test the server itself used to decide delivery succeeded: the
-  // composer holds the whole prompt, not just a fragment of it.
+  // The same arrival evidence the server used stays in scrollback after
+  // submission: the fixture received one whole collapsed prompt.
   const finalPane = await paneText(started.session);
+  assert.match(finalPane, /\[PastedContent\d+chars\]/, "the regression crosses Codex's collapsed-paste composer shape");
   assert.ok(promptArrived(finalPane, persisted.prompt), `the whole prompt should have arrived in the pane; got:\n${finalPane}`);
 
   // Arrival in the composer is not delivery. The first Enter is ignored by
@@ -335,11 +359,17 @@ test("an armed step prompt retries when the harness keeps the first Enter in its
     }
   }, 100);
   assert.equal(submitted, persisted.prompt);
+  assert.equal(await readFile(harness.count, "utf8"), "1", "the lost first Enter causes one retry, not a duplicate submission");
 
   // Exercise the ordinary Brain-to-worker route against the same real pane.
   // The fixture loses the first Enter for every draft. The HTTP response must
   // wait for the second Enter's submission receipt, and the receipt must hold
   // one banner plus one body rather than a second paste of either.
+  await waitFor("the observer to see the worker's empty composer", async () => {
+    const agents = await fetch(`${restarted}/api/agents`).then((response) => response.json());
+    const worker = agents.agents?.find((agent) => agent.name === started.session);
+    return worker?.stateDetail === "idle" || worker?.observation?.composer === "idle" ? worker : null;
+  });
   const followUp = "Brain follow-up reaches the exact worker once.";
   const sent = await post(restarted, "/api/agents/send", {
     from: brain.session,
@@ -352,4 +382,79 @@ test("an armed step prompt retries when the harness keeps the first Enter in its
     return value.includes(followUp) ? value : null;
   });
   assert.equal(followUpReceipt, `[Message from ${brain.session} (otto/${leaf})] ${followUp}`);
+  assert.equal(await readFile(harness.count, "utf8"), "2", "one opening prompt and one follow-up were submitted");
+
+  // Reproduce the crash window after a durable submission checkpoint but
+  // before its armed record was removed. A fresh server must reconcile that
+  // terminal record without pasting or submitting the prompt again.
+  const terminalPrompt = "TERMINAL CHECKPOINT MUST NEVER REPLAY";
+  const receiptBeforeTerminalRestart = await readFile(harness.receipt, "utf8");
+  await stopServer(child);
+  const brainRecord = await readBrain(path.join(root, "brains"), `otto/${leaf}`);
+  const source = currentGeneration(brainRecord);
+  const { stdout: successorTargetOutput } = await execFileAsync("tmux", ["display-message", "-p", "-t", `=${started.session}:`, "#{session_id}"]);
+  const successorTarget = successorTargetOutput.trim();
+  const succession = {
+    id: `terminal-succession-${process.pid}`,
+    status: "starting",
+    source: { session: source.session, generation: source.generation, target: source.target },
+    successor: { session: started.session, generation: source.generation + 1, target: successorTarget, instanceId: INSTANCE_ID },
+    prompt: { includedNotices: [], sha256: "already-proved", bytes: terminalPrompt.length },
+  };
+  const successor = beginStagedGeneration(brainRecord, started.session, source.resolvedLaunch, succession);
+  successor.target = successorTarget;
+  successor.instanceId = INSTANCE_ID;
+  promoteStagedGeneration(brainRecord, { sha256: "already-proved", bytes: terminalPrompt.length });
+  brainRecord.health = { status: "retiring", problem: null, updatedAt: new Date().toISOString() };
+  await writeBrain(path.join(root, "brains"), brainRecord);
+  await writeArmedPrompt(armed, started.session, {
+    submit: true,
+    prompt: terminalPrompt,
+    extraFiles: [],
+    receiptRequest: {
+      kind: "brain-succession",
+      area: `otto/${leaf}`,
+      operationId: succession.id,
+      generation: successor.generation,
+      expectedSha256: "already-proved",
+      expectedBytes: terminalPrompt.length,
+      noticeRefs: [],
+    },
+    deliveryState: "submitted",
+    targetIdentity: null,
+  });
+  const deadSession = `ended-receipt-${process.pid}`;
+  const receiptArea = `orphan/${leaf}`;
+  const inbox = newInbox(receiptArea);
+  const notice = appendNotice(inbox, "Terminal receipt metadata must settle.");
+  await writeInbox(path.join(root, "brains"), inbox);
+  await writeArmedPrompt(armed, deadSession, {
+    submit: true,
+    prompt: "ALREADY SUBMITTED TO AN ENDED SESSION",
+    extraFiles: [],
+    receiptRequest: {
+      kind: "repair-notices",
+      session: deadSession,
+      noticeRefs: [{ area: receiptArea, id: notice.id }],
+    },
+    deliveryState: "submitted",
+    targetIdentity: null,
+  });
+  const terminalPort = await freePort();
+  child = startServer(root, trees, terminalPort, "arm-restart-terminal");
+  await waitForServer(`http://127.0.0.1:${terminalPort}`, child);
+  await waitFor("the terminal armed checkpoint to reconcile", async () => {
+    const records = await readAllArmedPrompts(armed);
+    return records.every((record) => ![started.session, deadSession].includes(record.session)) ? true : null;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.equal(await readFile(harness.receipt, "utf8"), receiptBeforeTerminalRestart);
+  assert.equal(await readFile(harness.count, "utf8"), "2", "restart after a receipt does not submit a third message");
+  assert.ok(!(await paneText(started.session)).includes(squash(terminalPrompt)), "restart does not paste a terminal prompt checkpoint");
+  const reconciledBrain = await readBrain(path.join(root, "brains"), `otto/${leaf}`);
+  assert.notEqual(reconciledBrain.succession.status, "failed", "a repeated terminal receipt never fails an authoritative successor");
+  assert.equal(reconciledBrain.session, started.session);
+  assert.notEqual(await paneCommand(started.session), "", "terminal reconciliation never terminates the authoritative successor");
+  const reconciledInbox = await readInbox(path.join(root, "brains"), receiptArea);
+  assert.ok(reconciledInbox.notices.find((item) => item.id === notice.id)?.deliveredAt, "receipt effects settle even after their tmux session ended");
 });

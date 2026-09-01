@@ -395,7 +395,7 @@ if (!existsSync(WORKSPACE)) mkdirSync(WORKSPACE, { recursive: true });
 /** Awaitable pause shared by session boot and prompt-delivery paths. */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Types literal text into an exact session pane and optionally submits it. */
+/** Types a literal shell or harness command. Prompts use the verified transport below. */
 async function typeInto(session, text, submit) {
   for (const chunk of typeChunks(text)) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "-l", "--", chunk]);
@@ -2372,7 +2372,7 @@ async function paneReadyForText(session, settle) {
  * prompt: a worker's report to a busy Area brain. A working harness is
  * already up; the only thing left to prove is that its pane is not a shell.
  */
-async function typePromptWhenReady(session, prompt, submit = false, label = "agent prompt", options = {}) {
+async function typePromptWhenReady(session, prompt, submit = true, label = "agent prompt", options = {}) {
   const target = deliveryTarget(session);
   return paneWrites.run(target.target ?? target.name, () => typePromptNow(target, prompt, submit, label, { settle: true, deliveryState: "accepted", checkpoint: noop, ...options }));
 }
@@ -2415,6 +2415,9 @@ async function typePromptNow(session, prompt, submit, label, { settle, deliveryI
     return ok;
   };
   try {
+    // The durable receipt is terminal. A caller recovering the narrow crash
+    // window before queue/arm cleanup must settle metadata, not touch tmux.
+    if (deliveryState === "submitted") return measured(true);
     let sample = await deliverySample(target);
     if (SHELL_CMDS.has(sample.command)) return measured(false);
     // A restart can find the exact full draft after staging but before its
@@ -2541,7 +2544,7 @@ async function sendDeliveryKeys(target, keys) {
 }
 
 /** Types a Goal assignment after its native harness is ready. */
-async function typeGoalPromptWhenReady(session, area, file, submit = false, extraFiles = [], options = {}) {
+async function typeGoalPromptWhenReady(session, area, file, submit = true, extraFiles = [], options = {}) {
   const goals = await readAreaGoals(area);
   const o = goals.find((t) => t.file === file);
   if (!o) return false;
@@ -2655,7 +2658,7 @@ function reportArmedPromptFailure(err) {
  * a restart before the harness leaves its shell still has the prompt to
  * re-arm at boot (rearmPersistedPrompts).
  */
-async function armSession(name, { submit = false, prompt = "", extraFiles = [], onTyped = null, receiptRequest = null, deliveryState = "accepted", targetIdentity = null } = {}) {
+async function armSession(name, { submit = true, prompt = "", extraFiles = [], onTyped = null, receiptRequest = null, deliveryState = "accepted", targetIdentity = null } = {}) {
   targetIdentity ??= await inspectDeliveryTarget(name).catch(() => null);
   armedSessions.set(name, { submit, prompt, extraFiles, onTyped, receiptRequest, deliveryState, targetIdentity, failed: false });
   try {
@@ -2664,6 +2667,34 @@ async function armSession(name, { submit = false, prompt = "", extraFiles = [], 
     console.error("armed prompt persist:", err.message ?? err);
   }
   runtimeScheduler.wake();
+}
+
+/** Rebuilds the durable effect that follows one proved armed-prompt receipt. */
+async function settleArmedPromptReceipt(request, arrived) {
+  if (!request) return;
+  if (request.kind === "brain-succession") {
+    await settleBrainSuccessionReceipt(request, arrived);
+    return;
+  }
+  if (request.kind === "brain-activation") {
+    await withBrainMutation(request.area, async () => {
+      const record = await readBrain(BRAINS_ROOT, request.area);
+      if (record) await settleBrainActivation(record, request.session, request.generation, arrived, request.noticeRefs ?? []);
+    });
+    return;
+  }
+  if (request.kind === "attempt-replacement") {
+    await recordReplacementReadiness(request.goalFile, request.operationId, arrived);
+    return;
+  }
+  if (request.kind === "repair-notices" && arrived && request.noticeRefs?.length) {
+    await markBrainNoticesDelivered(request.noticeRefs, request.session, null);
+  }
+}
+
+/** Returns an awaitable live callback for one persisted receipt effect. */
+function armedPromptReceiptCallback(request) {
+  return request ? (arrived) => settleArmedPromptReceipt(request, arrived) : null;
 }
 
 /**
@@ -2677,6 +2708,18 @@ async function armSession(name, { submit = false, prompt = "", extraFiles = [], 
 async function rearmPersistedPrompts() {
   const records = await readAllArmedPrompts(ARMED_ROOT);
   if (!records.length) return;
+  const pending = [];
+  for (const record of records) {
+    if (record.deliveryState !== "submitted") {
+      pending.push(record);
+      continue;
+    }
+    // A terminal checkpoint needs no live tmux target. Complete its durable
+    // caller effect first, then remove the arm without ever replaying text.
+    await settleArmedPromptReceipt(record.receiptRequest, true);
+    await clearArmedPrompt(ARMED_ROOT, record.session);
+  }
+  if (!pending.length) return;
   const sessions = await listAllSessions();
   // An empty snapshot cannot say these sessions died (snapshotCanJudgeAbsence):
   // keep every record; the next boot that sees a real world sweeps them.
@@ -2684,7 +2727,7 @@ async function rearmPersistedPrompts() {
   const live = new Map(sessions.map((session) => [session.name, session]));
   let persistedPipelines = null;
   let persistedGoals = null;
-  for (const record of records) {
+  for (const record of pending) {
     const observed = live.get(record.session);
     if (observed && !observed.owned) continue;
     if (!observed) {
@@ -2692,6 +2735,7 @@ async function rearmPersistedPrompts() {
       await clearArmedPrompt(ARMED_ROOT, record.session).catch(() => {});
       continue;
     }
+    const onTyped = armedPromptReceiptCallback(record.receiptRequest);
     let prompt = record.prompt;
     if (prompt.includes("send brain --question")) {
       persistedPipelines ??= await readAllPipelines(PIPELINES_ROOT);
@@ -2705,11 +2749,7 @@ async function rearmPersistedPrompts() {
       }
       prompt = await pipelineStepPrompt(queue.area, goal, queue, step.index, [], record.session);
     }
-    /** Reconciles a persisted succession receipt after exact prompt delivery. */
-    const onTyped = record.receiptRequest?.kind === "brain-succession"
-      ? (arrived) => settleBrainSuccessionReceipt(record.receiptRequest, arrived)
-      : null;
-    await armSession(record.session, { submit: record.submit, prompt, extraFiles: record.extraFiles, receiptRequest: record.receiptRequest, deliveryState: record.deliveryState, targetIdentity: record.targetIdentity, onTyped });
+    await armSession(record.session, { submit: true, prompt, extraFiles: record.extraFiles, receiptRequest: record.receiptRequest, deliveryState: record.deliveryState, targetIdentity: record.targetIdentity, onTyped });
   }
 }
 
@@ -2806,12 +2846,13 @@ async function sessionLaunch(session) {
 }
 
 /**
- * Primes a session sitting at its shell: the launch command the caller named,
- * typed but not submitted, and the goal prompt armed to follow whatever
- * harness the user starts. A pane that is already running something is left
- * alone — priming must never type over an agent mid-conversation.
+ * Primes a session sitting at its shell: the launch command the caller named
+ * waits for the caller unless launch is true. The Goal prompt follows the
+ * harness whenever it starts and is always submitted. A pane that is already
+ * running something is left alone — priming must never type over an agent
+ * mid-conversation.
  */
-async function primeGoalSession(session, { launch = false, startHarness = launch, command = "", extraFiles = [], prompt = "", onTyped = null } = {}) {
+async function primeGoalSession(session, { launch = false, startHarness = launch, command = "", extraFiles = [], prompt = "", onTyped = null, receiptRequest = null } = {}) {
   // The caller names the harness or nothing is typed. spawnGoalSession
   // refuses a start with no command, and a pane that reached its shell
   // between that check and this one must not get an Area default nobody
@@ -2820,7 +2861,7 @@ async function primeGoalSession(session, { launch = false, startHarness = launch
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
   await prepareHarnessDebugLogForSession(session, command);
-  await armSession(session, { submit: launch, prompt, extraFiles, onTyped });
+  await armSession(session, { submit: true, prompt, extraFiles, onTyped, receiptRequest });
   await typeInto(session, withDefaultModel(command), false);
   if (startHarness) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
@@ -2841,12 +2882,12 @@ async function prepareHarnessDebugLogForSession(session, command) {
  * the area's repo with the suggested agent command pre-typed, bound via
  * @tangent_area + @tangent_goal, goal mechanically flipped to active.
  * Only a brain start reaches this (D8): the queue start and the exact-attempt
- * replacement. Both the launch line and the opening prompt follow the
- * type-but-never-submit rule unless the start asks for a direct launch.
+ * replacement. The launch line waits for the user unless direct launch was
+ * requested; the opening prompt always submits once that harness is ready.
  * The path option gives the new pane one exact directory instead of the
  * Area repository; a pipeline step passes its own.
  */
-async function spawnGoalSession(area, slug, { approved = false, launch = false, command = "", label = "", ref = "", path: workingDirectory = "", workFolder = null, extraSlugs = [], pipeline = null, continuation = null, attemptId = "", deferBinding = false, onPrimed = null, trace = null } = {}) {
+async function spawnGoalSession(area, slug, { approved = false, launch = false, command = "", label = "", ref = "", path: workingDirectory = "", workFolder = null, extraSlugs = [], pipeline = null, continuation = null, attemptId = "", deferBinding = false, onPrimed = null, receiptRequest = null, trace = null } = {}) {
   const areaGoals = await readAreaGoals(area);
   trace?.mark("spawn area goals ready", { goals: areaGoals.length });
   const o = areaGoals.find((t) => t.slug === slug);
@@ -2911,7 +2952,16 @@ async function spawnGoalSession(area, slug, { approved = false, launch = false, 
     let primed = false;
     if (approved && live && !SHELL_CMDS.has(live.command)) {
       if (live.state === "working") return { status: 409, error: "the agent is still working; wait before you approve another assignment" };
-      await typeInto(existing, await goalPrompt(area, o, ownExtras, [], null, folder), true);
+      const target = {
+        name: existing,
+        target: live.target,
+        instanceId: live.instanceId,
+        assignment: live.assignment,
+        attempt: live.attempt,
+        launchRef: live.launchRef,
+      };
+      const submitted = await typePromptWhenReady(target, await goalPrompt(area, o, ownExtras, [], null, folder), true, "goal prompt", { settle: false });
+      if (!submitted) return { status: 409, error: "the agent is no longer at an empty composer; retry after it is ready" };
     } else {
       primed = await primeGoalSession(existing, { launch, startHarness, command, extraFiles }).catch(() => false);
     }
@@ -2964,7 +3014,7 @@ async function spawnGoalSession(area, slug, { approved = false, launch = false, 
     // be wiped by the redraw.
     await sleep(700);
     try {
-      const primed = await primeGoalSession(phaseName, { launch, startHarness, command, extraFiles, prompt: stepPrompt, onTyped: onPrimed });
+      const primed = await primeGoalSession(phaseName, { launch, startHarness, command, extraFiles, prompt: stepPrompt, onTyped: onPrimed, receiptRequest });
       if (!primed && onPrimed) onPrimed(false);
     } catch (err) {
       console.error("prime session:", err.message ?? err);
@@ -4491,6 +4541,7 @@ async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
   const liveNames = new Set((await listAllSessions({ fresh: true })).map((session) => session.name));
   const sessionName = replacementSessionName(record, liveNames);
   const replacementAttemptId = randomUUID();
+  const receiptRequest = { kind: "attempt-replacement", goalFile, operationId };
   let releasePersisted;
   const persisted = new Promise((resolve) => { releasePersisted = resolve; });
   /** Defers the prompt receipt until the starting target is durable. */
@@ -4514,6 +4565,7 @@ async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
       attemptId: replacementAttemptId,
       deferBinding: true,
       onPrimed,
+      receiptRequest,
     });
     if (started.status !== 200) throw new Error(started.error);
     const replacementTarget = {
@@ -5383,12 +5435,8 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     entry.providerSession = conversation ? structuredClone(conversation) : null;
     entry.notices = notices.map((notice) => ({ area: notice.area, id: notice.id, text: notice.text, createdAt: notice.createdAt }));
     record.health = { status: "starting", problem: null, updatedAt: new Date().toISOString() };
-    /** Settles an asynchronous arm callback under the same Area lifecycle lock. */
-    const firstMessageTyped = (arrived) => withBrainMutation(record.area, async () => {
-      const current = await readBrain(BRAINS_ROOT, record.area);
-      if (!current) return;
-      await settleBrainActivation(current, name, generation, arrived, held);
-    });
+    const receiptRequest = { kind: "brain-activation", area: record.area, session: name, generation, noticeRefs: held };
+    const firstMessageTyped = armedPromptReceiptCallback(receiptRequest);
     if (process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") {
       await writeBrain(BRAINS_ROOT, record);
       await settleBrainActivation(record, name, generation, true, held);
@@ -5401,7 +5449,7 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     // Persist the arm before making this generation current, and make it
     // current before launching the harness, so a restart before the harness
     // is ready still types the message.
-    await armSession(name, { submit: true, prompt: message, onTyped: firstMessageTyped });
+    await armSession(name, { submit: true, prompt: message, onTyped: firstMessageTyped, receiptRequest });
     armed = true;
     await writeBrain(BRAINS_ROOT, record);
     const brainCommand = launchWithConversation(harness, withDefaultModel(resolvedLaunch.command), conversation);
@@ -5547,6 +5595,10 @@ async function succeedBrain(session, operationId) {
 /** Settles the durable exact receipt request, including after controller restart. */
 async function settleBrainSuccessionReceipt(request, arrived) {
   if (!arrived) return failBrainSuccession(request.area, request.operationId, "the staged Agent did not accept its first message");
+  const existing = await readBrain(BRAINS_ROOT, request.area);
+  if (existing?.succession?.id === request.operationId && ["promoted", "retiring", "complete"].includes(existing.succession.status)) {
+    return reconcilePromotedBrainSuccession(request, existing);
+  }
   let receipt = null;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const record = await readBrain(BRAINS_ROOT, request.area);
@@ -5584,6 +5636,33 @@ async function settleBrainSuccessionReceipt(request, arrived) {
   await recordRuntimeEvent("brain.succession.retired", { operationId: request.operationId, address: request.area, actorSession: promoted.record.session, generation: sourceTarget.generation, immutableTarget: sourceTarget.target, outcome: retired.state });
   return withBrainMutation(request.area, async () => {
     const record = await readBrain(BRAINS_ROOT, request.area);
+    record.succession.status = ["terminated", "absent"].includes(retired.state) ? "complete" : "retiring";
+    record.succession.completedAt = record.succession.status === "complete" ? new Date().toISOString() : null;
+    record.succession.failure = record.succession.status === "complete" ? null : "retirement-incomplete";
+    record.health = { status: record.succession.status === "complete" ? "healthy" : "retirement-incomplete", problem: record.succession.failure, updatedAt: new Date().toISOString() };
+    await writeBrain(BRAINS_ROOT, record);
+    return { status: 200, state: record.succession.status, brain: record };
+  });
+}
+
+/** Finishes an already authoritative succession without rechecking old source fences. */
+async function reconcilePromotedBrainSuccession(request, snapshot) {
+  const operation = snapshot.succession;
+  const included = request.noticeRefs ?? operation.prompt?.includedNotices ?? [];
+  await withInbox(request.area, async (inbox) => {
+    markDelivered(inbox, included.filter((item) => item.area === request.area).map((item) => item.id), {
+      session: snapshot.session,
+      generation: snapshot.generation,
+      brainArea: request.area,
+    });
+  });
+  if (operation.status === "complete") return { status: 200, state: "complete", brain: snapshot };
+  const retired = await sessionOwnership.terminate(operation.source.session, operation.source.target);
+  return withBrainMutation(request.area, async () => {
+    const record = await readBrain(BRAINS_ROOT, request.area);
+    if (record?.succession?.id !== request.operationId) return { status: 409, error: "the succession operation changed" };
+    if (record.succession.status === "complete") return { status: 200, state: "complete", brain: record };
+    if (!["promoted", "retiring"].includes(record.succession.status)) return { status: 409, error: `succession ${request.operationId} is ${record.succession.status}` };
     record.succession.status = ["terminated", "absent"].includes(retired.state) ? "complete" : "retiring";
     record.succession.completedAt = record.succession.status === "complete" ? new Date().toISOString() : null;
     record.succession.failure = record.succession.status === "complete" ? null : "retirement-incomplete";
@@ -5678,10 +5757,17 @@ async function spawnRepairSession(record, repair, firstMessage, notices) {
       return { status: 200, session: repair.session, firstMessage };
     }
     /** Marks only the notes proved visible inside the crew's first message. */
-    const onTyped = (arrived) => {
-      if (arrived && notices.length) void markBrainNoticesDelivered(notices, repair.session, null);
+    const receiptRequest = {
+      kind: "repair-notices",
+      session: repair.session,
+      noticeRefs: notices.map((notice) => ({ area: notice.area, id: notice.id })),
     };
-    await armSession(repair.session, { submit: true, prompt: firstMessage, onTyped });
+    await armSession(repair.session, {
+      submit: true,
+      prompt: firstMessage,
+      onTyped: armedPromptReceiptCallback(receiptRequest),
+      receiptRequest,
+    });
     armed = true;
     const repairCommand = launchWithConversation(harness, withDefaultModel(repair.resolvedLaunch.command), conversation);
     await prepareHarnessDebugLogForSession(repair.session, repairCommand);

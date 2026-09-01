@@ -23,7 +23,7 @@ function normalizeEntry(value) {
     banner: true,
     queuedAt: String(value.queuedAt ?? "").trim() || null,
     ...(["brain", "worker", "repair", "local"].includes(value.sourceRole) ? { sourceRole: value.sourceRole } : {}),
-    ...(["staging", "staged", "submitting", "ambiguous", "failed"].includes(value.deliveryState) ? { deliveryState: value.deliveryState } : {}),
+    ...(["staging", "staged", "submitting", "submitted", "ambiguous", "failed"].includes(value.deliveryState) ? { deliveryState: value.deliveryState } : {}),
     ...(targetIdentity ? { targetIdentity } : {}),
     ...noticeFields(value),
   };

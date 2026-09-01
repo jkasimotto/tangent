@@ -68,9 +68,10 @@ test("delivery checkpoints preserve the accepted immutable target", async () => 
     text: "facts",
     targetIdentity: { name: "worker", target: "$9", instanceId: "shell-1", assignment: "a1", attempt: "try-1", launchRef: "pi-code" },
   });
-  await store.update("m-target", { deliveryState: "submitting" });
-  const [entry] = store.entries();
-  assert.equal(entry.deliveryState, "submitting");
+  await store.update("m-target", { deliveryState: "submitted" });
+  const reopened = await openMessageQueueStore({ file: path.join(root, "queue.json") });
+  const [entry] = reopened.entries();
+  assert.equal(entry.deliveryState, "submitted", "the terminal checkpoint survives normalization and restart");
   assert.equal(entry.sourceRole, "brain");
   assert.deepEqual(entry.targetIdentity, { name: "worker", target: "$9", instanceId: "shell-1", assignment: "a1", attempt: "try-1", launchRef: "pi-code" });
 });

@@ -112,6 +112,33 @@ test("a redraw that only clears the editor is ambiguous", () => {
   assert.equal(submissionReceipt(before, after, "exact draft"), "ambiguous");
 });
 
+test("a pre-existing busy marker or changing timer is not a submission receipt", () => {
+  const before = { text: "> exact draft\nesc to interrupt\nWorking… 1s", cursorX: 13, cursorY: 0, composer: "draft" };
+  const sameMarker = { text: "> \nesc to interrupt\nWorking… 1s", cursorX: 2, cursorY: 0, composer: "idle" };
+  const changedTimer = { text: "> \nesc to interrupt\nWorking… 2s", cursorX: 2, cursorY: 0, composer: "idle" };
+  assert.equal(submissionReceipt(before, sameMarker, "exact draft"), "ambiguous");
+  assert.equal(submissionReceipt(before, changedTimer, "exact draft"), "ambiguous");
+});
+
+test("each supported harness shape supplies new prompt-specific submission evidence", () => {
+  const prompt = "exact harness prompt";
+  const shapes = [
+    { harness: "Claude", before: "❯ exact harness prompt", after: "exact harness prompt\n✳ Working… esc to interrupt\n❯ " },
+    { harness: "Codex", before: "› exact harness prompt", after: "exact harness prompt\nesc to interrupt\n› " },
+    { harness: "Pi", before: "────────────\nexact harness prompt\n────────────", beforeY: 1, after: "exact harness prompt\nWorking…\n────────────\n\n────────────", afterY: 3 },
+    { harness: "Agy/generic", before: "> exact harness prompt", after: "exact harness prompt\n> " },
+  ];
+  for (const { harness, before: beforeText, beforeY, after: afterText, afterY } of shapes) {
+    const beforeLines = beforeText.split("\n");
+    const afterLines = afterText.split("\n");
+    const beforeCursorY = beforeY ?? beforeLines.length - 1;
+    const afterCursorY = afterY ?? afterLines.length - 1;
+    const before = { text: beforeText, cursorX: beforeLines[beforeCursorY].length, cursorY: beforeCursorY, composer: "draft" };
+    const after = { text: afterText, cursorX: afterLines[afterCursorY].length, cursorY: afterCursorY, composer: "idle" };
+    assert.equal(submissionReceipt(before, after, prompt), "submitted", harness);
+  }
+});
+
 test("a partially taken prompt is not delivered", () => {
   assert.equal(promptArrived(claudePane("# Work with JulianThis session covers the complete Goal and"), PROMPT), false);
   assert.equal(promptArrived(claudePane(""), PROMPT), false);

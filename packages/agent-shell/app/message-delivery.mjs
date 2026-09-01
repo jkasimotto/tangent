@@ -157,6 +157,22 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
     if (!pending.length) queues.delete(target);
   }
 
+  /** Settles durable terminal receipts without touching their tmux target again. */
+  async function reconcileSubmitted() {
+    for (const [target, pending] of [...queues.entries()]) {
+      for (const entry of [...pending]) {
+        if (entry.deliveryState !== "submitted") continue;
+        // The transport checkpoint is proof that the submit key produced a
+        // receipt. A restart in the small window before notice settlement or
+        // queue removal must finish those durable effects, never replay text.
+        if (entry.notices?.length) await notices.delivered(entry.notices, target, entry.generation ?? null, entry.brainArea ?? null);
+        await log({ event: "submission reconciled", deliveryId: entry.deliveryId ?? null, deliveryState: "submitted", to: target, from: entry.from, area: entry.area, text: entry.text });
+        await settle(target, pending, entry);
+        failedThisProcess.delete(entry.deliveryId ?? entry);
+      }
+    }
+  }
+
   /** Delivers immediately when safe and ordered, otherwise queues. */
   async function dispatch(target, entry) {
     const decision = deliveryDecision(target ?? null);
@@ -217,6 +233,7 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
     if (ticking) return ticking;
     ticking = (async () => {
       await durableMutations;
+      await reconcileSubmitted();
       if (!queues.size) return;
       const liveSessions = await sessions();
       const liveByName = new Map(liveSessions.map((session) => [session.name, session]));

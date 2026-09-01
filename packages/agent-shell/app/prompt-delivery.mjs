@@ -37,6 +37,7 @@ const PASTED_MARKERS = [
 
 const PROMPT_LINES = [/^\s*❯(?:\s|$)/, /^\s*›(?:\s|$)/, /^\s*>(?:\s|$)/];
 const FRAME_LINE = /^\s*─{10,}\s*$/;
+const SUBMISSION_MARKER = /(?:\bSUBMITTED\b|esc to interrupt|Working(?:\.\.\.|…)|queued message|will be processed next)/gi;
 
 /** Splits a prompt into the probe typed first and the remainder typed after it. */
 export function splitPrompt(prompt) {
@@ -95,10 +96,15 @@ export function promptStaged(sample, prompt) {
 
 /** Removes the active editor so a clear composer alone is not a receipt. */
 export function paneOutsideComposer(sample) {
+  return squash(paneOutsideComposerText(sample));
+}
+
+/** Returns pane output with the active editor replaced by one stable token. */
+function paneOutsideComposerText(sample) {
   const lines = String(sample?.text ?? "").split("\n");
   const composer = activeComposer(sample ?? {});
   lines.splice(composer.start, composer.end - composer.start + 1, "<composer>");
-  return squash(lines.join("\n"));
+  return lines.join("\n");
 }
 
 /**
@@ -109,9 +115,20 @@ export function paneOutsideComposer(sample) {
 export function submissionReceipt(before, after, prompt) {
   if (promptStaged(after, prompt)) return "staged";
   if (after?.composer === "draft") return "partial";
-  const positiveMarker = /(?:SUBMITTED|esc to interrupt|Working(?:\.\.\.|…)|queued message|will be processed next)/i.test(String(after?.text ?? ""));
-  const outputChanged = paneOutsideComposer(before) !== paneOutsideComposer(after);
-  return positiveMarker || outputChanged ? "submitted" : "ambiguous";
+  const beforeOutput = paneOutsideComposerText(before);
+  const afterOutput = paneOutsideComposerText(after);
+  // A marker that was already present, or an unrelated timer/redraw outside
+  // the editor, cannot prove this key submitted this prompt. Require either a
+  // newly added harness submission marker or this attempt's exact prompt to
+  // newly appear in transcript output.
+  const markerAdded = submissionMarkerCount(afterOutput) > submissionMarkerCount(beforeOutput);
+  const promptMovedToOutput = promptArrived(afterOutput, prompt) && !promptArrived(beforeOutput, prompt);
+  return markerAdded || promptMovedToOutput ? "submitted" : "ambiguous";
+}
+
+/** Counts submit-specific status markers without treating changing timer text as new proof. */
+function submissionMarkerCount(text) {
+  return [...String(text ?? "").matchAll(SUBMISSION_MARKER)].length;
 }
 
 /** True when a pasted-text marker follows the probe somewhere on the (squashed) pane. */

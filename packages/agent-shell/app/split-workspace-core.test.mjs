@@ -37,6 +37,13 @@ test("show, hide, focus, order, and responsive changes preserve independent fact
   assert.deepEqual(layout.presentation, { kind: "single", active: "brain" }, "the last single-pane choice remains the narrow default");
   layout = reconcileSplitPresentation(layout, 1200, minimums);
   assert.equal(layout.presentation.kind, "wide");
+  layout = reconcileSplitPresentation(layout, 900, minimums);
+  assert.deepEqual(layout.presentation, { kind: "single", active: "brain" }, "wide mode restores the last narrow pane for this visit");
+  layout = focusSplitPane(layout, "map");
+  layout = reconcileSplitPresentation(layout, 1200, minimums);
+  layout = reconcileSplitPresentation(layout, 900, minimums);
+  assert.deepEqual(layout.presentation, { kind: "single", active: "map" }, "a later narrow choice survives another wide interval");
+  layout = reconcileSplitPresentation(layout, 1200, minimums);
   layout = hideSplitPane(layout, "map", { availableWidth: 1200, minSizePx: minimums });
   assert.deepEqual([...layout.open], ["brain"]);
   assert.equal(hideSplitPane(layout, "brain", { availableWidth: 1200, minSizePx: minimums }), layout, "the primary pane cannot be hidden");

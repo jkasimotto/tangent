@@ -1675,6 +1675,7 @@ function areaBrainPane(area) {
     /** Reuses the existing stopped-Brain launch state. */
     onSeedStart: (target) => {
       if (state.launchTarget !== BRAIN_LAUNCH_TARGET || state.brainDraft?.area !== target) seedMapBrainDraft(target);
+      launchOptionsFor(target);
     },
   });
 }

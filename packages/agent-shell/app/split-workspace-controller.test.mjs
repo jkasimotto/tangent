@@ -34,6 +34,10 @@ test("the split preserves exact roots and mounts once through layout changes", a
   controller.focus("brain");
   controller.setSize("brain", 520);
   controller.setOrder(["brain", "map"]);
+  controller.setPrimary("brain");
+  assert.deepEqual([controller.snapshot().order, controller.snapshot().primary], [["brain", "map"], "brain"]);
+  assert.equal(controller.root("map"), mapRoot, "order and prominence changes keep the same Map root");
+  assert.equal(controller.root("brain"), brainRoot, "order and prominence changes keep the same Brain root");
   controller.measure(800);
   assert.equal(controller.root("brain").hasAttribute("inert"), true, "the inactive narrow pane is inert without being disposed");
   controller.measure(1200);

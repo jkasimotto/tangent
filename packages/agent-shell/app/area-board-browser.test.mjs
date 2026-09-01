@@ -423,6 +423,11 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     const widths = await page.evaluate(() => ({ pane: document.querySelector("[data-map-brain-pane]").getBoundingClientRect().width, map: document.querySelector("[data-map-column]").getBoundingClientRect().width }));
     assert.ok(widths.pane >= 550 && widths.pane <= 570, `the dock starts at 560px: ${JSON.stringify(widths)}`);
     assert.ok(widths.map >= 560, `the map keeps its usable minimum: ${JSON.stringify(widths)}`);
+    const separator = page.getByRole("separator", { name: "Resize Brain" });
+    await separator.focus();
+    await page.keyboard.press("ArrowLeft");
+    const resizedBrainWidth = await pane.evaluate((node) => node.getBoundingClientRect().width);
+    assert.ok(resizedBrainWidth > widths.pane, `the keyboard separator resizes Brain without route logic: ${resizedBrainWidth}`);
     await page.locator('[data-map-breadcrumb="otto"]').click();
     assert.equal(await pane.locator(".map-brain-terminal").getAttribute("data-session"), "otto-tangent--brain", "Map drill does not close or retarget Brain");
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "Map drill preserves the same Map controller");
@@ -462,6 +467,12 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     assert.equal(await pane.isVisible(), true, "the Map key selects the mounted Brain in narrow mode");
     assert.equal(await page.locator("[data-map-column]").isVisible(), false);
     assert.equal(await companionTerminal.getAttribute("data-responsive-identity"), "original", "narrow selection preserves the exact xterm node");
+    await page.setViewportSize({ width: 1400, height: 760 });
+    await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "wide");
+    await page.setViewportSize({ width: 900, height: 760 });
+    await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "single");
+    assert.equal(await pane.isVisible(), true, "a later narrow interval restores the last narrow pane");
+    assert.equal(await page.locator("[data-map-column]").isVisible(), false);
     await pane.locator("[data-toggle-workspace-map]").click();
     assert.equal(await page.locator("[data-map-column]").isVisible(), true, "the Brain Map action selects the mounted Map in narrow mode");
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "narrow selection preserves the exact canvas");

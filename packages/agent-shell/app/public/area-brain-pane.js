@@ -17,6 +17,7 @@ export function createAreaBrainPane({
     /** Mounts one stable Brain presentation in the split-owned root. */
     mount({ host }) {
       let mode = "";
+      let launchMarkup = "";
       let disposed = false;
       host.classList.add("area-workspace-brain-pane", "map-brain-pane");
       host.dataset.mapBrainPane = "";
@@ -36,10 +37,23 @@ export function createAreaBrainPane({
           if (map) map.textContent = mapVisible ? "Hide Map" : "Map";
           const hide = host.querySelector("[data-hide-workspace-brain]");
           if (hide) hide.hidden = primaryBrain;
+          if (facts.presentation.kind === "start") {
+            onSeedStart(area);
+            const nextMarkup = facts.launchHtml();
+            if (nextMarkup !== launchMarkup) {
+              const active = host.ownerDocument.activeElement;
+              const focusKey = host.contains(active) ? active.closest?.("[data-focus-key]")?.dataset.focusKey : "";
+              const content = host.querySelector(".map-brain-content");
+              if (content) content.innerHTML = `<div class="map-brain-start"><p>${escapeHtml(facts.label)}</p>${nextMarkup}</div>`;
+              launchMarkup = nextMarkup;
+              if (focusKey) [...host.querySelectorAll("[data-focus-key]")].find((item) => item.dataset.focusKey === focusKey)?.focus?.({ preventScroll: true });
+            }
+          }
           return;
         }
         terminalController.disposeTerminal();
         mode = nextMode;
+        launchMarkup = "";
         host.dataset.mode = mode;
         host.innerHTML = `<header><button type="button" data-leave-area-workspace>Work <kbd>⌘⇧↵</kbd></button><strong>${escapeHtml(facts.label)}</strong>${facts.live ? `<button class="session-tag" type="button" data-copy-session-tag="${escapeHtml(facts.live.name)}"><code>${escapeHtml(facts.live.name)}</code></button>` : ""}<button type="button" data-toggle-workspace-map>${mapVisible ? "Hide Map" : "Map"}</button><button type="button" data-hide-workspace-brain${primaryBrain ? " hidden" : ""}>Hide Brain <kbd>b</kbd></button></header><div class="map-brain-content"></div>`;
         const content = host.querySelector(".map-brain-content");
@@ -54,7 +68,8 @@ export function createAreaBrainPane({
           void onResume(area, host.querySelector("[data-toggle-workspace-map]"));
         } else {
           onSeedStart(area);
-          content.innerHTML = `<div class="map-brain-start"><p>${escapeHtml(facts.label)}</p>${facts.launchHtml()}</div>`;
+          launchMarkup = facts.launchHtml();
+          content.innerHTML = `<div class="map-brain-start"><p>${escapeHtml(facts.label)}</p>${launchMarkup}</div>`;
         }
       }
       update();

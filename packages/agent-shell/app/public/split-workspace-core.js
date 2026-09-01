@@ -74,6 +74,7 @@ export function createSplitLayout({
     open: new Set([entryPane]),
     primary: entryPane,
     focused: entryPane,
+    lastSinglePane: entryPane,
     sizePx,
     presentation: { kind: "single", active: entryPane },
   };
@@ -86,12 +87,16 @@ export function reconcileSplitPresentation(layout, availableWidth, minSizePx, se
   const canShowWide = open.length === 2
     && Number(availableWidth) >= open.reduce((sum, id) => sum + minSizePx[id], separatorPx);
   if (canShowWide) {
+    if (layout.presentation?.kind === "single" && open.includes(layout.presentation.active)) {
+      next.lastSinglePane = layout.presentation.active;
+    }
     next.presentation = { kind: "wide" };
     return next;
   }
-  const previous = layout.presentation?.kind === "single" ? layout.presentation.active : null;
+  const previous = layout.presentation?.kind === "single" ? layout.presentation.active : layout.lastSinglePane;
   const active = open.includes(previous) ? previous : open.includes(next.primary) ? next.primary : open[0];
   next.presentation = { kind: "single", active };
+  next.lastSinglePane = active;
   next.focused = open.includes(next.focused) ? next.focused : active;
   return next;
 }
@@ -104,6 +109,7 @@ export function showSplitPane(layout, id, { focus = false, availableWidth, minSi
   next = reconcileSplitPresentation(next, availableWidth, minSizePx, separatorPx);
   if (next.presentation.kind === "single") {
     next.presentation = { kind: "single", active: id };
+    next.lastSinglePane = id;
     next.focused = id;
   } else if (focus) {
     next.focused = id;
@@ -124,7 +130,10 @@ export function hideSplitPane(layout, id, { availableWidth, minSizePx, separator
 export function focusSplitPane(layout, id) {
   if (!layout.open.has(id)) return layout;
   const next = { ...layout, open: new Set(layout.open), order: [...layout.order], sizePx: { ...layout.sizePx }, focused: id };
-  if (next.presentation.kind === "single") next.presentation = { kind: "single", active: id };
+  if (next.presentation.kind === "single") {
+    next.presentation = { kind: "single", active: id };
+    next.lastSinglePane = id;
+  }
   return next;
 }
 

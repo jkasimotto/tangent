@@ -57,6 +57,24 @@ test("a missing Agent never changes canonical Job state", () => {
   assert.equal(validateWorkCandidate(candidate).ok, true);
 });
 
+test("a final Assignment does not retain a dead Agent or a closed Goal", () => {
+  const finalJob = {
+    id: "otto/goal-one.md#1", goalId: "otto/goal-one.md", run: 1, revision: 4, state: "complete",
+    assignmentCandidates: [{ id: "assignment-1", index: 1, kind: "implementation", status: "complete", label: "Build", instruction: "Build it", session: "finished-agent", startedAt: "2026-01-01T00:00:00.000Z", endedAt: "2026-01-01T01:00:00.000Z" }],
+    counts: { total: 1, final: 1, pending: 0 }, startedAt: "2026-01-01T00:00:00.000Z", endedAt: "2026-01-01T01:00:00.000Z",
+  };
+  const openCandidate = buildWorkCandidate(sources({ jobs: fenceSource([finalJob]) }));
+  assert.equal(openCandidate.agents.length, 0);
+  assert.equal(openCandidate.goals[0].execution.assignment.agentId, null);
+  assert.equal(validateWorkCandidate(openCandidate).ok, true);
+
+  const closedGoal = { ...sources().goals.rows[0], lifecycle: "done" };
+  const closedCandidate = buildWorkCandidate(sources({ goals: fenceSource([closedGoal]), jobs: fenceSource([finalJob]) }));
+  assert.equal(closedCandidate.agents.length, 0);
+  assert.equal(closedCandidate.goals.length, 0);
+  assert.equal(validateWorkCandidate(closedCandidate).ok, true);
+});
+
 test("a failed enumeration retains the last truthful rows", async () => {
   let fails = false;
   const adapter = retainingAdapter("goals", async () => {

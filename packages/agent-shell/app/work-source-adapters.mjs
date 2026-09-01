@@ -132,6 +132,10 @@ export function buildWorkCandidate(sources) {
   for (const job of selectedJobs) {
     const agentId = job.assignment?.agentId;
     if (!agentId || knownAgentIds.has(agentId) || !sourceGoalIds.has(job.goalId)) continue;
+    if (FINAL_ASSIGNMENTS.has(job.assignment.state)) {
+      job.assignment = { ...job.assignment, agentId: null };
+      continue;
+    }
     agents.push(absentAgent(agentId, { kind: "assignment", goalId: job.goalId, run: job.run, assignmentId: job.assignment.id }, sourceGoalArea.get(job.goalId) ?? null));
     knownAgentIds.add(agentId);
   }

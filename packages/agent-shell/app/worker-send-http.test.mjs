@@ -252,12 +252,12 @@ test("a durable I am done handover completes a live worker's Assignment and leav
   assert.equal(ambiguous.status, 200, JSON.stringify(ambiguous.body));
   let queue = await readPipeline(path.join(root, "pipelines"), area, started.body.pipeline.slug);
   assert.equal(queue.steps[0].status, "running", "ambiguous completion wording is only a note");
-  const premature = await post(base, "/api/agents/send", { to: area, from: started.body.session, text: "I am done." });
+  const premature = await post(base, "/api/agents/send", { to: area, from: started.body.session, text: "I am done.", operationId: "legacy-completion" });
   assert.equal(premature.status, 200, JSON.stringify(premature.body));
   queue = await readPipeline(path.join(root, "pipelines"), area, started.body.pipeline.slug);
   assert.equal(queue.steps[0].status, "running", "a conclusion without the required facts is only a note");
 
-  const done = await post(base, "/api/agents/send", { to: area, from: started.body.session, text: "I am done. Commit abc123 passes the focused test." });
+  const done = await post(base, "/api/agents/send", { to: area, from: started.body.session, text: "I am done. Commit abc123 passes the focused test.", operationId: "legacy-completion" });
   assert.equal(done.status, 200, JSON.stringify(done.body));
   queue = await readPipeline(path.join(root, "pipelines"), area, started.body.pipeline.slug);
   assert.equal(queue.steps[0].status, "complete");

@@ -3794,8 +3794,13 @@ async function handoverPipelineStep(sessionName, text, report = null, idempotenc
 
 /** Performs one serialized worker submission or exact retry. */
 async function handoverPipelineStepUnlocked(sessionName, text, report = null, idempotencyKey = "", kind = null) {
-  const operationId = workerHandoverOperationId(sessionName, text, report, idempotencyKey, kind);
+  let operationId = workerHandoverOperationId(sessionName, text, report, idempotencyKey, kind);
   const records = await readAllPipelines(PIPELINES_ROOT);
+  if (kind === "done" || kind === "blocked") {
+    const legacyNote = records.some((record) => record.steps.some((step) => step.status === "running"
+      && workerHandoverReceipt(record, step, sessionName, operationId)?.queue?.result === "note"));
+    if (legacyNote) operationId = `${operationId}:${kind}`;
+  }
   for (const record of records) {
     const step = record.steps.find((item) => (item.session === sessionName || item.attempts?.some((attempt) => attempt.session === sessionName))
       && (item.reports?.some((stored) => stored.idempotencyKey === operationId) || workerHandoverReceipt(record, item, sessionName, operationId)));

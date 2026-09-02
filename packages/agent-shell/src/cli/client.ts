@@ -67,10 +67,9 @@ export function resolveServerUrl(explicit: string | undefined): URL {
 }
 
 /** One request against the Agent Shell server, returning its status and parsed JSON body without throwing on a non-2xx response. */
-async function vaultRequest(server: URL, path: string, init?: RequestInit): Promise<{ status: number; body: Record<string, any> }> {
+async function vaultRequest(server: URL, path: string, init?: RequestInit): Promise<{ status: number; body: Record<string, any>; operationId: string }> {
   let response: Response;
   const method = String(init?.method ?? "GET").toUpperCase();
-  const operationId = randomUUID();
   const timeoutMs = Math.max(1_000, Number(process.env.TANGENT_SHELL_TIMEOUT_MS) || 20_000);
   const controller = new AbortController();
   let timedOut = false;
@@ -85,6 +84,7 @@ async function vaultRequest(server: URL, path: string, init?: RequestInit): Prom
   if (callerSignal?.aborted) callerAborted();
   else callerSignal?.addEventListener("abort", callerAborted, { once: true });
   const headers = new Headers(init?.headers);
+  const operationId = headers.get("x-tangent-operation-id")?.trim() || randomUUID();
   headers.set("x-tangent-operation-id", operationId);
   const session = await currentTmuxSession();
   if (session) headers.set("x-tangent-session", session);
@@ -97,26 +97,34 @@ async function vaultRequest(server: URL, path: string, init?: RequestInit): Prom
     callerSignal?.removeEventListener("abort", callerAborted);
   }
   const body = (await response.json().catch(() => ({}))) as Record<string, any>;
-  return { status: response.status, body };
+  return { status: response.status, body, operationId };
 }
 
 /** One request against the Agent Shell server, throwing with the server's own error message on a non-2xx response. */
 export async function vaultFetch(server: URL, path: string, init?: RequestInit): Promise<Record<string, any>> {
-  const { status, body } = await vaultRequest(server, path, init);
+  const { status, body, operationId } = await vaultRequest(server, path, init);
   if (status < 200 || status >= 300) {
     if (body.code === "launch-not-allowed") {
       throw new Error(`${body.error}\nArea: ${body.area}\nAllowed: ${(body.allowed ?? []).join(", ") || "none"}`);
     }
-    throw new Error(body.error || `Agent Shell returned ${status}.`);
+    throw Object.assign(new Error(body.error || `Agent Shell returned ${status}.`), {
+      status,
+      code: String(body.code ?? ""),
+      operationId: String(body.operationId ?? operationId),
+      payload: body,
+    });
   }
   return body;
 }
 
 /** POSTs a JSON payload to the Agent Shell server. */
 export function postJson(server: URL, path: string, payload: unknown): Promise<Record<string, any>> {
+  const operationId = payload && typeof payload === "object" && "operationId" in payload
+    ? String((payload as { operationId?: unknown }).operationId ?? "").trim()
+    : "";
   return vaultFetch(server, path, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(operationId ? { "x-tangent-operation-id": operationId } : {}) },
     body: JSON.stringify(payload)
   });
 }

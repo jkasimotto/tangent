@@ -151,7 +151,7 @@ test("Area help publishes the complete Brain-facing Map resource lifecycle", () 
     "label", "operation-id", "server", "json",
   ]);
   assert.deepEqual(resource.subcommands.find((entry) => entry.name === "add-back").options.map((entry) => entry.name), [
-    "confirm-last-known", "operation-id", "server", "json",
+    "confirm-last-known", "kind", "path", "url", "label", "operation-id", "server", "json",
   ]);
 });
 
@@ -507,6 +507,37 @@ test("missing-record Add-back requires explicit Last-known confirmation and rein
   });
   assert.deepEqual(applied.expectedCatalogs, [{ owner: AREA, revision: "child-catalog-revision" }]);
   assert.deepEqual(applied.expectedScenes, [{ owner: AREA, hash: "source-scene-hash" }]);
+
+  const statelessProjection = projection({
+    rows: [{
+      viewedFrom: AREA,
+      relation: { kind: "direct" },
+      alsoFrom: [],
+      entity: {
+        locator: { owner: AREA, id: DIRECT_ID },
+        reason: "missing-record",
+        lastKnown: null,
+        representation: "on-map",
+      },
+    }],
+  });
+  await assert.rejects(
+    runFixture(["resource", "add-back", AREA, DIRECT_ID, "--confirm-last-known", "--operation-id", "brain-add-back-no-facts"], handler, statelessProjection),
+    /Supply --kind with --path or --url and --label/,
+  );
+  await runFixture([
+    "resource", "add-back", AREA, DIRECT_ID,
+    "--confirm-last-known", "--kind", "worktree", "--path", "/tmp/remembered", "--label", "Remembered checkout",
+    "--operation-id", "brain-add-back-explicit", "--json",
+  ], handler, statelessProjection);
+  assert.deepEqual(applied.mutation.source, {
+    kind: "confirmed-last-known",
+    input: {
+      target: { kind: "worktree", path: "/tmp/remembered" },
+      missingConfirmation: { targetFingerprint: "remembered-fingerprint" },
+    },
+    label: "Remembered checkout",
+  });
 });
 
 test("discover, refresh, check, and undo keep their safe read and mutation envelopes", async () => {

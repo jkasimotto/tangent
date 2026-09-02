@@ -299,6 +299,122 @@ test("revision fences, inherited writes, stale evidence, and operation reuse fai
   assert.equal(rejected.code, "operation-id-reused");
 });
 
+test("mutation owners cannot escape the selected Area ancestry", async () => {
+  const transactions = transactionFixture();
+  const existenceChecks = [];
+  const resources = coordinator(transactions, {
+    /** Records which Area names cross the existence authority boundary. */
+    async areaExists(area) { existenceChecks.push(area); return true; },
+  });
+  const unrelated = "neara/private";
+  await assert.rejects(resources.apply(await request(transactions, {
+    kind: "add",
+    owner: unrelated,
+    input: { target: { kind: "link", url: "https://example.test/unrelated" } },
+    label: null,
+  }, "unrelated-add", "otto/tangent")), (error) => error.code === "inherited-resource-read-only");
+  assert.deepEqual(existenceChecks, ["otto/tangent"], "an unrelated owner is rejected before existence or status reads");
+
+  const target = { kind: "repository", path: "/tmp/unrelated-repository" };
+  const candidate = {
+    owner: unrelated,
+    target,
+    evidence: { kind: "legacy-area-binding", field: "Repository" },
+    evidenceHash: "unrelated-legacy",
+    targetFingerprint: areaResourceTargetFingerprint(target),
+  };
+  await assert.rejects(resources.apply(await request(transactions, {
+    kind: "import-legacy",
+    selections: [{ candidate, attachDeclaredBranch: false }],
+  }, "unrelated-import", "otto/tangent")), (error) => error.code === "inherited-resource-read-only");
+  assert.deepEqual(existenceChecks, ["otto/tangent", "otto/tangent"]);
+});
+
+test("Undo is scoped to the Area view that created its receipt", async () => {
+  const transactions = transactionFixture();
+  const resources = coordinator(transactions);
+  const added = await resources.apply(await request(transactions, {
+    kind: "add",
+    owner: "otto/tangent",
+    input: { target: { kind: "link", url: "https://example.test/scoped-undo" } },
+    label: null,
+  }, "scoped-undo-add"));
+
+  await assert.rejects(resources.apply({
+    schema: "area-map-resource-mutation.v1",
+    operationId: "scoped-undo-wrong-area",
+    viewedFrom: "otto",
+    mutation: { kind: "undo", token: added.undo.token },
+  }), (error) => error.code === "undo-unavailable");
+
+  const undone = await resources.apply({
+    schema: "area-map-resource-mutation.v1",
+    operationId: "scoped-undo-correct-area",
+    viewedFrom: "otto/tangent",
+    mutation: { kind: "undo", token: added.undo.token },
+  });
+  assert.equal(undone.effect, "undone");
+});
+
+test("Undo rechecks Area status and guards it through the exact install", async () => {
+  const owner = "otto/tangent";
+  const noteFile = `${owner}/tangent.md`;
+  let changedStatus = false;
+  const transactions = transactionFixture({ [noteFile]: "# Tangent\n" }, {
+    /** Marks the Area done after the first Undo plan but before its install. */
+    beforeInstall({ files, options }) {
+      if (options.operationId === "status-guard-undo" && !changedStatus) {
+        files.set(noteFile, Buffer.from("# Tangent\nstatus: done\n"));
+        changedStatus = true;
+      }
+    },
+  });
+  const resources = coordinator(transactions, {
+    /** Derives read-only state from the same exact note bytes as the fixture guard. */
+    async areaReadOnly() { return transactions.files.get(noteFile)?.toString("utf8").includes("status: done") ?? false; },
+    /** Supplies one exact status note guard for every catalog and Undo plan. */
+    async guardReader() {
+      return [{ file: noteFile, oldContent: Buffer.from(transactions.files.get(noteFile)), kind: "status" }];
+    },
+  });
+  const added = await resources.apply(await request(transactions, {
+    kind: "add",
+    owner,
+    input: { target: { kind: "link", url: "https://example.test/status-guard" } },
+    label: null,
+  }, "status-guard-add"));
+  const catalogFile = areaResourceCatalogPath(owner);
+  const beforeUndo = Buffer.from(transactions.files.get(catalogFile));
+
+  await assert.rejects(resources.apply({
+    schema: "area-map-resource-mutation.v1",
+    operationId: "status-guard-undo",
+    viewedFrom: owner,
+    mutation: { kind: "undo", token: added.undo.token },
+  }), (error) => error.code === "area-resource-read-only" && error.status === 423);
+  assert.deepEqual(transactions.files.get(catalogFile), beforeUndo);
+});
+
+test("generic transaction recovery becomes the stable Map-resource failure", async () => {
+  const base = transactionFixture();
+  const transactions = {
+    ...base,
+    /** Simulates the transaction repository's generic recovery barrier. */
+    async saveExact() { return { status: 503, code: "recovery-required", error: "private recovery detail", recoveryRequired: { operationId: "prior" } }; },
+  };
+  const resources = coordinator(transactions);
+  const result = await resources.apply(await request(transactions, {
+    kind: "add",
+    owner: "otto/tangent",
+    input: { target: { kind: "link", url: "https://example.test/recovery" } },
+    label: null,
+  }, "transaction-recovery"));
+  assert.equal(result.status, 503);
+  assert.equal(result.code, "resource-transaction-recovery");
+  assert.equal(result.retryable, false);
+  assert.equal(result.error, "Map resource transaction recovery must finish first.");
+});
+
 test("generic Link association commits catalog and scene together, then semantic Undo preserves later layout", async () => {
   const owner = "otto/tangent";
   const sourceFile = areaCanvasPath(owner);
@@ -739,14 +855,16 @@ test("coordinator synthesizes every accepted current recovery arm", async (t) =>
     const transactions = transactionFixture();
     /** Rederives both current candidates before enforcing the Branch choice. */
     const branchEvidence = async () => ({ suggestions: [], legacyReview: [repository, worktree] });
+    /** Keeps only the accepted LegacyResourceReference fields in the command. */
+    const reference = ({ owner, target, evidence, evidenceHash, targetFingerprint }) => ({ owner, target, evidence, evidenceHash, targetFingerprint });
     const branch = await rejected(coordinator(transactions, {
       projectionReader,
       evidenceReader: branchEvidence,
     }).apply(await request(transactions, {
       kind: "import-legacy",
       selections: [
-        { candidate: repository, attachDeclaredBranch: false },
-        { candidate: worktree, attachDeclaredBranch: false },
+        { candidate: reference(repository), attachDeclaredBranch: false },
+        { candidate: reference(worktree), attachDeclaredBranch: false },
       ],
     }, "recovery-branch")));
     assert.deepEqual(branch.recovery, {

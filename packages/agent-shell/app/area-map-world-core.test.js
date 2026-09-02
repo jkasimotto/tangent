@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { composeAreaMapWorld, composeShard, computeWorldGeometry, detachCrossOwnerTextBindings, protectAreaRegions, provisionalRegions, shardHulls, runtimeId, solveAreaMapGesture, splitComposed } from "./public/area-map-world-core.js";
+import { composeAreaMapWorld, composeShard, computeWorldGeometry, detachCrossOwnerTextBindings, placeBlockInSourceScene, protectAreaRegions, provisionalRegions, shardHulls, runtimeId, solveAreaMapGesture, sourceAreaContentBounds, splitComposed } from "./public/area-map-world-core.js";
 import { createBlockElements, createEmptyScene, createTextElement } from "./public/area-board-core.js";
 
 const areas = ["neara", "neara/delivery", "neara/delivery/standards"];
@@ -30,6 +30,30 @@ test("provisional placement preserves stored rectangles and uses nearest 2D free
   assert.deepEqual(regions.get("root/c").storedRect, { x: 60, y: 440, width: 460, height: 320 });
   assert.ok(separated(regions.get("root/a").storedRect, regions.get("root/b").storedRect));
   assert.ok(separated(regions.get("root/b").storedRect, regions.get("root/c").storedRect));
+});
+
+test("generic source placement shares Block collision and composed-world growth", () => {
+  const scene = createEmptyScene();
+  const existing = createBlockElements({ id: "existing", kind: "goal", ref: "root/goal.md", title: "Existing", x: 700, y: 40 });
+  scene.elements.push(...existing);
+  const beforeBounds = sourceAreaContentBounds(scene);
+  assert.ok(beforeBounds.width > 900, "authored content widens the shared source bounds");
+
+  const placed = placeBlockInSourceScene(scene, {
+    kind: "resource",
+    ref: "11111111-1111-4111-8111-111111111111",
+    title: "Checkout",
+  }, "resource");
+  assert.deepEqual(placed.root.customData.tangent, { kind: "resource", ref: "11111111-1111-4111-8111-111111111111" });
+  assert.ok(separated(placed.root, existing[0]), "the generic collision solver avoids existing Tangent Blocks");
+  const label = placed.scene.elements.find((element) => element.containerId === placed.root.id);
+  assert.ok(label && label.x >= placed.root.x && label.x <= placed.root.x + placed.root.width);
+
+  const hulls = shardHulls(placed.scene);
+  const regions = provisionalRegions(["root"]);
+  const geometry = computeWorldGeometry({ areas: ["root"], regions, blockHulls: new Map([["root", hulls.blocks]]), inkHulls: new Map([["root", hulls.ink]]) });
+  assert.ok(geometry.get("root").constraint.width >= sourceAreaContentBounds(placed.scene).width,
+    "the normal composed-world solver grows around the placed source Block");
 });
 
 test("Standards never crosses Delivery while Delivery and Neara grow", () => {

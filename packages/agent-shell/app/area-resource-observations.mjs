@@ -6,6 +6,7 @@ import { mapWithConcurrency } from "./bounded-work.mjs";
 
 const DEFAULT_CAPACITY = 2_000;
 const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_CLEANUP_GRACE_MS = 250;
 const SAFE_PROVIDER_CODES = new Set(["provider-access-unavailable", "provider-unavailable"]);
 
 /** Returns one target's stable cache fingerprint without exposing its value in telemetry. */
@@ -49,29 +50,41 @@ export function validProviderLabel(value) {
   return typeof value === "string" && value.length > 0 && value.length <= 100 && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
+/** Returns an expected empty Git result without swallowing abort or system failures. */
+async function optionalGitText(readGit, cwd, args, signal, allowedCodes) {
+  try { return await readGit(cwd, args, { signal }); }
+  catch (error) {
+    if (allowedCodes.has(Number(error?.code))) return "";
+    throw error;
+  }
+}
+
 /** Reads one local worktree or repository as bounded Git and filesystem facts. */
-export async function inspectLocalResource(target, { signal }) {
+export async function inspectLocalResource(target, { signal, statPath = stat, readGit = gitText } = {}) {
   try {
-    const info = await stat(target.path);
+    signal?.throwIfAborted?.();
+    const info = await statPath(target.path);
+    signal?.throwIfAborted?.();
     if (!info.isDirectory()) return { state: "missing" };
-    const bare = await gitText(target.path, ["rev-parse", "--is-bare-repository"], { signal }).catch(() => "");
+    const bare = await readGit(target.path, ["rev-parse", "--is-bare-repository"], { signal });
     if (target.kind === "worktree" && bare === "true") return { state: "not-a-worktree" };
     if (target.kind === "worktree") {
-      const root = await gitText(target.path, ["rev-parse", "--show-toplevel"], { signal }).catch(() => "");
-      if (!root || path.resolve(root) !== path.resolve(target.path)) return { state: "not-a-worktree" };
-      const head = await gitText(target.path, ["rev-parse", "HEAD"], { signal });
-      const branchRef = await gitText(target.path, ["symbolic-ref", "-q", "HEAD"], { signal }).catch(() => "");
+      const root = await readGit(target.path, ["rev-parse", "--show-toplevel"], { signal });
+      if (path.resolve(root) !== path.resolve(target.path)) return { state: "not-a-worktree" };
+      const head = await readGit(target.path, ["rev-parse", "HEAD"], { signal });
+      const branchRef = await optionalGitText(readGit, target.path, ["symbolic-ref", "-q", "HEAD"], signal, new Set([1]));
       return {
         state: "available",
         checkout: branchRef ? { kind: "branch", head, branchRef } : { kind: "detached", head },
-        repositoryPath: await gitText(target.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], { signal }).then((folder) => path.dirname(folder)),
+        repositoryPath: await readGit(target.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], { signal }).then((folder) => path.dirname(folder)),
       };
     }
-    const head = await gitText(target.path, ["rev-parse", "HEAD"], { signal }).catch(() => "");
+    const head = bare === "true"
+      ? await optionalGitText(readGit, target.path, ["rev-parse", "HEAD"], signal, new Set([128]))
+      : await readGit(target.path, ["rev-parse", "HEAD"], { signal });
     if (bare === "true") return { state: "available", checkout: { kind: "bare", head: head || null } };
-    const root = await gitText(target.path, ["rev-parse", "--show-toplevel"], { signal }).catch(() => "");
-    if (!root) throw new Error("not a Git repository");
-    const branchRef = await gitText(target.path, ["symbolic-ref", "-q", "HEAD"], { signal }).catch(() => "");
+    await readGit(target.path, ["rev-parse", "--show-toplevel"], { signal });
+    const branchRef = await optionalGitText(readGit, target.path, ["symbolic-ref", "-q", "HEAD"], signal, new Set([1]));
     return { state: "available", checkout: branchRef ? { kind: "branch", head, branchRef } : { kind: "detached", head } };
   } catch (error) {
     if (["ENOENT", "ENOTDIR"].includes(error?.code)) return { state: "missing" };
@@ -99,20 +112,41 @@ function providerError(error) {
 }
 
 /** Runs one operation against an owned deadline and propagates caller cancellation. */
-async function withDeadline(load, timeoutMs, callerSignal) {
+async function withDeadline(load, timeoutMs, callerSignal, cleanupGraceMs) {
   const controller = new AbortController();
   let timeoutId;
+  let timedOut = false;
   /** Propagates an outer cancellation without leaking its reason into output. */
   const abort = () => controller.abort();
   if (callerSignal?.aborted) abort(); else callerSignal?.addEventListener("abort", abort, { once: true });
-  const timeout = new Promise((_resolve, reject) => {
+  let operation;
+  try { operation = Promise.resolve(load(controller.signal)); }
+  catch (error) { operation = Promise.reject(error); }
+  const settled = operation.then(
+    (value) => ({ state: "fulfilled", value }),
+    (error) => ({ state: "rejected", error }),
+  );
+  const timeout = new Promise((resolve) => {
     timeoutId = setTimeout(() => {
+      timedOut = true;
       controller.abort();
-      reject(Object.assign(new Error("observation timed out"), { name: "TimeoutError" }));
+      resolve({ state: "timed-out" });
     }, timeoutMs);
-    timeoutId.unref?.();
   });
-  try { return await Promise.race([load(controller.signal), timeout]); }
+  try {
+    const result = await Promise.race([settled, timeout]);
+    if (timedOut || result.state === "timed-out") {
+      let cleanupTimer;
+      await Promise.race([
+        settled,
+        new Promise((resolve) => { cleanupTimer = setTimeout(resolve, cleanupGraceMs); }),
+      ]);
+      clearTimeout(cleanupTimer);
+      throw Object.assign(new Error("observation timed out"), { name: "TimeoutError" });
+    }
+    if (result.state === "rejected") throw result.error;
+    return result.value;
+  }
   finally {
     clearTimeout(timeoutId);
     callerSignal?.removeEventListener("abort", abort);
@@ -127,12 +161,14 @@ export function createAreaResourceObservations({
   recognition = { githubHost: "github.com", phabricatorBaseUrls: [] },
   capacity = DEFAULT_CAPACITY,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  cleanupGraceMs = DEFAULT_CLEANUP_GRACE_MS,
   concurrency = 8,
   now = () => Date.now(),
 } = {}) {
   const entries = new Map();
   const generations = new Map();
   let access = 0;
+  let epoch = 0;
 
   /** Returns one locator's stable string identity. */
   function locatorKey(locator) { return `${locator?.owner ?? ""}\0${locator?.id ?? ""}`; }
@@ -213,13 +249,14 @@ export function createAreaResourceObservations({
     if (!entry) return { locator: resource.locator, observation: { state: "unavailable", value: null, checkedAt: null, error: capacityError } };
     entry.access = ++access;
     if (entry.inFlight) return entry.inFlight;
+    const cacheEpoch = epoch;
     const generation = generations.get(locatorKey(resource.locator)) ?? 0;
     const previous = entry.observation;
     entry.observation = { state: "checking", value: previous.value ?? null, checkedAt: previous.checkedAt ?? null };
     entry.inFlight = (async () => {
       let observation;
       try {
-        const value = await withDeadline((ownedSignal) => load(resource, described, ownedSignal), timeoutMs, signal);
+        const value = await withDeadline((ownedSignal) => load(resource, described, ownedSignal), timeoutMs, signal, cleanupGraceMs);
         observation = { state: "current", value, checkedAt: new Date(now()).toISOString() };
       } catch (error) {
         const bounded = described.facet === "local" ? localError(error) : error?.code === "provider-state-unsupported"
@@ -229,7 +266,7 @@ export function createAreaResourceObservations({
           ? { state: "last-known", value: previous.value, checkedAt: previous.checkedAt, error: bounded }
           : { state: "unavailable", value: null, checkedAt: null, error: bounded };
       }
-      if ((generations.get(locatorKey(resource.locator)) ?? 0) === generation && entries.get(described.key) === entry) {
+      if (epoch === cacheEpoch && (generations.get(locatorKey(resource.locator)) ?? 0) === generation && entries.get(described.key) === entry) {
         entry.observation = observation;
         entry.access = ++access;
       }
@@ -254,10 +291,17 @@ export function createAreaResourceObservations({
     }
   }
 
+  /** Clears every owner-keyed fact and fences late results after an Area move. */
+  function clear() {
+    epoch += 1;
+    entries.clear();
+    generations.clear();
+  }
+
   /** Reports bounded cache facts for tests and health output. */
   function status() { return { size: entries.size, capacity, active: [...entries.values()].filter((entry) => entry.inFlight).length }; }
 
-  return { invalidate, peek, project, refresh, refreshOne, status };
+  return { clear, invalidate, peek, project, refresh, refreshOne, status };
 }
 
 export default { createAreaResourceObservations, inspectLocalResource, observationTargetFingerprint, providerTreatment, recognizeReviewLink, validProviderLabel };

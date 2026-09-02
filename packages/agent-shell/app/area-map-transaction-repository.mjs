@@ -471,12 +471,13 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
   }
 
   /** Saves every source shard of one world gesture as one exact Git commit. */
-  async function saveMany(writes, { operationId, worldId = "default", area = writes[0]?.area ?? "", session = null, preflight = null, acknowledgement = null } = {}) {
+  async function saveMany(writes, { operationId, worldId = "default", area = writes[0]?.area ?? "", session = null, preflight = null, acknowledgement = null, intent = null } = {}) {
     if (!operationId) throw new Error("Area map gestures require an operation ID");
     const startedAt = Date.now();
     await ensureRecovered();
     if (recoveryRequired) return { status: 503, code: "recovery-required", retryable: false, error: "Area map recovery requires attention", recoveryRequired };
-    const requestDigest = digest(writes.map((write) => ({ area: write.area, baseHash: write.baseHash ?? null, canvas: write.canvas })));
+    const writeIntent = writes.map((write) => ({ area: write.area, baseHash: write.baseHash ?? null, canvas: write.canvas }));
+    const requestDigest = digest(intent === null ? writeIntent : { writes: writeIntent, intent });
     const directory = operationDirectory(worldId, operationId);
     const manifestFile = path.join(directory, "manifest.json");
     return withLock(async () => {
@@ -505,11 +506,16 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       if (conflicts.length) return { status: 409, conflict: true, code: "shard-conflict", retryable: false, operationId, currentHashes: Object.fromEntries(conflicts.map((entry) => [entry.write.area, entry.current.hash])) };
       const changed = preparedWrites.filter((entry) => entry.current.hash !== entry.newHash);
       if (!changed.length) {
-        return {
+        const result = {
           committed: true, idempotent: true, operationId,
           hashes: Object.fromEntries(preparedWrites.map((entry) => [entry.write.area, entry.newHash])),
           ...(acknowledgement ? { acknowledgement } : {}),
         };
+        await writeManifest(manifestFile, {
+          schema: "area-map-transaction.v2", operationId, worldId, digest: requestDigest, state: "committed",
+          preparedAt: new Date().toISOString(), committedAt: new Date().toISOString(), shardCount: 0, targets: [], result,
+        });
+        return result;
       }
       const targets = changed.flatMap((entry) => [
         { area: entry.write.area, file: entry.current.file, oldText: entry.current.canonicalExists === false ? null : entry.current.text ?? null, newText: entry.newText, oldHash: entry.current.hash ?? null, newHash: entry.newHash },
@@ -572,13 +578,13 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
   async function saveExact(buildPlan, { operationId, worldId = "area-tree", area = "", session = null, intent = {}, rehydrate = null } = {}) {
     if (!operationId || typeof buildPlan !== "function") throw new Error("exact vault transactions require an operation ID and plan builder");
     await ensureRecovered();
-    if (recoveryRequired) return { status: 503, error: "Area map recovery requires attention", recoveryRequired };
+    if (recoveryRequired) return { status: 503, code: "recovery-required", retryable: false, error: "Area map recovery requires attention", recoveryRequired };
     const requestDigest = digest(intent);
     const directory = operationDirectory(worldId, operationId);
     const manifestFile = path.join(directory, "manifest.json");
     return withLock(async () => {
       await recoverUnlocked();
-      if (recoveryRequired) return { status: 503, error: "Area map recovery requires attention", recoveryRequired };
+      if (recoveryRequired) return { status: 503, code: "recovery-required", retryable: false, error: "Area map recovery requires attention", recoveryRequired };
       try {
         const prior = JSON.parse(await readFile(manifestFile, "utf8"));
         if (prior.digest !== requestDigest) return { status: 409, conflict: true, code: "operation-id-reused", retryable: false, operationId, error: "operation ID was already used for a different exact vault change" };

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createAreaResourceObservations, providerTreatment, recognizeReviewLink, validProviderLabel } from "./area-resource-observations.mjs";
+import { createAreaResourceObservations, inspectLocalResource, providerTreatment, recognizeReviewLink, validProviderLabel } from "./area-resource-observations.mjs";
 
 /** Builds one active worktree fixture. */
 const worktree = (id = "one", path = "/tmp/one") => ({ locator: { owner: "otto/tangent", id }, membership: { state: "active" }, target: { kind: "worktree", path } });
@@ -24,6 +24,60 @@ test("keeps provider words while deriving only success, muted, and neutral treat
   assert.equal(providerTreatment("github", "Ready for train"), "neutral");
   assert.equal(validProviderLabel("Ready for train"), true);
   assert.equal(validProviderLabel("bad\nlabel"), false);
+});
+
+test("local Git inspection distinguishes exact root facts from abort and command failures", async () => {
+  const directory = { isDirectory: () => true };
+  const aborted = new AbortController();
+  aborted.abort();
+  await assert.rejects(inspectLocalResource(
+    { kind: "worktree", path: process.cwd() },
+    { signal: aborted.signal },
+  ), (error) => error?.name === "AbortError");
+  const cancelled = createAreaResourceObservations();
+  const cancelledResult = await cancelled.refreshOne(worktree("cancelled", process.cwd()), { signal: aborted.signal });
+  assert.equal(cancelledResult.observation.state, "unavailable");
+  assert.equal(cancelledResult.observation.error.code, "local-check-failed");
+
+  await assert.rejects(inspectLocalResource(
+    { kind: "worktree", path: "/repo" },
+    {
+      signal: new AbortController().signal,
+      statPath: async () => directory,
+      readGit: async () => { throw Object.assign(new Error("git unavailable"), { code: "EIO" }); },
+    },
+  ), (error) => error?.code === "EIO");
+
+  const nested = await inspectLocalResource(
+    { kind: "worktree", path: "/repo/nested" },
+    {
+      signal: new AbortController().signal,
+      statPath: async () => directory,
+      readGit: async (_cwd, args) => args.includes("--is-bare-repository") ? "false" : "/repo",
+    },
+  );
+  assert.deepEqual(nested, { state: "not-a-worktree" });
+
+  const detached = await inspectLocalResource(
+    { kind: "worktree", path: "/repo" },
+    {
+      signal: new AbortController().signal,
+      statPath: async () => directory,
+      readGit: async (_cwd, args) => {
+        if (args.includes("--is-bare-repository")) return "false";
+        if (args.includes("--show-toplevel")) return "/repo";
+        if (args.includes("HEAD") && args[0] === "rev-parse") return "abcdef";
+        if (args.includes("symbolic-ref")) throw Object.assign(new Error("detached"), { code: 1 });
+        if (args.includes("--git-common-dir")) return "/repo/.git";
+        throw new Error(`unexpected Git arguments ${args.join(" ")}`);
+      },
+    },
+  );
+  assert.deepEqual(detached, {
+    state: "available",
+    checkout: { kind: "detached", head: "abcdef" },
+    repositoryPath: "/repo",
+  });
 });
 
 test("coalesces reads and keeps a last-known local fact after a bounded error", async () => {
@@ -53,6 +107,50 @@ test("coalesces reads and keeps a last-known local fact after a bounded error", 
   assert.doesNotMatch(stale.observation.error.message, /secret/);
 });
 
+test("observation timeout waits for aborted reader cleanup before returning", async () => {
+  let aborted = false;
+  let cleaned = false;
+  const observations = createAreaResourceObservations({
+    timeoutMs: 5,
+    /** Finishes asynchronous child cleanup only after observing abort. */
+    localReader: (_target, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        aborted = true;
+        setTimeout(() => {
+          cleaned = true;
+          reject(new Error("reader reaped"));
+        }, 10);
+      }, { once: true });
+    }),
+  });
+  const result = await observations.refreshOne(worktree("timeout", "/timeout"));
+  assert.equal(aborted, true);
+  assert.equal(cleaned, true);
+  assert.equal(result.observation.state, "unavailable");
+  assert.equal(result.observation.error.code, "local-check-failed");
+});
+
+test("an abort-ignoring provider stays bounded and can never install a late current value", async () => {
+  let release;
+  const observations = createAreaResourceObservations({
+    timeoutMs: 5,
+    cleanupGraceMs: 10,
+    githubReader: {
+      /** Deliberately ignores AbortSignal until the test releases its late value. */
+      read: () => new Promise((resolve) => { release = resolve; }),
+    },
+  });
+  const resource = link("late", "https://github.com/o/r/pull/9");
+  const started = Date.now();
+  const result = await observations.refreshOne(resource);
+  assert.ok(Date.now() - started < 200, "an uncooperative provider cannot make the observation deadline unbounded");
+  assert.equal(result.observation.state, "unavailable");
+  assert.equal(result.observation.error.code, "provider-timeout");
+  release({ state: "current", stateLabel: "Merged", providerUpdatedAt: "2026-09-02T00:00:00.000Z" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(observations.peek(resource).state, "unavailable");
+});
+
 test("uses injected named readers, exact labels, and missing-capability unavailable state", async () => {
   const observations = createAreaResourceObservations({
     githubReader: {
@@ -72,6 +170,38 @@ test("uses injected named readers, exact labels, and missing-capability unavaila
   assert.equal(unavailable.observation.error.code, "provider-unavailable");
 });
 
+test("passes exact Phabricator references and retains current state after permission loss", async () => {
+  const references = [];
+  let permitted = true;
+  const observations = createAreaResourceObservations({
+    recognition: { phabricatorBaseUrls: ["https://reviews.example.test/"] },
+    phabricatorReader: {
+      /** Models a trusted adapter whose credentials remain outside its public reference. */
+      async read(reference) {
+        references.push(structuredClone(reference));
+        if (!permitted) throw { code: "provider-access-unavailable", credential: "never public" };
+        return { state: "current", stateLabel: "Accepted", providerUpdatedAt: "2026-09-02T00:00:00.000Z" };
+      },
+    },
+    now: () => Date.parse("2026-09-02T00:00:01.000Z"),
+  });
+  const resource = link("phab-permission", "https://reviews.example.test/D71");
+  const current = await observations.refreshOne(resource);
+  assert.equal(current.observation.state, "current");
+  assert.deepEqual(current.observation.value, { stateLabel: "Accepted", treatment: "success", providerUpdatedAt: "2026-09-02T00:00:00.000Z" });
+
+  permitted = false;
+  const retained = await observations.refreshOne(resource);
+  assert.equal(retained.observation.state, "last-known");
+  assert.deepEqual(retained.observation.value, current.observation.value);
+  assert.deepEqual(retained.observation.error, { code: "provider-access-unavailable", message: "Provider access is unavailable.", retryable: false });
+  assert.deepEqual(references, [
+    { baseUrl: "https://reviews.example.test/", revisionId: "D71" },
+    { baseUrl: "https://reviews.example.test/", revisionId: "D71" },
+  ]);
+  assert.equal(JSON.stringify(retained).includes("credential"), false);
+});
+
 test("generation invalidation rejects a late target result", async () => {
   let release;
   /** Holds one local observation until the test crosses its generation fence. */
@@ -80,6 +210,21 @@ test("generation invalidation rejects a late target result", async () => {
   const resource = worktree();
   const pending = observations.refreshOne(resource);
   observations.invalidate(resource.locator);
+  release({ state: "missing" });
+  await pending;
+  assert.equal(observations.peek(resource).state, "not-checked");
+});
+
+test("clearing observations fences every late owner-keyed result after an Area move", async () => {
+  let release;
+  const observations = createAreaResourceObservations({
+    /** Holds an old-owner fact until the move cache clear completes. */
+    localReader: () => new Promise((resolve) => { release = resolve; }),
+  });
+  const resource = worktree("moving", "/moving");
+  const pending = observations.refreshOne(resource);
+  observations.clear();
+  assert.deepEqual(observations.status(), { size: 0, capacity: 2_000, active: 0 });
   release({ state: "missing" });
   await pending;
   assert.equal(observations.peek(resource).state, "not-checked");

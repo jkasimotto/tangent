@@ -109,9 +109,11 @@
 .tangent-map-outline-empty p { margin: 0 0 7px; }
 .tangent-map-outline-empty button { min-height: 30px; margin-right: 6px; padding: 0 9px; border: 1px solid var(--tangent-border); border-radius: 6px; background: transparent; color: var(--tangent-text); cursor: pointer; }
 
-/* Resources is a retained Map sheet. It never replaces or resizes the canvas. */
-.tangent-map-resources-backdrop, .tangent-map-resource-recovery { position: absolute; z-index: 50; inset: 0; display: flex; justify-content: flex-end; background: var(--tangent-overlay); color: var(--tangent-text); font: 14px Assistant, system-ui, sans-serif; }
-.tangent-map-resources { box-sizing: border-box; width: min(680px, 72%); height: 100%; padding: 18px; overflow: auto; border-left: 1px solid var(--tangent-border); background: var(--tangent-island); box-shadow: -18px 0 50px rgba(0, 0, 0, .35); }
+/* Resources is a retained side panel at wide widths and a modal Map sheet at narrow widths. */
+.tangent-map-resources-backdrop, .tangent-map-resource-recovery { position: absolute; z-index: 50; inset: 0; display: flex; justify-content: flex-end; color: var(--tangent-text); font: 14px Assistant, system-ui, sans-serif; }
+.tangent-map-resources-backdrop { background: transparent; pointer-events: none; }
+.tangent-map-resources { box-sizing: border-box; width: min(680px, 72%); height: 100%; padding: 18px; overflow: auto; border-left: 1px solid var(--tangent-border); background: var(--tangent-island); box-shadow: -18px 0 50px rgba(0, 0, 0, .35); pointer-events: auto; }
+.tangent-map-resources-backdrop.placement-active .tangent-map-resources { pointer-events: none; }
 .tangent-map-resources > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .tangent-map-resources > header p { margin: 0 0 2px; color: var(--tangent-muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
 .tangent-map-resources h2 { margin: 0; font-size: 22px; }
@@ -155,11 +157,13 @@
 .tangent-map-resource-confirm input { width: auto; }
 .tangent-map-resource-form-error { color: #ff8787; }
 .tangent-map-resource-review li { display: grid; grid-template-columns: minmax(110px, .6fr) minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--tangent-border); }
-.tangent-map-resource-recovery { z-index: 60; align-items: center; justify-content: center; padding: 16px; }
+.tangent-map-resource-recovery { z-index: 60; align-items: center; justify-content: center; padding: 16px; background: var(--tangent-overlay); }
 .tangent-map-resource-recovery section { box-sizing: border-box; width: min(520px, 100%); padding: 20px; border: 1px solid var(--tangent-border); border-radius: 10px; background: var(--tangent-island); box-shadow: 0 16px 60px rgba(0, 0, 0, .55); }
 .tangent-map-resource-recovery h2 { margin: 0 0 10px; font-size: 19px; }
 .tangent-map-resource-recovery textarea { box-sizing: border-box; width: 100%; min-height: 76px; padding: 10px; border: 1px solid var(--tangent-border); border-radius: 7px; background: var(--tangent-input); color: var(--tangent-text); font: 13px ui-monospace, SFMono-Regular, monospace; }
 .tangent-map-resource-recovery section > div { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; }
+.tangent-map-resource-transaction { position: absolute; z-index: 70; top: 18px; left: 50%; display: grid; gap: 2px; max-width: calc(100% - 32px); padding: 10px 14px; border: 1px solid var(--tangent-accent); border-radius: 9px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font: 13px Assistant, system-ui, sans-serif; pointer-events: none; transform: translateX(-50%); }
+.tangent-map-resource-transaction span { color: var(--tangent-muted); font-size: 11px; }
 
 .tangent-map-resource-placement { position: absolute; z-index: 45; left: 50%; bottom: 62px; display: flex; align-items: center; gap: 9px; max-width: calc(100% - 32px); padding: 9px 11px; border: 1px solid var(--tangent-accent); border-radius: 9px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font: 12px Assistant, system-ui, sans-serif; pointer-events: none; transform: translateX(-50%); }
 .tangent-map-resource-placement strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -181,6 +185,7 @@
   .tangent-map-dialog-backdrop.dock-right { right: 0; }
   .tangent-map-dialog-backdrop.dock-left { left: 0; }
   .tangent-map-picker { height: 100%; max-height: none; border-radius: 0; }
+  .tangent-map-resources-backdrop { background: var(--tangent-overlay); pointer-events: auto; }
   .tangent-map-resources { width: 100%; border-left: 0; }
   .tangent-map-resource-placement { bottom: 72px; flex-wrap: wrap; justify-content: center; width: min(620px, calc(100% - 32px)); }
   .tangent-map-resource-review li { grid-template-columns: 1fr auto; }

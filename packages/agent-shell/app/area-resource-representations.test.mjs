@@ -4,7 +4,7 @@ import test from "node:test";
 import { canvasHash, parseAreaCanvas, serializeAreaCanvas } from "./area-canvas.mjs";
 import { createAreaResourceRepresentationCoordinator } from "./area-resource-representations.mjs";
 import { createBlockElements, createEmptyScene, setBlockHidden } from "./public/area-board-core.js";
-import { AREA_MAP_LAYOUT, nearestFreeRectangle } from "./public/area-map-world-core.js";
+import { placeBlockAtNearestFreePoint, placeBlockInSourceScene } from "./public/area-map-world-core.js";
 
 const OWNER = "otto";
 const VIEWED_FROM = "otto/tangent";
@@ -29,12 +29,13 @@ function activeResolution(resource = RESOURCE, label = "Feature checkout") {
 }
 
 /** Creates an in-memory transaction authority with exact hash and preflight behavior. */
-function fixture({ scene = createEmptyScene(), status = "", resolve = async (resource) => activeResolution(resource), forceConflict = false } = {}) {
+function fixture({ scene = createEmptyScene(), status = "", resolve = async (resource) => activeResolution(resource), placementContextReader = null, forceConflict = false, saveFailure = null } = {}) {
   let currentScene = structuredClone(scene);
   let currentText = serializeAreaCanvas(currentScene);
   let currentHash = canvasHash(currentText);
   const reads = [];
   const saves = [];
+  const receipts = new Map();
   let commits = 0;
   const transactions = {
     /** Holds a complete fixture read behind one transaction lease. */
@@ -47,16 +48,38 @@ function fixture({ scene = createEmptyScene(), status = "", resolve = async (res
     /** Applies preflight and optimistic hash checks before installing one source scene. */
     async saveMany(writes, options) {
       saves.push({ writes: structuredClone(writes), options });
+      if (saveFailure) return structuredClone(saveFailure);
+      const digest = JSON.stringify({ writes, intent: options.intent ?? null });
+      const prior = receipts.get(options.operationId);
+      if (prior) {
+        if (prior.digest !== digest) return { status: 409, code: "operation-id-reused", error: "operation ID reused", operationId: options.operationId, committed: false };
+        return { ...structuredClone(prior.result), idempotent: true };
+      }
       const preflight = await options.preflight?.();
       if (Number(preflight?.status ?? 0) >= 400) return { ...preflight, operationId: options.operationId, committed: false };
       if (forceConflict || writes[0].baseHash !== currentHash) {
         return { status: 409, code: "shard-conflict", error: "source changed", operationId: options.operationId, committed: false, currentHashes: { [writes[0].area]: currentHash } };
       }
-      currentScene = structuredClone(writes[0].canvas);
-      currentText = serializeAreaCanvas(currentScene);
-      currentHash = canvasHash(currentText);
-      commits += 1;
-      return { committed: true, idempotent: false, operationId: options.operationId, hash: currentHash, hashes: { [writes[0].area]: currentHash } };
+      const nextScene = structuredClone(writes[0].canvas);
+      const nextText = serializeAreaCanvas(nextScene);
+      const nextHash = canvasHash(nextText);
+      const changed = nextHash !== currentHash;
+      if (changed) {
+        currentScene = nextScene;
+        currentText = nextText;
+        currentHash = nextHash;
+        commits += 1;
+      }
+      const result = {
+        committed: true,
+        idempotent: !changed,
+        operationId: options.operationId,
+        hash: currentHash,
+        hashes: { [writes[0].area]: currentHash },
+        ...(options.acknowledgement ? { acknowledgement: structuredClone(options.acknowledgement) } : {}),
+      };
+      receipts.set(options.operationId, { digest, result: structuredClone(result) });
+      return result;
     },
   };
   const coordinator = createAreaResourceRepresentationCoordinator({
@@ -64,6 +87,7 @@ function fixture({ scene = createEmptyScene(), status = "", resolve = async (res
     resolveCatalogResource: resolve,
     /** Returns the nearest hidden Area status, or an empty active status. */
     async readAreaStatus() { return status; },
+    placementContextReader,
   });
   return {
     coordinator, reads, saves,
@@ -92,15 +116,13 @@ function authoredFields(element) {
 
 test("Place uses shared Block creation and nearest-free world layout in the resource source owner", async () => {
   const scene = createEmptyScene();
-  const preferred = {
-    x: (AREA_MAP_LAYOUT.minimumWidth - 280) / 2,
-    y: (AREA_MAP_LAYOUT.minimumHeight - AREA_MAP_LAYOUT.labelBand - 132) / 2,
-    width: 280,
-    height: 132,
-  };
-  const existing = createBlockElements({ id: "existing", kind: "goal", ref: "otto/goal-existing.md", title: "Existing", x: preferred.x, y: preferred.y });
+  const existing = createBlockElements({ id: "existing", kind: "goal", ref: "otto/goal-existing.md", title: "Existing", x: 10, y: 24 });
   scene.elements.push(...existing);
-  const expected = nearestFreeRectangle(preferred, [existing[0]], { gap: AREA_MAP_LAYOUT.spacing });
+  const expected = placeBlockInSourceScene(
+    scene,
+    { kind: "resource", ref: RESOURCE_ID, title: "Feature checkout" },
+    `tangent-resource-${RESOURCE_ID}`,
+  ).root;
   const resolved = [];
   const value = fixture({
     scene,
@@ -123,12 +145,64 @@ test("Place uses shared Block creation and nearest-free world layout in the reso
   const placedScene = receiptScene(result);
   const root = placedScene.elements.find((element) => element.id === result.sourceId);
   const label = placedScene.elements.find((element) => element.containerId === root.id);
-  assert.deepEqual({ x: root.x, y: root.y, width: root.width, height: root.height }, expected);
+  assert.deepEqual({ x: root.x, y: root.y, width: root.width, height: root.height }, {
+    x: expected.x, y: expected.y, width: expected.width, height: expected.height,
+  });
   assert.deepEqual(root.customData.tangent, { kind: "resource", ref: RESOURCE_ID });
   assert.equal(root.customData.tangentWorld, undefined, "source ownership stays implicit in the source shard");
   assert.equal(label.containerId, root.id);
   assert.match(label.text, /RESOURCE.*Feature checkout/s);
   assert.deepEqual(result.sourceUpdates[0], { owner: OWNER, serializedSource: result.sourceUpdates[0].serializedSource, hash: canvasHash(result.sourceUpdates[0].serializedSource) });
+});
+
+test("Place uses composed owner geometry and derived-child obstacles, then rechecks its world revision", async () => {
+  const scene = createEmptyScene();
+  const context = {
+    revision: "force-widened-world-1",
+    point: { x: 700, y: 420 },
+    occupied: [{ x: 560, y: 354, width: 460, height: 320 }],
+  };
+  const reads = [];
+  const expected = placeBlockAtNearestFreePoint(
+    scene,
+    { kind: "resource", ref: RESOURCE_ID, title: "Feature checkout" },
+    context.point,
+    `tangent-resource-${RESOURCE_ID}`,
+    { occupied: context.occupied },
+  ).root;
+  const value = fixture({
+    scene,
+    /** Models the source-local projection of one force-widened composed Area and its child region. */
+    async placementContextReader(owner) { reads.push(owner); return structuredClone(context); },
+  });
+
+  const result = await value.coordinator.apply(request("place", "composed-place-1"));
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(reads, [OWNER, OWNER], "Place rechecks the composed world under transaction preflight");
+  const root = receiptScene(result).elements.find((element) => element.id === result.sourceId);
+  assert.deepEqual({ x: root.x, y: root.y, width: root.width, height: root.height }, {
+    x: expected.x, y: expected.y, width: expected.width, height: expected.height,
+  });
+  assert.equal(root.y + root.height < context.occupied[0].y, true, "the shared nearest-free solver avoids the derived child rectangle");
+});
+
+test("Place refuses a composed-world revision race before source installation", async () => {
+  let revision = 0;
+  const value = fixture({
+    /** Returns a changed complete-world revision during locked preflight. */
+    async placementContextReader() {
+      revision += 1;
+      return { revision: `world-${revision}`, point: { x: 300, y: 300 }, occupied: [] };
+    },
+  });
+
+  const result = await value.coordinator.apply(request("place", "composed-race-1"));
+
+  assert.equal(result.status, 409);
+  assert.equal(result.code, "resource-representation-conflict");
+  assert.equal(value.commits(), 0);
+  assert.equal(result.sourceUpdates, undefined);
 });
 
 test("Hide retains the exact root and bound label as deleted, then Restore revives authored geometry and style", async () => {
@@ -198,10 +272,18 @@ test("Hide is idempotent for one consistently retained hidden root and label", a
   assert.equal(result.status, 200);
   assert.equal(result.idempotent, true);
   assert.equal(result.representation, "hidden");
-  assert.equal(value.saves.length, 0);
+  assert.equal(value.saves.length, 1, "the no-op still crosses transaction authority to claim its operation ID");
   const retained = receiptScene(result);
   assert.equal(retained.elements.find((element) => element.id === elements[0].id).isDeleted, true);
   assert.equal(retained.elements.find((element) => element.id === elements[1].id).isDeleted, true);
+
+  const replay = await value.coordinator.apply(request("hide", "hide-again"));
+  assert.equal(replay.idempotent, true);
+  assert.deepEqual(replay.sourceUpdates, result.sourceUpdates);
+  const reused = await value.coordinator.apply(request("restore", "hide-again"));
+  assert.equal(reused.status, 409);
+  assert.equal(reused.code, "operation-id-reused");
+  assert.equal(reused.sourceUpdates, undefined);
 });
 
 test("typed not-found, read-only, unsafe-owner, and optimistic conflict results never claim a source update", async () => {
@@ -236,6 +318,15 @@ test("typed not-found, read-only, unsafe-owner, and optimistic conflict results 
   assert.deepEqual(conflict.currentHashes, { [OWNER]: canvasHash(serializeAreaCanvas(scene)) });
   assert.equal(conflict.sourceUpdates, undefined);
   assert.equal(conflicted.commits(), 0);
+
+  const recovering = fixture({
+    scene,
+    saveFailure: { status: 503, code: "recovery-required", error: "internal recovery detail", committed: false },
+  });
+  const recovery = await recovering.coordinator.apply(request("hide", "recovery-1"));
+  assert.equal(recovery.status, 503);
+  assert.equal(recovery.code, "resource-transaction-recovery");
+  assert.equal(recovery.sourceUpdates, undefined);
 });
 
 test("Place loses authority safely when the exact catalog record becomes a tombstone during preflight", async () => {

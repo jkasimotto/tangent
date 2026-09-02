@@ -56,6 +56,10 @@ const areaResourceCommandSpec: CliCommandSpec = {
       args: "<area> <resource-id>",
       options: [
         { name: "confirm-last-known", description: "Confirm the exact cached label and target when no tombstone remains" },
+        { name: "kind", takesValue: true, values: ["worktree", "repository", "link"], description: "Exact Last-known kind when the server no longer has it" },
+        { name: "path", takesValue: true, description: "Exact Last-known Worktree or Repository path" },
+        { name: "url", takesValue: true, description: "Exact Last-known Link URL" },
+        { name: "label", takesValue: true, description: "Exact Last-known label, including an explicitly empty value" },
         resourceOperationOption, serverOption, jsonOption,
       ],
     },

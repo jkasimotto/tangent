@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { Readable } from "node:stream";
 import test from "node:test";
 
@@ -62,12 +64,57 @@ test("routes every resource contract without changing operation envelopes", asyn
   assert.deepEqual(calls[0], { name: "read", input: { area: "otto/tangent" } });
 });
 
+test("rollback keeps compatible reads while disabling refresh, discovery, and writers", async () => {
+  const calls = [];
+  const operations = Object.fromEntries(
+    ["read", "resolve", "refresh", "discover", "inspectTarget", "apply", "representation"].map((name) => [name, async () => {
+      calls.push(name);
+      return { status: 200, operation: name };
+    }]),
+  );
+  const routes = createAreaResourceRoutes({ operations, writesEnabled: false });
+  const allowed = [
+    ["GET", "/api/areas/map-resources?area=otto%2Ftangent", null, "read"],
+    ["POST", "/api/areas/map-resources/resolve", { resources: [] }, "resolve"],
+    ["POST", "/api/areas/map-resources/inspect-target", { kind: "worktree", path: "/tmp/x" }, "inspectTarget"],
+  ];
+  for (const [method, address, body, expected] of allowed) {
+    const output = response();
+    await routes.handle(body === null ? { method } : request(body, method), output, new URL(`http://local${address}`));
+    assert.equal(output.status, 200);
+    assert.equal(JSON.parse(output.body).operation, expected);
+  }
+  for (const address of [
+    "/api/areas/map-resources/refresh",
+    "/api/areas/map-resources/discover",
+    "/api/areas/map-resources/apply",
+    "/api/areas/map-resources/representation",
+  ]) {
+    const output = response();
+    await routes.handle(request({}), output, new URL(`http://local${address}`));
+    assert.equal(output.status, 503);
+    assert.deepEqual(JSON.parse(output.body), {
+      status: 503,
+      code: "resource-unavailable",
+      error: "Map resources are unavailable.",
+      retryable: false,
+    });
+  }
+  assert.deepEqual(calls, ["read", "resolve", "inspectTarget"]);
+});
+
 test("returns stable malformed, unavailable, and timeout errors", async () => {
+  let cleaned = false;
   const routes = createAreaResourceRoutes({
     deadlineMs: 5,
     operations: {
-      /** Waits until the route-owned abort deadline. */
-      refresh: (_body, { signal }) => new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true })),
+      /** Completes asynchronous cleanup after the route-owned abort deadline. */
+      refresh: (_body, { signal }) => new Promise((_resolve, reject) => signal.addEventListener("abort", () => {
+        setTimeout(() => {
+          cleaned = true;
+          reject(new Error("aborted and cleaned"));
+        }, 10);
+      }, { once: true })),
     },
   });
   const malformed = response();
@@ -85,6 +132,62 @@ test("returns stable malformed, unavailable, and timeout errors", async () => {
   await routes.handle(request({ resources: [] }), timedOut, new URL("http://local/api/areas/map-resources/refresh"));
   assert.equal(timedOut.status, 503);
   assert.equal(JSON.parse(timedOut.body).code, "resource-timeout");
+  assert.equal(cleaned, true, "the response waits until the aborted operation finishes cleanup");
+});
+
+test("route deadlines stay bounded for an abort-ignoring operation", async () => {
+  const routes = createAreaResourceRoutes({
+    deadlineMs: 5,
+    cleanupGraceMs: 10,
+    operations: {
+      /** Deliberately never settles and ignores its signal. */
+      discover: async () => new Promise(() => {}),
+    },
+  });
+  const output = response();
+  const started = Date.now();
+  await routes.handle(request({ area: "otto/tangent" }), output, new URL("http://local/api/areas/map-resources/discover"));
+  assert.ok(Date.now() - started < 200);
+  assert.equal(output.status, 503);
+  assert.equal(JSON.parse(output.body).code, "resource-timeout");
+});
+
+test("a deadline reaps a spawned slow operation before the route responds", async () => {
+  let child = null;
+  let exited = false;
+  const routes = createAreaResourceRoutes({
+    deadlineMs: 20,
+    cleanupGraceMs: 500,
+    operations: {
+      /** Models the abort/reap contract used by bounded Git discovery. */
+      discover: (_body, { signal }) => {
+        child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+        return new Promise((_resolve, reject) => {
+          const stop = () => {
+            child.once("exit", () => {
+              exited = true;
+              reject(new Error("slow child reaped"));
+            });
+            child.kill("SIGTERM");
+          };
+          if (signal.aborted) stop(); else signal.addEventListener("abort", stop, { once: true });
+        });
+      },
+    },
+  });
+  const output = response();
+  try {
+    await routes.handle(request({ area: "otto/tangent" }), output, new URL("http://local/api/areas/map-resources/discover"));
+    assert.equal(exited, true);
+    assert.notEqual(child?.exitCode ?? child?.signalCode, null);
+    assert.equal(output.status, 503);
+    assert.equal(JSON.parse(output.body).code, "resource-timeout");
+  } finally {
+    if (child && !exited) {
+      child.kill("SIGKILL");
+      await once(child, "exit").catch(() => {});
+    }
+  }
 });
 
 test("serializes returned and thrown failures through the same closed recovery boundary", async () => {

@@ -115,6 +115,39 @@ test("one gesture writes every source shard in one exact commit and preserves un
   assert.equal(reused.status, 409);
 });
 
+test("a no-change source gesture durably claims its operation intent", async () => {
+  const value = await fixture("no-change-receipt");
+  const initial = scene("Initial");
+  await value.transactions.saveMany([
+    { area: "neara", baseHash: null, canvas: initial, reason: "seed" },
+  ], { operationId: "seed", worldId: "seed", area: "neara" });
+  const current = await value.repository.read("neara");
+  const writes = [{ area: "neara", baseHash: current.hash, canvas: current.scene, reason: "already hidden" }];
+  const intent = { kind: "hide", resource: { owner: "neara", id: "resource-one" } };
+  const acknowledgement = { representation: "hidden" };
+  const head = String((await runGit(["-C", value.root, "rev-parse", "HEAD"])).stdout).trim();
+
+  const first = await value.transactions.saveMany(writes, {
+    operationId: "no-change", worldId: "resource", area: "neara", intent, acknowledgement,
+  });
+  assert.equal(first.committed, true);
+  assert.equal(first.idempotent, true);
+  assert.deepEqual(first.acknowledgement, acknowledgement);
+  assert.equal(String((await runGit(["-C", value.root, "rev-parse", "HEAD"])).stdout).trim(), head, "a no-change receipt adds no Git commit");
+
+  const replay = await value.transactions.saveMany(writes, {
+    operationId: "no-change", worldId: "resource", area: "neara", intent, acknowledgement,
+  });
+  assert.equal(replay.idempotent, true);
+  assert.deepEqual(replay.acknowledgement, acknowledgement);
+
+  const reused = await value.transactions.saveMany(writes, {
+    operationId: "no-change", worldId: "resource", area: "neara", intent: { ...intent, kind: "restore" }, acknowledgement,
+  });
+  assert.equal(reused.status, 409);
+  assert.equal(reused.code, "operation-id-reused");
+});
+
 for (const phase of ["prepared", "ref-installed", "index-installed", "target-installed:0", "target-installed:1", "verified", "result-recorded"]) {
   test(`startup recovery completes the ${phase} crash phase before a read`, async () => {
     let crashed = false;

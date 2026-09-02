@@ -188,20 +188,24 @@ test("catalog validation enforces IDs, active duplicates, and suggestion relatio
   assert.match(validateAreaResourceCatalog(catalog([one], [decision, structuredClone(decision)])).errors.join(" "), /duplicates another suggestion decision/);
 });
 
-test("target normalization expands only home, removes separators, and changes only a URL host's case", () => {
+test("target normalization expands only home, removes separators, changes host case, and rejects credentials", () => {
   assert.deepEqual(
     normalizeAreaResourceTarget({ kind: "worktree", path: "~/Projects/../Repo///", future: true }, { home: "/Users/Example" }),
     { kind: "worktree", path: "/Users/Example/Repo", future: true },
   );
   assert.deepEqual(normalizeAreaResourceTarget({ kind: "repository", path: "/Volumes/Case/../CASE/" }), { kind: "repository", path: "/Volumes/CASE" });
   assert.deepEqual(
-    normalizeAreaResourceTarget({ kind: "link", url: "HTTP://User:Pass@EXAMPLE.COM:80/%7EThing?Q=A#Frag" }),
-    { kind: "link", url: "HTTP://User:Pass@example.com:80/%7EThing?Q=A#Frag" },
+    normalizeAreaResourceTarget({ kind: "link", url: "HTTP://EXAMPLE.COM:80/%7EThing?Q=A#Frag" }),
+    { kind: "link", url: "HTTP://example.com:80/%7EThing?Q=A#Frag" },
   );
   assert.throws(() => normalizeAreaResourceTarget({ kind: "worktree", path: "relative/path" }), { code: "invalid-resource-target" });
   assert.throws(() => normalizeAreaResourceTarget({ kind: "worktree", path: "~someone/repo" }), { code: "invalid-resource-target" });
   assert.throws(() => normalizeAreaResourceTarget({ kind: "link", url: "mailto:test@example.com" }), { code: "invalid-resource-target" });
   assert.throws(() => normalizeAreaResourceTarget({ kind: "link", url: "https://example.com/a b" }), { code: "invalid-resource-target" });
+  assert.throws(() => normalizeAreaResourceTarget({ kind: "link", url: "https://token:secret@example.com/review" }), { code: "invalid-resource-target" });
+  assert.equal(validateAreaResourceCatalog(catalog([
+    record(ID_A, { kind: "link", url: "https://token:secret@example.com/review" }),
+  ])).ok, false, "catalog parsing cannot admit a credential-bearing Link from older bytes");
 
   assert.equal(
     areaResourceTargetFingerprint({ kind: "worktree", path: "/repo/child/../" }),

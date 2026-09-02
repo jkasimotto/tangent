@@ -4,7 +4,7 @@ import { parseAreaCanvas, serializeAreaCanvas } from "./area-canvas.mjs";
 import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { composeAreaMapWorld, shardHulls } from "./public/area-map-world-core.js";
 import { createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createTextElement } from "./public/area-board-core.js";
-import { areaMapWorldEnabled, loadAreaMapAuthority } from "./public/area-map-rollout.js";
+import { areaMapResourceWritesEnabled, areaMapWorldEnabled, loadAreaMapAuthority } from "./public/area-map-rollout.js";
 
 /** Adds one stored direct-child region to a source scene. */
 function addRegion(scene, options) {
@@ -189,6 +189,8 @@ test("first structural and content gestures write only their exact source owners
 test("disabling areaMapWorld lets the old format-2 reader parse every changed shard", async () => {
   assert.equal(areaMapWorldEnabled(), true, "the composed world rollout defaults on");
   assert.equal(areaMapWorldEnabled("0"), false);
+  assert.equal(areaMapResourceWritesEnabled(), true, "Stage 3 resource writers default on independently");
+  assert.equal(areaMapResourceWritesEnabled("off"), false, "Stage 2 can keep world readers while disabling resource writers");
   const fixture = migrationFixture();
   const world = await fixture.index.snapshot("neara/delivery/standards");
   const delivery = structuredClone(fixture.scenes.get("neara/delivery"));

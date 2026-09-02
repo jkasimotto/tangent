@@ -95,7 +95,7 @@ test("the vault index carries kinds, git times, degrees, and Area children and s
   await waitForServer(base);
 
   const config = await fetch(`${base}/config.js`).then((response) => response.text());
-  assert.match(config, /window\.TANGENT_FEATURES = \{"areaMapWorld":false\}/, "the browser receives the disabled rollout flag");
+  assert.match(config, /window\.TANGENT_FEATURES = \{"areaMapWorld":false,"areaMapResourceWrites":false\}/, "the browser receives disabled world and resource-writer flags");
   assert.equal((await fetch(`${base}/api/areas/map-world?located=neara%2Fhackathon`)).status, 404, "the disabled world read route is not an alternate authority");
   assert.equal((await fetch(`${base}/api/areas/map-gestures`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 404, "the disabled world write route is not an alternate authority");
   const legacyCanvas = await fetch(`${base}/api/areas/canvas?area=neara%2Fhackathon`).then((response) => response.json());

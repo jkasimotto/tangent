@@ -91,7 +91,7 @@ function normalizeLocalPath(value, home) {
   return normalized;
 }
 
-/** Lowercases only the authority's host token while retaining every other recorded URL byte. */
+/** Lowercases only the host token and rejects credentials before they reach catalog authority. */
 function normalizeHttpUrl(value) {
   if (typeof value !== "string" || !value || value.includes("\0") || value.includes("\\") || /[\u0000-\u0020\u007f]/.test(value)) {
     invalidTarget("A Link resource target must be a safe HTTP or HTTPS URL.");
@@ -101,10 +101,10 @@ function normalizeHttpUrl(value) {
   let parsed;
   try { parsed = new URL(value); } catch { invalidTarget("A Link resource target must be a valid HTTP or HTTPS URL."); }
   if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname) invalidTarget("A Link resource target must be a valid HTTP or HTTPS URL.");
+  if (parsed.username || parsed.password) invalidTarget("A Link resource target cannot contain credentials.");
 
   const authority = match[2];
   const at = authority.lastIndexOf("@");
-  const userInfo = at >= 0 ? authority.slice(0, at + 1) : "";
   const hostAndPort = authority.slice(at + 1);
   let host;
   let port;
@@ -119,7 +119,7 @@ function normalizeHttpUrl(value) {
     port = colon >= 0 ? hostAndPort.slice(colon) : "";
   }
   if (!host) invalidTarget("A Link resource target must contain a valid host.");
-  return `${match[1]}://${userInfo}${host.toLowerCase()}${port}${match[3]}`;
+  return `${match[1]}://${host.toLowerCase()}${port}${match[3]}`;
 }
 
 /** Ensures that an input and all additive fields remain JSON data. */

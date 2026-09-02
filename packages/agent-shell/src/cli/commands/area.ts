@@ -699,9 +699,16 @@ async function resourceAddBackCommand(args: Args): Promise<void> {
     if (!booleanArg(args["confirm-last-known"])) {
       throw new Error(`resource ${resource.id} has no tombstone. Review its exact Last-known label and target, then repeat with --confirm-last-known.`);
     }
-    const target = resourceTarget(row.entity);
-    const label = row.entity?.lastKnown?.label;
-    if (!target || target.kind === "local-path" || typeof label !== "string") throw new Error(`resource ${resource.id} has no complete Last-known label and target to confirm`);
+    const retainedTarget = resourceTarget(row.entity);
+    const hasTargetFlags = stringArg(args.kind) !== undefined || stringArg(args.path) !== undefined || stringArg(args.url) !== undefined;
+    const target = hasTargetFlags
+      ? resourceTargetRequest(args, requestedResourceKind(args, retainedTarget?.kind === "local-path" ? "" : retainedTarget?.kind), retainedTarget)
+      : retainedTarget;
+    const suppliedLabel = stringArg(args.label);
+    const label = suppliedLabel !== undefined ? suppliedLabel : row.entity?.lastKnown?.label;
+    if (!target || target.kind === "local-path" || typeof label !== "string") {
+      throw new Error(`resource ${resource.id} has no complete Last-known facts. Supply --kind with --path or --url and --label, then repeat with --confirm-last-known.`);
+    }
     const request: Record<string, string> = "path" in target
       ? { kind: target.kind, path: target.path }
       : { kind: target.kind, url: target.url };

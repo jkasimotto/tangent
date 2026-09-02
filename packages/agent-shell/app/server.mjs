@@ -129,7 +129,8 @@ import { createAreaResourceProjection } from "./area-resource-projection.mjs";
 import { createAreaResourceRepresentationCoordinator } from "./area-resource-representations.mjs";
 import { createAreaResourceRoutes } from "./area-resource-routes.mjs";
 import { createAreaResourceService } from "./area-resource-service.mjs";
-import { areaMapWorldEnabled } from "./public/area-map-rollout.js";
+import { areaMapResourceWritesEnabled, areaMapWorldEnabled } from "./public/area-map-rollout.js";
+import { composeAreaMapWorld } from "./public/area-map-world-core.js";
 import { workerWallNotice } from "./worker-wall-notice.mjs";
 import { dismissAreaDocument, markAreaDocumentOpened, presentAreaDocuments, projectAreaPresentations, pruneMissingAreaPresentations, readAreaPresentations, removeAreaPresentations, withdrawAreaDocument } from "./area-presentations.mjs";
 import { cardFieldsHash, cardSummary, validateCard } from "./goal-cards.mjs";
@@ -229,6 +230,8 @@ function traceOperation(name, fields = {}) {
 
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const AREA_MAP_WORLD_ENABLED = areaMapWorldEnabled(process.env.TANGENT_AREA_MAP_WORLD);
+const AREA_MAP_RESOURCE_WRITES_ENABLED = AREA_MAP_WORLD_ENABLED
+  && areaMapResourceWritesEnabled(process.env.TANGENT_AREA_MAP_RESOURCE_WRITES);
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
 const HARNESS_LOG_ROOT = process.env.TANGENT_HARNESS_LOG_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "harness-logs", "pi");
@@ -385,10 +388,45 @@ const areaResourceMutations = createAreaResourceMutationCoordinator({
     for (const locator of locators) if (locator?.owner && locator?.id) areaResourceObservations.invalidate(locator);
   },
 });
+/** Returns the canonical composed-world placement inputs in one owner's source coordinates. */
+async function resourcePlacementContext(owner) {
+  const world = await areaMapWorldIndex.snapshot(owner);
+  const composition = composeAreaMapWorld(world);
+  const region = composition.regionRects.get(owner);
+  const offset = composition.offsets.get(owner);
+  if (!world?.worldRevision || !region || !offset) {
+    throw Object.assign(new Error(`The composed Map placement context for ${owner} is unavailable.`), {
+      status: 503,
+      code: "resource-source-load-failed",
+      retryable: true,
+    });
+  }
+  const occupied = composition.scene.elements
+    .filter((element) => !element?.isDeleted
+      && !element?.customData?.tangentWorldEphemeral
+      && element?.customData?.tangentWorld?.owner === owner
+      && [element.x, element.y, element.width, element.height].every(Number.isFinite)
+      && element.width > 0 && element.height > 0)
+    .map((element) => ({
+      x: element.x - offset.x,
+      y: element.y - offset.y,
+      width: element.width,
+      height: element.height,
+    }));
+  return {
+    revision: world.worldRevision,
+    point: {
+      x: region.x + region.width / 2 - offset.x,
+      y: region.y + region.height / 2 - offset.y,
+    },
+    occupied,
+  };
+}
 const areaResourceRepresentations = createAreaResourceRepresentationCoordinator({
   transactions: areaMapTransactions,
   resolveCatalogResource: areaResourceCatalogAuthority.resolve,
   readAreaStatus: hiddenAreaStatus,
+  placementContextReader: resourcePlacementContext,
 });
 areaResourceService = createAreaResourceService({
   projection: areaResourceProjection,
@@ -399,7 +437,7 @@ areaResourceService = createAreaResourceService({
   jobsRoot: PIPELINES_ROOT,
   areaExists: mapAreaExists,
 });
-const areaResourceRoutes = createAreaResourceRoutes({ operations: areaResourceService });
+const areaResourceRoutes = createAreaResourceRoutes({ operations: areaResourceService, writesEnabled: AREA_MAP_RESOURCE_WRITES_ENABLED });
 
 /** Reads the additive active-only Area-show resource list without failing legacy fields. */
 async function areaShowMapResources(area) {
@@ -7233,6 +7271,7 @@ const areaRoutesOperations = {
       operationId: String(body.operationId ?? "").trim() || randomUUID(),
     });
     areaResourceMutations.clearUndo();
+    areaResourceObservations.clear();
     areaResourceService.discoveryStore.clear();
     await moveSessionBindings(moved);
     return moved;
@@ -7966,7 +8005,7 @@ const shellControlRoutes = createShellControlRoutes(shellControlOperations);
 const shellStateRoutes = createShellStateRoutes({
   chatSession: CHAT_SESSION,
   instanceId: INSTANCE_ID,
-  features: { areaMapWorld: AREA_MAP_WORLD_ENABLED },
+  features: { areaMapWorld: AREA_MAP_WORLD_ENABLED, areaMapResourceWrites: AREA_MAP_RESOURCE_WRITES_ENABLED },
   /** Returns bounded shell chrome state without reading Agents or Work sources. */
   async status() {
     const [revisions, rebuild, goalCleanups] = await Promise.all([

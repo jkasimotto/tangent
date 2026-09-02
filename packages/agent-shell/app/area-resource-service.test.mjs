@@ -37,7 +37,7 @@ function suggestion(overrides = {}) {
 
 /** Builds one isolated composed service and observable dependency calls. */
 function fixture(overrides = {}) {
-  const calls = { discovery: 0, refresh: [], mutation: [], representation: [] };
+  const calls = { discovery: 0, refresh: [], resolve: [], mutation: [], representation: [] };
   let decisions = [];
   const repository = entity(AREA, REPOSITORY_ID, { kind: "repository", path: "/repo" }, "Repo");
   const projection = {
@@ -57,10 +57,17 @@ function fixture(overrides = {}) {
     async evidence() { return { state: "current", owner: AREA, decisions, suggestions: [], legacyReview: [] }; },
     /** Resolves the known worktree and retains unknown ordered locators as gone. */
     async resolve({ resources }) {
+      calls.resolve.push(structuredClone(resources));
       return {
         resolutions: resources.map((locator) => locator.id === WORKTREE_ID
           ? { state: "current", value: entity(locator.owner, locator.id, { kind: "worktree", path: "/repo/worktree" }, "WT") }
-          : { state: "gone", value: { locator, reason: "missing-record", representation: "on-map", lastKnown: null, warnings: [] } }),
+          : { state: "gone", value: {
+              locator: { owner: locator.owner, id: locator.id },
+              reason: "missing-record",
+              representation: locator.representation ?? "on-map",
+              lastKnown: locator.lastKnown ?? null,
+              warnings: [],
+            } }),
         catalogs: [{ owner: AREA, revision: "r1" }],
       };
     },
@@ -133,6 +140,29 @@ test("refresh observes only current entities and returns every requested resolut
   assert.deepEqual(calls.refresh, [[resources[0]]]);
   assert.deepEqual(result.results.map((item) => item.state), ["current", "gone"]);
   assert.deepEqual(result.resolutions.map((item) => item.value.locator), resources);
+});
+
+test("resolve preserves validated Last-known and representation facts for a missing record", async () => {
+  const { service, calls } = fixture();
+  const request = {
+    locator: { owner: AREA, id: "missing" },
+    representation: "hidden",
+    lastKnown: { label: "Former checkout", target: { kind: "worktree", path: "/repo/former" } },
+  };
+  const resolved = await service.resolve({ resources: [request] });
+  assert.deepEqual(calls.resolve[0], [{
+    owner: AREA,
+    id: "missing",
+    representation: "hidden",
+    lastKnown: request.lastKnown,
+  }]);
+  assert.deepEqual(resolved.resolutions[0].value.lastKnown, request.lastKnown);
+  assert.equal(resolved.resolutions[0].value.representation, "hidden");
+
+  await assert.rejects(service.resolve({ resources: [{
+    ...request,
+    lastKnown: { label: "Unsafe", target: { kind: "worktree", path: "relative/path" } },
+  }] }), { status: 422, code: "invalid-resource-target" });
 });
 
 test("service rejects unsafe Areas and more than 500 locators before calling dependencies", async () => {

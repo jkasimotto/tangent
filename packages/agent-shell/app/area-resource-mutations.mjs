@@ -28,6 +28,7 @@ import { isSafeResourceId } from "./public/area-map-entities.js";
 
 const MUTATION_SCHEMA = "area-map-resource-mutation.v1";
 const OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const MAX_OPERATION_RECEIPTS = 256;
 const CATALOG_ONLY_KINDS = new Set(["add", "add-suggestion", "edit", "remove", "import-legacy", "dismiss-suggestion"]);
 const SCENE_COUPLED_KINDS = new Set(["associate-generic-link", "add-back-gone"]);
 const RECOVERY_CODES = new Set([
@@ -58,6 +59,13 @@ export class AreaResourceMutationError extends Error {
 /** Throws one stable resource mutation failure. */
 function fail(status, code, message, fields = {}) {
   throw new AreaResourceMutationError(status, code, message, fields);
+}
+
+/** Maps generic Map recovery state into the stable Area-resource error vocabulary. */
+function resourceTransactionResult(value) {
+  return value?.code === "recovery-required"
+    ? { ...value, status: 503, code: "resource-transaction-recovery", retryable: false, error: "Map resource transaction recovery must finish first." }
+    : value;
 }
 
 /** Returns true for one exact JSON-compatible structural value. */
@@ -243,6 +251,19 @@ function mutationOwners(mutation) {
   return [];
 }
 
+/** Reports whether an owning Area is visible from the selected Area. */
+function ownerVisibleFrom(owner, viewedFrom) {
+  return owner === viewedFrom || viewedFrom.startsWith(`${owner}/`);
+}
+
+/** Confines each mutation kind to the Area relationship that its product action permits. */
+function requireMutationOwnerScope(mutation, viewedFrom, owners) {
+  const allowed = mutation?.kind === "import-legacy"
+    ? owners.every((owner) => ownerVisibleFrom(owner, viewedFrom))
+    : owners.every((owner) => owner === viewedFrom);
+  if (!allowed) fail(422, "inherited-resource-read-only", "A Map resource change must use the selected Area or an eligible legacy declaring Area.");
+}
+
 /** Requires one supplied suggestion to still exist in the current derived evidence. */
 function currentSuggestion(evidence, supplied, legacy = false) {
   const candidates = legacy ? evidence?.legacyReview ?? [] : evidence?.suggestions ?? [];
@@ -268,10 +289,19 @@ function legacySelections(selections, evidence) {
     const candidate = currentSuggestion(evidence, supplied, true);
     return { selection, supplied, candidate };
   });
+  const choices = selected.flatMap(({ candidate }) => {
+    const field = candidate?.evidence?.kind === "legacy-area-binding" ? candidate.evidence.field : null;
+    const label = typeof candidate?.proposedLabel === "string" ? candidate.proposedLabel
+      : typeof candidate?.target?.path === "string" ? candidate.target.path : null;
+    return candidate?.declaredBranch && ["Repository", "Worktree"].includes(field)
+      && typeof candidate.targetFingerprint === "string" && label !== null
+      ? [{ owner: candidate.owner, field, targetFingerprint: candidate.targetFingerprint, label }]
+      : [];
+  });
   const branchGroups = new Map();
   for (const item of selected) {
     if (!item.candidate.declaredBranch) {
-      if (item.selection.attachDeclaredBranch) fail(409, "legacy-branch-choice-required", "A legacy Branch can attach only to a declaration that supplies it.");
+      if (item.selection.attachDeclaredBranch) fail(409, "legacy-branch-choice-required", "A legacy Branch can attach only to a declaration that supplies it.", { choices });
       continue;
     }
     const key = `${item.supplied.owner}\0${item.candidate.declaredBranch}`;
@@ -280,7 +310,7 @@ function legacySelections(selections, evidence) {
     branchGroups.set(key, group);
   }
   for (const group of branchGroups.values()) if (group.filter((item) => item.selection.attachDeclaredBranch).length !== 1) {
-    fail(409, "legacy-branch-choice-required", "Choose exactly one selected local resource for the declared Branch.");
+    fail(409, "legacy-branch-choice-required", "Choose exactly one selected local resource for the declared Branch.", { choices });
   }
   return selected;
 }
@@ -468,6 +498,13 @@ export function createAreaResourceMutationCoordinator({
   let undoReceipt = null;
   const operationReceipts = new Map();
 
+  /** Retains only a bounded replay cache; durable transaction receipts remain authoritative. */
+  function retainOperationReceipt(operationId, receipt) {
+    operationReceipts.delete(operationId);
+    while (operationReceipts.size >= MAX_OPERATION_RECEIPTS) operationReceipts.delete(operationReceipts.keys().next().value);
+    operationReceipts.set(operationId, receipt);
+  }
+
   /** Rebuilds response-only source bytes instead of persisting them in an operation receipt. */
   async function hydrateDurable(durable) {
     if (!Array.isArray(durable?.sourceOwners)) return { ...durable, sourceUpdates: durable?.sourceUpdates ?? [] };
@@ -617,9 +654,16 @@ export function createAreaResourceMutationCoordinator({
   /** Applies the one retained process-local inverse under the same exact transaction lock. */
   async function applyUndo(request) {
     const receipt = undoReceipt;
-    if (!receipt || request.mutation?.token !== receipt.token) fail(409, "undo-unavailable", "That Map resource Undo is no longer available.");
+    if (!receipt || request.mutation?.token !== receipt.token || request.viewedFrom !== receipt.viewedFrom) {
+      fail(409, "undo-unavailable", "That Map resource Undo is no longer available in this Area.");
+    }
     /** Builds and submits one plan; safe head/guard conflicts can invoke it once more. */
     const save = () => transactions.saveExact(() => planWithRecovery(async () => {
+      const owners = receipt.catalogs.map((inverse) => inverse.owner);
+      for (const owner of owners) if (await areaReadOnly(owner)) {
+        fail(423, "area-resource-read-only", `Map resources for ${owner} became read-only before Undo could be saved.`);
+      }
+      const authority = await prepareAuthority(request, owners);
       const currentCatalogs = new Map();
       for (const inverse of receipt.catalogs) {
         const current = await readCatalog(transactions, inverse.owner);
@@ -652,6 +696,7 @@ export function createAreaResourceMutationCoordinator({
       }
       return {
         targets,
+        guards: authority.guards.map(({ kind: _kind, ...guard }) => guard),
         message: `update: ${request.viewedFrom} undo Map resource`,
         result: {
           effect: "undone",
@@ -667,15 +712,17 @@ export function createAreaResourceMutationCoordinator({
       intent: request,
       rehydrate: hydrateDurable,
     });
-    let result = await save();
+    let result = resourceTransactionResult(await save());
     if (["head-race", "guard-race"].includes(result?.code)) result = await save();
+    result = resourceTransactionResult(result);
     if (Number(result?.status ?? 200) >= 400) {
+      if (result.code === "guard-race") return { ...result, code: "area-resource-read-only", status: 423, error: "Area status changed while Undo was saving." };
       if (result.code === "target-race" && receipt.semantic) return { ...result, code: "resource-representation-conflict", error: "The Map resource Block changed while Undo was saving." };
       return result;
     }
     if (undoReceipt?.token === receipt.token) undoReceipt = null;
     const decorated = await decorate(request.viewedFrom, result, { state: "unavailable" });
-    operationReceipts.set(request.operationId, decorated);
+    retainOperationReceipt(request.operationId, decorated);
     await onCommitted({ kind: "undo", request, result: decorated });
     return decorated;
   }
@@ -693,6 +740,7 @@ export function createAreaResourceMutationCoordinator({
     const owners = mutationOwners(request.mutation);
     if (!owners.length || owners.some((owner) => !safeAreaResourceOwner(owner))) fail(422, "invalid-resource-target", "The resource owner is unsafe.");
     const uniqueOwners = [...new Set(owners)].sort();
+    requireMutationOwnerScope(request.mutation, request.viewedFrom, uniqueOwners);
     for (const owner of uniqueOwners) {
       if (!await areaExists(owner)) fail(404, "area-not-found", `No Area ${owner}.`);
       if (await areaReadOnly(owner)) fail(423, "area-resource-read-only", `Map resources for ${owner} are read-only because that Area is done or archived.`);
@@ -783,8 +831,9 @@ export function createAreaResourceMutationCoordinator({
       intent: request,
       rehydrate: hydrateDurable,
     });
-    let result = await save();
+    let result = resourceTransactionResult(await save());
     if (["head-race", "guard-race"].includes(result?.code)) result = await save();
+    result = resourceTransactionResult(result);
     if (Number(result?.status ?? 200) >= 400) {
       if (result.code === "guard-race") {
         const statusChanged = (result.changedPaths ?? []).some((file) => guardKinds.get(file) === "status");
@@ -800,7 +849,7 @@ export function createAreaResourceMutationCoordinator({
     if (replay) {
       const replayUndo = undoReceipt?.operationId === request.operationId ? replay.undo : { state: "unavailable" };
       const decorated = await decorate(request.viewedFrom, result, replayUndo);
-      operationReceipts.set(request.operationId, decorated);
+      retainOperationReceipt(request.operationId, decorated);
       return decorated;
     }
     const eligible = Boolean(inverse && (["add", "add-suggestion", "edit", "remove"].includes(request.mutation.kind) && inverse.catalogs.length || sceneCoupled && inverse.semantic));
@@ -808,11 +857,11 @@ export function createAreaResourceMutationCoordinator({
     if (eligible) {
       const post = await Promise.all(inverse.catalogs.map(async (entry) => ({ ...entry, postRevision: (await readCatalog(transactions, entry.owner)).revision })));
       const token = generateUndoToken();
-      undoReceipt = { token, operationId: request.operationId, catalogs: post, semantic: inverse.semantic };
+      undoReceipt = { token, operationId: request.operationId, viewedFrom: request.viewedFrom, catalogs: post, semantic: inverse.semantic };
       undo = { state: "available", token };
     } else undoReceipt = null;
     const decorated = await decorate(request.viewedFrom, result, undo);
-    operationReceipts.set(request.operationId, decorated);
+    retainOperationReceipt(request.operationId, decorated);
     await onCommitted({ kind: request.mutation.kind, request, result: decorated });
     return decorated;
   }

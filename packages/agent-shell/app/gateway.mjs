@@ -16,7 +16,7 @@ import { serveStaticAsset } from "./static-assets.mjs";
 import { createStateEvents } from "./state-events.mjs";
 import { startEventLoopWatchdog } from "./event-loop-watchdog.mjs";
 import { agentShellInstanceId, createSessionOwnership, SESSION_OWNER_OPTION } from "./session-ownership.mjs";
-import { areaMapWorldEnabled } from "./public/area-map-rollout.js";
+import { areaMapResourceWritesEnabled, areaMapWorldEnabled } from "./public/area-map-rollout.js";
 import { createWorkStore, workResponseHeaders } from "./work-store.mjs";
 import { createWorkTelemetry } from "./work-telemetry.mjs";
 
@@ -25,6 +25,8 @@ const HOST = process.env.HOST ?? "127.0.0.1";
 const PORT = Number(process.env.PORT ?? 4321);
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const AREA_MAP_WORLD_ENABLED = areaMapWorldEnabled(process.env.TANGENT_AREA_MAP_WORLD);
+const AREA_MAP_RESOURCE_WRITES_ENABLED = AREA_MAP_WORLD_ENABLED
+  && areaMapResourceWritesEnabled(process.env.TANGENT_AREA_MAP_RESOURCE_WRITES);
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
 const AGENT_CMD = process.env.AGENT_CMD ?? "claude";
@@ -451,7 +453,7 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/config.js") {
       response.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-cache" });
-      response.end(`window.CHAT_SESSION = ${JSON.stringify(CHAT_SESSION)};\nwindow.TANGENT_FEATURES = ${JSON.stringify({ areaMapWorld: AREA_MAP_WORLD_ENABLED })};\nwindow.TANGENT_WORK = ${JSON.stringify({ instanceId: INSTANCE_ID, schema: "agent-shell-work.v3", rollout: "v3" })};\n`);
+      response.end(`window.CHAT_SESSION = ${JSON.stringify(CHAT_SESSION)};\nwindow.TANGENT_FEATURES = ${JSON.stringify({ areaMapWorld: AREA_MAP_WORLD_ENABLED, areaMapResourceWrites: AREA_MAP_RESOURCE_WRITES_ENABLED })};\nwindow.TANGENT_WORK = ${JSON.stringify({ instanceId: INSTANCE_ID, schema: "agent-shell-work.v3", rollout: "v3" })};\n`);
       return;
     }
     if (url.pathname.startsWith("/api/")) {

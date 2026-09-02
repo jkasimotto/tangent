@@ -51,9 +51,24 @@ function requestedLocators(input) {
   if (!Array.isArray(resources)) fail(400, "invalid-resource-request", "A resource locator list is required.");
   if (resources.length > MAX_RESOURCES) fail(400, "invalid-resource-request", `At most ${MAX_RESOURCES} Map resources can be requested at once.`);
   return resources.map((resource) => {
-    const locator = validLocator(resource);
+    const locator = validLocator(resource?.locator ?? resource);
     if (!locator) fail(422, "invalid-resource-target", "A resource locator has an unsafe owner or ID.");
-    return locator;
+    const representation = resource?.representation;
+    if (representation !== undefined && !["on-map", "hidden"].includes(representation)) {
+      fail(422, "invalid-resource-target", "A retained resource representation must be on-map or hidden.");
+    }
+    let lastKnown = null;
+    if (resource?.lastKnown !== undefined && resource.lastKnown !== null) {
+      if (typeof resource.lastKnown?.label !== "string") fail(422, "invalid-resource-target", "Retained resource facts need a label and valid target.");
+      try { areaResourceTargetFingerprint(resource.lastKnown.target); }
+      catch { fail(422, "invalid-resource-target", "Retained resource facts need a label and valid target."); }
+      lastKnown = { label: resource.lastKnown.label, target: structuredClone(resource.lastKnown.target) };
+    }
+    return {
+      ...locator,
+      ...(representation === undefined ? {} : { representation }),
+      ...(lastKnown === null ? {} : { lastKnown }),
+    };
   });
 }
 

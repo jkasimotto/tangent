@@ -1,4 +1,4 @@
-import { hiddenResourceRecordIds, isAreaBoundary, isAreaRegion, tangentOf } from "./area-board-core.js";
+import { addBlock, hiddenResourceRecordIds, isAreaBoundary, isAreaRegion, tangentOf } from "./area-board-core.js";
 
 export const AREA_MAP_LAYOUT = Object.freeze({
   spacing: 60,
@@ -487,6 +487,46 @@ export function nearestFreeRectangle(preferred, occupied = [], { gap = 0 } = {})
   return candidates[0].value;
 }
 
+/** Returns visible source-local geometry that participates in Block collision and Area growth. */
+function sourcePlacementObstacles(scene) {
+  return (scene?.elements ?? []).filter((element) => !element?.isDeleted
+    && !element?.containerId
+    && !element?.customData?.tangentWorldEphemeral
+    && !isAreaBoundary(element)
+    && finiteRect(element));
+}
+
+/** Returns the current source-local content bounds from the same minimum and growth rules as the world solver. */
+export function sourceAreaContentBounds(scene) {
+  const required = unionRects(sourcePlacementObstacles(scene).map(rectangleOf));
+  const size = storedSizeFloor(required);
+  return { x: 0, y: 0, width: size.width, height: Math.max(1, size.height - LABEL_BAND) };
+}
+
+/** Adds any Tangent Block at the nearest free point through the shared Block and collision pipeline. */
+export function placeBlockAtNearestFreePoint(scene, choice, point, id, { occupied = sourcePlacementObstacles(scene) } = {}) {
+  const next = addBlock(scene, choice, point, id);
+  const added = next.elements.slice(scene?.elements?.length ?? 0);
+  const root = added.find((element) => tangentOf(element) && !element.containerId);
+  if (!root) return { scene: next, root: null };
+  const placed = nearestFreeRectangle(rectangleOf(root), occupied.map(rectangleOf), { gap: CONTENT_MARGIN });
+  const dx = placed.x - root.x;
+  const dy = placed.y - root.y;
+  const bound = new Set([root.id, ...(root.boundElements ?? []).map((binding) => binding.id)]);
+  for (const element of added) if (bound.has(element.id)) {
+    element.x += dx;
+    element.y += dy;
+  }
+  return { scene: next, root: next.elements.find((element) => element.id === root.id) ?? null };
+}
+
+/** Places any Tangent Block from the center of its source Area's current world-layout bounds. */
+export function placeBlockInSourceScene(scene, choice, id) {
+  const bounds = sourceAreaContentBounds(scene);
+  const point = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  return placeBlockAtNearestFreePoint(scene, choice, point, id);
+}
+
 /** Returns the local hulls that affect one Area's structural and drawn rectangles. */
 export function shardHulls(scene) {
   const blocks = [];
@@ -830,4 +870,4 @@ export function remapAreaMapWorld(world, changedPaths) {
   return moved;
 }
 
-export default { AREA_MAP_LAYOUT, composeAreaMapWorld, composeRegionElement, composeShard, computeWorldGeometry, detachCrossOwnerTextBindings, elementKey, inflateRect, nearestFreeRectangle, protectAreaRegions, provisionalRegions, rectanglesOverlap, regionId, regionKey, remapAreaMapWorld, reprioritizeAreaPlacement, runtimeId, shardHulls, solveAreaMapGesture, solveOwnedElementGesture, splitComposed, unionRects };
+export default { AREA_MAP_LAYOUT, composeAreaMapWorld, composeRegionElement, composeShard, computeWorldGeometry, detachCrossOwnerTextBindings, elementKey, inflateRect, nearestFreeRectangle, placeBlockAtNearestFreePoint, placeBlockInSourceScene, protectAreaRegions, provisionalRegions, rectanglesOverlap, regionId, regionKey, remapAreaMapWorld, reprioritizeAreaPlacement, runtimeId, shardHulls, solveAreaMapGesture, solveOwnedElementGesture, sourceAreaContentBounds, splitComposed, unionRects };

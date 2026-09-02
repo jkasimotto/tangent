@@ -20,6 +20,37 @@ const jsonResponse = (payload) => ({
   async json() { return payload; },
 });
 
+test("Map and Work stay primary while Model opens from the Shell menu", async () => {
+  const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
+  const { window } = dom;
+  window.setInterval = () => 0;
+  window.fetch = async (url) => {
+    const pathname = new URL(url, window.location.href).pathname;
+    if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", sourceChanged: false, deployedCommit: "", pendingCommits: [], caffeinate: false, sessions: [] });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/prompts/inspect") return jsonResponse({ goals: [], brains: [], agents: [], jobs: [], processes: [] });
+    return jsonResponse({ areas: [], map: [], documents: [] });
+  };
+  window.eval(shellBundle);
+  await settle(window);
+
+  const primary = [...window.document.querySelectorAll(".primary-tabs > button:not([hidden])")];
+  assert.deepEqual(primary.map((button) => button.textContent.trim()), ["Map", "Work"]);
+  const model = window.document.querySelector("#shell-menu > #prompts-tab.shell-menu-item");
+  assert.ok(model, "Model belongs to the Shell menu");
+  assert.equal(model.getAttribute("role"), "menuitem");
+
+  const menu = window.document.querySelector("#shell-menu");
+  menu.hidden = false;
+  click(window, "#prompts-tab");
+  await settle(window);
+  assert.equal(menu.hidden, true);
+  assert.ok(window.document.querySelector(".prompt-bestiary"), "Model keeps its existing route");
+  assert.equal(model.getAttribute("aria-current"), "page");
+  dom.window.close();
+});
+
 test("the Shell menu owns recovery while offline refresh preserves the screen", async () => {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });

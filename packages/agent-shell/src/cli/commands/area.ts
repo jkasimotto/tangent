@@ -669,6 +669,7 @@ async function showCommand(args: Args): Promise<void> {
     console.log(detail.purpose);
   }
   printResources(detail);
+  printAreaShowMapResources(detail);
   printSkills(detail);
   printProcesses(detail);
   if (detail.map) {
@@ -700,6 +701,27 @@ function printResources(detail: AreaShowDetail): void {
   if (!lines.length) console.log("  Repository: none bound");
   for (const [label, item] of lines) console.log(`  ${label}: ${item.value} (from ${item.area})`);
   if (detail.workFolder) console.log(`  Workers start in ${detail.workFolder.cwd} (from ${detail.workFolder.source})`);
+}
+
+/** Prints the additive active Map-resource projection without starting checks or discovery. */
+function printAreaShowMapResources(detail: AreaShowDetail): void {
+  const projected = detail.mapResources;
+  if (!projected) return;
+  console.log("");
+  console.log("Map resources:");
+  if (projected.state === "unavailable") {
+    console.log(`  Unavailable: ${projected.error?.message ?? "catalog could not be read"}`);
+    return;
+  }
+  if (!projected.rows.length) console.log(projected.state === "current" ? "  None." : "  No confirmed rows loaded.");
+  for (const row of projected.rows) {
+    const source = row.source.kind === "inherited" ? `inherited from ${row.source.sourceArea}` : "direct";
+    console.log(`  ${row.locator.id.slice(0, 12)}  ${row.target.kind}  ${row.label}  (${source}; ${row.locator.owner})`);
+    console.log(`    ${resourceTargetText(row.target)}`);
+  }
+  if (projected.state === "partial") for (const problem of projected.problems ?? []) {
+    console.log(`  Problem: ${problem.message ?? "catalog source unavailable"}`);
+  }
 }
 
 /**
@@ -741,6 +763,20 @@ type AreaShowProcess = { slug: string; file: string; when: string; status: strin
 /** One resource value with the Area whose note declares it. */
 type ResolvedResource = { value: string; area: string };
 
+/** One active Map-resource row from the additive Area-show contract. */
+type AreaShowMapResourceRow = {
+  locator: MapResourceLocator;
+  label: string;
+  target: MapResourceTarget;
+  source: { kind: "direct" } | { kind: "inherited"; sourceArea: string };
+};
+
+/** The additive Area-show resource projection, kept distinct from launch bindings. */
+type AreaShowMapResources =
+  | { state: "current"; rows: AreaShowMapResourceRow[] }
+  | { state: "partial"; rows: AreaShowMapResourceRow[]; problems?: Array<{ message?: string }> }
+  | { state: "unavailable"; error?: { message?: string } };
+
 /** The parts of `/api/areas/show` the resource printout reads. */
 type AreaShowDetail = {
   resolved?: { repository?: ResolvedResource | null; worktree?: ResolvedResource | null; branch?: ResolvedResource | null };
@@ -748,6 +784,7 @@ type AreaShowDetail = {
   processes?: AreaShowProcess[];
   skills?: AreaShowSkill[];
   projectSkills?: AreaShowSkill[];
+  mapResources?: AreaShowMapResources;
 };
 
 /**

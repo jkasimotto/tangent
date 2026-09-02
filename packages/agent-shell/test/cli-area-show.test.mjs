@@ -55,3 +55,34 @@ test("tangent area show --json also omits the Goal collection", async () => {
   const text = await runShow({ area: "otto/dnd", purpose: "Play.", goals: [{ slug: "hidden-work" }] }, ["--json"]);
   assert.deepEqual(JSON.parse(text), { area: "otto/dnd", purpose: "Play." });
 });
+
+test("tangent area show prints Map resources separately from legacy launch bindings", async () => {
+  const text = await runShow({
+    area: "otto/dnd",
+    purpose: "Play.",
+    resources: "- Worktree: /tmp/launch",
+    resolved: { worktree: { value: "/tmp/launch", area: "otto" } },
+    workFolder: { cwd: "/tmp/launch", source: "area:otto" },
+    goals: [], processes: [], skills: [], projectSkills: [],
+    mapResources: {
+      state: "current",
+      rows: [
+        {
+          locator: { owner: "otto/dnd", id: "11111111-1111-4111-8111-111111111111" },
+          label: "Feature checkout",
+          target: { kind: "worktree", path: "/tmp/feature" },
+          source: { kind: "direct" },
+        },
+        {
+          locator: { owner: "otto", id: "22222222-2222-4222-8222-222222222222" },
+          label: "Repository",
+          target: { kind: "repository", path: "/tmp/repository" },
+          source: { kind: "inherited", sourceArea: "otto" },
+        },
+      ],
+    },
+  });
+  assert.match(text, /Resources:\n  Worktree: \/tmp\/launch \(from otto\)/);
+  assert.match(text, /Map resources:\n  11111111-111  worktree  Feature checkout  \(direct; otto\/dnd\)/);
+  assert.match(text, /22222222-222  repository  Repository  \(inherited from otto; otto\)/);
+});

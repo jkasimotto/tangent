@@ -2,7 +2,56 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { currentCommit, git, gitText, statusPorcelain } from "./git.js";
+import { currentCommit, git, gitRaw, gitText, statusPorcelain } from "./git.js";
+
+export type GitCheckout =
+  | { kind: "branch"; head: string; branchRef: string }
+  | { kind: "detached"; head: string }
+  | { kind: "bare"; head: string | null };
+
+export type GitWorktree = {
+  path: string;
+  checkout: GitCheckout;
+  locked: { reason: string | null } | null;
+  prunable: { reason: string | null } | null;
+};
+
+/** Parses Git's NUL-delimited worktree porcelain without applying product policy. */
+export function parseGitWorktreesPorcelain(output: string): GitWorktree[] {
+  const records: Array<Record<string, string | true>> = [];
+  let current: Record<string, string | true> = {};
+  for (const field of output.split("\0")) {
+    if (!field) {
+      if (Object.keys(current).length) records.push(current);
+      current = {};
+      continue;
+    }
+    const separator = field.indexOf(" ");
+    current[separator < 0 ? field : field.slice(0, separator)] = separator < 0 ? true : field.slice(separator + 1);
+  }
+  if (Object.keys(current).length) records.push(current);
+  return records.map((record) => {
+    const worktree = typeof record.worktree === "string" ? record.worktree : "";
+    if (!worktree) throw new Error("git worktree porcelain record has no path");
+    const head = typeof record.HEAD === "string" ? record.HEAD : null;
+    let checkout: GitCheckout;
+    if (record.bare === true) checkout = { kind: "bare", head };
+    else if (record.detached === true) checkout = { kind: "detached", head: head ?? "" };
+    else if (typeof record.branch === "string") checkout = { kind: "branch", head: head ?? "", branchRef: record.branch };
+    else throw new Error(`git worktree porcelain record for ${worktree} has no checkout state`);
+    /** Projects one optional porcelain diagnostic and its optional reason. */
+    const reason = (field: "locked" | "prunable") => record[field] === undefined
+      ? null
+      : { reason: typeof record[field] === "string" && record[field] ? record[field] as string : null };
+    return { path: worktree, checkout, locked: reason("locked"), prunable: reason("prunable") };
+  });
+}
+
+/** Lists every Git worktree as repository facts, leaving Area candidate policy to callers. */
+export async function listGitWorktrees(repository: string, options: { signal: AbortSignal }): Promise<GitWorktree[]> {
+  const output = await gitRaw(repository, ["worktree", "list", "--porcelain", "-z"], options);
+  return parseGitWorktreesPorcelain(output);
+}
 
 /** Creates (or resets) a git worktree at the given path on a branch pointing at a commit. */
 export async function worktreeAdd(args: { sourceRepo: string; branch: string; worktree: string; commit: string }): Promise<void> {

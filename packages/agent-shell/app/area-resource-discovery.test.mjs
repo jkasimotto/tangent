@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { discoverAreaResources, recentAreaAttempts } from "./area-resource-discovery.mjs";
+import { areaResourceTargetFingerprint } from "./area-resource-catalog.mjs";
 
 /** Builds one complete Job-history fixture. */
 function job(area, attempts) {
@@ -37,6 +38,8 @@ test("discovers branch, detached, and locked repository worktrees while naming e
     jobsEvidence: { jobs: [], problems: [] },
     listWorktrees,
   });
+  assert.equal(result.suggestions[0].targetFingerprint, areaResourceTargetFingerprint(result.suggestions[0].target));
+  assert.equal(result.suggestions[0].evidence.repositoryTargetFingerprint, areaResourceTargetFingerprint({ kind: "repository", path: "/repo" }));
   assert.equal(result.state, "partial");
   assert.deepEqual(result.suggestions.map((item) => [item.target.path, item.proposedLabel]), [["/repo/main", "main"], ["/repo/review", "review"]]);
   assert.deepEqual(result.problems.map((item) => item.code), ["bare-worktree", "prunable-worktree"]);

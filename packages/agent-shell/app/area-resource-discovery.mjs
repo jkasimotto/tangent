@@ -5,6 +5,7 @@ import { gitText } from "@tangent/repo/git";
 import { listGitWorktrees } from "@tangent/repo/worktree";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 import { readAllJobEvidence } from "./job-record.mjs";
+import { areaResourceTargetFingerprint } from "./area-resource-catalog.mjs";
 
 const ATTEMPT_LIMIT = 20;
 const ATTEMPT_WINDOW_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -46,7 +47,7 @@ export function recentAreaAttempts(jobs, area, { now = Date.now() } = {}) {
 
 /** Builds one resource Suggestion with stable evidence and target fingerprints. */
 function suggestion(target, evidence, proposedLabel, provenanceLabel, extraEvidence = null) {
-  const targetFingerprint = discoveryFingerprint(target);
+  const targetFingerprint = areaResourceTargetFingerprint(target);
   const evidenceHash = discoveryFingerprint({ evidence, target, extraEvidence });
   return { owner: null, target, evidence, evidenceHash, targetFingerprint, proposedLabel, provenanceLabel };
 }
@@ -92,7 +93,7 @@ export async function discoverAreaResources({
           if (entry.checkout?.kind === "bare") { diagnostics.push({ code: "bare-worktree", path: candidatePath, message: "Git reported a bare checkout; it is not a worktree candidate." }); continue; }
           if (entry.prunable) { diagnostics.push({ code: "prunable-worktree", path: candidatePath, message: entry.prunable.reason || "Git reports this worktree as prunable." }); continue; }
           const target = { kind: "worktree", path: candidatePath };
-          const sourceTargetFingerprint = discoveryFingerprint(repository.target);
+          const sourceTargetFingerprint = areaResourceTargetFingerprint(repository.target);
           const itemEvidence = { kind: "git-worktree", repositoryTargetFingerprint: sourceTargetFingerprint, pathFingerprint: discoveryFingerprint(candidatePath) };
           suggestions.push(suggestion(target, itemEvidence, worktreeLabel(entry), `Worktree of ${repository.label ?? path.basename(repository.target.path)}`, { checkout: entry.checkout, locked: entry.locked }));
         }

@@ -184,6 +184,96 @@ test("resource fact projection updates shared Block words and treatment without 
   controller.destroy();
 });
 
+test("resource source updates preserve authored geometry and rebase retained semantic Undo", async () => {
+  const owner = "neara/delivery";
+  const previousId = "11111111-1111-4111-8111-111111111111";
+  const currentId = "22222222-2222-4222-8222-222222222222";
+  const world = fixtureWorld();
+  world.areas.find((node) => node.key === owner).shard.scene.elements.push(
+    ...core.createBlockElements({ id: "resource-block", kind: "resource", ref: previousId, title: "Worktree", x: 210, y: 190 }),
+  );
+  const saves = [];
+  const controller = createAreaMapWorldController({
+    world,
+    storage: memoryStorage(),
+    /** Captures the exact source authority written by Undo. */
+    persistWorld: async (next, _areas, _owners, _command, direction) => {
+      saves.push({ next: structuredClone(next), direction });
+      return {
+        status: 200,
+        hashes: { [owner]: `saved-${saves.length}` },
+        treeRevision: "tree-saved",
+        worldRevision: `world-saved-${saves.length}`,
+      };
+    },
+  });
+
+  const styled = controller.world();
+  const styledBlock = styled.areas.find((node) => node.key === owner).shard.scene.elements.find((element) => element.id === "resource-block");
+  styledBlock.x += 35;
+  styledBlock.strokeColor = "#7048e8";
+  styledBlock.customData.note = "kept";
+  controller.commitWorld(styled, { changedOwners: [owner] }, "style");
+  await controller.flush();
+
+  const source = controller.world().areas.find((node) => node.key === owner).shard.scene;
+  source.elements.find((element) => element.id === "resource-block").customData.tangent.ref = currentId;
+  const revisionBefore = controller.snapshot().revision;
+  assert.equal(controller.installResourceSourceUpdates([{
+    owner,
+    hash: "resource-source-hash",
+    serializedSource: JSON.stringify(source),
+    treeRevision: "tree-resource",
+    worldRevision: "world-resource",
+  }]), true);
+
+  const installed = controller.world();
+  const installedBlock = installed.areas.find((node) => node.key === owner).shard.scene.elements.find((element) => element.id === "resource-block");
+  assert.equal(installedBlock.customData.tangent.ref, currentId);
+  assert.equal(installedBlock.x, 245);
+  assert.equal(installedBlock.strokeColor, "#7048e8");
+  assert.equal(installedBlock.customData.note, "kept");
+  assert.equal(installed.areas.find((node) => node.key === owner).shard.hash, "resource-source-hash");
+  assert.equal(installed.treeRevision, "tree-resource");
+  assert.equal(installed.worldRevision, "world-resource");
+  assert.ok(controller.snapshot().revision > revisionBefore);
+
+  assert.equal(controller.undo(), true, "the earlier style command remains the next Map history word");
+  const undoneBlock = controller.world().areas.find((node) => node.key === owner).shard.scene.elements.find((element) => element.id === "resource-block");
+  assert.equal(undoneBlock.customData.tangent.ref, currentId, "Undo preserves the newer resource association");
+  assert.equal(undoneBlock.x, 210);
+  assert.notEqual(undoneBlock.strokeColor, "#7048e8");
+  assert.equal(undoneBlock.customData.note, undefined);
+  await controller.flush();
+  assert.equal(saves.at(-1).direction, "before");
+  const persistedUndo = saves.at(-1).next.areas.find((node) => node.key === owner).shard.scene.elements.find((element) => element.id === "resource-block");
+  assert.equal(persistedUndo.customData.tangent.ref, currentId, "a later Map save cannot restore the stale resource ID");
+  assert.equal(controller.undo(), false, "the source update did not add a Map history entry");
+  controller.destroy();
+});
+
+test("resource source updates reject invalid authority and pending Map work", () => {
+  const owner = "neara/delivery";
+  const world = fixtureWorld();
+  world.areas.find((node) => node.key === owner).shard.scene.elements.push(
+    ...core.createBlockElements({ id: "resource-block", kind: "resource", ref: "11111111-1111-4111-8111-111111111111", title: "Worktree", x: 210, y: 190 }),
+  );
+  const controller = createAreaMapWorldController({ world, storage: memoryStorage() });
+  assert.throws(() => controller.installResourceSourceUpdates([{ owner, hash: "next", serializedSource: "{}" }]), { code: "resource-source-invalid" });
+
+  const dirty = controller.world();
+  dirty.areas.find((node) => node.key === owner).region.storedRect.x += 10;
+  controller.beginGesture("pointer");
+  controller.preview(dirty, { changedAreas: [owner] });
+  assert.throws(() => controller.installResourceSourceUpdates([{
+    owner,
+    hash: "next",
+    serializedSource: JSON.stringify(dirty.areas.find((node) => node.key === owner).shard.scene),
+  }]), { code: "resource-representation-conflict" });
+  controller.endGesture();
+  controller.destroy();
+});
+
 test("Only deletes unrelated regions and owner content from the render projection", () => {
   const world = fixtureWorld();
   const delivery = world.areas.find((node) => node.key === "neara/delivery");

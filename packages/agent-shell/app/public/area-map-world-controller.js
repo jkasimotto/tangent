@@ -856,6 +856,84 @@ export function createAreaMapWorldController({
     return true;
   }
 
+  /** Parses one trusted transaction source update without accepting a partial scene. */
+  function sourceUpdateScene(update) {
+    let scene;
+    try { scene = JSON.parse(String(update?.serializedSource ?? "")); }
+    catch { throw Object.assign(new Error("A resource transaction returned an invalid Map source."), { code: "resource-source-invalid" }); }
+    if (!scene || scene.type !== "excalidraw" || !Array.isArray(scene.elements) || typeof update?.owner !== "string" || !update.owner) {
+      throw Object.assign(new Error("A resource transaction returned an invalid Map source."), { code: "resource-source-invalid" });
+    }
+    return scene;
+  }
+
+  /** Applies only changed Tangent metadata to one historical world snapshot. */
+  function rebaseResourceSemantics(target, owner, changes, update) {
+    const node = target?.areas?.find((entry) => entry.key === owner);
+    if (!node?.shard?.scene) return;
+    for (const [sourceId, tangent] of changes) {
+      const element = node.shard.scene.elements.find((candidate) => candidate.id === sourceId);
+      if (!element) continue;
+      element.customData = { ...(element.customData ?? {}), tangent: clone(tangent) };
+    }
+    node.shard.hash = update.hash;
+    node.shard.revision = update.hash;
+    if (update.treeRevision) target.treeRevision = update.treeRevision;
+    if (update.worldRevision) target.worldRevision = update.worldRevision;
+  }
+
+  /** Returns every retained command whose snapshots can later become source authority. */
+  function retainedHistoryCommands() {
+    const items = [
+      ...(worldHistory?.state.undo ?? []),
+      ...(worldHistory?.state.redo ?? []),
+      worldHistory?.state.open,
+      worldHistory?.state.active?.command,
+      ...(worldHistory?.state.queue ?? []).map((item) => item.command),
+      failedSave?.command,
+      ...recoveryQueue.map((item) => item.command),
+    ].filter(Boolean);
+    return [...new Map(items.map((command) => [command.id, command])).values()];
+  }
+
+  /** Installs scene-coupled transaction authority without a Map history entry. */
+  function installResourceSourceUpdates(updates = []) {
+    if (!Array.isArray(updates) || !updates.length) return false;
+    if (hasPendingAuthoredWork()) {
+      throw Object.assign(new Error("Save or recover the current Map change before changing resource authority."), {
+        code: "resource-representation-conflict",
+      });
+    }
+    const next = clone(world);
+    const prepared = updates.map((update) => {
+      const node = next.areas.find((entry) => entry.key === update?.owner);
+      if (!node?.shard?.scene || typeof update?.hash !== "string" || !update.hash) {
+        throw Object.assign(new Error("A resource transaction returned an unknown Map source."), { code: "resource-source-invalid" });
+      }
+      const scene = sourceUpdateScene(update);
+      const previous = new Map(node.shard.scene.elements.map((element) => [element.id, element.customData?.tangent ?? null]));
+      const changes = new Map(scene.elements.flatMap((element) => {
+        const before = previous.get(element.id) ?? null;
+        const after = element.customData?.tangent ?? null;
+        return same(before, after) ? [] : [[element.id, after]];
+      }));
+      if (!changes.size) throw Object.assign(new Error("A resource transaction returned no semantic Map change."), { code: "resource-source-invalid" });
+      node.shard = { ...node.shard, state: "ready", hash: update.hash, revision: update.hash, scene };
+      return { update, changes };
+    });
+    const revisions = new Set(prepared.map(({ update }) => `${update.treeRevision ?? ""}\0${update.worldRevision ?? ""}`));
+    if (revisions.size !== 1) throw Object.assign(new Error("A resource transaction returned inconsistent Map revisions."), { code: "resource-source-invalid" });
+    const final = prepared.at(-1)?.update;
+    if (final?.treeRevision) next.treeRevision = final.treeRevision;
+    if (final?.worldRevision) next.worldRevision = final.worldRevision;
+    for (const command of retainedHistoryCommands()) for (const state of [command.before, command.after]) {
+      const historical = state?.get?.("world");
+      for (const { update, changes } of prepared) rebaseResourceSemantics(historical, update.owner, changes, update);
+    }
+    install(next, "resource-source-update");
+    return true;
+  }
+
   /** Retries an ordered failed save. */
   async function retry() {
     if (!failedSave && !recoveryQueue.length) return worldHistory.flush();
@@ -1018,7 +1096,7 @@ export function createAreaMapWorldController({
       return changed;
     },
     selectArea, setSelection, setFindReveal, fitArea, navigateArea, setRestriction, toggleRestriction, escape, toggleFold, setFocus, setCamera, captureView, restoreView,
-    materialize, prioritizeLoads, refreshFacts, setResourceResolutions,
+    materialize, prioritizeLoads, refreshFacts, setResourceResolutions, installResourceSourceUpdates,
     /** Drains durable work, but never waits for a user Retry decision after a failed save. */
     async flush() {
       while (worldHistory.state.scheduled || worldHistory.state.active || worldHistory.state.queue.length) {

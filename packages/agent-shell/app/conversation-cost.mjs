@@ -30,6 +30,25 @@ const LEDGER_NOTE = "priced from Claude Code's own ledger, which already include
 const PI_SUBAGENT_NOTE = "pi records subagent work inside the conversation, so it is already counted";
 
 /**
+ * The gap a Claude conversation carries when its own ledger cannot be used.
+ *
+ * A running or interrupted conversation has no ledger that is still the last
+ * word, so its tokens are priced instead. Those tokens are not the whole
+ * bill: measured over 137 model rows whose transcript totals match the ledger
+ * exactly, the rate is right to 0.1 percent, but two kinds of billed row
+ * reach the ledger and never the transcript, `claude-haiku-4-5` background
+ * calls and the `claude-opus-5[1m]` long-context SKU. A figure built this way
+ * is a floor, and it says so rather than reading as the whole number.
+ */
+const TOKEN_PRICED_GAP = {
+  reason: "priced from tokens, not from Claude Code's own ledger",
+  detail: "These conversations are still running or were interrupted. Background calls and the long-context billing SKU never reach a transcript, so this part of the figure is a floor.",
+};
+
+/** The gap a conversation carries when one of its files could not be read. */
+const UNREADABLE_GAP = { reason: "a transcript file could not be read", detail: "The work in it is missing from the figure." };
+
+/**
  * Reads and prices one recorded conversation, including its subagents.
  *
  * `rates` is the catalog to price against, so a caller that loaded the vault
@@ -52,16 +71,18 @@ export async function conversationUsage({ harness, conversation, cwd, startedAt,
   const resolved = await resolveConversationFiles({ harness, conversation, cwd, startedAt });
   if (!resolved) return null;
   if (!resolved.path) {
-    return { family: resolved.family, path: null, files: [], byModel: [], subagentFiles: 0, notes: ["the transcript for this conversation was not found"] };
+    return { family: resolved.family, path: null, files: [], byModel: [], subagentFiles: 0, notes: ["the transcript for this conversation was not found"], gaps: [] };
   }
   const stamp = cache ? await filesStamp([resolved.path, ...resolved.subagents]) : null;
   const cached = stamp ? cache.get(resolved.path) : null;
   if (cached?.stamp === stamp) return cached.usage;
   const notes = resolved.subagentsSupported ? [] : [PI_SUBAGENT_NOTE];
+  const gaps = [];
   const ledger = resolved.family === "claude" ? claudeLedger(await readRows(resolved.path)) : null;
   if (ledger) {
-    return remember(cache, resolved.path, stamp, { family: resolved.family, path: resolved.path, files: [resolved.path], byModel: ledger, subagentFiles: resolved.subagents.length, notes: [...notes, LEDGER_NOTE] });
+    return remember(cache, resolved.path, stamp, { family: resolved.family, path: resolved.path, files: [resolved.path], byModel: ledger, subagentFiles: resolved.subagents.length, notes: [...notes, LEDGER_NOTE], gaps });
   }
+  if (resolved.family === "claude") gaps.push(TOKEN_PRICED_GAP);
   const files = [resolved.path, ...resolved.subagents];
   const seen = new Set();
   const groups = new Map();
@@ -69,11 +90,12 @@ export async function conversationUsage({ harness, conversation, cwd, startedAt,
     const rows = await readRows(file);
     if (!rows) {
       notes.push(`a transcript could not be read: ${file}`);
+      gaps.push(UNREADABLE_GAP);
       continue;
     }
     for (const part of readUsage(resolved.family, rows, seen)) collect(groups, part);
   }
-  return remember(cache, resolved.path, stamp, { family: resolved.family, path: resolved.path, files, byModel: [...groups.values()], subagentFiles: resolved.subagents.length, notes });
+  return remember(cache, resolved.path, stamp, { family: resolved.family, path: resolved.path, files, byModel: [...groups.values()], subagentFiles: resolved.subagents.length, notes, gaps });
 }
 
 /**
@@ -240,20 +262,40 @@ export function readCodexUsage(rows) {
   return parts;
 }
 
-/** The tokens one cumulative Codex total added over the one before it. */
+/** The cumulative fields Codex reports, which only ever rise inside one run. */
+const CODEX_TOTAL_FIELDS = ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens"];
+
+/**
+ * The tokens one cumulative Codex total added over the one before it.
+ *
+ * Codex restarts its counter inside a thread when the context is compacted,
+ * so the running total falls instead of rising. Measured over 400 rollouts,
+ * three did this. The tokens before the fall were still spent, so a fall is
+ * read as the start of a second run and the new total is charged whole: a
+ * plain difference would clamp that step to zero and lose it, and following
+ * the last total alone would lose everything before the fall.
+ */
 function codexDifference(total, previous) {
-  const input = tokenCount(total.input_tokens) - tokenCount(previous?.input_tokens);
-  const cached = tokenCount(total.cached_input_tokens) - tokenCount(previous?.cached_input_tokens);
+  const base = codexReset(total, previous) ? null : previous;
+  const input = tokenCount(total.input_tokens) - tokenCount(base?.input_tokens);
+  const cached = tokenCount(total.cached_input_tokens) - tokenCount(base?.cached_input_tokens);
   const usage = {
     input: Math.max(0, input - cached),
-    output: Math.max(0, tokenCount(total.output_tokens) - tokenCount(previous?.output_tokens)),
+    output: Math.max(0, tokenCount(total.output_tokens) - tokenCount(base?.output_tokens)),
     cacheRead: Math.max(0, cached),
-    cacheWrite: Math.max(0, tokenCount(total.cache_write_input_tokens) - tokenCount(previous?.cache_write_input_tokens)),
+    cacheWrite: Math.max(0, tokenCount(total.cache_write_input_tokens) - tokenCount(base?.cache_write_input_tokens)),
     cacheWrite1h: 0,
-    reasoning: Math.max(0, tokenCount(total.reasoning_output_tokens) - tokenCount(previous?.reasoning_output_tokens)),
+    reasoning: Math.max(0, tokenCount(total.reasoning_output_tokens) - tokenCount(base?.reasoning_output_tokens)),
   };
   return usage.input || usage.output || usage.cacheRead || usage.cacheWrite ? usage : null;
 }
+
+/** True when a running Codex total fell, which only a restarted counter does. */
+function codexReset(total, previous) {
+  if (!previous) return false;
+  return CODEX_TOTAL_FIELDS.some((field) => tokenCount(total[field]) < tokenCount(previous[field]));
+}
+
 
 /**
  * Reads pi usage, which is already in this shape.

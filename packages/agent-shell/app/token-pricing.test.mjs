@@ -110,6 +110,25 @@ test("the pricing Document overrides a seeded rate and adds a model the seed has
   assert.equal(priceUsage({ provider: "anthropic", model: "claude-sonnet-5", usage: usage({ output: 1_000_000 }) }, rates).amount, 10);
 });
 
+test("the Document carries the fast-mode rate, because it replaces a seeded rate outright", () => {
+  // The Document wins over the seed for a model it names, so a model whose
+  // seeded rate has a fast-mode override must repeat that override here or
+  // fast work silently bills at the standard rate.
+  const parsed = parsePricingDocument([
+    "```tangent.pricing.v1",
+    JSON.stringify({
+      version: 1,
+      providers: { anthropic: { models: { "claude-opus-5": { input: 5, output: 25, cacheWrite: 6.25, cacheWrite1h: 10, cacheRead: 0.5, fastMode: { input: 10, output: 50 } } } } },
+    }, null, 2),
+    "```",
+  ].join("\n"));
+  const rates = mergeRates(parsed.rates);
+  const priced = priceUsage({ provider: "anthropic", model: "claude-opus-5", usage: usage({ input: 1_000_000, output: 1_000_000 }), modifiers: { fastMode: true } }, rates);
+  assert.equal(priced.amount, 60);
+  // The cache rates are untouched by fast mode; only input and output move.
+  assert.equal(priceUsage({ provider: "anthropic", model: "claude-opus-5", usage: usage({ cacheRead: 1_000_000 }), modifiers: { fastMode: true } }, rates).amount, 0.5);
+});
+
 test("the longest matching Document key wins, so a specific SKU beats its family", () => {
   const parsed = parsePricingDocument([
     "```tangent.pricing.v1",

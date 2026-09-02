@@ -31,6 +31,7 @@ const WORK_KEY_SEPARATOR = "\u001f";
 export function createCostService({
   pipelinesRoot,
   brainsRoot,
+  repairsRoot = null,
   registry,
   pricingFile = path.join(os.homedir(), ".tangent", "trees", "pricing.md"),
   now = () => Date.now(),
@@ -52,17 +53,28 @@ export function createCostService({
     return snapshot ?? { status: "reading", days: wanted, amount: null, display: "…", computedAt: null };
   }
 
-  /** Reads and prices the window, and replaces the snapshot with the result. */
+  /**
+   * Reads and prices the window, and replaces the snapshot with the result.
+   *
+   * A broken harness registry leaves nothing to price against. That publishes
+   * a snapshot saying so rather than none at all: with no snapshot the bar
+   * would show a patient ellipsis forever and never say why.
+   */
   async function refresh(days) {
     const current = await registry();
-    if (current?.error) return;
+    const since = new Date(now() - days * 86_400_000).toISOString();
+    const computedAt = new Date(now()).toISOString();
+    if (current?.error) {
+      snapshot = summarizeCost({ amount: 0, complete: false, unpriced: [], parts: [], conversations: [], unattributed: [] },
+        { days, since, computedAt, registryError: current.error });
+      return;
+    }
     /** Finds one registry harness by id. */
     const harnessFor = (id) => (current.harnesses ?? []).find((entry) => entry.id === id) ?? null;
     const table = await pricingTable(pricingFile);
-    const since = new Date(now() - days * 86_400_000).toISOString();
-    const attempts = await attemptsInWindow({ pipelinesRoot, brainsRoot, since });
+    const attempts = await attemptsInWindow({ pipelinesRoot, brainsRoot, repairsRoot, since });
     const priced = await priceAttempts(attempts, { harnessFor, rates: table.rates, cache: conversationCache });
-    snapshot = summarizeCost(priced, { days, since, computedAt: new Date(now()).toISOString(), pricingError: table.error });
+    snapshot = summarizeCost(priced, { days, since, computedAt, pricingError: table.error });
   }
 
   return { read };
@@ -90,12 +102,17 @@ export async function pricingTable(pricingFile) {
  * count, so the breakdown states what the number leaves out in one line per
  * reason rather than listing hundreds of attempts nobody will read.
  */
-export function summarizeCost(priced, { days, since, computedAt, pricingError = null }) {
+export function summarizeCost(priced, { days, since, computedAt, pricingError = null, registryError = null }) {
   const byHarness = new Map();
   const byModel = new Map();
   const byWork = new Map();
   const unpricedTokens = new Map();
+  const gaps = new Map();
   for (const entry of priced.conversations) {
+    for (const gap of entry.cost.gaps ?? []) {
+      const known = gaps.get(gap.reason);
+      gaps.set(gap.reason, { ...gap, count: (known?.count ?? 0) + 1 });
+    }
     addAmount(byHarness, entry.harness, entry.cost.amount);
     for (const part of entry.cost.parts) {
       const id = `${part.provider}/${part.model}`;
@@ -106,12 +123,14 @@ export function summarizeCost(priced, { days, since, computedAt, pricingError = 
     addAmount(byWork, [attempt.scope, attempt.area ?? "", attempt.name ?? ""].join(WORK_KEY_SEPARATOR), entry.cost.amount);
   }
   const excluded = [];
+  if (registryError) excluded.push({ reason: "the harness registry could not be read, so nothing was priced", detail: registryError, count: 1 });
   for (const [id, tokens] of ranked(unpricedTokens)) {
     excluded.push({ reason: `no rate for ${id}`, detail: `${formatTokens(tokens)} tokens. Add a rate to pricing.md.`, count: 1 });
   }
   const reasons = new Map();
   for (const entry of priced.unattributed) addAmount(reasons, entry.reason, 1);
   for (const [reason, count] of ranked(reasons)) excluded.push({ reason, detail: null, count });
+  for (const gap of [...gaps.values()].sort((left, right) => right.count - left.count)) excluded.push(gap);
   if (pricingError) excluded.push({ reason: "the pricing Document could not be read", detail: pricingError, count: 1 });
   return {
     status: "ready",
@@ -121,7 +140,7 @@ export function summarizeCost(priced, { days, since, computedAt, pricingError = 
     amount: priced.amount,
     display: formatUsd(priced.amount),
     currency: "USD",
-    complete: priced.complete && priced.unattributed.length === 0 && !pricingError,
+    complete: priced.complete && priced.unattributed.length === 0 && !pricingError && !registryError && gaps.size === 0,
     conversations: priced.conversations.length,
     byHarness: ranked(byHarness).map(([harness, amount]) => ({ harness, amount, display: formatUsd(amount) })),
     byModel: ranked(byModel).map(([id, amount]) => ({ id, amount, display: formatUsd(amount) })),

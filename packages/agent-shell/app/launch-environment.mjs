@@ -344,9 +344,20 @@ function providerInArgs(args) {
  * This keeps the data model correct before anyone edits harnesses.md. A
  * harness the table does not know returns null rather than a guess: an
  * unknown provider prices nothing and says so, which is the honest outcome.
+ *
+ * A harness whose id ends in `-gw` is never inferred. That suffix is the
+ * naming Julian uses for a gateway, and a gateway reaches an account this
+ * table cannot name: `claude-gw` runs `harness run claudecode` against a
+ * managed account, not his own Anthropic one, so reading it as `anthropic`
+ * would price gateway work at the vendor's direct rate. That is the confident
+ * wrong answer this axis exists to prevent. A gateway must declare its
+ * provider in harnesses.md, and until it does its work is reported unpriced.
+ * A profile shim is not a gateway: `claude-otto` only sets
+ * `CLAUDE_CONFIG_DIR` on the same account, so it still infers `anthropic`.
  */
 function familyProvider(harnessId) {
   const id = String(harnessId ?? "");
+  if (id.endsWith("-gw")) return null;
   if (id.startsWith("claude")) return "anthropic";
   if (id.startsWith("codex")) return "openai";
   return null;

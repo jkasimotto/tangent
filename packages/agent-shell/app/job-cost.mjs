@@ -55,6 +55,29 @@ export function jobAttempts(record, area, slug) {
   return attempts;
 }
 
+/**
+ * Every generation one Area repair crew has run.
+ *
+ * A repair crew recovers a stopped Area and spends the whole time it works,
+ * so leaving it out understates a day by however much recovery cost. Its
+ * record keeps the same five facts under `current` and `history` that a Job
+ * keeps under `attempts`.
+ */
+export function repairAttempts(record) {
+  const generations = [...(record?.history ?? []), ...(record?.current ? [record.current] : [])];
+  return generations.map((generation) => spendAttempt({
+    scope: "repair",
+    area: record?.area ?? "",
+    name: `${record?.area ?? ""} repair`,
+    file: null,
+    ref: generation.resolvedLaunch?.ref,
+    conversation: generation.providerSession,
+    cwd: generation.cwd,
+    startedAt: generation.startedAt,
+    endedAt: generation.endedAt,
+  }));
+}
+
 /** Every generation one Area brain has run. */
 export function brainAttempts(record) {
   return (record?.generations ?? []).map((generation) => spendAttempt({
@@ -131,14 +154,14 @@ async function discoverConversation(harness, attempt) {
 }
 
 /**
- * Reads every Job and brain record under the Agent Shell state roots and
- * returns the attempts that started inside a window.
+ * Reads every Job, brain and repair record under the Agent Shell state roots
+ * and returns the attempts that started inside a window.
  *
  * A conversation is charged to the day its attempt started, so a session that
  * ran through midnight lands whole on the day it began rather than split
  * across two totals that neither of them explains.
  */
-export async function attemptsInWindow({ pipelinesRoot, brainsRoot, since = null, until = null } = {}) {
+export async function attemptsInWindow({ pipelinesRoot, brainsRoot, repairsRoot = null, since = null, until = null } = {}) {
   const attempts = [];
   for (const file of await jsonFilesUnder(pipelinesRoot)) {
     const record = await readRecord(file);
@@ -147,6 +170,10 @@ export async function attemptsInWindow({ pipelinesRoot, brainsRoot, since = null
   for (const file of await jsonFilesUnder(brainsRoot)) {
     const record = await readRecord(file);
     if (record) attempts.push(...brainAttempts(record));
+  }
+  for (const file of await jsonFilesUnder(repairsRoot)) {
+    const record = await readRecord(file);
+    if (record) attempts.push(...repairAttempts(record));
   }
   return attempts.filter((attempt) => withinWindow(attempt.startedAt, since, until));
 }

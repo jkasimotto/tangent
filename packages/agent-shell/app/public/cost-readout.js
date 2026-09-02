@@ -62,6 +62,7 @@ export function costBreakdownMarkup(snapshot) {
  */
 function workLabel(entry) {
   if (entry.scope === "brain") return `${entry.area} brain`;
+  if (entry.scope === "repair") return `${entry.area} repair`;
   const name = String(entry.name ?? "").split("/").pop().replace(/^goal-/, "").replace(/\.md$/, "").replaceAll("-", " ");
   return name || entry.area || "unnamed work";
 }

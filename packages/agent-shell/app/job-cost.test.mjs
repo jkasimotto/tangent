@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { attemptsInWindow, brainAttempts, jobAttempts, priceAttempts } from "./job-cost.mjs";
+import { attemptsInWindow, brainAttempts, jobAttempts, priceAttempts, repairAttempts } from "./job-cost.mjs";
 import { claudeProjectKey } from "./harness-transcripts.mjs";
 import { summarizeCost } from "./cost-service.mjs";
 
@@ -189,4 +189,51 @@ test("a complete summary says so, and one blocked by a broken price table does n
   const broken = summarizeCost({ amount: 3, complete: true, conversations, unattributed: [] }, { ...window, pricingError: "pricing table is not valid JSON" });
   assert.equal(broken.complete, false);
   assert.equal(broken.excluded.at(-1).detail, "pricing table is not valid JSON");
+});
+
+test("a repair crew is priced beside Jobs and brains, because it spends while it recovers", async () => {
+  const root = await scratchRoot();
+  const pipelines = path.join(root, "pipelines", AREA);
+  const repairs = path.join(root, "repairs");
+  await mkdir(pipelines, { recursive: true });
+  await mkdir(repairs, { recursive: true });
+  await writeFile(path.join(pipelines, "thing.json"), JSON.stringify({
+    goal: `${AREA}/goal-thing.md`, area: AREA,
+    steps: [{ attempts: [attempt({ id: "one", conversation: { harness: "claude-otto", id: "a" } })] }],
+  }), "utf8");
+  // A repair record keeps its generations under history and current, not
+  // under attempts, which is why it needs its own reader.
+  await writeFile(path.join(repairs, "otto-tangent.json"), JSON.stringify({
+    area: AREA,
+    current: attempt({ id: "live", conversation: { harness: "claude-otto", id: "c" }, startedAt: "2026-09-03T05:30:00.000Z" }),
+    history: [attempt({ id: "past", conversation: { harness: "claude-otto", id: "b" }, startedAt: "2026-09-03T05:00:00.000Z" })],
+  }), "utf8");
+  const attempts = await attemptsInWindow({
+    pipelinesRoot: path.join(root, "pipelines"),
+    brainsRoot: path.join(root, "brains"),
+    repairsRoot: repairs,
+    since: "2026-09-03T00:00:00.000Z",
+  });
+  assert.deepEqual(attempts.map((entry) => entry.scope).sort(), ["job", "repair", "repair"]);
+  assert.deepEqual(repairAttempts({ area: AREA, history: [], current: null }), []);
+});
+
+test("a figure that could not use a harness ledger says so and refuses to call itself complete", () => {
+  const window = { days: 1, since: "2026-09-03T00:00:00.000Z", computedAt: "2026-09-03T06:00:00.000Z" };
+  const withGap = pricedConversation({ harness: "claude", amount: 3, provider: "anthropic", model: "claude-opus-5" });
+  withGap.cost.gaps = [{ reason: "priced from tokens, not from Claude Code's own ledger", detail: "a floor" }];
+  const second = pricedConversation({ harness: "claude", amount: 2, provider: "anthropic", model: "claude-opus-5", name: "goal-other.md" });
+  second.cost.gaps = [{ reason: "priced from tokens, not from Claude Code's own ledger", detail: "a floor" }];
+  const snapshot = summarizeCost({ amount: 5, complete: true, conversations: [withGap, second], unattributed: [] }, window);
+  assert.equal(snapshot.complete, false);
+  const gap = snapshot.excluded.find((entry) => entry.reason.startsWith("priced from tokens"));
+  assert.equal(gap.count, 2);
+});
+
+test("a broken harness registry is named in the figure rather than leaving it blank forever", () => {
+  const snapshot = summarizeCost({ amount: 0, complete: false, conversations: [], unattributed: [] },
+    { days: 1, since: "2026-09-03T00:00:00.000Z", computedAt: "2026-09-03T06:00:00.000Z", registryError: "harness registry is invalid: duplicate id" });
+  assert.equal(snapshot.status, "ready");
+  assert.equal(snapshot.complete, false);
+  assert.equal(snapshot.excluded[0].detail, "harness registry is invalid: duplicate id");
 });

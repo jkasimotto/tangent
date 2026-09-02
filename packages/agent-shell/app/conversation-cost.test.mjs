@@ -147,6 +147,33 @@ test("a Codex thread is charged once for a cumulative total it repeats", async (
   assert.equal(usage.byModel[0].usage.output, 400);
 });
 
+test("a Codex counter that restarts mid-thread keeps the work it did before the restart", async () => {
+  const root = await transcriptsRoot();
+  const id = "01a00000-0000-7000-8000-000000000003";
+  await writeJsonl(path.join(root, codexDayFolder(), `rollout-2026-09-03T04-00-00-${id}.jsonl`), [
+    codexMeta({ id }),
+    codexTokenCount({ input_tokens: 8000, cached_input_tokens: 0, output_tokens: 900 }),
+    // Compaction restarts the running total inside the same thread. The
+    // 8,000 tokens before it were still spent, and the 500 in the first
+    // reading after it are a step of their own.
+    codexTokenCount({ input_tokens: 500, cached_input_tokens: 0, output_tokens: 40 }),
+    codexTokenCount({ input_tokens: 1500, cached_input_tokens: 0, output_tokens: 90 }),
+  ]);
+  const usage = await conversationUsage({ harness: { id: "codex", transcripts: root }, conversation: { harness: "codex", id }, cwd: CWD, startedAt: STARTED });
+  assert.equal(usage.byModel[0].usage.input, 8000 + 1500);
+  assert.equal(usage.byModel[0].usage.output, 900 + 90);
+});
+
+test("a Claude conversation with no usable ledger says its figure is a floor", async () => {
+  const root = await transcriptsRoot();
+  const id = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+  await writeJsonl(path.join(root, claudeProjectKey(CWD), `${id}.jsonl`), [
+    { type: "assistant", message: { id: "m1", role: "assistant", model: "claude-opus-5", usage: { input_tokens: 100, output_tokens: 10 } } },
+  ]);
+  const usage = await conversationUsage({ harness: { id: "claude", transcripts: root }, conversation: { harness: "claude", id }, cwd: CWD, startedAt: STARTED });
+  assert.deepEqual(usage.gaps.map((gap) => gap.reason), ["priced from tokens, not from Claude Code's own ledger"]);
+});
+
 test("every Codex rollout descended from a thread is found, at any depth and under any label", async () => {
   const root = await transcriptsRoot();
   const folder = path.join(root, codexDayFolder());

@@ -8124,6 +8124,7 @@ const voiceRoutes = createVoiceRoutes({
 const costService = createCostService({
   pipelinesRoot: PIPELINES_ROOT,
   brainsRoot: BRAINS_ROOT,
+  repairsRoot: REPAIRS_ROOT,
   pricingFile: path.join(TREES_ROOT, "pricing.md"),
   /** Reads the harness registry the shell already keeps. */
   registry: () => launchCatalog.registry(),

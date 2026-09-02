@@ -374,6 +374,7 @@ const PROVIDER_REGISTRY = {
     { id: "claude-otto", command: "claude", modelSet: "claude", provider: "anthropic" },
     { id: "pi-code", command: "pi", modelSet: "pi", provider: "zai-openai" },
     { id: "opencode", command: "opencode" },
+    { id: "claude-gw", command: "claude-gw", modelSet: "claude" },
   ],
 };
 
@@ -396,6 +397,18 @@ test("a harness that declares no provider is inferred from its family, or left u
   // A harness nothing can infer stays null. An unknown provider prices
   // nothing and says so, which beats a guess.
   assert.equal(resolveLaunch(registry, { harness: "opencode" }).provider, null);
+});
+
+test("a gateway harness is never read as the vendor's own account", () => {
+  // claude-gw runs a managed account, not Julian's Anthropic one, so pricing
+  // it at the vendor's direct rate would be the confident wrong answer this
+  // axis exists to prevent. It must declare its provider, and until it does
+  // its work is reported unpriced.
+  const registry = { ...PROVIDER_REGISTRY, harnesses: PROVIDER_REGISTRY.harnesses.map((entry) => ({ ...entry, provider: undefined })) };
+  assert.equal(resolveLaunch(registry, { harness: "claude-gw", model: "opus-5" }).provider, null);
+  // A declaration on the gateway is still honoured.
+  const declared = { ...registry, harnesses: registry.harnesses.map((entry) => entry.id === "claude-gw" ? { ...entry, provider: "litellm" } : entry) };
+  assert.equal(resolveLaunch(declared, { harness: "claude-gw", model: "opus-5" }).provider, "litellm");
 });
 
 test("the launch reference stays three parts, whatever the provider is", () => {

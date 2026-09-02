@@ -13,6 +13,11 @@ Neither means zero, and neither is ever guessed at.
 one-hour rate. `input` means the tokens charged at the full input rate, with
 cache excluded.
 
+`fastMode` is optional and holds the `input` and `output` rates that apply when
+Claude Code ran the request in fast mode. Only those two change; the cache
+rates stay. A model that has one must keep it here, because this Document
+replaces the seeded rate for that model outright rather than merging with it.
+
 These are API list prices. Under a subscription they measure the work a
 conversation did, not money that left an account.
 
@@ -30,10 +35,10 @@ Install this file at `~/.tangent/trees/pricing.md`.
     "anthropic": {
       "note": "Claude Code 2.1.258 baked price catalog, verified against recorded cost-state totals.",
       "models": {
-        "claude-opus-5": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5 },
+        "claude-opus-5": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5, "fastMode": { "input": 10, "output": 50 } },
         "claude-opus-4-8": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5 },
-        "claude-opus-4-7": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5 },
-        "claude-opus-4-6": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5 },
+        "claude-opus-4-7": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5, "fastMode": { "input": 30, "output": 150 } },
+        "claude-opus-4-6": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5, "fastMode": { "input": 30, "output": 150 } },
         "claude-opus-4-5": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5 },
         "claude-opus-4-1": { "input": 15, "output": 75, "cacheWrite": 18.75, "cacheWrite1h": 30, "cacheRead": 1.5 },
         "claude-opus-4-0": { "input": 15, "output": 75, "cacheWrite": 18.75, "cacheWrite1h": 30, "cacheRead": 1.5 },

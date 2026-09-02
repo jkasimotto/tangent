@@ -79,8 +79,20 @@ snapshot it holds and reads the next one behind the request, so the figure is
 there without a press.
 
 **What a number leaves out travels with the number.** Every total carries the
-models it could not price and the attempts it could not reach, each with a
-reason, and the face of an incomplete figure says so.
+models it could not price, the attempts it could not reach, and the
+conversations it could only price from tokens, each with a reason, and the
+face of an incomplete figure says so. A running or interrupted Claude
+conversation has no ledger that is still the last word, so its part of the
+figure is a floor and is named as one: measured over 137 model rows whose
+transcript tokens match the ledger exactly, the rate is right to 0.1 percent,
+but `claude-haiku-4-5` background calls and the `claude-opus-5[1m]` SKU reach
+the ledger and never the transcript.
+
+**The Document replaces a rate, it does not merge with it.** A model named in
+`pricing.md` takes its whole rate from there, `fastMode` included. A Document
+entry that omits `fastMode` for a model whose seeded rate has one prices fast
+work at the standard rate. `pricing.md.proposed` carries the fast rates for
+that reason.
 
 ## Consequences
 
@@ -99,4 +111,9 @@ weekly quota in that position and Tangent supplies the codex dollar.
 Two registry entries, `codex-gw` and `claude-gw`, declare no `transcripts`
 folder, so their attempts are unattributable by construction. Both wrappers run
 on the real `~/.codex` and `~/.claude`. Adding those paths to the two entries
-recovers them; that is a vault edit, not a code change.
+recovers them; that is a vault edit, not a code change. The same edit must give
+each entry a `provider`, because a harness whose id ends in `-gw` is never
+inferred from its family: a gateway reaches an account this table cannot name,
+and reading `claude-gw` as `anthropic` would price gateway work at the vendor's
+direct rate. A profile shim is not a gateway; `claude-otto` sets
+`CLAUDE_CONFIG_DIR` on the same account and still infers `anthropic`.

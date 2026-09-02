@@ -15,13 +15,13 @@ export const sendCommandSpec: CliCommandSpec = {
 
 export const harnessCommandSpec: CliCommandSpec = {
   name: "harness",
-  description: "List the machine harness catalog and resolved Area launch defaults",
+  description: "List the machine harness catalog and effective Area launch policy",
   subcommands: [
     {
       name: "list",
-      description: "List valid harness, model, and effort ids; with --area, include its resolved work and brain defaults",
+      description: "List valid harness, model, and effort ids; with --area, include its policy, contract health, and remembered launch",
       options: [
-        { name: "area", takesValue: true, description: "Area whose inherited work and brain defaults to resolve" },
+        { name: "area", takesValue: true, description: "Area whose inherited policy and remembered launch to resolve" },
         serverOption,
         jsonOption
       ]

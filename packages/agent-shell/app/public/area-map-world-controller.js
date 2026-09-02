@@ -773,11 +773,12 @@ export function createAreaMapWorldController({
     return snapshot("view-restored");
   }
 
-  /** Materializes one deferred shard in the existing world. */
+  /** Materializes one deferred shard in the existing world. A missing shard outside the eager set has no scene either; loading it supplies the projected empty scene so a nested Area with no Map file yet can still receive Blocks. */
   function materialize(area) {
     if (inFlightLoads.has(area)) return inFlightLoads.get(area);
     const node = world.areas.find((entry) => entry.key === area);
-    if (!node || !["deferred", "load-error"].includes(node.shard.state) || !loadShard) return Promise.resolve(node?.shard ?? null);
+    const loadable = ["deferred", "load-error"].includes(node?.shard?.state) || (node?.shard?.state === "missing" && !node.shard.scene);
+    if (!node || !loadable || !loadShard) return Promise.resolve(node?.shard ?? null);
     const task = (async () => {
       const startedAt = performance.now();
       const generation = authorityGeneration; const requestedRevision = world.worldRevision;

@@ -1012,3 +1012,26 @@ test("the current 41-Area structure and planned loads stay within product budget
   assert.ok(plannedDuration < 3_000, `planned subtree loading finished in ${plannedDuration.toFixed(1)} ms`);
   controller.destroy();
 });
+
+test("a missing nested shard outside the eager set materializes its projected empty scene", async () => {
+  const world = fixtureWorld();
+  const missing = world.areas.find((node) => node.key === "neara/delivery");
+  missing.shard = { owner: missing.key, hash: null, state: "missing", elementCount: 0, blockCount: 0 };
+  const calls = [];
+  const controller = createAreaMapWorldController({
+    world, storage: memoryStorage(),
+    /** Returns the projected empty scene the shard route supplies for a file that does not exist yet. */
+    loadShard: async (area, context) => {
+      calls.push(area);
+      return { owner: area, state: "missing", hash: null, worldRevision: context.worldRevision, scene: core.createEmptyScene() };
+    },
+  });
+  assert.equal(controller.world().areas.find((node) => node.key === missing.key).shard.scene, undefined, "a missing shard starts without a scene");
+  const loaded = await controller.materialize(missing.key);
+  assert.equal(loaded.state, "missing");
+  assert.ok(Array.isArray(loaded.scene?.elements), "the missing shard now carries a scene that placement can extend");
+  assert.deepEqual(calls, [missing.key]);
+  assert.equal((await controller.materialize(missing.key)).state, "missing", "a loaded missing shard is not fetched again");
+  assert.deepEqual(calls, [missing.key]);
+  controller.destroy();
+});

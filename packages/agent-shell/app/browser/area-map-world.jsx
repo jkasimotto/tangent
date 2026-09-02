@@ -401,6 +401,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const resourcePlacementProjectionRef = useRef("");
   const resourcePlacementPointerRef = useRef(false);
   const pendingResourceControlFocusRef = useRef(null);
+  const pendingResourcePlacementRef = useRef(null);
 
   /** Returns one stable key for an Excalidraw selection. */
   function selectionKey(ids) {
@@ -1014,12 +1015,31 @@ export function AreaMapWorld({ host, bridge, options }) {
 
   /** Changes the inventory scope to the exact owner of an inherited association. */
   function openResourceSourceArea(row) {
-    const owner = resourceEntityForRow(row)?.locator?.owner;
+    return openResourceOwnerArea(resourceEntityForRow(row)?.locator?.owner);
+  }
+
+  /** Changes the inventory scope to one owning Area, where its own resources and Suggestions accept writes. */
+  function openResourceOwnerArea(owner) {
     if (!owner) return false;
     setResourcesArea(owner); setResourceProjection(null); setResourceDetails(null); setResourceDiscovery(null); setResourceMutationRecovery(null); setLegacySelected(new Set()); setLegacyReviewHidden(false);
     void loadResources(owner);
     requestAnimationFrame(() => resourcesHeadingRef.current?.focus?.({ preventScroll: true }));
     return true;
+  }
+
+  /** Returns the owning Area of the resource or Suggestion one failed mutation tried to write. */
+  function recoveryOwner(recovery) {
+    return recovery?.recovery?.owner ?? resourceMutationOwners(recovery?.mutation).find(Boolean) ?? null;
+  }
+
+  /** Renders one Suggestion or legacy review row with its target on one bounded line. */
+  function reviewRowView({ key, label, target, provenance, owner, actions }) {
+    return <li key={key}>
+      <div className="tangent-map-resource-review-summary"><strong>{label}</strong><code title={target}>{target}</code></div>
+      {owner && <span className="tangent-map-resource-review-owner">From {owner}</span>}
+      {provenance && <p className="tangent-map-resource-review-provenance" title={provenance}>{provenance}</p>}
+      <div className="tangent-map-resource-actions">{actions}</div>
+    </li>;
   }
 
   /** Returns the one loaded source shard that can participate in an exact scene mutation. */
@@ -1446,8 +1466,8 @@ export function AreaMapWorld({ host, bridge, options }) {
     return true;
   }
 
-  /** Starts explicit placement at the nearest shared-layout point in the owner. */
-  function placeResourceOnMap(row, opener = document.activeElement) {
+  /** Starts explicit placement at the nearest shared-layout point in the owner. A nested Area's Map loads on demand first, so placing from its tab never refuses. */
+  function placeResourceOnMap(row, opener = document.activeElement, { awaited = false } = {}) {
     const entity = resourceEntityForRow(row); if (!entity) return false;
     const representation = representationForRow(row);
     if (representation === "on-map") return showResourceOnMap(row, opener);
@@ -1455,7 +1475,13 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (representation === "hidden") return restoreResourceOnMap(row);
     if (representation === "unavailable") { announce("Placement is unavailable until the source Map loads."); return false; }
     const ownerNode = controller.world().areas.find((node) => node.key === entity.locator.owner);
-    if (!ownerNode?.shard?.scene) { announce("Placement is unavailable until the source Map loads."); return false; }
+    if (!ownerNode?.shard?.scene) {
+      if (awaited || !ownerNode || !["deferred", "loading", "load-error", "missing"].includes(ownerNode.shard?.state)) { announce("Placement is unavailable until the source Map loads."); return false; }
+      pendingResourcePlacementRef.current = { owner: entity.locator.owner, row, opener };
+      void controller.materialize(entity.locator.owner);
+      announce(`Loading the ${leaf(entity.locator.owner)} Map, then placing ${entity.label}.`);
+      return true;
+    }
     const box = state.composition.regionRects.get(entity.locator.owner);
     const center = box ? { x: box.x + box.width / 2, y: box.y + box.height / 2 } : placementPoint();
     const occupied = state.composition.scene.elements.filter((element) => !element.isDeleted && !ephemeral(element) && element.customData?.tangentWorld?.owner === entity.locator.owner);
@@ -1480,7 +1506,8 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (target) scrollCanvasTo([target], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
     if (narrowResources) setResourcesOpen(false);
     setPicker(null); setResourcePlacement(placement);
-    requestAnimationFrame(() => host.querySelector(".excalidraw")?.focus?.({ preventScroll: true }));
+    // The narrow sheet lifts its inert fence one render after it closes, so a single-frame focus would land on the body and Enter would commit nothing.
+    focusResourceControl(".excalidraw");
     announce(`Place ${entity.label}: click or press Enter. Arrow keys move the preview. Escape cancels.`);
     return true;
   }
@@ -1516,6 +1543,17 @@ export function AreaMapWorld({ host, bridge, options }) {
       "rebase-failed": "Recovery could not finish. The map is not saved.",
     }[state.reason];
     if (message) announce(message, { visible: state.reason === "tree-refresh-failed" || state.reason === "rebase-failed" });
+  }, [state.revision]);
+
+  /** Resumes a placement that waited for a nested Area's deferred Map to load. */
+  useEffect(() => {
+    const pending = pendingResourcePlacementRef.current;
+    if (!pending) return;
+    const node = state.world.areas.find((entry) => entry.key === pending.owner);
+    if (node && ["deferred", "loading"].includes(node.shard?.state)) return;
+    pendingResourcePlacementRef.current = null;
+    if (node?.shard?.scene) placeResourceOnMap(pending.row, pending.opener, { awaited: true });
+    else announce(`The ${leaf(pending.owner)} Map did not load. Placement is unavailable.`);
   }, [state.revision]);
 
   /** Applies one controller projection without allowing Excalidraw to own history. */
@@ -2882,7 +2920,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     onChange: handleCanvasChange,
   };
 
-  return <div className="TangentAreaMap theme--dark" data-tangent-area-map={state.locatedArea} data-tangent-area-map-world={options.world.worldId} aria-busy={resourceSceneBusy ? "true" : undefined}>
+  return <div className={`TangentAreaMap theme--dark${resourcesOpen && !narrowResources ? " resources-panel-open" : ""}`} data-tangent-area-map={state.locatedArea} data-tangent-area-map-world={options.world.worldId} aria-busy={resourceSceneBusy ? "true" : undefined}>
     <StableWorldCanvas initialData={initialDataRef.current} handlers={canvasHandlersRef} />
     <div className="tangent-map-top-right">
       <div className="tangent-map-toolbar-extra"><button type="button" onClick={openPicker} aria-keyshortcuts="b Shift+B" title="Place a Tangent block (B)"><span aria-hidden="true">◈</span><span className="tangent-map-label">Block</span><kbd>B</kbd></button></div>
@@ -2920,7 +2958,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       })}
     </div>
     <div className={`tangent-map-save ${state.save.state}`} role="status" aria-live="polite" aria-label="Map save status">{state.save.state === "saving" ? "Saving…" : state.save.state === "dirty" ? "Pending save…" : state.save.state === "conflict" ? <>Not saved <button type="button" onClick={() => recoverMap("reload")}>Reload saved</button><button type="button" onClick={() => recoverMap("keepMine")}>Keep mine</button></> : state.save.state === "blocked" ? <>Not saved <button type="button" onClick={() => recoverMap("retry")}>Retry</button><button type="button" onClick={() => recoverMap("reload")}>Reload saved</button><button type="button" onClick={() => recoverMap("keepMine")}>Keep mine</button></> : state.draft && !state.draft.restored ? "Saved · Recovery available" : "Saved"}</div>
-    {notice && <div className="tangent-map-location" aria-hidden="true">{notice}</div>}
+    {notice && !resourcePlacement && <div className="tangent-map-location" aria-hidden="true">{notice}</div>}
     {announcement.text && <div key={announcement.id} className="tangent-map-live" role="status" aria-live="polite" aria-atomic="true">{announcement.text}</div>}
     {resourcePlacement && <section className="tangent-map-resource-placement" role="status" aria-label={`Place ${resourcePlacement.entity.label} on the Map`}><strong>Place {resourcePlacement.entity.label} in {areaName(resourcePlacement.entity.locator.owner)}</strong><span>Move the pointer or use <kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd></span><span>Click or <kbd>Enter</kbd> to place · <kbd>Esc</kbd> to cancel</span><button type="button" onClick={cancelResourcePlacement}>Cancel</button></section>}
     {findOpen && <section className="tangent-map-find" role="search" aria-label="Find on the map">
@@ -2961,7 +2999,8 @@ export function AreaMapWorld({ host, bridge, options }) {
       <nav aria-label="Resource Area breadcrumb">{String(resourcesArea).split("/").filter(Boolean).map((_part, index, parts) => { const area = parts.slice(0, index + 1).join("/"); return <button type="button" key={area} aria-current={area === resourcesArea ? "page" : undefined} onClick={() => { setResourcesArea(area); setResourceProjection(null); setResourceDetails(null); setResourceEditor(null); setResourceDiscovery(null); setResourceMutationRecovery(null); void loadResources(area); }}>{areaName(area)}</button>; })}</nav>
       {resourceTransport.error && <div className="tangent-map-resource-problem" role="alert"><strong>{resourceTransport.state === "last-known" ? "Could not refresh Map resources · Last known." : "Map resources did not load."}</strong><span>{resourceTransport.error}</span><button type="button" onClick={() => void loadResources(resourcesArea)}>Retry</button></div>}
       {resourceProjection?.state === "partial" && <div className="tangent-map-resource-problem" role="status">Some source facts are unavailable. Counts are lower bounds; Copy and Open remain available.</div>}
-      {resourceMutationRecovery && <div className="tangent-map-resource-problem" role="alert"><strong>{resourceMutationRecovery.message}</strong><span>{resourceMutationRecovery.code === "duplicate-resource-target" ? "That exact target already belongs to this Area." : ["catalog-revision-changed", "suggestion-changed"].includes(resourceMutationRecovery.code) ? "Reload current resources without discarding this draft." : resourceMutationRecovery.code === "missing-target-confirmation-required" ? "Review and confirm the exact missing path before saving again." : resourceMutationRecovery.code === "legacy-branch-choice-required" ? "Choose the one imported target that owns the legacy Branch." : "The current draft and server recovery evidence are retained."}</span><div className="tangent-map-resource-actions">
+      {resourceMutationRecovery && <div className="tangent-map-resource-problem" role="alert"><strong>{resourceMutationRecovery.message}</strong><span>{resourceMutationRecovery.code === "duplicate-resource-target" ? "That exact target already belongs to this Area." : ["catalog-revision-changed", "suggestion-changed"].includes(resourceMutationRecovery.code) ? "Reload current resources without discarding this draft." : resourceMutationRecovery.code === "missing-target-confirmation-required" ? "Review and confirm the exact missing path before saving again." : resourceMutationRecovery.code === "legacy-branch-choice-required" ? "Choose the one imported target that owns the legacy Branch." : resourceMutationRecovery.code === "inherited-resource-read-only" ? `It belongs to Area ${recoveryOwner(resourceMutationRecovery) ?? "another Area"}. Open that Area's resources to change it.` : "The current draft and server recovery evidence are retained."}</span><div className="tangent-map-resource-actions">
+        {resourceMutationRecovery.code === "inherited-resource-read-only" && recoveryOwner(resourceMutationRecovery) && <button type="button" onClick={() => openResourceOwnerArea(recoveryOwner(resourceMutationRecovery))}>Open {areaName(recoveryOwner(resourceMutationRecovery))} resources</button>}
         {resourceMutationRecovery.code === "duplicate-resource-target" && <><button type="button" onClick={openRecoveryResource}>Open resource</button><button type="button" onClick={showRecoveryResource}>Show on Map</button></>}
         {["catalog-revision-changed", "suggestion-changed"].includes(resourceMutationRecovery.code) && <button type="button" onClick={() => void loadResources(resourcesArea, { refreshObservations: false, rebaseDraft: true })}>Reload resources</button>}
         {resourceMutationRecovery.code === "missing-target-confirmation-required" && <button type="button" onClick={() => host.querySelector(".tangent-map-resource-confirm input")?.focus?.()}>Review missing path</button>}
@@ -2992,8 +3031,26 @@ export function AreaMapWorld({ host, bridge, options }) {
         {resourceTransport.state === "loading" && !resourceProjection && <p role="status">Loading Map resources…</p>}
         {resourceProjection?.state === "current" && resourceTransport.state === "current" && !filteredResourceRows.length && !(resourceProjection.suggestions?.length) && !(resourceProjection.legacyReview?.length) && <p>{resourceFilter ? "No resources match this filter." : "No confirmed Map resources in this Area yet."}</p>}
         {!!filteredResourceRows.length && <ul className="tangent-map-resource-list">{filteredResourceRows.map(resourceRowView)}</ul>}
-        {!!resourceProjection?.legacyReview?.length && <section className="tangent-map-resource-review"><h3>Legacy resources to review</h3><ul>{resourceProjection.legacyReview.map((candidate, index) => <li key={`${candidate.owner}:${candidate.field ?? candidate.targetFingerprint}:${index}`}><strong>{candidate.field ?? candidate.proposedLabel ?? candidate.target?.kind}</strong><code>{candidate.target?.path ?? candidate.message}</code>{candidate.state === "candidate" && <button type="button" disabled={!resourceWritesAvailable()} onClick={() => void applyResourceMutation({ kind: "import-legacy", selections: [{ candidate: suggestionReference(candidate), attachDeclaredBranch: Boolean(candidate.declaredBranch) }] }, { success: "Legacy resource imported." })}>Import</button>}</li>)}</ul></section>}
-        {!!resourceProjection?.suggestions?.length && <section className="tangent-map-resource-review"><h3>Suggestions</h3><ul>{resourceProjection.suggestions.map((suggestion) => <li key={`${suggestion.owner}:${suggestion.evidenceHash}:${suggestion.targetFingerprint}`}><strong>{suggestion.proposedLabel ?? suggestion.target.kind}</strong><code>{suggestion.target.path ?? suggestion.target.url}</code><span>{suggestion.provenanceLabel}</span><button type="button" disabled={!resourceWritesAvailable()} onClick={() => editResource({ mode: "suggestion", suggestion })}>Add to Area</button><button type="button" disabled={!resourceWritesAvailable()} onClick={() => void applyResourceMutation({ kind: "dismiss-suggestion", suggestion: suggestionReference(suggestion) }, { success: "Suggestion dismissed." })}>Dismiss</button></li>)}</ul></section>}
+        {!!resourceProjection?.legacyReview?.length && <section className="tangent-map-resource-review"><h3>Legacy resources to review</h3><ul>{resourceProjection.legacyReview.map((candidate, index) => reviewRowView({
+          key: `${candidate.owner}:${candidate.field ?? candidate.targetFingerprint}:${index}`,
+          label: candidate.field ?? candidate.proposedLabel ?? candidate.target?.kind,
+          target: candidate.target?.path ?? candidate.message,
+          actions: candidate.state === "candidate" && <button type="button" disabled={!resourceWritesAvailable()} onClick={() => void applyResourceMutation({ kind: "import-legacy", selections: [{ candidate: suggestionReference(candidate), attachDeclaredBranch: Boolean(candidate.declaredBranch) }] }, { success: "Legacy resource imported." })}>Import</button>,
+        }))}</ul></section>}
+        {!!resourceProjection?.suggestions?.length && <section className="tangent-map-resource-review"><h3>Suggestions</h3><ul>{resourceProjection.suggestions.map((suggestion) => {
+          const inherited = suggestion.owner !== resourcesArea;
+          const name = suggestion.proposedLabel ?? suggestion.target.kind;
+          return reviewRowView({
+            key: `${suggestion.owner}:${suggestion.evidenceHash}:${suggestion.targetFingerprint}`,
+            label: name,
+            target: suggestion.target.path ?? suggestion.target.url,
+            provenance: suggestion.provenanceLabel,
+            owner: inherited ? suggestion.owner : null,
+            actions: inherited
+              ? <button type="button" aria-label={`Review ${name} in ${suggestion.owner}`} onClick={() => openResourceOwnerArea(suggestion.owner)}>Review in {areaName(suggestion.owner)}</button>
+              : <><button type="button" aria-label={`Add ${name} to Area`} disabled={!resourceWritesAvailable()} onClick={() => editResource({ mode: "suggestion", suggestion })}>Add to Area</button><button type="button" aria-label={`Dismiss ${name}`} disabled={!resourceWritesAvailable()} onClick={(event) => void applyResourceMutation({ kind: "dismiss-suggestion", suggestion: suggestionReference(suggestion) }, { success: "Suggestion dismissed.", opener: event.currentTarget })}>Dismiss</button></>,
+          });
+        })}</ul></section>}
       </div>}
     </section></div>}
     {resourceSceneBusy && <div className="tangent-map-resource-transaction" role="status" aria-live="polite"><strong>{resourceSceneBusy.label}</strong><span>Map and Area resource authority are saving together.</span></div>}

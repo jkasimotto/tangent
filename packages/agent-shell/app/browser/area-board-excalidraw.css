@@ -42,7 +42,9 @@
 @keyframes tangent-map-find-pulse { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tangent-accent) 55%, transparent); } to { box-shadow: 0 0 0 8px transparent; } }
 .tangent-map-ancestry button strong { font-weight: 600; }
 .tangent-map-ancestry button span { margin-left: 6px; color: var(--tangent-muted); font-size: 11px; }
-.tangent-map-location { position: absolute; z-index: 4; left: 50%; bottom: 62px; padding: 6px 9px; border-radius: 6px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font-size: 12px; pointer-events: none; transform: translateX(-50%); }
+.tangent-map-location { position: absolute; z-index: 55; left: 50%; bottom: 62px; box-sizing: border-box; max-width: calc(100% - 32px); padding: 6px 9px; border-radius: 6px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font-size: 12px; pointer-events: none; transform: translateX(-50%); }
+/* The wide Resources panel keeps the right min(680px, 72%). Toasts and the placement bar centre in the Map that stays visible beside it. */
+.TangentAreaMap.resources-panel-open .tangent-map-location, .TangentAreaMap.resources-panel-open .tangent-map-resource-placement { left: calc((100% - min(680px, 72%)) / 2); max-width: calc(100% - min(680px, 72%) - 24px); }
 .tangent-map-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .tangent-map-find { position: absolute; z-index: 17; top: 64px; left: 50%; box-sizing: border-box; width: min(760px, calc(100% - 24px)); padding: 8px; border: 1px solid var(--tangent-border); border-radius: 10px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: 0 14px 48px rgba(0, 0, 0, .5); font: 13px Assistant, system-ui, sans-serif; transform: translateX(-50%); }
@@ -156,7 +158,12 @@
 .tangent-map-resource-confirm { grid-template-columns: auto 1fr !important; align-items: center; }
 .tangent-map-resource-confirm input { width: auto; }
 .tangent-map-resource-form-error { color: #ff8787; }
-.tangent-map-resource-review li { display: grid; grid-template-columns: minmax(110px, .6fr) minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--tangent-border); }
+/* A review row stays one bounded block: label and target on one line, provenance clamped, actions below. */
+.tangent-map-resource-review li { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--tangent-border); }
+.tangent-map-resource-review-summary { display: grid; grid-template-columns: fit-content(45%) minmax(0, 1fr); gap: 8px; align-items: baseline; min-width: 0; }
+.tangent-map-resource-review-summary strong, .tangent-map-resource-review-summary code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+.tangent-map-resource-review-owner { padding: 2px 6px; border-radius: 999px; background: var(--tangent-hover); color: var(--tangent-muted); font-size: 11px; justify-self: start; }
+.tangent-map-resource-review-provenance { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; color: var(--tangent-muted); font-size: 12px; overflow-wrap: anywhere; }
 .tangent-map-resource-recovery { z-index: 60; align-items: center; justify-content: center; padding: 16px; background: var(--tangent-overlay); }
 .tangent-map-resource-recovery section { box-sizing: border-box; width: min(520px, 100%); padding: 20px; border: 1px solid var(--tangent-border); border-radius: 10px; background: var(--tangent-island); box-shadow: 0 16px 60px rgba(0, 0, 0, .55); }
 .tangent-map-resource-recovery h2 { margin: 0 0 10px; font-size: 19px; }
@@ -188,8 +195,7 @@
   .tangent-map-resources-backdrop { background: var(--tangent-overlay); pointer-events: auto; }
   .tangent-map-resources { width: 100%; border-left: 0; }
   .tangent-map-resource-placement { bottom: 72px; flex-wrap: wrap; justify-content: center; width: min(620px, calc(100% - 32px)); }
-  .tangent-map-resource-review li { grid-template-columns: 1fr auto; }
-  .tangent-map-resource-review li code, .tangent-map-resource-review li span { grid-column: 1 / -1; }
+  .tangent-map-resource-review-summary { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 1119px) { .tangent-map-find li:nth-child(n + 5) { display: none; } }
 /* Under 730px Excalidraw uses its mobile layout: a wrapped tool island at the top and a bar along the bottom.

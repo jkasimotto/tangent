@@ -161,6 +161,7 @@ function legacyCandidateKey(candidate) {
 
 /** Applies the accepted launch, Map representation, and label ordering within inventory groups. */
 function sortPanelResourceRows(rows) {
+  /** Ranks launch rows first, placed rows second, and the rest last. */
   const priority = (row) => row?.launchMatch?.state === "current" && row.launchMatch.value ? 0 : savedRepresentationForRow(row) === "on-map" ? 1 : 2;
   return [...rows].sort((left, right) => priority(left) - priority(right)
     || String(resourceEntityForRow(left)?.label ?? resourceEntityForRow(left)?.lastKnown?.label ?? "").localeCompare(String(resourceEntityForRow(right)?.label ?? resourceEntityForRow(right)?.lastKnown?.label ?? ""), undefined, { sensitivity: "base" }));
@@ -498,6 +499,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Tracks the same viewport boundary that turns the Resources panel into a modal sheet. */
   useEffect(() => {
     const query = matchMedia("(max-width: 960px)");
+    /** Mirrors the narrow media query into React state. */
     const changed = () => setNarrowResources(query.matches);
     changed(); query.addEventListener("change", changed);
     return () => query.removeEventListener("change", changed);
@@ -730,6 +732,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   function focusResourceControl(selector) {
     const request = { selector, attempts: 0 };
     pendingResourceControlFocusRef.current = request;
+    /** Focuses the requested control once it exists, retrying across frames. */
     const attempt = () => {
       if (pendingResourceControlFocusRef.current !== request) return;
       const target = host.querySelector(selector);
@@ -2715,6 +2718,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     const launch = row.launchMatch?.state === "current" && row.launchMatch.value;
     const warnings = (observedEntity.warnings ?? []).map(resourceWarningText).filter(Boolean);
     const rowName = `${facts.accessibleName}. ${provenance}. ${representationLabel}.${launch ? ` Workers start here by default from ${entity.locator.owner}.` : ""}${warnings.length ? ` ${warnings.join(" ")}` : ""}`;
+    /** Prefixes an action label to the full row name for accessible buttons. */
     const actionName = (label) => `${label}. ${rowName}`;
     const writable = resourceWritesAvailable();
     const refreshing = resourceRefreshing.has(key);

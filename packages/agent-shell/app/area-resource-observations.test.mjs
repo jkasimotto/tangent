@@ -27,7 +27,10 @@ test("keeps provider words while deriving only success, muted, and neutral treat
 });
 
 test("local Git inspection distinguishes exact root facts from abort and command failures", async () => {
-  const directory = { isDirectory: () => true };
+  const directory = {
+    /** Reports the fixture path as a directory. */
+    isDirectory: () => true,
+  };
   const aborted = new AbortController();
   aborted.abort();
   await assert.rejects(inspectLocalResource(
@@ -43,7 +46,9 @@ test("local Git inspection distinguishes exact root facts from abort and command
     { kind: "worktree", path: "/repo" },
     {
       signal: new AbortController().signal,
+      /** Resolves the fixture directory. */
       statPath: async () => directory,
+      /** Fails every Git command with an I/O error. */
       readGit: async () => { throw Object.assign(new Error("git unavailable"), { code: "EIO" }); },
     },
   ), (error) => error?.code === "EIO");
@@ -52,7 +57,9 @@ test("local Git inspection distinguishes exact root facts from abort and command
     { kind: "worktree", path: "/repo/nested" },
     {
       signal: new AbortController().signal,
+      /** Resolves the fixture directory. */
       statPath: async () => directory,
+      /** Answers a non-bare repository rooted at /repo. */
       readGit: async (_cwd, args) => args.includes("--is-bare-repository") ? "false" : "/repo",
     },
   );
@@ -62,7 +69,9 @@ test("local Git inspection distinguishes exact root facts from abort and command
     { kind: "worktree", path: "/repo" },
     {
       signal: new AbortController().signal,
+      /** Resolves the fixture directory. */
       statPath: async () => directory,
+      /** Answers scripted Git facts for the exact-root case. */
       readGit: async (_cwd, args) => {
         if (args.includes("--is-bare-repository")) return "false";
         if (args.includes("--show-toplevel")) return "/repo";
@@ -183,6 +192,7 @@ test("passes exact Phabricator references and retains current state after permis
         return { state: "current", stateLabel: "Accepted", providerUpdatedAt: "2026-09-02T00:00:00.000Z" };
       },
     },
+    /** Fixes the observation clock one second after the provider update. */
     now: () => Date.parse("2026-09-02T00:00:01.000Z"),
   });
   const resource = link("phab-permission", "https://reviews.example.test/D71");

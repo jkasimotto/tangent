@@ -163,6 +163,7 @@ test("a deadline reaps a spawned slow operation before the route responds", asyn
       discover: (_body, { signal }) => {
         child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
         return new Promise((_resolve, reject) => {
+          /** Kills the child and resolves once it has exited. */
           const stop = () => {
             child.once("exit", () => {
               exited = true;

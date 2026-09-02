@@ -35,6 +35,12 @@ const authority = await areaBoard.loadAreaMapAuthority(api, "otto");
 window.editor = areaBoard.mount(document.querySelector("#map"), { area: "otto", ...authority, api, onBack() {} });
 </script></body></html>`;
 
+/** Reduces one saved element to the resource facts a rollback save must preserve; Excalidraw bookkeeping such as version and index may change. */
+function resourceRecordFacts(element) {
+  const { id, type, isDeleted, x, y, width, height, text, containerId, customData } = element;
+  return { id, type, isDeleted: Boolean(isDeleted), x, y, width, height, text: text ?? null, containerId: containerId ?? null, customData: customData ?? null, boundElements: (element.boundElements ?? []).map((binding) => `${binding.type}:${binding.id}`).sort() };
+}
+
 test("disabled areaMapWorld mounts and saves only the format-2 legacy editor", { skip: !enabled, timeout: 90_000 }, async () => {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -69,7 +75,9 @@ test("disabled areaMapWorld mounts and saves only the format-2 legacy editor", {
       before: window.initialResourceRecords,
       after: window.saved.elements.filter((element) => ["visible-resource", "visible-resource-tangent-label", "hidden-resource", "hidden-resource-tangent-label"].includes(element.id)),
     }));
-    assert.deepEqual(resourceRecords.after, resourceRecords.before, "rollback-compatible unrelated saves preserve visible and hidden resource records exactly");
+    const hiddenIds = new Set(["hidden-resource", "hidden-resource-tangent-label"]);
+    assert.deepEqual(resourceRecords.after.filter((element) => hiddenIds.has(element.id)), resourceRecords.before.filter((element) => hiddenIds.has(element.id)), "rollback-compatible unrelated saves return hidden resource records verbatim, label binding included");
+    assert.deepEqual(resourceRecords.after.map(resourceRecordFacts), resourceRecords.before.map(resourceRecordFacts), "rollback-compatible unrelated saves preserve every visible and hidden resource fact");
     assert.equal(resourceRecords.after.filter((element) => element.isDeleted).length, 2, "the hidden root and bound label stay retained");
     const calls = await page.evaluate(() => window.calls);
     assert.deepEqual(calls.map(({ resource, method }) => [resource, method]), [["/api/areas/canvas?area=otto", "GET"], ["/api/areas/canvas", "POST"]]);

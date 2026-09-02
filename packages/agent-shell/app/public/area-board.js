@@ -242,7 +242,19 @@ function mountLegacy(host, { area, payload, api, onBack = null }) {
   const loader = document.createElement("div"); loader.className = "area-board-loading"; loader.innerHTML = "<p>Loading drawing tools…</p>"; host.append(loader);
   let editor = null; let pending = null; let failed = null; let timer = null; let runner = null; let destroyed = false;
   let baseHash = payload.hash ?? null;
-  const initial = structuredClone(payload.scene ?? payload.canvas ?? core.createEmptyScene());
+  const source = structuredClone(payload.scene ?? payload.canvas ?? core.createEmptyScene());
+  // Hidden resource records are inert under rollback. Excalidraw strips the
+  // label binding of a deleted container, so they stay out of the editor and
+  // return verbatim on every save (compatibility floor, ADR-0049 retention).
+  const retainedIds = core.hiddenResourceRecordIds(source);
+  const retained = source.elements.filter((element) => retainedIds.has(element.id));
+  const initial = { ...source, elements: source.elements.filter((element) => !retainedIds.has(element.id)) };
+
+  /** Appends the verbatim hidden resource records to one editor scene. */
+  function withRetained(scene) {
+    if (!retained.length || !scene) return scene;
+    return { ...scene, elements: [...(scene.elements ?? []).filter((element) => !retainedIds.has(element.id)), ...structuredClone(retained)] };
+  }
 
   /** Saves the latest direct shard without allowing a world mutation route. */
   async function drain() {
@@ -268,7 +280,7 @@ function mountLegacy(host, { area, payload, api, onBack = null }) {
   /** Coalesces live Excalidraw changes into an ordered direct-shard save. */
   function queue(scene) {
     if (destroyed) return;
-    pending = scene;
+    pending = withRetained(scene);
     if (failed) { editor?.setSaveState?.({ state: "blocked", result: failed.error?.result }); return; }
     editor?.setSaveState?.({ state: "dirty" });
     if (timer !== null) clearTimeout(timer);
@@ -302,7 +314,7 @@ function mountLegacy(host, { area, payload, api, onBack = null }) {
 
   return {
     /** Returns the direct source scene after the editor mounts. */
-    current: () => editor?.current?.() ?? initial,
+    current: () => withRetained(editor?.current?.() ?? initial),
     /** Flushes only the direct format-2 source queue. */
     async flush() { await ready.catch(() => null); await flushPending(); },
     /** A rollback shard has no composed Area camera target. */

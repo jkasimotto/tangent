@@ -695,6 +695,16 @@ test("wide Resources stays a non-modal panel and the resource cadence changes fa
     assert.equal(await page.locator(".excalidraw").evaluate((element) => element.inert), false);
     assert.equal(await page.locator("#brain-pane").evaluate((element) => element.inert), false);
     assert.equal(await page.locator("#global-controls").evaluate((element) => element.inert), false, "wide inventory leaves retained shell navigation interactive");
+    await page.evaluate(() => window.selectMain(false));
+    await page.waitForFunction(() => Object.keys(window.editor.appState().selectedElementIds).filter((id) => window.editor.appState().selectedElementIds[id]).length === 1);
+    await page.locator("#map").dispatchEvent("keydown", { key: "Enter" });
+    await page.waitForFunction(() => window.copied.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.copied), [exactWorktree], "the open wide panel leaves canvas Enter on the selected worktree");
+    await panel.getByRole("heading", { name: "Map resources · Tangent" }).evaluate((heading) => heading.focus());
+    await panel.getByRole("heading", { name: "Map resources · Tangent" }).dispatchEvent("keydown", { key: "Enter", bubbles: true });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.evaluate(() => window.copied.length), 1, "Enter typed inside the panel is not a canvas action");
+    assert.equal(await panel.count(), 1, "Enter inside the panel keeps it open");
     await page.waitForFunction(() => window.apiCalls.filter((call) => call.url === "/api/areas/map-resources/refresh").length >= 2);
     const beforeCadence = await page.evaluate(() => ({
       world: window.editor.controller().world(),

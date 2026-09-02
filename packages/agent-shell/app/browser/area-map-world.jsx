@@ -2360,7 +2360,10 @@ export function AreaMapWorld({ host, bridge, options }) {
         return;
       }
       if (event.key === "Escape" && (resourceSceneRecovery || resourceRecovery || resourcesOpen)) { stop(event); escape(); return; }
-      if (resourceSceneRecovery || resourceRecovery || resourceSceneBusy || resourcesOpen) return;
+      // The wide Resources panel is a non-modal region: keys typed inside it belong to it, while the
+      // canvas keeps every Map key. The narrow sheet is modal and owns every key until Close.
+      const resourcesOwnKeys = resourcesOpen && (narrowResources || Boolean(event.target.closest?.(".tangent-map-resources")));
+      if (resourceSceneRecovery || resourceRecovery || resourceSceneBusy || resourcesOwnKeys) return;
       const findKey = (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f";
       if (findKey || !findOpen && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key === "/") { stop(event); openFind(); return; }
       if (event.key === "Escape" && (findOpen || picker || helpOpen || outlineOpen)) { stop(event); escape(); return; }
@@ -2492,7 +2495,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     host.addEventListener("keydown", keydown, true);
     host.addEventListener("dblclick", doubleClick, true);
     return () => { host.removeEventListener("keydown", keydown, true); host.removeEventListener("dblclick", doubleClick, true); };
-  }, [api, findOpen, findQuery, findIndex, picker, helpOpen, outlineOpen, resourcesOpen, resourceLocate, resourcePlacement, resourceRecovery, resourceResolutions, state.revision]);
+  }, [api, findOpen, findQuery, findIndex, picker, helpOpen, outlineOpen, resourcesOpen, narrowResources, resourceLocate, resourcePlacement, resourceRecovery, resourceResolutions, state.revision]);
 
   useEffect(() => {
     if (!picker && !helpOpen && !outlineOpen) return undefined;

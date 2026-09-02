@@ -622,13 +622,24 @@ async function resourceRefreshCommand(args: Args): Promise<void> {
   if (resources.length > 500) throw new Error("one resource refresh can check at most 500 resources");
   const result = await postJson(server, "/api/areas/map-resources/refresh", { resources });
   if (booleanArg(args.json)) return printJson(result);
-  const outcomes = (result.results ?? result.resources ?? []) as Array<Record<string, any>>;
+  const resolutions = (result.resolutions ?? result.results ?? []) as ResourceResolution[];
   console.log(`Checked ${resources.length} Map resource${resources.length === 1 ? "" : "s"} for ${area}.`);
-  for (const [index, outcome] of outcomes.entries()) {
-    const locator = outcome.locator ?? resources[index];
-    const observation = outcome.local ?? outcome.lifecycle ?? outcome.observation ?? outcome;
-    console.log(`  ${locator?.owner}:${locator?.id}  ${observation.state ?? outcome.state ?? "checked"}`);
+  for (const [index, resolution] of resolutions.entries()) {
+    const entity = resolvedEntity(resolution);
+    const locator = entity?.locator ?? resources[index];
+    const target = resourceTarget(entity);
+    const state = resolution.state === "current" ? resourceState(entity) || "checked" : `${resolution.state}${entity?.reason ? `: ${entity.reason}` : ""}`;
+    console.log(`  ${shortResourceId(locator)}  ${target?.kind ?? "resource"}  ${entity?.label ?? entity?.lastKnown?.label ?? "Unlabelled"}  ${state}`);
   }
+}
+
+/** One ordered refresh or resolve outcome as the server returns it. */
+type ResourceResolution = { state?: string; value?: MapResourceEntity | null; locator?: MapResourceLocator; reason?: string };
+
+/** Returns the entity facts of one resolution, including the retained facts of a gone resource. */
+function resolvedEntity(resolution: ResourceResolution): MapResourceEntity | undefined {
+  if (resolution.value && typeof resolution.value === "object") return resolution.value;
+  return resolution.locator ? { locator: resolution.locator, reason: resolution.reason } : undefined;
 }
 
 /** Applies the one process-local catalog Undo token returned by a prior mutation. */

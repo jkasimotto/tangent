@@ -546,25 +546,35 @@ test("discover, refresh, check, and undo keep their safe read and mutation envel
   const handler = ({ url, body, init }) => {
     posts.push({ path: url.pathname, body, operationId: new Headers(init.headers).get("x-tangent-operation-id") });
     if (url.pathname.endsWith("/discover")) return Response.json({ suggestions: projection().suggestions, problems: [] });
-    if (url.pathname.endsWith("/refresh")) return Response.json({ results: body.resources.map((locator) => ({ locator, observation: { state: "current" } })) });
+    if (url.pathname.endsWith("/refresh")) {
+      const resolutions = body.resources.map((locator) => locator.id === DIRECT_ID
+        ? { state: "current", value: { locator, label: "Feature checkout", target: { kind: "worktree", path: "/tmp/feature-checkout" }, local: { state: "current", value: { state: "missing" } }, link: null } }
+        : { state: "current", value: { locator, label: "Main repository", target: { kind: "repository", path: "/tmp/main" }, local: { state: "last-known", value: { state: "available" } }, link: null } });
+      return Response.json({ resolutions, results: resolutions });
+    }
     if (url.pathname.endsWith("/apply")) return Response.json({ operationId: body.operationId, warnings: [], sourceUpdates: [], undo: { state: "unavailable" } });
     return Response.json({ error: "unexpected" }, { status: 404 });
   };
   await runFixture(["resource", "discover", AREA, "--json"], handler);
   await runFixture(["resource", "refresh", AREA, "11111111", "--json"], handler);
   await runFixture(["resource", "check", AREA, "--json"], handler);
+  const checked = await runFixture(["resource", "check", AREA], handler);
+  assert.match(checked.text, /^Checked 2 Map resources for otto\/tangent\.$/m);
+  assert.match(checked.text, /^  11111111-111  worktree  Feature checkout  missing$/m, "check prints the observed local state, not the resolution wrapper");
+  assert.match(checked.text, /^  22222222-222  repository  Main repository  available · Last known$/m);
   await runFixture(["resource", "undo", AREA, "undo-token-1", "--operation-id", "brain-undo-1", "--json"], handler);
 
   assert.deepEqual(posts[0].body, { area: AREA });
   assert.deepEqual(posts[1].body, { resources: [{ owner: AREA, id: DIRECT_ID }] });
   assert.deepEqual(posts[2].body, { resources: [{ owner: AREA, id: DIRECT_ID }, { owner: "otto", id: INHERITED_ID }] });
-  assert.deepEqual(posts[3].body, {
+  assert.deepEqual(posts[3].body, posts[2].body);
+  assert.deepEqual(posts[4].body, {
     schema: "area-map-resource-mutation.v1",
     operationId: "brain-undo-1",
     viewedFrom: AREA,
     mutation: { kind: "undo", token: "undo-token-1" },
   });
-  assert.equal(posts[3].operationId, "brain-undo-1");
+  assert.equal(posts[4].operationId, "brain-undo-1");
 });
 
 test("edit and remove use a stable direct locator, while inherited and ambiguous selectors are refused before writes", async () => {

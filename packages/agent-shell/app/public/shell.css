@@ -527,7 +527,20 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-col-work { width: auto; min-width: 280px; }
 .work-col-agent { width: 260px; }
 .work-col-status { width: 216px; }
+.work-col-cost { width: 76px; }
 .work-col-controls { width: 56px; }
+/* What a worker cost. One dim figure that the eye can skip and the hover
+   explains: a plain dollar when nothing is missing, a tilde when the figure
+   is a floor, and a token count when the model has no rate, because a guessed
+   dollar would be worse than no dollar. */
+.worker-cost { color: #93a0ad; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: help; }
+.worker-cost-floor { color: #b8a677; }
+.worker-cost-tokens { color: #8b7fa8; }
+.worker-cost-none { color: #4d5661; cursor: default; }
+.work-cell-cost { overflow: hidden; padding-right: 4px; text-align: right; white-space: nowrap; }
+.work-table thead th.work-head-cost { text-align: right; }
+.work-group-cost { margin-right: 4px; }
+.session-cost { flex: none; padding: 3px 7px; }
 
 .work-group-row > .work-group-head { box-sizing: border-box; height: 28px; padding: 0 10px; border-bottom: 1px solid #2b3037; background: #14171b; font-weight: 400; line-height: 1.1; text-align: left; }
 .work-group-head { display: table-cell; }
@@ -684,6 +697,7 @@ button.work-agent-ref:hover, button.work-agent-ref:focus-visible { color: #fff; 
      the text in Chrome's accessibility tree. */
   .work-col-work { width: auto; min-width: 0; }
   .work-col-status { width: 0; }
+  .work-col-cost { width: 60px; }
   .work-col-controls { width: 56px; }
   .work-head-status, .work-cell-status { visibility: hidden; padding: 0; overflow: hidden; white-space: nowrap; }
   .work-row > * { height: auto; padding: 6px 8px; }

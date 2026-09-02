@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { attemptsInWindow, brainAttempts, jobAttempts, priceAttempts, repairAttempts } from "./job-cost.mjs";
 import { claudeProjectKey } from "./harness-transcripts.mjs";
-import { summarizeCost } from "./cost-service.mjs";
+import { inWindow, summarizeCost, summarizeWorkers } from "./cost-service.mjs";
 
 const CWD = "/Users/fixture/Projects/thing";
 const AREA = "otto/tangent";
@@ -236,4 +236,116 @@ test("a broken harness registry is named in the figure rather than leaving it bl
   assert.equal(snapshot.status, "ready");
   assert.equal(snapshot.complete, false);
   assert.equal(snapshot.excluded[0].detail, "harness registry is invalid: duplicate id");
+});
+
+/** One priced conversation as the worker index reads it. */
+function workerConversation({ key, amount, session, file = "goal-thing.md", scope = "job", family = "claude", harness = "claude-otto", endedAt = "2026-09-03T05:00:00.000Z", startedAt = "2026-09-03T04:00:00.000Z", parts = null, gaps = [] }) {
+  return {
+    key,
+    harness,
+    cost: {
+      amount, family, gaps,
+      parts: parts ?? [{ provider: "anthropic", model: "claude-opus-5", priced: true, amount, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, reasoning: 0 } }],
+    },
+    attempts: [{ scope, area: AREA, name: file, file, session, startedAt, endedAt }],
+  };
+}
+
+test("a worker index is keyed the way each surface names a worker", () => {
+  const index = summarizeWorkers({
+    conversations: [
+      workerConversation({ key: "a", amount: 4, session: "thing-one" }),
+      workerConversation({ key: "b", amount: 6, session: "thing-two" }),
+      workerConversation({ key: "c", amount: 3, session: "tangent-brain-g1", scope: "brain", file: null }),
+    ],
+    unattributed: [],
+  });
+  // The Work table knows a row by its Goal file; the session layer knows a
+  // worker by its tmux name.
+  assert.equal(index.work[`job:${AREA}/goal-thing.md`], undefined);
+  assert.equal(index.work["job:goal-thing.md"].amount, 10);
+  assert.equal(index.work["job:goal-thing.md"].workers, 2);
+  assert.equal(index.work[`brain:${AREA}`].amount, 3);
+  assert.equal(index.sessions["thing-one"].amount, 4);
+  assert.equal(index.sessions["thing-two"].amount, 6);
+});
+
+test("one conversation is charged once to a worker, however many attempts ran in it", () => {
+  const shared = workerConversation({ key: "a", amount: 9, session: "thing-one" });
+  shared.attempts.push({ ...shared.attempts[0], session: "thing-one" });
+  const index = summarizeWorkers({ conversations: [shared], unattributed: [] });
+  assert.equal(index.work["job:goal-thing.md"].amount, 9);
+  assert.equal(index.sessions["thing-one"].amount, 9);
+  assert.equal(index.sessions["thing-one"].conversations, 1);
+});
+
+test("a live worker's figure is a floor and says why", () => {
+  const index = summarizeWorkers({
+    conversations: [workerConversation({ key: "a", amount: 4, session: "thing-one", endedAt: null })],
+    unattributed: [],
+  });
+  const worker = index.sessions["thing-one"];
+  assert.equal(worker.floor, true);
+  assert.equal(worker.reasons[0], "this worker is still running, so this is what it has cost so far");
+  assert.match(worker.subagents, /Subagents are inside this figure/);
+});
+
+test("a worker whose model has no rate reports its tokens instead of a dollar", () => {
+  const index = summarizeWorkers({
+    conversations: [workerConversation({
+      key: "a", amount: 0, session: "thing-one",
+      parts: [{ provider: "openai", model: "gpt-5.6-sol", priced: false, amount: null, usage: { input: 1_500_000, output: 300_000, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, reasoning: 0 } }],
+    })],
+    unattributed: [],
+  });
+  const worker = index.sessions["thing-one"];
+  assert.equal(worker.amount, 0);
+  assert.equal(worker.unpricedTokens, 1_800_000);
+  assert.equal(worker.unpricedDisplay, "1.8M tok");
+  assert.equal(worker.floor, true);
+  assert.match(worker.reasons[0], /^no rate for openai\/gpt-5\.6-sol/);
+});
+
+test("an attempt that could not be reached is named on the worker it belonged to", () => {
+  const index = summarizeWorkers({
+    conversations: [workerConversation({ key: "a", amount: 4, session: "thing-one" })],
+    unattributed: [
+      { scope: "job", area: AREA, name: "goal-thing.md", file: "goal-thing.md", session: "thing-one", reason: "the transcript for this conversation is no longer on disk" },
+      { scope: "job", area: AREA, name: "goal-thing.md", file: "goal-thing.md", session: "thing-one", reason: "the transcript for this conversation is no longer on disk" },
+    ],
+  });
+  const worker = index.sessions["thing-one"];
+  assert.equal(worker.floor, true);
+  assert.equal(worker.reasons[0], "the transcript for this conversation is no longer on disk (2)");
+  assert.equal(index.work["job:goal-thing.md"].floor, true);
+});
+
+test("a window taken out of one full reading keeps only the conversations that started in it", () => {
+  const priced = {
+    conversations: [
+      workerConversation({ key: "old", amount: 5, session: "thing-old", startedAt: "2026-09-01T04:00:00.000Z" }),
+      workerConversation({ key: "new", amount: 7, session: "thing-new", startedAt: "2026-09-03T04:00:00.000Z" }),
+    ],
+    unattributed: [
+      { scope: "job", area: AREA, name: "goal-thing.md", startedAt: "2026-09-01T04:00:00.000Z", reason: "gone" },
+      { scope: "job", area: AREA, name: "goal-thing.md", startedAt: "2026-09-03T04:00:00.000Z", reason: "gone" },
+    ],
+  };
+  const sliced = inWindow(priced, "2026-09-03T00:00:00.000Z");
+  assert.equal(sliced.amount, 7);
+  assert.deepEqual(sliced.conversations.map((entry) => entry.key), ["new"]);
+  assert.equal(sliced.unattributed.length, 1);
+  // Without a window the reading passes through untouched.
+  assert.equal(inWindow(priced, null), priced);
+});
+
+test("a Job's whole life is one key, so its figure does not change with the day", () => {
+  const priced = {
+    conversations: [
+      workerConversation({ key: "old", amount: 5, session: "thing-old", startedAt: "2026-09-01T04:00:00.000Z" }),
+      workerConversation({ key: "new", amount: 7, session: "thing-new", startedAt: "2026-09-03T04:00:00.000Z" }),
+    ],
+    unattributed: [],
+  };
+  assert.equal(summarizeWorkers(priced).work["job:goal-thing.md"].amount, 12);
 });

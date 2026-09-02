@@ -67,7 +67,7 @@ export function createAreaBrainPane({
         mode = nextMode;
         launchMarkup = "";
         host.dataset.mode = mode;
-        host.innerHTML = `<header><button type="button" data-leave-area-workspace>Work <kbd>⌘⇧↵</kbd></button><strong>${escapeHtml(facts.label)}</strong>${facts.live ? `<button class="session-tag" type="button" data-copy-session-tag="${escapeHtml(facts.live.name)}"><code>${escapeHtml(facts.live.name)}</code></button>` : ""}<button type="button" data-toggle-workspace-map>${mapVisible ? "Hide Map" : "Map"}</button><button type="button" data-hide-workspace-brain${primaryBrain ? " hidden" : ""}>Hide Brain <kbd>b</kbd></button></header><div class="map-brain-content"></div>`;
+        host.innerHTML = `<header><button type="button" data-leave-area-workspace>Work <kbd>⌘⇧↵</kbd></button><strong>${escapeHtml(facts.label)}</strong>${facts.live ? `<button class="session-tag" type="button" data-copy-session-tag="${escapeHtml(facts.live.name)}"><code>${escapeHtml(facts.live.name)}</code></button><span class="session-cost" data-worker-cost="${escapeHtml(facts.live.name)}" data-worker-cost-scope="session" data-worker-cost-subject="this brain"></span>` : ""}<button type="button" data-toggle-workspace-map>${mapVisible ? "Hide Map" : "Map"}</button><button type="button" data-hide-workspace-brain${primaryBrain ? " hidden" : ""}>Hide Brain <kbd>b</kbd></button></header><div class="map-brain-content"></div>`;
         const content = host.querySelector(".map-brain-content");
         host.querySelector("[data-toggle-workspace-map]")?.addEventListener("click", onToggleMap);
         host.querySelector("[data-hide-workspace-brain]")?.addEventListener("click", onHideBrain);

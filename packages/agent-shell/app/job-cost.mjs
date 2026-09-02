@@ -19,10 +19,11 @@ import { conversationCost } from "./conversation-cost.mjs";
 import { findCodexThread, transcriptFamily } from "./harness-transcripts.mjs";
 
 /** One attempt's spend facts, in the shape every record family reduces to. */
-export function spendAttempt({ scope, area, name, file, ref, conversation, cwd, startedAt, endedAt }) {
+export function spendAttempt({ scope, area, name, file, session, ref, conversation, cwd, startedAt, endedAt }) {
   return {
     scope, area, name,
     file: file ?? null,
+    session: session ?? null,
     ref: ref ?? null,
     provider: ref?.provider ?? null,
     conversation: conversation ?? null,
@@ -30,6 +31,19 @@ export function spendAttempt({ scope, area, name, file, ref, conversation, cwd, 
     startedAt: startedAt ?? null,
     endedAt: endedAt ?? null,
   };
+}
+
+/**
+ * The piece of work one attempt was spent on.
+ *
+ * A Job is named by the Goal file its record points at, because that is the
+ * identity the Work screen already keys its rows on. A brain and a repair
+ * crew have no Goal, so they are named by their Area and their kind: an Area
+ * has exactly one brain and one repair crew at a time.
+ */
+export function workKey(attempt) {
+  if (attempt?.scope === "job") return `job:${attempt.file ?? attempt.name ?? ""}`;
+  return `${attempt?.scope ?? "job"}:${attempt?.area ?? ""}`;
 }
 
 /** Every attempt one Job record made, across all of its runs. */
@@ -43,6 +57,7 @@ export function jobAttempts(record, area, slug) {
           area: record?.area ?? area,
           name: record?.goal ?? slug,
           file: record?.goal ?? null,
+          session: attempt.session ?? assignment?.session ?? null,
           ref: attempt.resolvedLaunch?.ref,
           conversation: attempt.providerSession,
           cwd: attempt.cwd,
@@ -70,6 +85,7 @@ export function repairAttempts(record) {
     area: record?.area ?? "",
     name: `${record?.area ?? ""} repair`,
     file: null,
+    session: generation.session ?? null,
     ref: generation.resolvedLaunch?.ref,
     conversation: generation.providerSession,
     cwd: generation.cwd,
@@ -85,6 +101,7 @@ export function brainAttempts(record) {
     area: record?.area ?? "",
     name: `${record?.area ?? ""} brain`,
     file: null,
+    session: generation.session ?? null,
     ref: generation.resolvedLaunch?.ref,
     conversation: generation.providerSession,
     cwd: generation.cwd,

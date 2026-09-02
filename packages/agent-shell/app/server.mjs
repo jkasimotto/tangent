@@ -8132,6 +8132,8 @@ const costService = createCostService({
 const costRoutes = createCostRoutes({
   /** Answers with the estimated cost of one window. */
   read(options) { return costService.read(options); },
+  /** Answers with what each worker has cost, keyed by Goal and by session. */
+  readWorkers(options) { return costService.readWorkers(options); },
 });
 const goalQueryRoutes = createGoalQueryRoutes({
   /**

@@ -117,7 +117,7 @@ test("real browser keeps the pre-cutover Work surface stable on bounded v3 facts
     await page.goto(`http://127.0.0.1:${server.address().port}/`, { waitUntil: "networkidle" });
     await page.locator(".work-table").waitFor();
 
-    assert.deepEqual(await page.locator(".work-table thead th").allTextContents(), ["Goal", "Agent", "Status", "Controls"]);
+    assert.deepEqual(await page.locator(".work-table thead th").allTextContents(), ["Goal", "Agent", "Status", "Cost", "Controls"]);
     assert.equal(await page.locator("text=Last known").count(), 0);
     assert.equal(await page.locator("text=source-record-invalid").count(), 0);
     assert.equal(await page.locator("text=412").count(), 0);

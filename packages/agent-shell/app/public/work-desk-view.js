@@ -5,6 +5,7 @@ import goToCore from "./go-to-core.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, toggleAreaFocusRoot, writeAreaFocus } from "./area-focus-core.js";
 import { workCommand, workCaptionKeys, workRowKind } from "./work-commands.js";
+import { workerCostMarkup } from "./worker-cost.js";
 
 const PRESENTED_ROWS_PER_GOAL = 3;
 
@@ -1499,6 +1500,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     { key: "work", label: "Goal" },
     { key: "agent", label: "Agent" },
     { key: "status", label: "Status" },
+    { key: "cost", label: "Cost" },
     { key: "controls", label: "Controls", hidden: true },
   ];
 
@@ -1602,6 +1604,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const route = brain?.live
       ? `data-open-brain="${escapeHtml(brain.session ?? "")}"`
       : `data-open-area-brain="${escapeHtml(area.path)}"`;
+    // A brain spends for as long as it is alive and never appears as a row,
+    // so its figure rides beside the button that enters it.
+    const brainCostKey = `brain:${area.path}`;
+    const brainCostFigure = brain
+      ? `<span class="work-group-cost" data-worker-cost="${escapeHtml(brainCostKey)}" data-worker-cost-subject="the ${escapeHtml(areaLabel(area.path))} brain">${workerCostMarkup(state.workerCost?.work?.[brainCostKey] ?? null, `the ${areaLabel(area.path)} brain`)}</span>`
+      : "";
     const name = sub ? descendantPath(area.path, parentPath) : humanName(area.name);
     const cursor = `area:${area.path}`;
     const showState = !sub || summary.questions || brain?.live;
@@ -1629,7 +1637,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
                 : `<span class="desk-state ${status.kind}" title="${escapeHtml(status.title)}">${escapeHtml(status.label)}</span>`}
           </div>
           <div class="work-group-controls work-row-controls">
-            ${mapButton}${brainButton}
+            ${mapButton}${brainCostFigure}${brainButton}
             <button class="desk-action-menu-trigger" type="button" data-work-object-actions data-work-object-area="${escapeHtml(area.path)}" data-focus-key="menu:area:${escapeHtml(area.path)}" ${workCommandAttributes("keys")} aria-label="Keys for ${escapeHtml(name)}">⋯${workKey("keys")}</button>
           </div>
         </div>
@@ -1715,6 +1723,21 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
+   * The Cost cell: what everything under this Goal has cost, all of its
+   * workers and all of their subagents together.
+   *
+   * The figure is written by `paintWorkerCosts` after each cost reading
+   * rather than by repainting the table, so a dollar that moved never takes
+   * the cursor or the keyboard focus off the row a person is reading. The
+   * key is the Goal file, which is what the server keys a Job's spend on.
+   */
+  function workCostCell(goal) {
+    const key = `job:${goal.file}`;
+    const entry = state.workerCost?.work?.[key] ?? null;
+    return `<td class="work-cell-cost" data-worker-cost="${escapeHtml(key)}" data-worker-cost-subject="${escapeHtml(goal.title)}">${workerCostMarkup(entry, goal.title)}</td>`;
+  }
+
+  /**
    * The row-end controls cell: the `⋯` route into the key sheet, revealed on
    * the cursor row, hover, and focus (work-screen-refresh D4), and a cleanup
    * failure that must stay visible whatever the pointer does.
@@ -1763,6 +1786,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       </th>
       ${workAgentCell(goal, action, pipeline, liveSession)}
       ${workStatusCell(action, facts, now)}
+      ${workCostCell(goal)}
       ${workControlsCell(goal)}
     </tr>`;
   }
@@ -1787,6 +1811,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       </th>
       <td class="work-cell-agent"><button class="work-agent-ref" type="button" data-select-work-definition="${escapeHtml(session.name)}" ${workCommandAttributes("session", `Open ${name}`)} aria-label="Open ${escapeHtml(name)} for ${escapeHtml(session.workTitle || "this description")}"><span class="work-agent-ref-text">${escapeHtml(name)}</span>${workKey("session")}</button></td>
       <td class="work-cell-status"><span class="desk-state ${kind}" title="${escapeHtml(workStateTitle(stateName, kind))}">${escapeHtml(stateName)}</span></td>
+      <td class="work-cell-cost"></td>
       <td class="work-cell-controls"></td>
     </tr>`;
   }
@@ -1890,6 +1915,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       </th>
       <td class="work-cell-agent"><span class="work-process-when" title="${escapeHtml(item.when)}">${escapeHtml(item.when)}</span></td>
       <td class="work-cell-status"><span class="desk-state ${stateKind}" title="${escapeHtml(stateText)}">${escapeHtml(stateText)}</span></td>
+      <td class="work-cell-cost"></td>
       <td class="work-cell-controls"><span class="work-process-controls"><button class="work-process-control" type="button" data-open-document="${escapeHtml(item.file)}" aria-label="Inspect process ${escapeHtml(item.title)}">Inspect</button>${lifecycle}${remove}</span></td>
     </tr>`;
   }
@@ -2005,7 +2031,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const presentedBy = card.presentedBy?.session || "brain";
     return `<tr class="desk-document work-row presented-card${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(goal.area)}" data-card-goal="${escapeHtml(goal.file)}" data-card-id="${escapeHtml(card.id)}" data-card-kind="${escapeHtml(card.kind)}" data-search-text="${escapeHtml(`${card.kind} ${card.title} ${card.summary ?? ""}`)}">
       <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<span class="work-goal-copy"><span class="work-goal-primary"><button type="button" class="work-row-title" data-work-row-title data-card-action aria-label="${escapeHtml(`${card.kind}: ${card.title}, presented by ${presentedBy}`)}" aria-keyshortcuts="Enter" title="${escapeHtml(`Presented by ${presentedBy}${stopped}`)}">↳ ${escapeHtml(card.kind)} · ${escapeHtml(card.title)}</button></span></span></span></th>
-      <td><small>${escapeHtml(card.summary ?? "")}</small></td><td></td>
+      <td><small>${escapeHtml(card.summary ?? "")}</small></td><td></td><td></td>
       <td><span class="work-row-controls"><button type="button" data-card-action aria-keyshortcuts="Enter">↵ ${action}</button><button type="button" data-card-goal-open aria-keyshortcuts="o">o goal</button><button type="button" data-card-dismiss aria-keyshortcuts="x">x dismiss</button></span></td>
     </tr>`;
   }
@@ -2015,7 +2041,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const cursor = `document:${goal.file}:${item.file}`;
     return `<tr class="desk-document work-row presented-document${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(goal.area)}" data-presentation-goal="${escapeHtml(goal.file)}" data-presentation-file="${escapeHtml(item.file)}" data-presentation-hash="${escapeHtml(item.presentedHash ?? "")}" data-search-text="${escapeHtml(`${item.title} ${item.file}`)}">
       <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<span class="work-goal-copy"><span class="work-goal-primary"><button type="button" class="work-row-title" data-work-row-title data-open-document="${escapeHtml(item.file)}" data-document-root="${escapeHtml(item.root ?? "vault")}" title="${escapeHtml(item.file)}">↳ Read · ${escapeHtml(item.title)}</button></span></span></span></th>
-      <td><small>${escapeHtml(item.note || item.presentedBy?.session || "Presented")}</small></td><td></td>
+      <td><small>${escapeHtml(item.note || item.presentedBy?.session || "Presented")}</small></td><td></td><td></td>
       <td><span class="work-row-controls"><button type="button" data-presentation-full="${escapeHtml(item.file)}" title="Open full reader">o full</button><button type="button" data-withdraw-presentation="${escapeHtml(item.file)}" title="Dismiss presentation">x dismiss</button></span></td>
     </tr>`;
   }
@@ -2028,13 +2054,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       const presenter = item.presentedBy?.session || "brain";
       return `<tr class="desk-document work-row presented-document${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}" data-presentation-area="${escapeHtml(area.path)}" data-presentation-file="${escapeHtml(item.file)}" data-presentation-hash="${escapeHtml(item.presentedHash ?? "")}" data-search-text="${escapeHtml(`${item.title} ${item.file}`)}">
         <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<span class="work-goal-copy"><span class="work-goal-primary"><button type="button" class="work-row-title" data-work-row-title data-open-document="${escapeHtml(item.file)}" data-document-root="vault" aria-label="${escapeHtml(`Read ${item.title}, in ${area.path}, presented by ${presenter}`)}" title="${escapeHtml(item.file)}">↳ Read · ${escapeHtml(item.title)}</button></span></span></span></th>
-        <td><small>${escapeHtml(item.note || presenter)}</small></td><td></td>
+        <td><small>${escapeHtml(item.note || presenter)}</small></td><td></td><td></td>
         <td><span class="work-row-controls"><button type="button" data-presentation-full="${escapeHtml(item.file)}" title="Open full reader">o full</button><button type="button" data-withdraw-presentation="${escapeHtml(item.file)}" title="Dismiss presentation">x dismiss</button></span></td>
       </tr>`;
     });
     if (items.length > PRESENTED_ROWS_PER_GOAL) {
       const hidden = items[PRESENTED_ROWS_PER_GOAL];
-      rows.push(`<tr class="desk-document work-row presented-document overflow" data-work-area="${escapeHtml(area.path)}"><th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<button type="button" data-open-document="${escapeHtml(hidden.file)}" data-presentation-area="${escapeHtml(area.path)}">and ${items.length - PRESENTED_ROWS_PER_GOAL} more · o</button></span></th><td></td><td></td><td></td></tr>`);
+      rows.push(`<tr class="desk-document work-row presented-document overflow" data-work-area="${escapeHtml(area.path)}"><th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<button type="button" data-open-document="${escapeHtml(hidden.file)}" data-presentation-area="${escapeHtml(area.path)}">and ${items.length - PRESENTED_ROWS_PER_GOAL} more · o</button></span></th><td></td><td></td><td></td><td></td></tr>`);
     }
     return rows;
   }
@@ -2042,7 +2068,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** One compact row for presentations beyond the desk cap. */
   function workPresentationOverflowRow(goal, count) {
     const cursor = `document-more:${goal.file}`;
-    return `<tr class="desk-document work-row presented-document overflow${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(goal.area)}"><th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<button type="button" data-work-row-title data-open-document="${escapeHtml(goal.file)}">and ${count} more · o</button></span></th><td></td><td></td><td></td></tr>`;
+    return `<tr class="desk-document work-row presented-document overflow${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(goal.area)}"><th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<button type="button" data-work-row-title data-open-document="${escapeHtml(goal.file)}">and ${count} more · o</button></span></th><td></td><td></td><td></td><td></td></tr>`;
   }
 
   /** Renders the Programs of one Area as a compact operational shelf. */

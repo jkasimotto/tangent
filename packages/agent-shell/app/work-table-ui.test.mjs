@@ -33,8 +33,8 @@ test("the work table states its rows and columns in the accessibility tree", asy
   assert.equal(document.querySelector("[data-work-filter]"), null, "Work is one projection, not Current and Planned modes");
 
   const columns = [...table.querySelectorAll("thead th")];
-  assert.deepEqual(columns.map((column) => column.textContent.trim()), ["Goal", "Agent", "Status", "Controls"], "three printed columns and one hidden-label controls column (work-screen-refresh D8)");
-  assert.ok(columns[3].querySelector(".visually-hidden"), "the controls column prints no header");
+  assert.deepEqual(columns.map((column) => column.textContent.trim()), ["Goal", "Agent", "Status", "Cost", "Controls"], "four printed columns and one hidden-label controls column (work-screen-refresh D8, plus Cost)");
+  assert.ok(columns[4].querySelector(".visually-hidden"), "the controls column prints no header");
   assert.ok(columns.every((column) => column.getAttribute("scope") === "col"), "every column header declares its scope");
   assert.equal(table.querySelectorAll("colgroup col").length, columns.length, "one column element per column carries its width");
 

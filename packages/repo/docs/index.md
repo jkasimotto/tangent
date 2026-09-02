@@ -1,6 +1,6 @@
 # @tangent/repo Docs
 
-Purpose: Repo discovery, git, worktree, and path helpers.
+Purpose: Repo discovery, abortable Git commands, typed worktree facts, and path helpers.
 
 Read next:
 - architecture.md

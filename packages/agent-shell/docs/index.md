@@ -3,6 +3,7 @@
 Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 
 - Vault CLI: `tangent area`, `tangent goal`, `tangent document`, `tangent vault commit`.
+- Area resource CLI: `tangent area resource` lists, adds, imports, places, hides, restores, edits, removes, discovers, and refreshes resources.
 - Agent CLI: `tangent agent list|show|stop|resume|send` joins exact live sessions to durable Job Attempts or Brain generations. Root `tangent send` remains the Area-aware convenience route.
 - Worker CLI: every assignment names its organizing brain's durable Area path. Its only command is `tangent send <brain-area> "<plain note>"`. A note never changes Goal or assignment state. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
 - Brain CLI: `tangent brain request` creates durable user requests. Job CLI: `tangent job advance` starts the next approved Assignment.
@@ -19,6 +20,10 @@ Agent Shell centers each Area on one logical brain with an active or inactive li
 Work shows all open Goals from one bounded `agent-shell-work.v3` snapshot. The gateway serves its last complete revision during controller or source failure. An explicit keyboard context owns each key. Terminal sessions keep native tmux input, except the visible leave shortcut. Work and Document actions expose matching keyboard and pointer paths. See ADR-0038 and ADR-0056.
 
 Each Area can have one `.excalidraw` source shard. One browser world shows the complete Area hierarchy and keeps every structural region interactive. A shared layout kernel expands ancestors and reflows affected sibling branches. Vault notes remain authoritative for Tangent block facts. One gesture commits all affected shards together. See ADR-0049, ADR-0051, and ADR-0052.
+
+Each physical Area can also own `map-resources.json`. This catalog supports multiple Worktrees, Repositories, and Links without changing legacy launch bindings.
+Resource Blocks use the shared Tangent Block and world-layout path. A resource Block stores only its catalog-local opaque ID.
+The server derives target, state, provenance, placement, and cached observation facts. A status refresh does not write the Map.
 
 An agent can present a Markdown Document on its Goal. An exact Area brain can also use `tangent area present <area> <file>...` to present an Area Document without a Goal. Work shows each presentation under its owner until Julian dismisses it. The runtime records do not change a Document, Goal queue, or Goal relation.
 

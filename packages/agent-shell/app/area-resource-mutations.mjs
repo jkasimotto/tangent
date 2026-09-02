@@ -709,7 +709,7 @@ export function createAreaResourceMutationCoordinator({
       operationId: request.operationId,
       worldId: "area-resources",
       area: request.viewedFrom,
-      intent: request,
+      intent: replayIntent(request),
       rehydrate: hydrateDurable,
     });
     let result = resourceTransactionResult(await save());
@@ -725,6 +725,16 @@ export function createAreaResourceMutationCoordinator({
     retainOperationReceipt(request.operationId, decorated);
     await onCommitted({ kind: "undo", request, result: decorated });
     return decorated;
+  }
+
+  /**
+   * Returns the semantic identity one operation ID stands for. Catalog and
+   * scene fences are preconditions, not content: a stateless retry re-reads
+   * them after a lost response and must replay the committed effect.
+   */
+  function replayIntent(request) {
+    const { expectedCatalogs: _catalogs, expectedScenes: _scenes, ...semantic } = request;
+    return semantic;
   }
 
   /** Applies one closed catalog mutation and returns current projection evidence. */
@@ -828,7 +838,7 @@ export function createAreaResourceMutationCoordinator({
       operationId: request.operationId,
       worldId: "area-resources",
       area: request.viewedFrom,
-      intent: request,
+      intent: replayIntent(request),
       rehydrate: hydrateDurable,
     });
     let result = resourceTransactionResult(await save());
@@ -849,6 +859,13 @@ export function createAreaResourceMutationCoordinator({
     if (replay) {
       const replayUndo = undoReceipt?.operationId === request.operationId ? replay.undo : { state: "unavailable" };
       const decorated = await decorate(request.viewedFrom, result, replayUndo);
+      retainOperationReceipt(request.operationId, decorated);
+      return decorated;
+    }
+    if (result.idempotent === true) {
+      // A durable replay after a restart or receipt eviction committed nothing new,
+      // so the current Undo receipt of a later mutation must survive it.
+      const decorated = await decorate(request.viewedFrom, result, { state: "unavailable" });
       retainOperationReceipt(request.operationId, decorated);
       return decorated;
     }

@@ -49,7 +49,7 @@ function fixture({ scene = createEmptyScene(), status = "", resolve = async (res
     async saveMany(writes, options) {
       saves.push({ writes: structuredClone(writes), options });
       if (saveFailure) return structuredClone(saveFailure);
-      const digest = JSON.stringify({ writes, intent: options.intent ?? null });
+      const digest = JSON.stringify(options.intent ?? writes);
       const prior = receipts.get(options.operationId);
       if (prior) {
         if (prior.digest !== digest) return { status: 409, code: "operation-id-reused", error: "operation ID reused", operationId: options.operationId, committed: false };
@@ -241,6 +241,30 @@ test("Hide retains the exact root and bound label as deleted, then Restore reviv
   assert.deepEqual(authoredFields(restoredRoot), beforeRoot);
   assert.deepEqual(authoredFields(restoredLabel), beforeLabel);
   assert.equal(value.commits(), 2);
+});
+
+test("Place replays an exact stateless retry after its commit instead of refusing the operation ID", async () => {
+  const value = fixture();
+
+  const first = await value.coordinator.apply(request("place", "place-retry"));
+  assert.equal(first.status, 200);
+  assert.equal(first.idempotent, false);
+  assert.equal(value.commits(), 1);
+
+  // A CLI Brain retrying after a lost response re-reads the committed scene, so
+  // its write bytes differ from the first attempt while its intent is identical.
+  const retry = await value.coordinator.apply(request("place", "place-retry"));
+  assert.equal(retry.status, 200);
+  assert.equal(retry.idempotent, true);
+  assert.equal(retry.representation, "on-map");
+  assert.deepEqual(retry.sourceUpdates, first.sourceUpdates, "the retry returns the committed source receipt");
+  assert.equal(value.commits(), 1, "the retry commits nothing new");
+  assert.equal(value.saves.at(-1).writes[0].baseHash, first.sourceUpdates[0].hash, "the retry was planned from the committed scene");
+
+  const reused = await value.coordinator.apply(request("hide", "place-retry"));
+  assert.equal(reused.status, 409);
+  assert.equal(reused.code, "operation-id-reused");
+  assert.equal(value.commits(), 1);
 });
 
 test("a visible-plus-hidden duplicate representation refuses every source mutation", async () => {

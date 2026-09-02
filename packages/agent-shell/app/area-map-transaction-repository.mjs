@@ -470,14 +470,21 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     return withRead(() => recoveryRequired || recoveryPending ? repository.readCommitted(area) : repository.read(area));
   }
 
-  /** Saves every source shard of one world gesture as one exact Git commit. */
+  /**
+   * Saves every source shard of one world gesture as one exact Git commit.
+   *
+   * A raw gesture is identified by its exact write bytes. A caller that
+   * supplies `intent` declares the semantic operation instead, so a stateless
+   * retry (a CLI Brain re-reading the current hash after a lost response)
+   * replays the committed result rather than failing as a reused ID.
+   */
   async function saveMany(writes, { operationId, worldId = "default", area = writes[0]?.area ?? "", session = null, preflight = null, acknowledgement = null, intent = null } = {}) {
     if (!operationId) throw new Error("Area map gestures require an operation ID");
     const startedAt = Date.now();
     await ensureRecovered();
     if (recoveryRequired) return { status: 503, code: "recovery-required", retryable: false, error: "Area map recovery requires attention", recoveryRequired };
     const writeIntent = writes.map((write) => ({ area: write.area, baseHash: write.baseHash ?? null, canvas: write.canvas }));
-    const requestDigest = digest(intent === null ? writeIntent : { writes: writeIntent, intent });
+    const requestDigest = digest(intent === null ? writeIntent : intent);
     const directory = operationDirectory(worldId, operationId);
     const manifestFile = path.join(directory, "manifest.json");
     return withLock(async () => {

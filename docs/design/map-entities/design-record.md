@@ -1993,6 +1993,10 @@ This rule matches the immediate, retained-session Undo contract. Undo never trus
 
 The same `operationId` can repeat after a lost response. A different request with that ID returns `operation-id-reused`.
 
+The operation content is the mutation, its schema, and `viewedFrom`. Catalog and scene fences are preconditions, not content.
+
+A stateless retry, such as a CLI Brain, re-reads current fences. It still receives the committed effect.
+
 A committed replay rebuilds its projection and source updates from a current `withRead` snapshot.
 
 It returns the original committed effect with current authoritative bytes and revisions. It never replays stale response bytes from the durable manifest.

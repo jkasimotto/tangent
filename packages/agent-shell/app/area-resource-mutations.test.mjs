@@ -299,6 +299,44 @@ test("revision fences, inherited writes, stale evidence, and operation reuse fai
   assert.equal(rejected.code, "operation-id-reused");
 });
 
+test("a stateless retry with re-read catalog revisions replays the commit and a durable replay keeps a later Undo", async () => {
+  const transactions = transactionFixture();
+  const resources = coordinator(transactions);
+  const mutation = {
+    kind: "add", owner: "otto/tangent", input: { target: { kind: "worktree", path: "/tmp/retry-checkout" }, missingConfirmation: null }, label: "Retry checkout",
+  };
+  const first = await resources.apply(await request(transactions, mutation, "stateless-retry"));
+  assert.equal(first.resource.locator.id, FIRST_ID);
+  const committed = Buffer.from(transactions.files.get(areaResourceCatalogPath("otto/tangent")));
+
+  // `request` re-reads the post-commit revision, exactly like a CLI Brain
+  // repeating `tangent area resource add --operation-id` after a lost response.
+  const retry = await resources.apply(await request(transactions, structuredClone(mutation), "stateless-retry"));
+  assert.equal(retry.resource.locator.id, FIRST_ID);
+  assert.equal(retry.undo.token, first.undo.token, "the retained-process retry keeps the same Undo");
+  assert.deepEqual(transactions.files.get(areaResourceCatalogPath("otto/tangent")), committed, "the retry adds no second record");
+
+  const restarted = coordinator(transactions);
+  const edited = await restarted.apply(await request(transactions, {
+    kind: "edit", resource: { owner: "otto/tangent", id: FIRST_ID }, input: { target: { kind: "worktree", path: "/tmp/retry-checkout" }, missingConfirmation: null }, label: "Renamed checkout",
+  }, "later-edit"));
+  assert.equal(edited.undo.state, "available");
+
+  const durable = await restarted.apply(await request(transactions, structuredClone(mutation), "stateless-retry"));
+  assert.equal(durable.resource.locator.id, FIRST_ID);
+  assert.equal(durable.undo.state, "unavailable", "a replay after restart has no retained Undo");
+  assert.equal(fixtureCatalog(transactions).resources[0].label, "Renamed checkout", "the durable replay changes nothing");
+
+  const undone = await restarted.apply({
+    schema: "area-map-resource-mutation.v1",
+    operationId: "undo-later-edit",
+    viewedFrom: "otto/tangent",
+    mutation: { kind: "undo", token: edited.undo.token },
+  });
+  assert.equal(undone.effect, "undone", "the durable replay did not clear the later Edit's Undo receipt");
+  assert.equal(fixtureCatalog(transactions).resources[0].label, "Retry checkout");
+});
+
 test("mutation owners cannot escape the selected Area ancestry", async () => {
   const transactions = transactionFixture();
   const existenceChecks = [];

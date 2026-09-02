@@ -123,7 +123,8 @@ function resourcePlacementPreview(placement) {
     status: "Place with click or Enter",
     style: { opacity: 70, strokeStyle: "dashed" },
   }, placement.point, "tangent-resource-placement-preview");
-  return placed.scene.elements.map((element) => ({ ...element, locked: true, customData: { ...(element.customData ?? {}), tangentWorldEphemeral: true } }));
+  // The preview is never locked: pointer down commits placement before Excalidraw hit-tests, and the next projection removes it and restores selection.
+  return placed.scene.elements.map((element) => ({ ...element, customData: { ...(element.customData ?? {}), tangentWorldEphemeral: true } }));
 }
 
 /** Reads one representation value without treating an unavailable source read as Never placed. */

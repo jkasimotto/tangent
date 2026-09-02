@@ -37,7 +37,7 @@ test("resource metadata is a compatible inert Block and source ownership scopes 
   const [resource] = core.createBlockElements({ id: "resource", kind: "resource", ref: "0198e8c5-2be6-7d6a-a142-f0903a13a23b", title: "Cached words" });
   resource.customData.tangentWorld = { owner: "otto/tangent", sourceId: "resource" };
   assert.deepEqual(core.tangentOf(resource), { kind: "resource", ref: "0198e8c5-2be6-7d6a-a142-f0903a13a23b" });
-  assert.deepEqual(core.factForBlock(resource, documents), { kind: "resource", title: "Map resource", status: "unresolved", ghost: true, ref: "0198e8c5-2be6-7d6a-a142-f0903a13a23b" });
+  assert.deepEqual(core.factForBlock(resource, documents), { kind: "resource", title: "Map resource", status: "unresolved", ghost: true, success: false, ref: "0198e8c5-2be6-7d6a-a142-f0903a13a23b" });
   assert.equal(core.areaForBlock(resource, documents), "otto/tangent");
   assert.equal(core.splitReference(resource.customData.tangent.ref).file, resource.customData.tangent.ref, "generic reference splitting is never resource resolution authority");
 
@@ -64,6 +64,28 @@ test("resource duplicate facts use owner plus ID and ephemeral success rails nev
   const fingerprint = core.authoredFingerprint(scene.elements);
   const rail = { id: "rail", type: "rectangle", x: 1, y: 2, width: 3, height: 4, customData: { tangentWorldEphemeral: true } };
   assert.equal(core.authoredFingerprint([...scene.elements, rail]), fingerprint);
+});
+
+test("resource facts use the shared Block words and an ephemeral success rail", () => {
+  const scene = core.createEmptyScene();
+  const elements = core.createBlockElements({ id: "review", kind: "resource", ref: "review-id", title: "Cached", x: 40, y: 60 });
+  elements.forEach((element) => { element.customData = { ...(element.customData ?? {}), tangentWorld: { owner: "otto/tangent", sourceId: element.id } }; });
+  scene.elements.push(...elements);
+  const refreshed = core.refreshTangentFacts(scene, [], {
+    /** Supplies the typed entity presentation without making bound text authority. */
+    resourceFact: () => ({ kind: "GitHub PR", title: "Map resources", status: "otto/tangent#42 · Merged", success: true }),
+  });
+  const label = refreshed.scene.elements.find((element) => element.type === "text");
+  const rail = refreshed.scene.elements.find((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-success-rail");
+  assert.equal(label.text, "GITHUB PR  ✓\nMap resources\notto/tangent#42 · Merged");
+  assert.deepEqual({ x: rail.x, y: rail.y, width: rail.width, height: rail.height }, { x: 40, y: 60, width: 7, height: 132 });
+  assert.equal(rail.locked, true);
+  assert.equal(rail.customData.tangentWorld.owner, "otto/tangent");
+  assert.equal(
+    core.authoredFingerprint(refreshed.scene.elements),
+    core.authoredFingerprint(refreshed.scene.elements.filter((element) => element !== rail)),
+    "the system-owned rail is excluded from authored authority",
+  );
 });
 
 test("fact refresh changes words but preserves geometry, style, and z-order", () => {

@@ -4,6 +4,7 @@ import { createAreaMapWorldHistory } from "./area-map-world-history.js";
 import { rebaseAreaMapOwners } from "./area-map-world-conflict.js";
 import { createAreaMapWorldDraftStore } from "./area-map-world-draft-store.js";
 import { areaInRestriction } from "./area-map-find-core.js";
+import { resolveMapEntity, resourceLocatorKey } from "./area-map-entities.js";
 
 const VIEW_SCHEMA = "area-map-view.v2";
 const DRAFT_SCHEMA = "area-map-draft.v1";
@@ -194,6 +195,7 @@ export function createAreaMapWorldController({
   let destroyed = false;
   let revision = 0;
   let factsRevision = 0;
+  let resourceResolutions = new Map();
   let authorityGeneration = 0;
   let viewTimer = null;
   let pendingView = null;
@@ -253,7 +255,21 @@ export function createAreaMapWorldController({
 
   /** Builds a disposable render mask. Source and composed elements stay unchanged. */
   function project() {
-    const scene = boardCore.refreshTangentFacts(clone(composition.scene), getDocuments()).scene;
+    /** Converts one resolved resource into the normal Tangent Block fact cache. */
+    const resourceFact = (element, tangent) => {
+      const owner = element.customData?.tangentWorld?.owner;
+      const key = resourceLocatorKey({ owner, id: tangent.ref });
+      const entity = key ? resolveMapEntity({ element, resource: resourceResolutions.get(key) ?? null }) : null;
+      if (!entity) return null;
+      return {
+        kind: entity.display.kindLabel,
+        title: entity.display.label,
+        status: [entity.display.targetClue, ...entity.display.stateText].filter(Boolean).join(" · "),
+        ghost: entity.sourceState !== "current",
+        success: entity.display.externalTreatment === "success",
+      };
+    };
+    const scene = boardCore.refreshTangentFacts(clone(composition.scene), getDocuments(), { resourceFact }).scene;
     const visibleFolds = effectiveFolds();
     const hidden = new Set();
     const hiddenBlocks = new Set();
@@ -286,10 +302,16 @@ export function createAreaMapWorldController({
         hidden.add(element.id);
         if (boardCore.tangentOf(element)) hiddenBlocks.add(element.id);
       }
-      if (!revealedByFind && boardCore.tangentOf(element) && !boardCore.blockMatchesFocus(element, getDocuments(), focus, locatedArea)) {
+      if (!revealedByFind && boardCore.tangentOf(element) && !boardCore.blockMatchesFocus(element, getDocuments(), focus, locatedArea, resourceFact)) {
         hidden.add(element.id); hiddenBlocks.add(element.id);
         for (const binding of element.boundElements ?? []) if (binding.type === "text") hidden.add(binding.id);
       }
+    }
+    for (const element of scene.elements) {
+      const sourceId = element.customData?.tangentWorldEphemeral?.kind === "resource-success-rail"
+        ? element.customData.tangentWorldEphemeral.sourceId
+        : null;
+      if (sourceId && hidden.has(sourceId)) hidden.add(element.id);
     }
     for (const element of scene.elements) {
       if (element.type !== "arrow") continue;
@@ -818,6 +840,22 @@ export function createAreaMapWorldController({
     return reconcileTree();
   }
 
+  /** Installs current resource read facts without changing world or Map history authority. */
+  function setResourceResolutions(values = [], { replace = false } = {}) {
+    if (!Array.isArray(values)) return false;
+    const next = replace ? new Map() : new Map(resourceResolutions);
+    for (const resolution of values) {
+      const locator = resolution?.value?.locator ?? resolution?.locator;
+      const key = resourceLocatorKey(locator);
+      if (key) next.set(key, clone(resolution));
+    }
+    if (same([...next], [...resourceResolutions])) return false;
+    resourceResolutions = next;
+    factsRevision += 1;
+    notify("resource-facts");
+    return true;
+  }
+
   /** Retries an ordered failed save. */
   async function retry() {
     if (!failedSave && !recoveryQueue.length) return worldHistory.flush();
@@ -980,7 +1018,7 @@ export function createAreaMapWorldController({
       return changed;
     },
     selectArea, setSelection, setFindReveal, fitArea, navigateArea, setRestriction, toggleRestriction, escape, toggleFold, setFocus, setCamera, captureView, restoreView,
-    materialize, prioritizeLoads, refreshFacts,
+    materialize, prioritizeLoads, refreshFacts, setResourceResolutions,
     /** Drains durable work, but never waits for a user Retry decision after a failed save. */
     async flush() {
       while (worldHistory.state.scheduled || worldHistory.state.active || worldHistory.state.queue.length) {

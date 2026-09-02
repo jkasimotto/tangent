@@ -140,6 +140,50 @@ test("view masks and camera history never replace complete world authority", () 
   controller.destroy();
 });
 
+test("resource fact projection updates shared Block words and treatment without Map authority", () => {
+  const world = fixtureWorld();
+  const owner = "neara/delivery";
+  const id = "11111111-1111-4111-8111-111111111111";
+  world.areas.find((node) => node.key === owner).shard.scene.elements.push(
+    ...core.createBlockElements({ id: "review-block", kind: "resource", ref: id, title: "Cached", x: 210, y: 190 }),
+  );
+  const controller = createAreaMapWorldController({ world, storage: memoryStorage() });
+  const authoritative = controller.world();
+  const before = controller.snapshot().scene.elements.find((element) => core.tangentOf(element)?.kind === "resource");
+  const beforeGeometry = { x: before.x, y: before.y, width: before.width, height: before.height };
+  const resolution = {
+    state: "current",
+    value: {
+      locator: { owner, id },
+      label: "Map entities review",
+      target: { kind: "link", url: "https://github.com/otto/tangent/pull/42" },
+      local: null,
+      link: {
+        kind: "github-pr", owner: "otto", repository: "tangent", number: 42,
+        lifecycle: { state: "current", value: { stateLabel: "Merged", treatment: "success", providerUpdatedAt: "2026-09-02T00:00:00.000Z" } },
+      },
+      representation: { state: "current", value: "on-map" },
+      origin: null,
+      warnings: [],
+    },
+  };
+  assert.equal(controller.setResourceResolutions([resolution]), true);
+  const snapshot = controller.snapshot();
+  const block = snapshot.scene.elements.find((element) => core.tangentOf(element)?.kind === "resource");
+  const labelId = block.boundElements.find((entry) => entry.type === "text").id;
+  const label = snapshot.scene.elements.find((element) => element.id === labelId);
+  const rail = snapshot.scene.elements.find((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-success-rail");
+  assert.match(label.text, /^GITHUB PR  ✓\nMap entities review\notto\/tangent#42 · Merged$/);
+  assert.equal(rail.customData.tangentWorldEphemeral.sourceId, block.id);
+  assert.deepEqual({ x: block.x, y: block.y, width: block.width, height: block.height }, beforeGeometry);
+  assert.deepEqual(controller.world(), authoritative, "fact projection leaves every source shard exact");
+  assert.equal(snapshot.save.state, "saved");
+  assert.equal(controller.undo(), false, "fact projection creates no Map history entry");
+  assert.equal(controller.snapshot().composition.scene.elements.some((element) => element.customData?.tangentWorldEphemeral), false, "the composed world never owns the rail");
+  assert.equal(controller.setResourceResolutions([resolution]), false, "an identical fact response is a no-op");
+  controller.destroy();
+});
+
 test("Only deletes unrelated regions and owner content from the render projection", () => {
   const world = fixtureWorld();
   const delivery = world.areas.find((node) => node.key === "neara/delivery");

@@ -114,12 +114,12 @@ function areaForBlock(element, documents = [], sourceOwner = null) {
 }
 
 /** True when a block stays visible under the shared Work Focus switches. */
-function blockMatchesFocus(element, documents, focus = {}, locatedArea = "") {
+function blockMatchesFocus(element, documents, focus = {}, locatedArea = "", resourceFact = null) {
   const area = areaForBlock(element, documents);
   if (!area) return true;
   const onLocatedPath = area === locatedArea || String(locatedArea).startsWith(`${area}/`);
   const starred = !focus.only || !(focus.areas ?? []).length || focus.areas.some((root) => area === root || area.startsWith(`${root}/`));
-  const fact = factForBlock(element, documents);
+  const fact = factForBlock(element, documents, resourceFact);
   const active = !focus.activeOnly || Boolean(fact?.live);
   return onLocatedPath || starred && active;
 }
@@ -138,7 +138,7 @@ function wrapLabelLine(line, separator = " ", columns = LABEL_COLUMNS) {
 
 /** Formats the visible, replaceable fact cache inside a Tangent block. */
 function blockLabel(fact) {
-  const badge = `${String(fact.kind || "document").toUpperCase()}${fact.live ? "  ●" : ""}`;
+  const badge = `${String(fact.kind || "document").toUpperCase()}${fact.live ? "  ●" : ""}${fact.success ? "  ✓" : ""}`;
   return [badge, wrapLabelLine(fact.title || "Untitled"), wrapLabelLine(fact.status || "", " · ")].filter(Boolean).join("\n");
 }
 /** Formats the compact one-line label bound to an Area region. */
@@ -172,11 +172,24 @@ function createAreaBoundary(area, bounds = {}) {
 }
 
 /** Resolves one Tangent block without treating its cached text as authority. */
-function factForBlock(element, documents = []) {
+function factForBlock(element, documents = [], resourceFact = null) {
   const tangent = tangentOf(element);
   if (!tangent) return null;
   if (tangent.role === "boundary") return null;
-  if (tangent.kind === "resource") return { kind: "resource", title: "Map resource", status: "unresolved", ghost: true, ref: tangent.ref };
+  if (tangent.kind === "resource") {
+    const supplied = typeof resourceFact === "function" ? resourceFact(element, tangent) : null;
+    if (supplied && typeof supplied === "object") {
+      return {
+        kind: String(supplied.kind || "resource"),
+        title: String(supplied.title || "Map resource"),
+        status: String(supplied.status || ""),
+        ghost: supplied.ghost === true,
+        success: supplied.success === true,
+        ref: tangent.ref,
+      };
+    }
+    return { kind: "resource", title: "Map resource", status: "unresolved", ghost: true, success: false, ref: tangent.ref };
+  }
   if (tangent.kind === "link") {
     let host = tangent.ref;
     try { host = new URL(tangent.ref).host; } catch {}
@@ -196,8 +209,10 @@ function factForBlock(element, documents = []) {
 }
 
 /** Refreshes only fact-cache words and ghost styling, never authored geometry. */
-function refreshTangentFacts(scene, documents = []) {
+function refreshTangentFacts(scene, documents = [], options = {}) {
   const next = structuredClone(scene);
+  const resourceFact = typeof options === "function" ? options : options?.resourceFact;
+  next.elements = (next.elements ?? []).filter((element) => element.customData?.tangentWorldEphemeral?.kind !== "resource-success-rail");
   const byId = new Map(next.elements.map((element) => [element.id, element]));
   const referenceCounts = new Map();
   for (const element of next.elements) {
@@ -210,7 +225,7 @@ function refreshTangentFacts(scene, documents = []) {
   }
   let changed = false;
   for (const block of next.elements) {
-    let fact = factForBlock(block, documents);
+    let fact = factForBlock(block, documents, resourceFact);
     if (!fact) continue;
     const tangentOwner = block.customData.tangent.kind === "resource" ? block.customData?.tangentWorld?.owner ?? "" : "";
     const tangentKey = `${tangentOwner}\u0000${block.customData.tangent.kind}:${block.customData.tangent.ref}`;
@@ -243,6 +258,22 @@ function refreshTangentFacts(scene, documents = []) {
     if (blockChanged) {
       block.version = Number(block.version || 0) + 1;
       block.versionNonce = seedFor(`${block.id}:facts:${block.version}:${fact.ghost}`);
+      changed = true;
+    }
+    if (!block.isDeleted && tangent.kind === "resource" && fact.success) {
+      const owner = block.customData?.tangentWorld?.owner;
+      next.elements.push(createShapeElement({
+        id: `${block.id}-tangent-resource-success-rail`,
+        x: block.x,
+        y: block.y,
+        width: 7,
+        height: block.height,
+        style: { backgroundColor: "#2f9e44", strokeColor: "#2f9e44", roughness: 0, strokeWidth: 1, locked: true },
+        customData: {
+          tangentWorldEphemeral: { kind: "resource-success-rail", sourceId: block.id },
+          ...(owner ? { tangentWorld: { owner, sourceId: `${block.customData?.tangentWorld?.sourceId ?? block.id}-success-rail` } } : {}),
+        },
+      }));
       changed = true;
     }
   }

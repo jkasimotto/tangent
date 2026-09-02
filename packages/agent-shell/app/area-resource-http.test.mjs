@@ -10,6 +10,8 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { areaCanvasPath, canvasHash, parseAreaCanvas, serializeAreaCanvas } from "./area-canvas.mjs";
+import { createBlockElements, createEmptyScene, tangentOf } from "./public/area-board-core.js";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
@@ -62,7 +64,7 @@ async function stopServer(server) {
 }
 
 /** Creates a complete temporary Git vault with one child Area. */
-async function createFixture() {
+async function createFixture({ scene = null } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-resource-http-"));
   const trees = path.join(root, "trees");
   for (const area of ["otto", "otto/tangent"]) {
@@ -71,12 +73,64 @@ async function createFixture() {
     await mkdir(directory, { recursive: true });
     await writeFile(path.join(directory, `${leaf}.md`), `---\ntype: area\nstatus: active\n---\n# ${leaf}\n## Purpose\nFixture Area.\n## Resources\n\n`, "utf8");
   }
+  if (scene) {
+    const source = path.join(trees, areaCanvasPath("otto/tangent"));
+    await writeFile(source, serializeAreaCanvas(scene), "utf8");
+  }
   await execFileAsync("git", ["-C", trees, "init", "--quiet"]);
   await execFileAsync("git", ["-C", trees, "config", "user.email", "resource-test@tangent.local"]);
   await execFileAsync("git", ["-C", trees, "config", "user.name", "Resource Test"]);
   await execFileAsync("git", ["-C", trees, "add", "."]);
   await execFileAsync("git", ["-C", trees, "commit", "--quiet", "-m", "add: resource fixture"]);
   return { root, trees };
+}
+
+/** Returns one source scene with a generic Link Block and bound shared label. */
+function genericLinkScene() {
+  const scene = createEmptyScene();
+  scene.elements.push(...createBlockElements({
+    id: "generic-review-link",
+    kind: "link",
+    ref: "HTTPS://Example.COM/review/17",
+    title: "Generic review label",
+    x: 90,
+    y: 130,
+    style: { strokeColor: "#c92a2a" },
+  }));
+  return scene;
+}
+
+/** Reads and validates the exact Area source scene in the temporary vault. */
+async function readFixtureScene(fixture) {
+  const file = path.join(fixture.trees, areaCanvasPath("otto/tangent"));
+  const serialized = await readFile(file, "utf8");
+  const parsed = parseAreaCanvas(serialized);
+  assert.equal(parsed.ok, true, parsed.errors?.join("; "));
+  return { file, serialized, hash: canvasHash(serialized), scene: parsed.scene };
+}
+
+/** Writes and commits one later authored source edit inside only the temporary vault. */
+async function commitFixtureScene(fixture, scene, message) {
+  const file = path.join(fixture.trees, areaCanvasPath("otto/tangent"));
+  const serialized = serializeAreaCanvas(scene);
+  await writeFile(file, serialized, "utf8");
+  await execFileAsync("git", ["-C", fixture.trees, "add", "--", areaCanvasPath("otto/tangent")]);
+  await execFileAsync("git", ["-C", fixture.trees, "commit", "--quiet", "-m", message]);
+  return { serialized, hash: canvasHash(serialized) };
+}
+
+/** Returns the temporary vault's exact current Git revision. */
+async function fixtureHead(fixture) {
+  const { stdout } = await execFileAsync("git", ["-C", fixture.trees, "rev-parse", "HEAD"]);
+  return stdout.trim();
+}
+
+/** Proves one operation produced exactly one commit containing every expected target. */
+async function assertOneCommit(fixture, before, after, files) {
+  const { stdout: count } = await execFileAsync("git", ["-C", fixture.trees, "rev-list", "--count", `${before}..${after}`]);
+  assert.equal(Number(count.trim()), 1);
+  const { stdout: changed } = await execFileAsync("git", ["-C", fixture.trees, "diff-tree", "--no-commit-id", "--name-only", "-r", after]);
+  assert.deepEqual(changed.trim().split("\n").filter(Boolean).sort(), [...files].sort());
 }
 
 /** Starts the unmodified production server against only the temporary fixture roots. */
@@ -149,6 +203,19 @@ function mutation(operationId, projection, mutationValue) {
     viewedFrom: "otto/tangent",
     mutation: mutationValue,
     expectedCatalogs: expectation(projection, owner),
+  };
+}
+
+/** Builds one revision- and scene-fenced source-coupled mutation body. */
+function sourceMutation(operationId, projection, mutationValue, sourceHash) {
+  const owner = mutationValue.owner ?? mutationValue.oldResource?.owner;
+  return {
+    schema: "area-map-resource-mutation.v1",
+    operationId,
+    viewedFrom: "otto/tangent",
+    mutation: mutationValue,
+    expectedCatalogs: expectation(projection, owner),
+    expectedScenes: [{ owner, hash: sourceHash }],
   };
 }
 
@@ -250,5 +317,131 @@ test("production routes commit catalog membership, shared Map representations, t
   assert.match(log, /add: otto\/tangent Map resource/);
   assert.match(log, /update: otto\/tangent undo Map resource/);
   assert.match(log, /place Map resource/);
+  assert.doesNotMatch(server.output.join(""), /4321/, "the isolated proof never reports the live port");
+});
+
+test("production apply atomically associates a generic Link, replays, semantically undoes, and adds back its tombstone", async (context) => {
+  const fixture = await createFixture({ scene: genericLinkScene() });
+  let server = null;
+  context.after(async () => {
+    await stopServer(server);
+    await rm(fixture.root, { recursive: true, force: true });
+  });
+  server = await startServer(fixture);
+
+  const initialPanel = await request(server, "/api/areas/map-resources?area=otto%2Ftangent");
+  assert.equal(initialPanel.status, 200, JSON.stringify(initialPanel.value));
+  const initialSource = await readFixtureScene(fixture);
+  const beforeAssociation = await fixtureHead(fixture);
+  const associationBody = sourceMutation("http-associate-link-1", initialPanel.value, {
+    kind: "associate-generic-link",
+    owner: "otto/tangent",
+    sourceElementId: "generic-review-link",
+    labelForNewRecord: "Review 17",
+  }, initialSource.hash);
+  const associated = await request(server, "/api/areas/map-resources/apply", associationBody);
+  assert.equal(associated.status, 200, JSON.stringify(associated.value));
+  assert.equal(associated.value.effect, "associate-generic-link");
+  assert.equal(associated.value.undo.state, "available");
+  const associatedLocator = associated.value.resource.locator;
+  const afterAssociation = await fixtureHead(fixture);
+  await assertOneCommit(fixture, beforeAssociation, afterAssociation, [
+    "otto/tangent/map-resources.json",
+    "otto/tangent/tangent.excalidraw",
+  ]);
+
+  const associatedSource = await readFixtureScene(fixture);
+  assert.equal(associated.value.sourceUpdates.length, 1);
+  assert.equal(associated.value.sourceUpdates[0].serializedSource, associatedSource.serialized);
+  assert.equal(associated.value.sourceUpdates[0].hash, associatedSource.hash);
+  assert.equal(canvasHash(associated.value.sourceUpdates[0].serializedSource), associated.value.sourceUpdates[0].hash);
+  assert.ok(associated.value.sourceUpdates[0].treeRevision);
+  assert.ok(associated.value.sourceUpdates[0].worldRevision);
+  const associatedWorld = await request(server, "/api/areas/map-world?located=otto%2Ftangent");
+  assert.equal(associatedWorld.status, 200, JSON.stringify(associatedWorld.value));
+  assert.equal(associated.value.sourceUpdates[0].treeRevision, associatedWorld.value.treeRevision);
+  assert.equal(associated.value.sourceUpdates[0].worldRevision, associatedWorld.value.worldRevision);
+  const associatedRoot = associatedSource.scene.elements.find((element) => element.id === "generic-review-link");
+  assert.deepEqual(tangentOf(associatedRoot), { kind: "resource", ref: associatedLocator.id });
+  const associatedCatalog = JSON.parse(await readFile(path.join(fixture.trees, "otto", "tangent", "map-resources.json"), "utf8"));
+  assert.equal(associatedCatalog.resources[0].id, associatedLocator.id);
+  assert.equal(associatedCatalog.resources[0].label, "Review 17");
+  assert.deepEqual(associatedCatalog.resources[0].target, { kind: "link", url: "HTTPS://example.com/review/17" });
+
+  const replayed = await request(server, "/api/areas/map-resources/apply", associationBody);
+  assert.equal(replayed.status, 200, JSON.stringify(replayed.value));
+  assert.equal(replayed.value.idempotent, true);
+  assert.deepEqual(replayed.value.resource.locator, associatedLocator);
+  assert.equal(replayed.value.undo.token, associated.value.undo.token);
+  assert.equal(replayed.value.sourceUpdates[0].serializedSource, associatedSource.serialized);
+  assert.equal(await fixtureHead(fixture), afterAssociation, "a committed replay adds no Git commit");
+
+  const laterScene = structuredClone(associatedSource.scene);
+  const laterRoot = laterScene.elements.find((element) => element.id === "generic-review-link");
+  laterRoot.x = 713;
+  laterRoot.strokeColor = "#1971c2";
+  laterRoot.customData.laterAuthoredFact = { retained: true };
+  await commitFixtureScene(fixture, laterScene, "update: later resource layout");
+  const beforeUndo = await fixtureHead(fixture);
+  const undone = await request(server, "/api/areas/map-resources/apply", {
+    schema: "area-map-resource-mutation.v1",
+    operationId: "http-undo-association-1",
+    viewedFrom: "otto/tangent",
+    mutation: { kind: "undo", token: associated.value.undo.token },
+  });
+  assert.equal(undone.status, 200, JSON.stringify(undone.value));
+  const afterUndo = await fixtureHead(fixture);
+  await assertOneCommit(fixture, beforeUndo, afterUndo, [
+    "otto/tangent/map-resources.json",
+    "otto/tangent/tangent.excalidraw",
+  ]);
+  const undoneSource = await readFixtureScene(fixture);
+  assert.equal(undone.value.sourceUpdates[0].serializedSource, undoneSource.serialized);
+  assert.equal(undone.value.sourceUpdates[0].hash, undoneSource.hash);
+  assert.ok(undone.value.sourceUpdates[0].treeRevision);
+  assert.ok(undone.value.sourceUpdates[0].worldRevision);
+  const undoneRoot = undoneSource.scene.elements.find((element) => element.id === "generic-review-link");
+  assert.deepEqual(tangentOf(undoneRoot), { kind: "link", ref: "HTTPS://Example.COM/review/17" });
+  assert.equal(undoneRoot.x, 713);
+  assert.equal(undoneRoot.strokeColor, "#1971c2");
+  assert.deepEqual(undoneRoot.customData.laterAuthoredFact, { retained: true });
+  const tombstonedCatalog = JSON.parse(await readFile(path.join(fixture.trees, "otto", "tangent", "map-resources.json"), "utf8"));
+  assert.equal(tombstonedCatalog.resources[0].id, associatedLocator.id);
+  assert.equal(tombstonedCatalog.resources[0].membership.state, "removed");
+
+  const goneScene = structuredClone(undoneSource.scene);
+  const goneRoot = goneScene.elements.find((element) => element.id === "generic-review-link");
+  goneRoot.customData = { ...goneRoot.customData, tangent: { kind: "resource", ref: associatedLocator.id } };
+  const goneSource = await commitFixtureScene(fixture, goneScene, "update: retain gone resource Block");
+  const gonePanel = await request(server, "/api/areas/map-resources?area=otto%2Ftangent");
+  assert.equal(gonePanel.status, 200, JSON.stringify(gonePanel.value));
+  assert.equal(gonePanel.value.rows.find((row) => row.entity.locator.id === associatedLocator.id).entity.reason, "removed");
+  const beforeAddBack = await fixtureHead(fixture);
+  const addedBack = await request(server, "/api/areas/map-resources/apply", sourceMutation("http-add-back-1", gonePanel.value, {
+    kind: "add-back-gone",
+    oldResource: associatedLocator,
+    source: { kind: "tombstone" },
+  }, goneSource.hash));
+  assert.equal(addedBack.status, 200, JSON.stringify(addedBack.value));
+  assert.equal(addedBack.value.effect, "add-back-gone");
+  assert.notEqual(addedBack.value.resource.locator.id, associatedLocator.id);
+  assert.equal(addedBack.value.resource.label, "Review 17");
+  const afterAddBack = await fixtureHead(fixture);
+  await assertOneCommit(fixture, beforeAddBack, afterAddBack, [
+    "otto/tangent/map-resources.json",
+    "otto/tangent/tangent.excalidraw",
+  ]);
+  const addedBackSource = await readFixtureScene(fixture);
+  assert.equal(addedBack.value.sourceUpdates[0].serializedSource, addedBackSource.serialized);
+  assert.equal(addedBack.value.sourceUpdates[0].hash, addedBackSource.hash);
+  assert.ok(addedBack.value.sourceUpdates[0].treeRevision);
+  assert.ok(addedBack.value.sourceUpdates[0].worldRevision);
+  assert.deepEqual(tangentOf(addedBackSource.scene.elements.find((element) => element.id === "generic-review-link")), {
+    kind: "resource",
+    ref: addedBack.value.resource.locator.id,
+  });
+  const addedBackCatalog = JSON.parse(await readFile(path.join(fixture.trees, "otto", "tangent", "map-resources.json"), "utf8"));
+  assert.equal(addedBackCatalog.resources.find((record) => record.id === associatedLocator.id).membership.state, "removed");
+  assert.equal(addedBackCatalog.resources.find((record) => record.id === addedBack.value.resource.locator.id).membership.state, "active");
   assert.doesNotMatch(server.output.join(""), /4321/, "the isolated proof never reports the live port");
 });

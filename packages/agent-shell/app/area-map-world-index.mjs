@@ -5,6 +5,7 @@ import { areaCanvasPath, canvasHash, parseAreaCanvas, serializeAreaCanvas, valid
 import { areaForBlock, isAreaBoundary, isAreaRegion, tangentOf } from "./public/area-board-core.js";
 import { isSafeResourceId } from "./public/area-map-entities.js";
 import { AREA_MAP_LAYOUT, nearestFreeRectangle, rectanglesOverlap, regionId, regionKey, shardHulls } from "./public/area-map-world-core.js";
+import { validateAreaResourceSceneTransition } from "./area-map-resource-invariant.mjs";
 
 const CONTENT_MARGIN = AREA_MAP_LAYOUT.spacing;
 const SLOT_WIDTH = 460;
@@ -459,7 +460,7 @@ function sourceElementError(element, owners, owner) {
 }
 
 /** Builds complete structural world snapshots over the per-Area shard repository. */
-export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = null, recordEvent = null }) {
+export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = null, recordEvent = null, resolveResource = null }) {
   const summaryCache = new Map();
   const baselineCache = new Map();
   const fallbackCache = new Map();
@@ -657,6 +658,8 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
       if (overlapError) return { status: 422, error: overlapError };
       const validation = validateAreaCanvas(scene);
       if (!validation.ok) return { status: 422, error: validation.errors.join("; ") };
+      const resourceError = await validateAreaResourceSceneTransition({ owner, currentScene: current.scene, nextScene: scene, resolveResource });
+      if (resourceError) return resourceError;
       writes.push({ owner, area: owner, baseHash: mutation.baseHash ?? null, canvas: scene, reason: String(request.reason ?? "map gesture").slice(0, 120) });
     }
     if (typeof saveGesture !== "function") return { status: 503, error: "map transaction writer is unavailable" };
@@ -668,20 +671,27 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
         preflight: async () => {
           const current = await readState();
           const expectedWorldRevision = requestedWorldRevision ?? state.world.worldRevision;
-          if (current?.world.worldId === state.world.worldId
+          if (!(current?.world.worldId === state.world.worldId
             && current.world.treeRevision === state.world.treeRevision
             && current.world.worldRevision === state.world.worldRevision
-            && current.world.worldRevision === expectedWorldRevision) return null;
-          return {
-            status: 409,
-            conflict: true,
-            code: "world-race",
-            retryable: false,
-            error: "map world changed while the gesture was preparing",
-            worldId: current?.world.worldId ?? state.world.worldId,
-            treeRevision: current?.world.treeRevision ?? state.world.treeRevision,
-            worldRevision: current?.world.worldRevision ?? state.world.worldRevision,
-          };
+            && current.world.worldRevision === expectedWorldRevision)) {
+            return {
+              status: 409,
+              conflict: true,
+              code: "world-race",
+              retryable: false,
+              error: "map world changed while the gesture was preparing",
+              worldId: current?.world.worldId ?? state.world.worldId,
+              treeRevision: current?.world.treeRevision ?? state.world.treeRevision,
+              worldRevision: current?.world.worldRevision ?? state.world.worldRevision,
+            };
+          }
+          for (const write of writes) {
+            const source = current.reads.get(write.owner);
+            const resourceError = await validateAreaResourceSceneTransition({ owner: write.owner, currentScene: source.scene, nextScene: write.canvas, resolveResource });
+            if (resourceError) return resourceError;
+          }
+          return null;
         },
         /** Persists the exact projected revision before the commit can become recoverable. */
         acknowledgement,

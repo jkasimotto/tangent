@@ -122,6 +122,7 @@ import { createAreaMapWorldViewStore } from "./area-map-world-view-store.mjs";
 import { createAreaResourceCatalogAuthority } from "./area-resource-authority.mjs";
 import { readAreaShowMapResources } from "./area-resource-catalog.mjs";
 import { discoverAreaResources } from "./area-resource-discovery.mjs";
+import { createAreaResourceMutationGuardReader } from "./area-resource-mutation-guards.mjs";
 import { createAreaResourceMutationCoordinator } from "./area-resource-mutations.mjs";
 import { createAreaResourceObservations } from "./area-resource-observations.mjs";
 import { createAreaResourceProjection } from "./area-resource-projection.mjs";
@@ -347,12 +348,19 @@ const areaResourceProjection = createAreaResourceProjection({
   transactions: areaMapTransactions,
   observations: areaResourceObservations,
   /** Keeps Area-note read failures distinct from an intentionally empty section. */
-  readNote: (area) => readFile(path.join(TREES_ROOT, areaNoteFile(area)), "utf8"),
+  readNote: (area) => readFile(path.join(TREES_ROOT, areaNoteFile(area))),
   ownerExists: mapAreaExists,
 });
 let areaResourceService;
 /** Reports inherited done/archive state for one resource-owning Area. */
 async function resourceAreaReadOnly(area) { return Boolean(await hiddenAreaStatus(area)); }
+const areaResourceMutationGuards = createAreaResourceMutationGuardReader({
+  transactions: areaMapTransactions,
+  /** Reads exact catalog authority for note-evidence decisions. */
+  readCatalog: (owner) => areaResourceCatalogAuthority.read(owner),
+  /** Keeps explicit discovery selectable while exact note evidence comes from guarded bytes. */
+  discoverySuggestions: async (area) => areaResourceService?.discoveryStore.get(area)?.suggestions ?? [],
+});
 const areaResourceMutations = createAreaResourceMutationCoordinator({
   transactions: areaMapTransactions,
   /** Returns the same scoped panel projection that the Brain and browser read. */
@@ -361,6 +369,12 @@ const areaResourceMutations = createAreaResourceMutationCoordinator({
   evidenceReader: (area, options) => areaResourceService.evidence({ area, ...options }),
   areaExists: mapAreaExists,
   areaReadOnly: resourceAreaReadOnly,
+  guardReader: areaResourceMutationGuards,
+  /** Attaches the current complete world revision to source-authority responses. */
+  sourceRevisionReader: async (owner) => {
+    const world = await areaMapWorldIndex.snapshot(owner);
+    return { treeRevision: world.treeRevision, worldRevision: world.worldRevision };
+  },
   /** Invalidates only locators whose catalog-backed observation may have changed. */
   onCommitted: async ({ request, result }) => {
     const locators = [
@@ -389,24 +403,24 @@ const areaResourceRoutes = createAreaResourceRoutes({ operations: areaResourceSe
 
 /** Reads the additive active-only Area-show resource list without failing legacy fields. */
 async function areaShowMapResources(area) {
-  return readAreaShowMapResources(TREES_ROOT, area, {
-    /** Converts exact catalog failures into the Area-show discriminated read union. */
-    readCatalog: async (owner) => {
-      try { return await areaResourceCatalogAuthority.read(owner); }
-      catch (error) {
-        return {
-          state: "unavailable",
-          owner,
-          error: {
+  return areaMapTransactions.withRead(() => readAreaShowMapResources(TREES_ROOT, area, {
+      /** Converts exact catalog failures into the Area-show discriminated read union. */
+      readCatalog: async (owner) => {
+        try { return await areaResourceCatalogAuthority.read(owner); }
+        catch (error) {
+          return {
+            state: "unavailable",
             owner,
-            code: error?.code ?? "catalog-load-failed",
-            message: error?.message ?? `Map resources for ${owner} could not be loaded.`,
-            retryable: error?.retryable === true,
-          },
-        };
-      }
-    },
-  });
+            error: {
+              owner,
+              code: error?.code ?? "catalog-load-failed",
+              message: error?.message ?? `Map resources for ${owner} could not be loaded.`,
+              retryable: error?.retryable === true,
+            },
+          };
+        }
+      },
+    }));
 }
 // One JSON record per Goal for a solo (non-pipeline) session's context
 // continuations: the same mechanism pipeline steps keep inline on the step

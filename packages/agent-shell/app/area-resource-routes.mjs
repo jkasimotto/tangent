@@ -1,16 +1,11 @@
+import { publicAreaResourceFailure } from "./area-resource-recovery.mjs";
 import { readJson, sendJson } from "./http-json.mjs";
 
 const DEFAULT_ROUTE_DEADLINE_MS = 18_000;
 
 /** Returns a bounded public error response for one thrown resource operation. */
 function operationError(error) {
-  return {
-    status: Number(error?.status ?? 500),
-    code: String(error?.code ?? "resource-operation-failed"),
-    error: String(error?.publicMessage ?? error?.message ?? "The Map resource operation failed."),
-    retryable: error?.retryable === true,
-    ...(error?.recovery ? { recovery: error.recovery } : {}),
-  };
+  return publicAreaResourceFailure(error);
 }
 
 /** Runs one slow resource operation against the route-owned abort deadline. */
@@ -30,7 +25,10 @@ async function withDeadline(operation, milliseconds) {
 /** Serves the private Area-resource read, observation, discovery, mutation, and representation APIs. */
 export function createAreaResourceRoutes({ operations, deadlineMs = DEFAULT_ROUTE_DEADLINE_MS }) {
   /** Sends one operation result while preserving its typed status and recovery payload. */
-  function reply(response, result) { sendJson(response, Number(result?.status ?? 200), result); }
+  function reply(response, result) {
+    const status = Number(result?.status ?? 200);
+    sendJson(response, status, status >= 400 ? publicAreaResourceFailure(result) : result);
+  }
 
   /** Runs one injected operation with consistent typed error handling. */
   async function run(response, name, input, { deadline = false } = {}) {

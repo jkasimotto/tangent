@@ -148,6 +148,30 @@ function coordinator(transactions, fields = {}) {
   });
 }
 
+/** Returns one complete current or partial panel for typed mutation recovery. */
+function recoveryPanel(problems = []) {
+  const partial = problems.length > 0;
+  return {
+    state: partial ? "partial" : "current",
+    rows: [],
+    catalogs: [{ owner: "otto/tangent", revision: null }],
+    legacyReview: [],
+    suggestions: [],
+    counts: partial
+      ? { state: "lower-bound", confirmedAssociationsAtLeast: 0, suggestionsAtLeast: 0, legacyReviewAtLeast: 0 }
+      : { state: "current", confirmedAssociations: 0, suggestions: 0, legacyReview: 0 },
+    ...(partial ? { problems } : {}),
+  };
+}
+
+/** Captures one expected rejected mutation for detailed recovery assertions. */
+async function rejected(operation) {
+  let failure = null;
+  try { await operation; } catch (error) { failure = error; }
+  assert.ok(failure, "the mutation must reject");
+  return failure;
+}
+
 test("target inspection normalizes exact paths and requires no Git or provider integration", async () => {
   /** Reports one directory-shaped fixture target. */
   const statPath = async () => ({
@@ -630,4 +654,182 @@ test("head races retry once while exact catalog target races never retry", async
   }, "target-no-replan"));
   assert.equal(conflict.code, "catalog-revision-changed");
   assert.equal(targetAttempts, 1);
+});
+
+test("coordinator synthesizes every accepted current recovery arm", async (t) => {
+  const panel = recoveryPanel();
+  /** Supplies a new immutable panel snapshot for each failed mutation. */
+  const projectionReader = async () => structuredClone(panel);
+
+  await t.test("duplicate and missing targets", async () => {
+    const duplicateTransactions = transactionFixture();
+    await coordinator(duplicateTransactions).apply(await request(duplicateTransactions, {
+      kind: "add", owner: "otto/tangent", input: { target: { kind: "worktree", path: "/tmp/duplicate" }, missingConfirmation: null }, label: null,
+    }, "recovery-add"));
+    const duplicate = await rejected(coordinator(duplicateTransactions, { projectionReader }).apply(await request(duplicateTransactions, {
+      kind: "add", owner: "otto/tangent", input: { target: { kind: "worktree", path: "/tmp/duplicate" }, missingConfirmation: null }, label: null,
+    }, "recovery-duplicate")));
+    assert.deepEqual(duplicate.recovery, {
+      code: "duplicate-resource-target",
+      existing: { owner: "otto/tangent", id: FIRST_ID },
+      projection: panel,
+    });
+
+    const missingTransactions = transactionFixture();
+    const target = { kind: "worktree", path: "/tmp/missing" };
+    const targetFingerprint = areaResourceTargetFingerprint(target);
+    const missing = await rejected(coordinator(missingTransactions, {
+      projectionReader,
+      /** Returns the exact missing-path fact the form must confirm. */
+      inspectTarget: async () => ({ kind: "local", normalized: target, targetFingerprint, state: "missing" }),
+    }).apply(await request(missingTransactions, {
+      kind: "add", owner: "otto/tangent", input: { target, missingConfirmation: null }, label: null,
+    }, "recovery-missing")));
+    assert.deepEqual(missing.recovery, {
+      code: "missing-target-confirmation-required",
+      inspection: { kind: "local", normalized: target, targetFingerprint, state: "missing" },
+      projection: panel,
+    });
+  });
+
+  await t.test("catalog and suggestion changes", async () => {
+    const catalogTransactions = transactionFixture();
+    const stale = await request(catalogTransactions, {
+      kind: "add", owner: "otto/tangent", input: { target: { kind: "link", url: "https://example.test/catalog" } }, label: null,
+    }, "recovery-catalog");
+    stale.expectedCatalogs[0].revision = "stale";
+    const catalog = await rejected(coordinator(catalogTransactions, { projectionReader }).apply(stale));
+    assert.deepEqual(catalog.recovery, { code: "catalog-revision-changed", projection: panel });
+
+    const suggestionTransactions = transactionFixture();
+    const suggestion = {
+      owner: "otto/tangent",
+      target: { kind: "link", url: "https://example.test/suggestion" },
+      evidence: { kind: "knowledge-line" },
+      evidenceHash: "reviewed-evidence",
+      targetFingerprint: areaResourceTargetFingerprint({ kind: "link", url: "https://example.test/suggestion" }),
+    };
+    /** Reports that the reviewed suggestion is no longer current. */
+    const changedEvidence = async () => ({ suggestions: [], legacyReview: [] });
+    const changed = await rejected(coordinator(suggestionTransactions, {
+      projectionReader,
+      evidenceReader: changedEvidence,
+    }).apply(await request(suggestionTransactions, {
+      kind: "add-suggestion",
+      selection: { suggestion, input: { target: suggestion.target } },
+      labelForNewRecord: null,
+    }, "recovery-suggestion")));
+    assert.deepEqual(changed.recovery, { code: "suggestion-changed", projection: panel });
+  });
+
+  await t.test("ambiguous legacy Branch choices", async () => {
+    /** Creates one current legacy candidate with the shared ambiguous Branch. */
+    const candidate = (field, kind, targetPath) => ({
+      state: "candidate",
+      owner: "otto/tangent",
+      target: { kind, path: targetPath },
+      evidence: { kind: "legacy-area-binding", field },
+      evidenceHash: `legacy-${kind}`,
+      targetFingerprint: areaResourceTargetFingerprint({ kind, path: targetPath }),
+      declaredBranch: "topic/recovery",
+      proposedLabel: kind,
+    });
+    const repository = candidate("Repository", "repository", "/tmp/recovery-repository");
+    const worktree = candidate("Worktree", "worktree", "/tmp/recovery-worktree");
+    const transactions = transactionFixture();
+    /** Rederives both current candidates before enforcing the Branch choice. */
+    const branchEvidence = async () => ({ suggestions: [], legacyReview: [repository, worktree] });
+    const branch = await rejected(coordinator(transactions, {
+      projectionReader,
+      evidenceReader: branchEvidence,
+    }).apply(await request(transactions, {
+      kind: "import-legacy",
+      selections: [
+        { candidate: repository, attachDeclaredBranch: false },
+        { candidate: worktree, attachDeclaredBranch: false },
+      ],
+    }, "recovery-branch")));
+    assert.deepEqual(branch.recovery, {
+      code: "legacy-branch-choice-required",
+      choices: [
+        { owner: "otto/tangent", field: "Repository", targetFingerprint: repository.targetFingerprint, label: "repository" },
+        { owner: "otto/tangent", field: "Worktree", targetFingerprint: worktree.targetFingerprint, label: "worktree" },
+      ],
+      projection: panel,
+    });
+  });
+
+  await t.test("representation conflict with current source hashes", async () => {
+    const owner = "otto/tangent";
+    const sourceFile = areaCanvasPath(owner);
+    const transactions = transactionFixture({ [sourceFile]: serializeAreaCanvas(sceneWithBlock()) });
+    const operation = await sceneRequest(transactions, {
+      kind: "associate-generic-link", owner, sourceElementId: "source-link", labelForNewRecord: null,
+    }, "recovery-representation");
+    const currentHash = operation.expectedScenes[0].hash;
+    operation.expectedScenes[0].hash = "stale-scene";
+    const conflict = await rejected(coordinator(transactions, { projectionReader }).apply(operation));
+    assert.deepEqual(conflict.recovery, {
+      code: "resource-representation-conflict",
+      currentScenes: [{ owner, hash: currentHash }],
+      projection: panel,
+    });
+  });
+
+  await t.test("source load and invalid problems", async () => {
+    const owner = "otto/tangent";
+    const sourceFile = areaCanvasPath(owner);
+    for (const [code, retryable] of [["resource-source-load-failed", true], ["resource-source-invalid", false]]) {
+      const problem = { source: "source-scene", owner, code, message: `Fixture ${code}.`, retryable };
+      const sourcePanel = recoveryPanel([{ kind: "projection", error: problem }]);
+      const transactions = transactionFixture({ ...(code === "resource-source-invalid" ? { [sourceFile]: "not a scene" } : {}) });
+      if (code === "resource-source-load-failed") {
+        const readExact = transactions.readExact.bind(transactions);
+        /** Fails only the source-scene read with a bounded source code. */
+        transactions.readExact = async (file) => {
+          if (file === sourceFile) throw Object.assign(new Error("private filesystem detail"), { code, status: 503, retryable: true });
+          return readExact(file);
+        };
+      }
+      /** Returns the partial panel carrying the matching source-owned problem. */
+      const sourceProjection = async () => structuredClone(sourcePanel);
+      const failure = await rejected(coordinator(transactions, {
+        projectionReader: sourceProjection,
+      }).apply({
+        schema: "area-map-resource-mutation.v1",
+        operationId: `recovery-source-${retryable}`,
+        viewedFrom: owner,
+        mutation: { kind: "associate-generic-link", owner, sourceElementId: "source-link", labelForNewRecord: null },
+        expectedCatalogs: [{ owner, revision: null }],
+        expectedScenes: [{ owner, hash: null }],
+      }));
+      assert.deepEqual(failure.recovery, { code, problem, projection: sourcePanel });
+    }
+  });
+
+  await t.test("Undo unavailable and stale", async () => {
+    const unavailableTransactions = transactionFixture();
+    const unavailable = await rejected(coordinator(unavailableTransactions, { projectionReader }).apply({
+      schema: "area-map-resource-mutation.v1",
+      operationId: "recovery-undo-unavailable",
+      viewedFrom: "otto/tangent",
+      mutation: { kind: "undo", token: "missing-token" },
+    }));
+    assert.deepEqual(unavailable.recovery, { code: "undo-unavailable", projection: panel });
+
+    const staleTransactions = transactionFixture();
+    const resources = coordinator(staleTransactions, { projectionReader });
+    const added = await resources.apply(await request(staleTransactions, {
+      kind: "add", owner: "otto/tangent", input: { target: { kind: "link", url: "https://example.test/undo" } }, label: null,
+    }, "recovery-undo-add"));
+    const catalogFile = areaResourceCatalogPath("otto/tangent");
+    staleTransactions.files.set(catalogFile, Buffer.concat([staleTransactions.files.get(catalogFile), Buffer.from(" ")]));
+    const stale = await rejected(resources.apply({
+      schema: "area-map-resource-mutation.v1",
+      operationId: "recovery-undo-stale",
+      viewedFrom: "otto/tangent",
+      mutation: { kind: "undo", token: added.undo.token },
+    }));
+    assert.deepEqual(stale.recovery, { code: "undo-stale", projection: panel });
+  });
 });

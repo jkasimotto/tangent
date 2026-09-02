@@ -92,3 +92,37 @@ test("rejects a read-only evidence guard that changes after prepare with a stabl
   assert.equal(result.code, "guard-race");
   await assert.rejects(readFile(path.join(root, "otto", "tangent", "map-resources.json")), { code: "ENOENT" });
 });
+
+test("preserves only a validated typed recovery bag across an exact transaction failure", async () => {
+  const value = await fixture("typed-recovery");
+  const panel = {
+    state: "current",
+    rows: [],
+    catalogs: [{ owner: "otto/tangent", revision: null }],
+    legacyReview: [],
+    suggestions: [],
+    counts: { state: "current", confirmedAssociations: 0, suggestions: 0, legacyReview: 0 },
+  };
+  const result = await value.transactions.saveExact(async () => {
+    throw Object.assign(new Error("typed catalog conflict"), {
+      status: 409,
+      code: "duplicate-resource-target",
+      retryable: false,
+      existing: { owner: "otto/tangent", id: "resource-1", target: "/private" },
+      projection: { ...panel, credentials: "private" },
+      providerBody: "private",
+      target: { kind: "worktree", path: "/private" },
+    });
+  }, { operationId: "typed-recovery", worldId: "resources", area: "otto/tangent", intent: { kind: "add" } });
+
+  assert.equal(result.status, 409);
+  assert.equal(result.operationId, "typed-recovery");
+  assert.deepEqual(result.recovery, {
+    code: "duplicate-resource-target",
+    existing: { owner: "otto/tangent", id: "resource-1" },
+    projection: panel,
+  });
+  assert.equal(result.providerBody, undefined);
+  assert.equal(result.target, undefined);
+  assert.equal(JSON.stringify(result.recovery).includes("private"), false);
+});

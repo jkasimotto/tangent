@@ -4,6 +4,18 @@ import test from "node:test";
 
 import { createAreaResourceRoutes } from "./area-resource-routes.mjs";
 
+/** Returns one minimal complete resource panel recovery fixture. */
+function projection() {
+  return {
+    state: "current",
+    rows: [],
+    catalogs: [{ owner: "otto/tangent", revision: "revision-1" }],
+    legacyReview: [],
+    suggestions: [],
+    counts: { state: "current", confirmedAssociations: 0, suggestions: 0, legacyReview: 0 },
+  };
+}
+
 /** Creates a small Node response recorder. */
 function response() {
   return {
@@ -73,4 +85,80 @@ test("returns stable malformed, unavailable, and timeout errors", async () => {
   await routes.handle(request({ resources: [] }), timedOut, new URL("http://local/api/areas/map-resources/refresh"));
   assert.equal(timedOut.status, 503);
   assert.equal(JSON.parse(timedOut.body).code, "resource-timeout");
+});
+
+test("serializes returned and thrown failures through the same closed recovery boundary", async () => {
+  const routes = createAreaResourceRoutes({
+    operations: {
+      /** Returns the exact-transaction failure shape used by mutation operations. */
+      async apply() {
+        return {
+          status: 409,
+          code: "duplicate-resource-target",
+          error: "provider body: credential=secret",
+          retryable: false,
+          operationId: "returned-operation",
+          changedPaths: ["private/catalog/path"],
+          providerBody: "private",
+          credentials: "secret",
+          recovery: {
+            code: "duplicate-resource-target",
+            existing: { owner: "otto/tangent", id: "resource-1", target: "/private" },
+            projection: { ...projection(), providerBody: "private" },
+            target: { kind: "worktree", path: "/private" },
+          },
+        };
+      },
+      /** Throws a future typed Branch recovery failure. */
+      async representation() {
+        throw Object.assign(new Error("credential=secret"), {
+          status: 409,
+          code: "legacy-branch-choice-required",
+          operationId: "thrown-operation",
+          recovery: {
+            code: "legacy-branch-choice-required",
+            choices: [{ owner: "otto/tangent", field: "Worktree", targetFingerprint: "choice-1", label: "topic", target: "/private" }],
+            projection: projection(),
+            credentials: "secret",
+          },
+        });
+      },
+    },
+  });
+
+  const returned = response();
+  await routes.handle(request({}), returned, new URL("http://local/api/areas/map-resources/apply"));
+  assert.equal(returned.status, 409);
+  assert.deepEqual(JSON.parse(returned.body), {
+    status: 409,
+    code: "duplicate-resource-target",
+    error: "The target is already an active Map resource.",
+    retryable: false,
+    operationId: "returned-operation",
+    recovery: {
+      code: "duplicate-resource-target",
+      existing: { owner: "otto/tangent", id: "resource-1" },
+      projection: projection(),
+    },
+  });
+
+  const thrown = response();
+  await routes.handle(request({}), thrown, new URL("http://local/api/areas/map-resources/representation"));
+  assert.equal(thrown.status, 409);
+  assert.deepEqual(JSON.parse(thrown.body), {
+    status: 409,
+    code: "legacy-branch-choice-required",
+    error: "Choose the resource that owns the legacy Branch.",
+    retryable: false,
+    operationId: "thrown-operation",
+    recovery: {
+      code: "legacy-branch-choice-required",
+      choices: [{ owner: "otto/tangent", field: "Worktree", targetFingerprint: "choice-1", label: "topic" }],
+      projection: projection(),
+    },
+  });
+  assert.equal(returned.body.includes("private"), false);
+  assert.equal(returned.body.includes("credential"), false);
+  assert.equal(thrown.body.includes("private"), false);
+  assert.equal(thrown.body.includes("credential"), false);
 });

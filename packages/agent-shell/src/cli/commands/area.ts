@@ -9,7 +9,7 @@ import { areaCommandSpec } from "../spec.js";
 /** Dispatches `tangent area` subcommands. */
 export async function runAreaCli(argv = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv, {
-    boolean: ["json", "all", "allow-missing", "clear-label", ...(argv[0] === "propose" ? [] : ["withdraw"])],
+    boolean: ["json", "all", "allow-missing", "clear-label", "confirm-last-known", ...(argv[0] === "propose" ? [] : ["withdraw"])],
     repeatable: ["candidate"],
   });
   const subcommand = args._[0];
@@ -196,6 +196,18 @@ type MapResourceProjection = {
   problems?: Array<{ kind?: string; error?: { message?: string }; message?: string }>;
   error?: { message?: string };
 };
+type MapSourceElement = {
+  id?: string;
+  isDeleted?: boolean;
+  containerId?: string | null;
+  customData?: { tangent?: { kind?: string; ref?: string } };
+};
+type MapSourceShard = {
+  owner?: string;
+  state?: string;
+  hash?: string | null;
+  scene?: { elements?: MapSourceElement[] };
+};
 
 const RESOURCE_OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const RESOURCE_KINDS = new Set(["worktree", "repository", "link"]);
@@ -207,10 +219,12 @@ async function resourceCommand(args: Args): Promise<void> {
   if (command === "list") return resourceListCommand(args);
   if (command === "show") return resourceShowCommand(args);
   if (command === "add") return resourceAddCommand(args);
+  if (command === "associate") return resourceAssociateCommand(args);
   if (command === "import") return resourceImportCommand(args);
   if (command === "discover") return resourceDiscoverCommand(args);
   if (command === "dismiss") return resourceDismissCommand(args);
   if (["place", "hide", "restore"].includes(command)) return resourceRepresentationCommand(args, command as "place" | "hide" | "restore");
+  if (command === "add-back") return resourceAddBackCommand(args);
   if (command === "edit") return resourceEditCommand(args);
   if (command === "remove") return resourceRemoveCommand(args);
   if (command === "check" || command === "refresh") return resourceRefreshCommand(args);
@@ -385,6 +399,56 @@ async function applyResourceMutation(server: URL, area: string, projection: MapR
   });
 }
 
+/** Reads the selected Area's exact raw-source hash and an eager source scene. */
+async function readMapSource(server: URL, area: string): Promise<MapSourceShard> {
+  const world = await vaultFetch(server, `/api/areas/map-world?located=${encodeURIComponent(area)}`);
+  const node = Array.isArray(world.areas) ? world.areas.find((item: any) => item?.key === area) : null;
+  let shard = node?.shard as MapSourceShard | undefined;
+  if (shard && !shard.scene && typeof world.worldRevision === "string") {
+    shard = await vaultFetch(server, `/api/areas/map-shard?area=${encodeURIComponent(area)}&located=${encodeURIComponent(area)}&worldRevision=${encodeURIComponent(world.worldRevision)}`) as MapSourceShard;
+  }
+  if (!shard || shard.owner !== area) throw new Error(`the Map world has no source shard for ${area}`);
+  if (shard.state === "unreadable") throw new Error(`the Map source for ${area} is unreadable`);
+  if (typeof shard.hash !== "string" || !shard.hash) throw new Error(`the Map source for ${area} has no exact saved hash`);
+  if (!shard.scene || !Array.isArray(shard.scene.elements)) throw new Error(`the Map source for ${area} is not loaded`);
+  return shard;
+}
+
+/** Resolves one visible generic Link root by exact ID or unambiguous ID prefix. */
+function findGenericLinkElement(shard: MapSourceShard, rawSelector: string): MapSourceElement {
+  const selector = rawSelector.trim();
+  if (!selector) throw new Error("a generic Link source element ID is required");
+  const matches = (shard.scene?.elements ?? []).filter((element) => {
+    const tangent = element.customData?.tangent;
+    return !element.isDeleted && !element.containerId && tangent?.kind === "link"
+      && (element.id === selector || element.id?.startsWith(selector));
+  });
+  if (!matches.length) throw new Error(`no visible generic Link Block matches ${JSON.stringify(rawSelector)} in this Area source`);
+  if (matches.length > 1) throw new Error(`${JSON.stringify(rawSelector)} matches ${matches.length} generic Link Blocks; use the full source element ID: ${matches.map((element) => element.id).join(", ")}`);
+  return matches[0]!;
+}
+
+/** Posts one catalog-plus-scene mutation with both exact authority fences. */
+async function applySourceResourceMutation(
+  server: URL,
+  area: string,
+  projection: MapResourceProjection,
+  args: Args,
+  mutation: Record<string, unknown>,
+  sourceOwner: string,
+  sourceHash: string,
+): Promise<Record<string, any>> {
+  const operationId = resourceOperationId(args);
+  return postJson(server, "/api/areas/map-resources/apply", {
+    schema: "area-map-resource-mutation.v1",
+    operationId,
+    viewedFrom: area,
+    mutation,
+    expectedCatalogs: expectedCatalogs(projection, [sourceOwner]),
+    expectedScenes: [{ owner: sourceOwner, hash: sourceHash }],
+  });
+}
+
 /** Returns one supported target kind or a command-specific error. */
 function requestedResourceKind(args: Args, fallback = ""): "worktree" | "repository" | "link" {
   const kind = String(stringArg(args.kind) ?? fallback).trim().toLowerCase();
@@ -466,6 +530,26 @@ async function resourceAddCommand(args: Args): Promise<void> {
   const result = await applyResourceMutation(server, area, projection, args, mutation, [area]);
   if (booleanArg(args.json)) return printJson(result);
   printResourceMutationResult(result, suggestion ? "added Suggestion to" : "added resource to", area);
+}
+
+/** Associates one existing generic Link Block in place through the scene-coupled mutation contract. */
+async function resourceAssociateCommand(args: Args): Promise<void> {
+  const { server, area } = await resourceArea(args, "associate");
+  const projection = writableResourceProjection(await readResourceProjection(server, area));
+  const selector = requiredString(args._[3], "tangent area resource associate requires <area> <source-element-id>.");
+  const source = await readMapSource(server, area);
+  const element = findGenericLinkElement(source, selector);
+  const sourceElementId = requiredString(element.id, "the selected generic Link Block has no source element ID");
+  const suppliedLabel = stringArg(args.label);
+  const labelForNewRecord = suppliedLabel === undefined ? null : suppliedLabel.trim();
+  const result = await applySourceResourceMutation(server, area, projection, args, {
+    kind: "associate-generic-link",
+    owner: area,
+    sourceElementId,
+    labelForNewRecord,
+  }, area, source.hash!);
+  if (booleanArg(args.json)) return printJson(result);
+  printResourceMutationResult(result, "associated generic Link as a resource in", area);
 }
 
 /** Resolves one legacy review candidate by evidence/target fingerprint or unique prefix. */
@@ -560,6 +644,44 @@ async function resourceRepresentationCommand(args: Args, kind: "place" | "hide" 
   });
   if (booleanArg(args.json)) return printJson(result);
   printResourceMutationResult(result, kind === "place" ? "placed resource on Map for" : kind === "hide" ? "hid resource Block in" : "restored resource Block in", resource.owner);
+}
+
+/** Adds one visible gone Block back under a fresh association identity. */
+async function resourceAddBackCommand(args: Args): Promise<void> {
+  const { server, area } = await resourceArea(args, "add-back");
+  const projection = writableResourceProjection(await readResourceProjection(server, area));
+  const selector = requiredString(args._[3], "tangent area resource add-back requires <area> <resource-id>.");
+  const row = findResourceRow(projection, selector);
+  const resource = row.entity?.locator;
+  if (!resource) throw new Error("the selected gone Map Block has no resource locator");
+  if (row.relation?.kind !== "direct" || resource.owner !== area) throw new Error(`cannot add back inherited resource ${resource.id}; change it in ${resource.owner}`);
+  const reason = row.entity?.reason;
+  if (!reason) throw new Error(`resource ${resource.id} is still current; Add back applies only to a visible gone Block`);
+  let source: Record<string, unknown>;
+  if (reason === "removed") source = { kind: "tombstone" };
+  else if (reason === "missing-record") {
+    if (!booleanArg(args["confirm-last-known"])) {
+      throw new Error(`resource ${resource.id} has no tombstone. Review its exact Last-known label and target, then repeat with --confirm-last-known.`);
+    }
+    const target = resourceTarget(row.entity);
+    const label = row.entity?.lastKnown?.label;
+    if (!target || target.kind === "local-path" || typeof label !== "string") throw new Error(`resource ${resource.id} has no complete Last-known label and target to confirm`);
+    const request: Record<string, string> = "path" in target
+      ? { kind: target.kind, path: target.path }
+      : { kind: target.kind, url: target.url };
+    const input = await inspectResourceTarget(server, request, true);
+    source = { kind: "confirmed-last-known", input, label };
+  } else if (reason === "missing-owner") {
+    throw new Error(`resource ${resource.id} has no owning Area. Add its target to another Area, then place a new Block.`);
+  } else throw new Error(`resource ${resource.id} cannot be added back from unsupported gone reason ${JSON.stringify(reason)}`);
+  const mapSource = await readMapSource(server, resource.owner);
+  const result = await applySourceResourceMutation(server, area, projection, args, {
+    kind: "add-back-gone",
+    oldResource: resource,
+    source,
+  }, resource.owner, mapSource.hash!);
+  if (booleanArg(args.json)) return printJson(result);
+  printResourceMutationResult(result, "added gone Block back to", area);
 }
 
 /** Edits one direct association while preserving its stable locator. */

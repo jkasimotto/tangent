@@ -22,6 +22,7 @@ import {
   safeAreaResourceOwner,
   serializeAreaResourceCatalog,
 } from "./area-resource-catalog.mjs";
+import { sanitizeAreaResourceRecovery } from "./area-resource-recovery.mjs";
 import { tangentOf } from "./public/area-board-core.js";
 import { isSafeResourceId } from "./public/area-map-entities.js";
 
@@ -29,6 +30,18 @@ const MUTATION_SCHEMA = "area-map-resource-mutation.v1";
 const OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const CATALOG_ONLY_KINDS = new Set(["add", "add-suggestion", "edit", "remove", "import-legacy", "dismiss-suggestion"]);
 const SCENE_COUPLED_KINDS = new Set(["associate-generic-link", "add-back-gone"]);
+const RECOVERY_CODES = new Set([
+  "duplicate-resource-target",
+  "catalog-revision-changed",
+  "suggestion-changed",
+  "missing-target-confirmation-required",
+  "legacy-branch-choice-required",
+  "resource-representation-conflict",
+  "resource-source-load-failed",
+  "resource-source-invalid",
+  "undo-unavailable",
+  "undo-stale",
+]);
 
 /** A stable HTTP-safe resource mutation failure. */
 export class AreaResourceMutationError extends Error {
@@ -515,12 +528,98 @@ export function createAreaResourceMutationCoordinator({
     };
   }
 
+  /** Returns the selectable local candidates for one ambiguous legacy Branch. */
+  function branchRecoveryChoices(request) {
+    return (request?.mutation?.selections ?? []).flatMap((selection) => {
+      const candidate = selection?.candidate;
+      const field = candidate?.evidence?.kind === "legacy-area-binding" ? candidate.evidence.field : null;
+      const label = typeof candidate?.proposedLabel === "string" ? candidate.proposedLabel
+        : typeof candidate?.target?.path === "string" ? candidate.target.path : null;
+      return candidate?.declaredBranch && ["Repository", "Worktree"].includes(field)
+        && typeof candidate.targetFingerprint === "string" && label !== null
+        ? [{ owner: candidate.owner, field, targetFingerprint: candidate.targetFingerprint, label }]
+        : [];
+    });
+  }
+
+  /** Reads current exact source hashes for a representation recovery. */
+  async function currentScenes(owners) {
+    const scenes = [];
+    for (const owner of [...new Set(owners)].filter(safeAreaResourceOwner)) {
+      const file = areaCanvasPath(owner);
+      if (!file) return null;
+      try {
+        const exact = await transactions.readExact(file);
+        scenes.push({ owner, hash: exact.hash ?? (exact.content === null ? null : canvasHash(exact.content)) });
+      } catch { return null; }
+    }
+    return scenes;
+  }
+
+  /** Finds a matching source-owned problem in one current panel. */
+  function projectedSourceProblem(panel, code) {
+    return (panel?.problems ?? []).find((item) => item?.kind === "projection" && item.error?.code === code)?.error ?? null;
+  }
+
+  /** Adds one current, closed recovery union arm without copying opaque error fields. */
+  async function withRecovery(value, request, { sceneOwners = [] } = {}) {
+    const code = value?.code;
+    if (!RECOVERY_CODES.has(code) || !safeAreaResourceOwner(request?.viewedFrom)) return value;
+    const retained = sanitizeAreaResourceRecovery({ code, recovery: value?.recovery });
+    if (retained) {
+      if (value instanceof Error) { value.recovery = retained; return value; }
+      return { ...value, recovery: retained };
+    }
+    let panel;
+    try { panel = await projection(request.viewedFrom); }
+    catch { return value; }
+    const seed = value?.recovery?.code === code ? value.recovery : value;
+    const candidate = { code, projection: panel };
+    if (code === "duplicate-resource-target") candidate.existing = seed.existing;
+    else if (code === "missing-target-confirmation-required") {
+      candidate.inspection = seed.inspection ?? {
+        kind: "local",
+        state: "missing",
+        normalized: seed.normalized,
+        targetFingerprint: seed.targetFingerprint,
+      };
+    } else if (code === "legacy-branch-choice-required") candidate.choices = seed.choices ?? branchRecoveryChoices(request);
+    else if (code === "resource-representation-conflict") {
+      candidate.currentScenes = seed.currentScenes;
+      if (!candidate.currentScenes && seed.owner && Object.hasOwn(seed, "currentHash")) candidate.currentScenes = [{ owner: seed.owner, hash: seed.currentHash }];
+      if (!candidate.currentScenes) {
+        const requested = [...(request.expectedScenes ?? []).map((item) => item?.owner), ...sceneOwners];
+        candidate.currentScenes = await currentScenes(requested);
+      }
+    } else if (["resource-source-load-failed", "resource-source-invalid"].includes(code)) {
+      const owner = seed.problem?.owner ?? seed.owner ?? sceneOwners[0] ?? request.viewedFrom;
+      const source = seed.problem?.source ?? seed.source ?? (sceneOwners.length || request.expectedScenes?.length ? "source-scene" : "area-note");
+      candidate.problem = seed.problem ?? projectedSourceProblem(panel, code) ?? {
+        source,
+        owner,
+        code,
+        message: code === "resource-source-load-failed" ? "The required Map resource source could not be loaded." : "The required Map resource source is invalid.",
+        retryable: code === "resource-source-load-failed",
+      };
+    }
+    const recovery = sanitizeAreaResourceRecovery(candidate);
+    if (!recovery) return value;
+    if (value instanceof Error) { value.recovery = recovery; return value; }
+    return { ...value, recovery };
+  }
+
+  /** Decorates a plan failure before the exact transaction serializes it. */
+  async function planWithRecovery(buildPlan, request, options) {
+    try { return await buildPlan(); }
+    catch (error) { throw await withRecovery(error, request, options); }
+  }
+
   /** Applies the one retained process-local inverse under the same exact transaction lock. */
   async function applyUndo(request) {
     const receipt = undoReceipt;
     if (!receipt || request.mutation?.token !== receipt.token) fail(409, "undo-unavailable", "That Map resource Undo is no longer available.");
     /** Builds and submits one plan; safe head/guard conflicts can invoke it once more. */
-    const save = () => transactions.saveExact(async () => {
+    const save = () => transactions.saveExact(() => planWithRecovery(async () => {
       const currentCatalogs = new Map();
       for (const inverse of receipt.catalogs) {
         const current = await readCatalog(transactions, inverse.owner);
@@ -561,7 +660,7 @@ export function createAreaResourceMutationCoordinator({
           ...(receipt.semantic ? { sourceOwners: [receipt.semantic.owner] } : { sourceUpdates: [] }),
         },
       };
-    }, {
+    }, request, { sceneOwners: receipt.semantic ? [receipt.semantic.owner] : [] }), {
       operationId: request.operationId,
       worldId: "area-resources",
       area: request.viewedFrom,
@@ -582,7 +681,7 @@ export function createAreaResourceMutationCoordinator({
   }
 
   /** Applies one closed catalog mutation and returns current projection evidence. */
-  async function apply(request) {
+  async function applyCurrent(request) {
     if (!request || request.schema !== MUTATION_SCHEMA || !OPERATION_ID.test(String(request.operationId ?? "")) || !safeAreaResourceOwner(request.viewedFrom)) {
       fail(400, "invalid-resource-request", "A valid resource mutation schema, operation ID, and viewed Area are required.");
     }
@@ -605,7 +704,7 @@ export function createAreaResourceMutationCoordinator({
     let inverse = null;
     const guardKinds = new Map();
     /** Builds and submits one plan; safe head/guard conflicts can invoke it once more. */
-    const save = () => transactions.saveExact(async () => {
+    const save = () => transactions.saveExact(() => planWithRecovery(async () => {
       inverse = null;
       guardKinds.clear();
       for (const owner of uniqueOwners) if (await areaReadOnly(owner)) {
@@ -677,7 +776,7 @@ export function createAreaResourceMutationCoordinator({
           sourceUpdates: [],
         },
       };
-    }, {
+    }, request, { sceneOwners: sceneCoupled ? uniqueOwners : [] }), {
       operationId: request.operationId,
       worldId: "area-resources",
       area: request.viewedFrom,
@@ -716,6 +815,20 @@ export function createAreaResourceMutationCoordinator({
     operationReceipts.set(request.operationId, decorated);
     await onCommitted({ kind: request.mutation.kind, request, result: decorated });
     return decorated;
+  }
+
+  /** Applies one mutation and equips every recoverable failure with current facts. */
+  async function apply(request) {
+    try {
+      const result = await applyCurrent(request);
+      return Number(result?.status ?? 200) >= 400 ? withRecovery(result, request, {
+        sceneOwners: request?.mutation?.kind === "undo" && undoReceipt?.semantic ? [undoReceipt.semantic.owner] : [],
+      }) : result;
+    } catch (error) {
+      throw await withRecovery(error, request, {
+        sceneOwners: request?.mutation?.kind === "undo" && undoReceipt?.semantic ? [undoReceipt.semantic.owner] : [],
+      });
+    }
   }
 
   /** Clears the one immediate Undo receipt after an Area move or external authority change. */

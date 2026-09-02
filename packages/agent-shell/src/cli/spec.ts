@@ -7,7 +7,7 @@ const resourceOperationOption = { name: "operation-id", takesValue: true, descri
 const areaResourceCommandSpec: CliCommandSpec = {
   name: "resource",
   description: "List and manage one Area's first-class Map resources and Blocks",
-  args: "<list|show|add|import|discover|dismiss|place|hide|restore|edit|remove|check|refresh|undo>",
+  args: "<list|show|add|associate|import|discover|dismiss|place|hide|restore|add-back|edit|remove|check|refresh|undo>",
   subcommands: [
     { name: "list", description: "List direct, inherited, removed, legacy-review, and suggested Map resources without running discovery or checks", args: "<area>", options: [serverOption, jsonOption] },
     { name: "show", description: "Show one Map resource, resolved from a full ID or unambiguous ID prefix", args: "<area> <resource-id>", options: [serverOption, jsonOption] },
@@ -22,6 +22,15 @@ const areaResourceCommandSpec: CliCommandSpec = {
         { name: "label", takesValue: true, description: "Optional authored label" },
         { name: "suggestion", takesValue: true, description: "Suggestion ID or unambiguous prefix to confirm" },
         { name: "allow-missing", description: "Confirm the inspected missing local path" },
+        resourceOperationOption, serverOption, jsonOption,
+      ],
+    },
+    {
+      name: "associate",
+      description: "Associate one existing generic Link Block in place as a direct Area resource",
+      args: "<area> <source-element-id>",
+      options: [
+        { name: "label", takesValue: true, description: "Optional authored label for a newly created association" },
         resourceOperationOption, serverOption, jsonOption,
       ],
     },
@@ -41,6 +50,15 @@ const areaResourceCommandSpec: CliCommandSpec = {
     { name: "place", description: "Place a never-placed resource through the shared Map Block and world-layout pipeline", args: "<area> <resource-id>", options: [resourceOperationOption, serverOption, jsonOption] },
     { name: "hide", description: "Hide an on-Map resource Block while retaining its reusable Map record", args: "<area> <resource-id>", options: [resourceOperationOption, serverOption, jsonOption] },
     { name: "restore", description: "Restore a hidden resource Block through the shared Map pipeline", args: "<area> <resource-id>", options: [resourceOperationOption, serverOption, jsonOption] },
+    {
+      name: "add-back",
+      description: "Add one visible gone Block back to its owning Area with a new resource ID",
+      args: "<area> <resource-id>",
+      options: [
+        { name: "confirm-last-known", description: "Confirm the exact cached label and target when no tombstone remains" },
+        resourceOperationOption, serverOption, jsonOption,
+      ],
+    },
     {
       name: "edit",
       description: "Edit one direct Area association while preserving its resource ID and Block identity",

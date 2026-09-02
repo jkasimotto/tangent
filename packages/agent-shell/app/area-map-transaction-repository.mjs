@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdir, open, readFile, readdir, rename, rm, rmdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { canvasHash, safeCanvasPath, serializeAreaCanvas } from "./area-canvas.mjs";
+import { areaResourceRecoveryFields } from "./area-resource-recovery.mjs";
 
 const LOCK_STALE_MS = 10_000;
 const LOCK_POLL_MS = 25;
@@ -539,6 +540,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         status: Number(error?.status ?? 503), committed: false, saved: false, operationId, error: error.message,
         code: error?.code ?? "transaction-failed", retryable: error?.retryable === true,
         ...(error?.conflict ? { conflict: true, currentHashes: error.currentHashes ?? {}, changedPaths: error.changedPaths ?? [] } : {}),
+        ...areaResourceRecoveryFields(error),
       };
     });
   }
@@ -631,6 +633,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         status: Number(error?.status ?? 503), committed: false, operationId, error: error.message,
         code: error?.code ?? "transaction-failed", retryable: error?.retryable === true,
         ...(error?.conflict ? { conflict: true, changedPaths: error.changedPaths ?? [] } : {}),
+        ...areaResourceRecoveryFields(error),
       };
     });
   }

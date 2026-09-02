@@ -72,6 +72,26 @@ function projection(overrides = {}) {
   };
 }
 
+/** Returns one eager map-world source with exact hash and generic Link roots. */
+function mapWorld(elements = [{
+  id: "generic-link-1",
+  isDeleted: false,
+  containerId: null,
+  customData: { tangent: { kind: "link", ref: "https://example.test/review/1" } },
+}]) {
+  return {
+    schema: "area-map-world.v1",
+    worldId: "world-resource-cli",
+    treeRevision: "tree-resource-cli",
+    worldRevision: "world-revision-resource-cli",
+    locatedArea: AREA,
+    areas: [{
+      key: AREA,
+      shard: { owner: AREA, state: "ready", hash: "source-scene-hash", scene: { elements } },
+    }],
+  };
+}
+
 /** Runs a resource command against an isolated fetch/log fixture. */
 async function runFixture(argv, handler = () => Response.json({ error: "unexpected request" }, { status: 404 }), resourceProjection = projection()) {
   const previousFetch = globalThis.fetch;
@@ -117,13 +137,19 @@ test("Area help publishes the complete Brain-facing Map resource lifecycle", () 
   const resource = resourceSpec();
   assert.ok(resource);
   assert.deepEqual(resource.subcommands.map((entry) => entry.name), [
-    "list", "show", "add", "import", "discover", "dismiss", "place", "hide", "restore", "edit", "remove", "check", "refresh", "undo",
+    "list", "show", "add", "associate", "import", "discover", "dismiss", "place", "hide", "restore", "add-back", "edit", "remove", "check", "refresh", "undo",
   ]);
   assert.deepEqual(resource.subcommands.find((entry) => entry.name === "add").options.map((entry) => entry.name), [
     "kind", "path", "url", "label", "suggestion", "allow-missing", "operation-id", "server", "json",
   ]);
   assert.deepEqual(resource.subcommands.find((entry) => entry.name === "import").options.map((entry) => entry.name), [
     "candidate", "all", "branch-to", "operation-id", "server", "json",
+  ]);
+  assert.deepEqual(resource.subcommands.find((entry) => entry.name === "associate").options.map((entry) => entry.name), [
+    "label", "operation-id", "server", "json",
+  ]);
+  assert.deepEqual(resource.subcommands.find((entry) => entry.name === "add-back").options.map((entry) => entry.name), [
+    "confirm-last-known", "operation-id", "server", "json",
   ]);
 });
 
@@ -237,6 +263,71 @@ test("resource add can confirm one exact Suggestion evidence tuple without placi
   });
 });
 
+test("resource associate resolves one generic Link source and replays one exact scene-fenced request", async () => {
+  const applies = [];
+  /** Returns the current source world and replay-aware scene-coupled receipts. */
+  const handler = ({ url, body, init }) => {
+    if (url.pathname === "/api/areas/map-world") return Response.json(mapWorld());
+    if (url.pathname.endsWith("/apply")) {
+      applies.push({ body, operationId: new Headers(init.headers).get("x-tangent-operation-id") });
+      return Response.json({
+        operationId: body.operationId,
+        effect: "associate-generic-link",
+        resource: { locator: { owner: AREA, id: DIRECT_ID } },
+        sourceUpdates: [{ owner: AREA, serializedSource: "source", hash: "next-source", treeRevision: "tree", worldRevision: "world" }],
+        warnings: [],
+        undo: { state: "available", token: "undo-associate" },
+        idempotent: applies.length > 1,
+      });
+    }
+    return Response.json({ error: `unexpected ${url.pathname}` }, { status: 404 });
+  };
+  const argv = ["resource", "associate", AREA, "generic-link", "--label", "Review link", "--operation-id", "brain-associate-1", "--json"];
+  const first = await runFixture(argv, handler);
+  const replay = await runFixture(argv, handler);
+  assert.equal(applies.length, 2);
+  assert.deepEqual(applies[0].body, {
+    schema: "area-map-resource-mutation.v1",
+    operationId: "brain-associate-1",
+    viewedFrom: AREA,
+    mutation: {
+      kind: "associate-generic-link",
+      owner: AREA,
+      sourceElementId: "generic-link-1",
+      labelForNewRecord: "Review link",
+    },
+    expectedCatalogs: [{ owner: AREA, revision: "child-catalog-revision" }],
+    expectedScenes: [{ owner: AREA, hash: "source-scene-hash" }],
+  });
+  assert.deepEqual(applies[1].body, applies[0].body);
+  assert.deepEqual(applies.map((item) => item.operationId), ["brain-associate-1", "brain-associate-1"]);
+  assert.equal(JSON.parse(first.text).sourceUpdates[0].worldRevision, "world");
+  assert.equal(JSON.parse(replay.text).idempotent, true);
+});
+
+test("resource associate refuses ambiguous source prefixes and unsafe retry identities before apply", async () => {
+  const world = mapWorld([
+    { id: "generic-link-one", isDeleted: false, containerId: null, customData: { tangent: { kind: "link", ref: "https://one.test" } } },
+    { id: "generic-link-two", isDeleted: false, containerId: null, customData: { tangent: { kind: "link", ref: "https://two.test" } } },
+  ]);
+  let applies = 0;
+  /** Supplies the ambiguous world and records any forbidden apply. */
+  const handler = ({ url }) => {
+    if (url.pathname === "/api/areas/map-world") return Response.json(world);
+    if (url.pathname.endsWith("/apply")) applies += 1;
+    return Response.json({ error: "apply must not run" }, { status: 500 });
+  };
+  await assert.rejects(
+    runFixture(["resource", "associate", AREA, "generic-link", "--operation-id", "brain-associate-ambiguous"], handler),
+    /matches 2 generic Link Blocks; use the full source element ID: generic-link-one, generic-link-two/,
+  );
+  await assert.rejects(
+    runFixture(["resource", "associate", AREA, "generic-link-one", "--operation-id", "unsafe operation id"], handler),
+    /--operation-id must be 1-128 safe/,
+  );
+  assert.equal(applies, 0);
+});
+
 test("resource import and dismiss send evidence identities with only their affected catalog revisions", async () => {
   const applies = [];
   /** Records each catalog mutation body and returns a valid receipt. */
@@ -302,6 +393,110 @@ test("place, hide, and restore use the exact reusable representation contract", 
     { schema: "area-map-resource-representation.v1", operationId: "brain-restore-1", kind: "restore", viewedFrom: AREA, resource: { owner: AREA, id: DIRECT_ID } },
   ]);
   assert.deepEqual(representations.map((item) => item.operationId), ["brain-place-1", "brain-hide-1", "brain-restore-1"]);
+});
+
+test("resource add-back sends a tombstone authority and exact catalog and source fences", async () => {
+  const goneProjection = projection({
+    rows: [{
+      viewedFrom: AREA,
+      relation: { kind: "direct" },
+      alsoFrom: [],
+      entity: {
+        locator: { owner: AREA, id: DIRECT_ID },
+        reason: "removed",
+        lastKnown: { label: "Former checkout", target: { kind: "worktree", path: "/tmp/former-checkout" } },
+        representation: "on-map",
+      },
+    }],
+  });
+  let applied;
+  let operationHeader;
+  /** Supplies the exact source world and records one tombstone Add-back request. */
+  const handler = ({ url, body, init }) => {
+    if (url.pathname === "/api/areas/map-world") return Response.json(mapWorld([]));
+    if (url.pathname.endsWith("/apply")) {
+      applied = body;
+      operationHeader = new Headers(init.headers).get("x-tangent-operation-id");
+      return Response.json({
+        operationId: body.operationId,
+        effect: "add-back-gone",
+        resource: { locator: { owner: AREA, id: INHERITED_ID } },
+        sourceUpdates: [{ owner: AREA, serializedSource: "next", hash: "next-hash", treeRevision: "tree", worldRevision: "world" }],
+        warnings: [],
+        undo: { state: "available", token: "undo-add-back" },
+      });
+    }
+    return Response.json({ error: `unexpected ${url.pathname}` }, { status: 404 });
+  };
+  const output = await runFixture(["resource", "add-back", AREA, "11111111", "--operation-id", "brain-add-back-1", "--json"], handler, goneProjection);
+  assert.deepEqual(applied, {
+    schema: "area-map-resource-mutation.v1",
+    operationId: "brain-add-back-1",
+    viewedFrom: AREA,
+    mutation: {
+      kind: "add-back-gone",
+      oldResource: { owner: AREA, id: DIRECT_ID },
+      source: { kind: "tombstone" },
+    },
+    expectedCatalogs: [{ owner: AREA, revision: "child-catalog-revision" }],
+    expectedScenes: [{ owner: AREA, hash: "source-scene-hash" }],
+  });
+  assert.equal(operationHeader, "brain-add-back-1");
+  assert.equal(JSON.parse(output.text).effect, "add-back-gone");
+});
+
+test("missing-record Add-back requires explicit Last-known confirmation and reinspection", async () => {
+  const goneProjection = projection({
+    rows: [{
+      viewedFrom: AREA,
+      relation: { kind: "direct" },
+      alsoFrom: [],
+      entity: {
+        locator: { owner: AREA, id: DIRECT_ID },
+        reason: "missing-record",
+        lastKnown: { label: "Remembered checkout", target: { kind: "worktree", path: "/tmp/remembered" } },
+        representation: "on-map",
+      },
+    }],
+  });
+  let inspected = 0;
+  let applied;
+  /** Reinspects the cached path, then records one confirmed Last-known request. */
+  const handler = ({ url, body }) => {
+    if (url.pathname.endsWith("/inspect-target")) {
+      inspected += 1;
+      return Response.json({ kind: "local", normalized: { kind: "worktree", path: "/tmp/remembered" }, targetFingerprint: "remembered-fingerprint", state: "missing" });
+    }
+    if (url.pathname === "/api/areas/map-world") return Response.json(mapWorld([]));
+    if (url.pathname.endsWith("/apply")) {
+      applied = body;
+      return Response.json({ operationId: body.operationId, effect: "add-back-gone", sourceUpdates: [], warnings: [], undo: { state: "available", token: "undo" } });
+    }
+    return Response.json({ error: `unexpected ${url.pathname}` }, { status: 404 });
+  };
+  await assert.rejects(
+    runFixture(["resource", "add-back", AREA, DIRECT_ID, "--operation-id", "brain-add-back-unconfirmed"], handler, goneProjection),
+    /Review its exact Last-known label and target, then repeat with --confirm-last-known/,
+  );
+  assert.equal(inspected, 0);
+  assert.equal(applied, undefined);
+
+  await runFixture(["resource", "add-back", AREA, DIRECT_ID, "--confirm-last-known", "--operation-id", "brain-add-back-confirmed", "--json"], handler, goneProjection);
+  assert.equal(inspected, 1);
+  assert.deepEqual(applied.mutation, {
+    kind: "add-back-gone",
+    oldResource: { owner: AREA, id: DIRECT_ID },
+    source: {
+      kind: "confirmed-last-known",
+      input: {
+        target: { kind: "worktree", path: "/tmp/remembered" },
+        missingConfirmation: { targetFingerprint: "remembered-fingerprint" },
+      },
+      label: "Remembered checkout",
+    },
+  });
+  assert.deepEqual(applied.expectedCatalogs, [{ owner: AREA, revision: "child-catalog-revision" }]);
+  assert.deepEqual(applied.expectedScenes, [{ owner: AREA, hash: "source-scene-hash" }]);
 });
 
 test("discover, refresh, check, and undo keep their safe read and mutation envelopes", async () => {

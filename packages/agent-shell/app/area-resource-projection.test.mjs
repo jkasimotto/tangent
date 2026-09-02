@@ -232,6 +232,14 @@ test("joins multi-worktree catalogs, provenance, cache facts, launch binding, an
   assert.equal(result.state, "current");
   assert.deepEqual(result.counts, { state: "current", confirmedAssociations: 5, suggestions: 1, legacyReview: 2 });
   assert.deepEqual(result.catalogs, [{ owner: "team/topic", revision: "team/topic-revision" }, { owner: "team", revision: "team-revision" }]);
+  assert.deepEqual(result.rows.map((row) => row.entity.locator.id), [
+    DIRECT_TWO,
+    DIRECT_ONE,
+    DIRECT_LINK,
+    DIRECT_GONE,
+    MISSING_RECORD,
+    INHERITED_REPOSITORY,
+  ], "every caller receives launch-first direct local, direct Link, removed, then inherited inventory groups");
   const current = result.rows.filter((row) => row.entity.target);
   assert.equal(current.length, 4, "the direct duplicate suppresses only its inherited display row");
   const first = current.find((row) => row.entity.locator.id === DIRECT_ONE);

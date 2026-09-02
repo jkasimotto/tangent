@@ -442,6 +442,45 @@ function launchMatch(target, binding, noteError) {
   return { state: "current", value: normalizeAreaResourceTarget(target).path === binding };
 }
 
+/** Returns the current or retained target used only to group one inventory row. */
+function panelRowTarget(row) { return row?.entity?.target ?? row?.entity?.lastKnown?.target ?? null; }
+
+/** Returns the saved representation word from either current or gone row shapes. */
+function panelRowRepresentation(row) {
+  const value = row?.entity?.representation;
+  return typeof value === "string" ? value : value?.state === "current" ? value.value : "unavailable";
+}
+
+/** Orders every caller's inventory by the accepted direct, removed, and inherited groups. */
+function sortPanelRows(rows) {
+  /** Assigns direct local, direct Link, removed, then inherited group order. */
+  const group = (row) => {
+    if (row?.relation?.kind === "inherited") return 3;
+    if (row?.entity?.reason) return 2;
+    return panelRowTarget(row)?.kind === "link" ? 1 : 0;
+  };
+  /** Orders launch, live Map representation, then label inside a direct group. */
+  const priority = (row) => row?.launchMatch?.state === "current" && row.launchMatch.value === true
+    ? 0
+    : panelRowRepresentation(row) === "on-map" ? 1 : 2;
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const leftGroup = group(left.row); const rightGroup = group(right.row);
+      if (leftGroup !== rightGroup) return leftGroup - rightGroup;
+      if (leftGroup < 3) {
+        const ranked = priority(left.row) - priority(right.row);
+        if (ranked) return ranked;
+        const leftLabel = left.row.entity?.label || left.row.entity?.lastKnown?.label || "\uffff";
+        const rightLabel = right.row.entity?.label || right.row.entity?.lastKnown?.label || "\uffff";
+        const labelled = leftLabel.localeCompare(rightLabel, undefined, { sensitivity: "base" });
+        if (labelled) return labelled;
+      }
+      return left.index - right.index;
+    })
+    .map(({ row }) => row);
+}
+
 /** Adds one owner/source problem only once. */
 function addProblem(problems, problem) {
   const error = problem.error;
@@ -511,6 +550,7 @@ export async function readAreaResourcePanelProjection({ area, readCatalog, readN
       });
     }
   }
+  const orderedRows = sortPanelRows(rows);
 
   const problems = [];
   for (const error of base.problems ?? []) addProblem(problems, { kind: "catalog", error });
@@ -522,7 +562,7 @@ export async function readAreaResourcePanelProjection({ area, readCatalog, readN
   if (problems.length) {
     return {
       state: "partial",
-      rows,
+      rows: orderedRows,
       catalogs: base.catalogs,
       legacyReview: legacy,
       suggestions,
@@ -537,7 +577,7 @@ export async function readAreaResourcePanelProjection({ area, readCatalog, readN
   }
   return {
     state: "current",
-    rows,
+    rows: orderedRows,
     catalogs: base.catalogs,
     legacyReview: legacy,
     suggestions,

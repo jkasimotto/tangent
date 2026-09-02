@@ -78,6 +78,22 @@ function showWorldError(host, error, retry = null) {
   host.replaceChildren(section);
 }
 
+/**
+ * Builds one canonical source mutation while retaining hidden resource
+ * representations. Other deleted Excalidraw records keep their established
+ * remove-or-ignore behavior.
+ */
+function sourceSceneElementMutation(nextScene, oldScene = null) {
+  const retained = core.hiddenResourceRecordIds(nextScene);
+  const nextElements = new Map((nextScene?.elements ?? []).filter((element) => !core.isAreaBoundary(element) && (!element.isDeleted || retained.has(element.id))).map((element) => [element.id, element]));
+  const structural = new Set((oldScene?.elements ?? []).filter(core.isAreaRegion).flatMap((element) => [element.id, ...(element.boundElements ?? []).map((binding) => binding.id)]));
+  const remove = [];
+  for (const element of oldScene?.elements ?? []) {
+    if (!element.isDeleted && !core.isAreaBoundary(element) && !nextElements.has(element.id) && !structural.has(element.id)) remove.push(element.id);
+  }
+  return { put: [...nextElements.values()].map((element) => structuredClone(element)), remove };
+}
+
 /** Mounts the complete hierarchy through one persistent browser island. */
 function mountWorld(host, { world, getDocuments, searchDocuments = null, api, onBack, onNavigation = null, onViewState = null, onEntityVerb = null, onEvent = null, focus = null }) {
   host.replaceChildren();
@@ -101,10 +117,9 @@ function mountWorld(host, { world, getDocuments, searchDocuments = null, api, on
       const nextScene = shardFor(nextWorld, owner)?.scene; const oldScene = shardFor(previous, owner)?.scene;
       if (!nextScene) throw new Error(`Cannot save ${owner}: its map shard is unavailable`);
       const mutation = mutationFor(owner);
-      const nextElements = new Map((nextScene.elements ?? []).filter((element) => !element.isDeleted && !core.isAreaBoundary(element)).map((element) => [element.id, element]));
-      const structural = new Set((oldScene?.elements ?? []).filter(core.isAreaRegion).flatMap((element) => [element.id, ...(element.boundElements ?? []).map((binding) => binding.id)]));
-      for (const element of nextElements.values()) putElement(mutation, element);
-      for (const element of oldScene?.elements ?? []) if (!element.isDeleted && !core.isAreaBoundary(element) && !nextElements.has(element.id) && !structural.has(element.id)) mutation.remove.add(element.id);
+      const sceneMutation = sourceSceneElementMutation(nextScene, oldScene);
+      for (const element of sceneMutation.put) putElement(mutation, element);
+      for (const sourceId of sceneMutation.remove) mutation.remove.add(sourceId);
     }
     for (const area of symmetricOverlapClosure(nextWorld, changedAreas)) {
       const node = nextWorld.areas.find((entry) => entry.key === area); if (!node) continue;
@@ -352,5 +367,5 @@ function mount(host, options) {
   };
 }
 
-export { loadAreaMapAuthority, mount, mountLegacy, mountWorld, symmetricOverlapClosure };
-export default { loadAreaMapAuthority, mount, mountLegacy, mountWorld, symmetricOverlapClosure };
+export { loadAreaMapAuthority, mount, mountLegacy, mountWorld, sourceSceneElementMutation, symmetricOverlapClosure };
+export default { loadAreaMapAuthority, mount, mountLegacy, mountWorld, sourceSceneElementMutation, symmetricOverlapClosure };

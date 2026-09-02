@@ -1,4 +1,4 @@
-import { isAreaBoundary, isAreaRegion, tangentOf } from "./area-board-core.js";
+import { hiddenResourceRecordIds, isAreaBoundary, isAreaRegion, tangentOf } from "./area-board-core.js";
 
 export const AREA_MAP_LAYOUT = Object.freeze({
   spacing: 60,
@@ -103,9 +103,12 @@ function rewriteIds(value, tables) {
 
 /** Converts one source shard into namespaced world elements. */
 export function composeShard(owner, scene, offset = { x: 0, y: 0 }) {
-  const regionIds = new Set((scene?.elements ?? []).filter((element) => element?.customData?.tangent?.role === "region").map((element) => element.id));
-  const elements = (scene?.elements ?? []).filter((element) => !element.isDeleted && !["boundary", "region"].includes(element?.customData?.tangent?.role) && !regionIds.has(element.containerId));
-  const tables = identityTables(owner, { elements, files: scene?.files ?? {} });
+  const sourceElements = scene?.elements ?? [];
+  const regionIds = new Set(sourceElements.filter((element) => element?.customData?.tangent?.role === "region").map((element) => element.id));
+  const retainedIds = hiddenResourceRecordIds(scene);
+  const elements = sourceElements.filter((element) => !element.isDeleted && !retainedIds.has(element.id) && !["boundary", "region"].includes(element?.customData?.tangent?.role) && !regionIds.has(element.containerId));
+  const retained = sourceElements.filter((element) => retainedIds.has(element.id));
+  const tables = identityTables(owner, { elements: [...elements, ...retained], files: scene?.files ?? {} });
   const inverse = reverseTables(tables);
   const origins = new Map();
   const composed = elements.map((source) => {
@@ -113,9 +116,14 @@ export function composeShard(owner, scene, offset = { x: 0, y: 0 }) {
     runtime.x = Number(runtime.x ?? 0) + Number(offset.x ?? 0);
     runtime.y = Number(runtime.y ?? 0) + Number(offset.y ?? 0);
     runtime.customData = { ...(runtime.customData ?? {}), tangentWorld: { owner, sourceId: source.id } };
-    origins.set(runtime.id, { owner, sourceId: source.id, identity: inverse, source: clone(source) });
+    origins.set(runtime.id, { owner, sourceId: source.id, identity: inverse, source: clone(source), sourceIndex: sourceElements.indexOf(source) });
     return runtime;
   });
+  for (const source of retained) {
+    origins.set(tables.elements.get(source.id), {
+      owner, sourceId: source.id, identity: inverse, source: clone(source), sourceIndex: sourceElements.indexOf(source), retainedResource: true,
+    });
+  }
   const files = Object.fromEntries(Object.entries(scene?.files ?? {}).map(([id, file]) => {
     const runtime = tables.files.get(id);
     const next = clone(file);
@@ -128,8 +136,11 @@ export function composeShard(owner, scene, offset = { x: 0, y: 0 }) {
 /** Converts world elements back into exact source-owner groups. */
 export function splitComposed(elements, origins, offsets = new Map()) {
   const byOwner = new Map();
+  const emitted = new Set();
+  const sourceOrder = new Map([...origins.values()].flatMap((origin) => Number.isInteger(origin.sourceIndex) ? [[elementKey(origin.owner, origin.sourceId), origin.sourceIndex]] : []));
   const fallback = { elements: new Map([...origins].map(([runtime, source]) => [runtime, source.sourceId])), groups: new Map(), files: new Map() };
   for (const runtime of elements ?? []) {
+    if (runtime?.customData?.tangentWorldEphemeral) continue;
     const origin = origins.get(runtime.id) ?? runtime.customData?.tangentWorld;
     if (!origin) continue;
     const source = rewriteIds(runtime, origin.identity ?? fallback);
@@ -166,7 +177,18 @@ export function splitComposed(elements, origins, offsets = new Map()) {
       if (!Object.keys(source.customData).length) delete source.customData;
     }
     const list = byOwner.get(origin.owner) ?? [];
-    list.push(source); byOwner.set(origin.owner, list);
+    list.push(source); byOwner.set(origin.owner, list); emitted.add(elementKey(origin.owner, origin.sourceId));
+  }
+  const retained = [...origins.values()].filter((origin) => origin.retainedResource && !emitted.has(elementKey(origin.owner, origin.sourceId))).sort((left, right) => left.sourceIndex - right.sourceIndex);
+  for (const origin of retained) {
+    const list = byOwner.get(origin.owner) ?? [];
+    const insertion = list.findIndex((element) => {
+      const order = sourceOrder.get(elementKey(origin.owner, element.id));
+      return Number.isInteger(order) && order > origin.sourceIndex;
+    });
+    const source = clone(origin.source);
+    if (insertion < 0) list.push(source); else list.splice(insertion, 0, source);
+    byOwner.set(origin.owner, list);
   }
   return byOwner;
 }

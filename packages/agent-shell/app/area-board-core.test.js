@@ -33,6 +33,39 @@ test("creates connectable fact-backed blocks with one authoritative reference", 
   assert.equal(core.factForBlock(block, documents).title, "Make the map");
 });
 
+test("resource metadata is a compatible inert Block and source ownership scopes resources and Links", () => {
+  const [resource] = core.createBlockElements({ id: "resource", kind: "resource", ref: "0198e8c5-2be6-7d6a-a142-f0903a13a23b", title: "Cached words" });
+  resource.customData.tangentWorld = { owner: "otto/tangent", sourceId: "resource" };
+  assert.deepEqual(core.tangentOf(resource), { kind: "resource", ref: "0198e8c5-2be6-7d6a-a142-f0903a13a23b" });
+  assert.deepEqual(core.factForBlock(resource, documents), { kind: "resource", title: "Map resource", status: "unresolved", ghost: true, ref: "0198e8c5-2be6-7d6a-a142-f0903a13a23b" });
+  assert.equal(core.areaForBlock(resource, documents), "otto/tangent");
+  assert.equal(core.splitReference(resource.customData.tangent.ref).file, resource.customData.tangent.ref, "generic reference splitting is never resource resolution authority");
+
+  const [link] = core.createBlockElements({ id: "link", kind: "link", ref: "https://example.com/exact" });
+  link.customData.tangentWorld = { owner: "otto/other", sourceId: "link" };
+  assert.equal(core.areaForBlock(link, documents), "otto/other");
+  delete link.customData.tangentWorld;
+  assert.equal(core.areaForBlock(link, documents, "otto/explicit"), "otto/explicit");
+});
+
+test("resource duplicate facts use owner plus ID and ephemeral success rails never dirty the scene", () => {
+  const scene = core.createEmptyScene();
+  const one = core.createBlockElements({ id: "one", kind: "resource", ref: "same-local-id", title: "One" });
+  const two = core.createBlockElements({ id: "two", kind: "resource", ref: "same-local-id", title: "Two" });
+  one.forEach((element) => { element.customData = { ...(element.customData ?? {}), tangentWorld: { owner: "otto/one", sourceId: element.id } }; });
+  two.forEach((element) => { element.customData = { ...(element.customData ?? {}), tangentWorld: { owner: "otto/two", sourceId: element.id } }; });
+  scene.elements.push(...one, ...two);
+  const distinct = core.refreshTangentFacts(scene, []);
+  assert.ok(distinct.scene.elements.filter((element) => element.type === "text").every((element) => !element.text.includes("duplicate")));
+  two.forEach((element) => { element.customData.tangentWorld.owner = "otto/one"; });
+  const duplicate = core.refreshTangentFacts({ ...scene, elements: [...one, ...two] }, []);
+  assert.ok(duplicate.scene.elements.filter((element) => element.type === "text").every((element) => element.text.includes("duplicate")));
+
+  const fingerprint = core.authoredFingerprint(scene.elements);
+  const rail = { id: "rail", type: "rectangle", x: 1, y: 2, width: 3, height: 4, customData: { tangentWorldEphemeral: true } };
+  assert.equal(core.authoredFingerprint([...scene.elements, rail]), fingerprint);
+});
+
 test("fact refresh changes words but preserves geometry, style, and z-order", () => {
   const scene = core.createEmptyScene();
   scene.elements.push(...core.createBlockElements({ id: "goal", kind: "goal", ref: "otto/goal-map.md", title: "Old", x: 71, y: 93, style: { strokeColor: "#ff00ff", roughness: 2 } }));

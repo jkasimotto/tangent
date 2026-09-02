@@ -13,7 +13,7 @@ const CANVAS = "#ffffff";
 const BLOCK_STROKE = "#1971c2";
 const BLOCK_FILL = "#a5d8ff";
 const LABEL_COLUMNS = 26;
-const ENTITY_KINDS = new Set(["goal", "document", "area", "link", "brain", "agent", "person", "request", "commit", "evidence"]);
+const ENTITY_KINDS = new Set(["goal", "document", "area", "link", "brain", "agent", "person", "request", "commit", "evidence", "resource"]);
 
 /** Returns a stable positive Excalidraw seed for one authored id. */
 function seedFor(id) {
@@ -103,9 +103,11 @@ function splitReference(ref) {
 }
 
 /** Returns the authoritative Area path represented by one Tangent block. */
-function areaForBlock(element, documents = []) {
+function areaForBlock(element, documents = [], sourceOwner = null) {
   const tangent = tangentOf(element);
-  if (!tangent || tangent.kind === "link") return "";
+  if (!tangent) return "";
+  const owner = String(sourceOwner?.owner ?? sourceOwner ?? element?.customData?.tangentWorld?.owner ?? "");
+  if (["link", "resource"].includes(tangent.kind)) return owner === "@root" ? "" : owner;
   const file = splitReference(tangent.ref).file ?? "";
   if (tangent.kind === "area") return file.replace(/\/[^/]+\.md$/, "");
   return documents.find((item) => item.file === file)?.area ?? file.replace(/\/[^/]+$/, "");
@@ -174,6 +176,7 @@ function factForBlock(element, documents = []) {
   const tangent = tangentOf(element);
   if (!tangent) return null;
   if (tangent.role === "boundary") return null;
+  if (tangent.kind === "resource") return { kind: "resource", title: "Map resource", status: "unresolved", ghost: true, ref: tangent.ref };
   if (tangent.kind === "link") {
     let host = tangent.ref;
     try { host = new URL(tangent.ref).host; } catch {}
@@ -199,13 +202,18 @@ function refreshTangentFacts(scene, documents = []) {
   const referenceCounts = new Map();
   for (const element of next.elements) {
     const tangent = !element.isDeleted && tangentOf(element);
-    if (tangent) referenceCounts.set(`${tangent.kind}:${tangent.ref}`, (referenceCounts.get(`${tangent.kind}:${tangent.ref}`) ?? 0) + 1);
+    if (tangent) {
+      const owner = tangent.kind === "resource" ? element.customData?.tangentWorld?.owner ?? "" : "";
+      const key = `${owner}\u0000${tangent.kind}:${tangent.ref}`;
+      referenceCounts.set(key, (referenceCounts.get(key) ?? 0) + 1);
+    }
   }
   let changed = false;
   for (const block of next.elements) {
     let fact = factForBlock(block, documents);
     if (!fact) continue;
-    const tangentKey = `${block.customData.tangent.kind}:${block.customData.tangent.ref}`;
+    const tangentOwner = block.customData.tangent.kind === "resource" ? block.customData?.tangentWorld?.owner ?? "" : "";
+    const tangentKey = `${tangentOwner}\u0000${block.customData.tangent.kind}:${block.customData.tangent.ref}`;
     if (!block.isDeleted && referenceCounts.get(tangentKey) > 1) fact = { ...fact, status: [fact.status, "duplicate"].filter(Boolean).join(" · ") };
     const label = block.boundElements?.find((entry) => entry.type === "text");
     const text = label ? byId.get(label.id) : null;
@@ -375,7 +383,7 @@ function authoredFingerprint(elements) {
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, clean(item, name)]).filter(([, item]) => item !== undefined));
     return value;
   };
-  return JSON.stringify((elements ?? []).map((element) => clean(element)));
+  return JSON.stringify((elements ?? []).filter((element) => !element?.customData?.tangentWorldEphemeral).map((element) => clean(element)));
 }
 
 /** Converts an old auto-arranged scene while preserving authored positions and ink. */
@@ -460,6 +468,17 @@ function setBlockHidden(scene, blockId, hidden) {
   return next;
 }
 
+/** Returns the source IDs of each hidden resource Block and its bound label. */
+function hiddenResourceRecordIds(scene) {
+  const ids = new Set();
+  for (const element of scene?.elements ?? []) {
+    if (!element?.isDeleted || tangentOf(element)?.kind !== "resource") continue;
+    ids.add(element.id);
+    for (const binding of element.boundElements ?? []) if (binding?.type === "text" && typeof binding.id === "string") ids.add(binding.id);
+  }
+  return ids;
+}
+
 /** Lists screen-reader and outline entries in spatial reading order. */
 function sceneOutline(scene, documents = []) {
   const elements = scene.elements.filter((element) => !element.isDeleted);
@@ -526,6 +545,6 @@ function legacyCanvasToExcalidraw(canvas) {
   return scene;
 }
 
-const api = { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, convertToBlankSlate, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, migrateAreaCardsToRegions, normalizeSceneColors, referenceFromText, refreshTangentFacts, regionSize, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, tangentOf, viewFromAppState, withBoundary };
-export { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, convertToBlankSlate, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, migrateAreaCardsToRegions, normalizeSceneColors, referenceFromText, refreshTangentFacts, regionSize, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, tangentOf, viewFromAppState, withBoundary };
+const api = { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, convertToBlankSlate, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, hiddenResourceRecordIds, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, migrateAreaCardsToRegions, normalizeSceneColors, referenceFromText, refreshTangentFacts, regionSize, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, tangentOf, viewFromAppState, withBoundary };
+export { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, convertToBlankSlate, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, hiddenResourceRecordIds, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, migrateAreaCardsToRegions, normalizeSceneColors, referenceFromText, refreshTangentFacts, regionSize, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, tangentOf, viewFromAppState, withBoundary };
 export default api;

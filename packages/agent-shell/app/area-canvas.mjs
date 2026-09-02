@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { createEmptyScene, legacyCanvasToExcalidraw, splitReference, tangentOf } from "./public/area-board-core.js";
+import { isSafeResourceId } from "./public/area-map-entities.js";
 
 export const EMPTY_AREA_CANVAS = Object.freeze(createEmptyScene());
 export const AREA_BOARD_VIEW_SCHEMA = "area-board-view.v1";
@@ -77,6 +78,7 @@ export function validateAreaCanvas(scene) {
     if (element.type === "text") { safeString(element.text, `${at}.text`, errors, { max: 500_000 }); safeString(element.originalText, `${at}.originalText`, errors, { max: 500_000 }); }
     const tangent = element.customData?.tangent;
     if (tangent !== undefined && !tangentOf(element)) errors.push(`${at}.customData.tangent must contain a supported kind and string ref`);
+    else if (tangent?.kind === "resource" && !isSafeResourceId(tangent.ref)) errors.push(`${at}.customData.tangent resource ref must be a safe opaque ID`);
   }
   const bindings = [];
   for (const element of scene.elements) {
@@ -112,6 +114,7 @@ export function areaCanvasSummary(scene) {
     references: elements.flatMap((element) => {
       const tangent = tangentOf(element);
       if (!tangent) return [];
+      if (tangent.kind === "resource") return [{ id: element.id, resourceId: tangent.ref }];
       const reference = splitReference(tangent.ref);
       return reference.url ? [{ id: element.id, url: reference.url }] : [{ id: element.id, file: reference.file, subpath: reference.subpath ?? null }];
     }),

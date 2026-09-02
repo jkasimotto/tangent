@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { composeAreaMapWorld, computeWorldGeometry, detachCrossOwnerTextBindings, protectAreaRegions, provisionalRegions, shardHulls, solveAreaMapGesture, splitComposed } from "./public/area-map-world-core.js";
+import { composeAreaMapWorld, composeShard, computeWorldGeometry, detachCrossOwnerTextBindings, protectAreaRegions, provisionalRegions, shardHulls, runtimeId, solveAreaMapGesture, splitComposed } from "./public/area-map-world-core.js";
+import { createBlockElements, createEmptyScene, createTextElement } from "./public/area-board-core.js";
 
 const areas = ["neara", "neara/delivery", "neara/delivery/standards"];
 
@@ -92,6 +93,41 @@ test("authored blocks expand containment while free ink expands only the drawn o
   const geometry = computeWorldGeometry({ areas: ["root"], regions, blockHulls: new Map([["root", hulls.blocks]]), inkHulls: new Map([["root", hulls.ink]]) }).get("root");
   assert.ok(geometry.constraint.width >= 760);
   assert.ok(geometry.drawn.x < geometry.constraint.x);
+});
+
+test("resource Blocks use the same authored hull and composed-world growth as every Tangent Block", () => {
+  const scene = createEmptyScene();
+  scene.elements.push(...createBlockElements({ id: "resource", kind: "resource", ref: "0198e8c5-2be6-7d6a-a142-f0903a13a23b", title: "Checkout", x: 500, y: 300, width: 200, height: 100 }));
+  const hulls = shardHulls(scene);
+  assert.deepEqual(hulls.blocks, { x: 500, y: 300, width: 200, height: 100 });
+  const regions = provisionalRegions(["root"], new Map([["@root>root", { x: 0, y: 0, width: 300, height: 220 }]]));
+  const world = { locatedArea: "root", areas: [{ key: "root", parent: "@root", region: regions.get("root"), shard: { state: "ready", scene, files: {} } }] };
+  const composed = composeAreaMapWorld(world);
+  assert.ok(composed.geometry.get("root").constraint.width >= 760);
+  const block = composed.scene.elements.find((element) => element.customData?.tangent?.kind === "resource");
+  assert.deepEqual(block.customData.tangentWorld, { owner: "root", sourceId: "resource" });
+});
+
+test("canonical compose and split preserve hidden resource Block records, bound labels, and z-order", () => {
+  const scene = createEmptyScene();
+  const before = createTextElement({ id: "before", text: "Before", x: 0, y: 0, width: 80, height: 30 });
+  const [hidden, hiddenLabel] = createBlockElements({ id: "hidden-resource", kind: "resource", ref: "0198e8c5-2be6-7d6a-a142-f0903a13a23b", title: "Hidden", x: 50, y: 60 });
+  hidden.isDeleted = true; hiddenLabel.isDeleted = true;
+  const after = createTextElement({ id: "after", text: "After", x: 400, y: 0, width: 80, height: 30 });
+  const deletedInk = createTextElement({ id: "deleted-ink", text: "Discarded", x: 0, y: 100, width: 80, height: 30 });
+  deletedInk.isDeleted = true;
+  scene.elements.push(before, hidden, hiddenLabel, after, deletedInk);
+
+  const composed = composeShard("root", scene, { x: 100, y: 200 });
+  assert.deepEqual(composed.elements.map((element) => element.customData?.tangentWorld?.sourceId), ["before", "after"], "hidden resource records never render");
+  const ephemeral = { ...structuredClone(composed.elements[0]), id: "success-rail", customData: { tangentWorld: { owner: "root", sourceId: "success-rail" }, tangentWorldEphemeral: true } };
+  const split = splitComposed([...composed.elements, ephemeral], composed.origins, new Map([["root", { x: 100, y: 200 }]])).get("root");
+  assert.deepEqual(split.map((element) => element.id), ["before", "hidden-resource", "hidden-resource-tangent-label", "after"]);
+  assert.deepEqual(split.find((element) => element.id === hidden.id), hidden);
+  assert.deepEqual(split.find((element) => element.id === hiddenLabel.id), hiddenLabel);
+  assert.equal(split.some((element) => element.id === deletedInk.id), false, "ordinary deleted elements keep their old disposal behavior");
+  assert.equal(split.some((element) => element.id === "success-rail"), false, "projection-only success rails never enter a source split");
+  assert.equal(composed.origins.get(runtimeId("root", hidden.id)).retainedResource, true);
 });
 
 test("composes every ancestor and descendant as one unlocked interactive region", () => {

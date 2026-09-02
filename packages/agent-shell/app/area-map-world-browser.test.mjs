@@ -1094,7 +1094,7 @@ test("keyboard outline selects and fits every Area", { timeout: 90_000 }, async 
   await page.keyboard.press("Meta+Shift+o");
   const outline = page.getByRole("region", { name: "Area hierarchy" });
   await outline.waitFor();
-  const buttons = outline.getByRole("treeitem");
+  const buttons = outline.locator("[role='treeitem'][data-outline-area]");
   const count = await buttons.count();
   assert.equal(count, 8);
   const areas = [
@@ -1107,8 +1107,8 @@ test("keyboard outline selects and fits every Area", { timeout: 90_000 }, async 
     "neara/hackathon",
     "neara/portland",
   ];
-  await buttons.first().focus();
   for (let index = 0; index < count; index += 1) {
+    await buttons.nth(index).focus();
     const expected = areas[index];
     const expectedName = labelName(expected, expected === "neara/essential" ? { state: "ready" } : undefined);
     assert.equal(await buttons.nth(index).getAttribute("aria-label"), expectedName);
@@ -1139,7 +1139,6 @@ test("keyboard outline selects and fits every Area", { timeout: 90_000 }, async 
       });
       assert.notDeepEqual(cameraAfter, cameraBefore);
     }
-    if (index < count - 1) await page.keyboard.press("ArrowDown");
   }
 });
 

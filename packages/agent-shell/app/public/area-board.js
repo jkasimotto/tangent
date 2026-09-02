@@ -95,7 +95,7 @@ function sourceSceneElementMutation(nextScene, oldScene = null) {
 }
 
 /** Mounts the complete hierarchy through one persistent browser island. */
-function mountWorld(host, { world, getDocuments, searchDocuments = null, api, onBack, onNavigation = null, onViewState = null, onEntityVerb = null, onEvent = null, focus = null }) {
+function mountWorld(host, { world, getDocuments, searchDocuments = null, api, onBack, onNavigation = null, onViewState = null, onEntityVerb = null, onEntityAction = null, onEvent = null, focus = null }) {
   host.replaceChildren();
   const loader = document.createElement("div"); loader.className = "area-board-loading"; loader.innerHTML = "<p>Loading drawing tools…</p>"; host.append(loader);
   let editor = null; let pendingNavigation = null; let pendingFind = false; let authority = null; let closing = false; let closePromise = null;
@@ -178,13 +178,13 @@ function mountWorld(host, { world, getDocuments, searchDocuments = null, api, on
   });
   const ready = editorLoader().then((module) => {
     if (closing) { loader.remove(); return null; }
-    loader.remove(); editor = module.mountAreaBoardEditor(host, { world, controller: authority, scene: { elements: [], appState: {}, files: {} }, getDocuments, searchDocuments, onEntityVerb, onViewState });
+    loader.remove(); editor = module.mountAreaBoardEditor(host, { world, controller: authority, scene: { elements: [], appState: {}, files: {} }, getDocuments, searchDocuments, api, onEntityVerb, onEntityAction, onViewState });
     if (pendingNavigation) editor.navigateArea?.(pendingNavigation.area, pendingNavigation.settings);
     if (pendingFind) editor.openFind?.();
     return editor;
   }).catch((error) => {
     if (closing) return null;
-    loader.remove(); showWorldError(host, error, () => mountWorld(host, { world, getDocuments, searchDocuments, api, onBack, onNavigation, onViewState, onEntityVerb, onEvent, focus })); throw error;
+    loader.remove(); showWorldError(host, error, () => mountWorld(host, { world, getDocuments, searchDocuments, api, onBack, onNavigation, onViewState, onEntityVerb, onEntityAction, onEvent, focus })); throw error;
   });
   return {
     /** Returns the live composed scene after the editor mounts. */

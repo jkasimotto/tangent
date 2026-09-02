@@ -3,6 +3,7 @@
 Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 
 - Vault CLI: `tangent area`, `tangent goal`, `tangent document`, `tangent vault commit`.
+- Style CLI: `tangent style add|list|show` records observations about how writing went and reads the corpus back. A style note is not a comment: it writes no vault file, makes no commit, and never reaches the reader, `tangent document comments`, or a brain notice.
 - Agent CLI: `tangent agent list|show|stop|resume|send` joins exact live sessions to durable Job Attempts or Brain generations. Root `tangent send` remains the Area-aware convenience route.
 - Worker CLI: every assignment names its organizing brain's durable Area path. Its only command is `tangent send <brain-area> "<plain note>"`. A note never changes Goal or assignment state. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
 - Brain CLI: `tangent brain request` creates durable user requests. Job CLI: `tangent job advance` starts the next approved Assignment.

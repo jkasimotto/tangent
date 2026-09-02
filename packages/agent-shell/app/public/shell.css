@@ -1563,11 +1563,14 @@ li .document-comment { margin: 8px 0 10px; }
 .document-comment-composer textarea { width: 100%; min-height: 54px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 15px; line-height: 1.5; resize: vertical; }
 .document-comment-composer textarea:focus { border-color: var(--red); outline: none; }
 .document-comment-composer-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
-.document-comment-composer-where { min-width: 0; color: var(--muted); font-size: 12px; }
+.document-comment-composer-where { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: 12px; }
 .document-comment-composer-actions { display: flex; flex: none; align-items: center; gap: 4px; }
 .document-comment-composer-actions .primary-button, .document-comment-composer-actions .quiet-button { padding: 6px 10px; font-size: 12px; }
 .document-comment-composer-actions kbd { margin-left: 8px; font-family: inherit; font-size: 11px; opacity: .7; }
 .document-comment-scope { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; }
+.document-comment-kind { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; }
+.document-comment-kind button { padding: 4px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 640; cursor: pointer; }
+.document-comment-kind button[aria-pressed="true"] { background: var(--surface-raised); color: var(--text); }
 .document-comment-scope button { padding: 4px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 640; cursor: pointer; }
 .document-comment-scope button[aria-pressed="true"] { background: var(--surface-raised); color: var(--text); }
 .document-comment-scope button:disabled { opacity: .45; cursor: default; }

@@ -27,6 +27,7 @@ const productCommands: Record<string, ProductCommand> = {
   send: { module: "@tangent/agent-shell/cli", exportName: "runSendCli", installHint: "send" },
   process: { module: "@tangent/agent-shell/cli", exportName: "runProcessCli", installHint: "process" },
   document: { module: "@tangent/agent-shell/cli", exportName: "runDocumentCli", installHint: "document" },
+  style: { module: "@tangent/agent-shell/cli", exportName: "runStyleCli", installHint: "style" },
   study: { module: "@tangent/agent-shell/cli", exportName: "runStudyCli", installHint: "study" },
   vault: { module: "@tangent/agent-shell/cli", exportName: "runVaultCli", installHint: "vault" },
   governance: { module: "@tangent/governance/cli", exportName: "runGovernanceCli", installHint: "governance" }
@@ -65,6 +66,7 @@ const tangentCommandSpec: CliCommandSpec = {
     { name: "harness", description: "List harnesses and resolved Area launch defaults", args: "<list>" },
     { name: "send", description: "Send a plain note to a live session or an Area", args: "<session|area> <note...>" },
     { name: "document", description: "List and resolve Julian's comments inside a vault Document", args: "<comments|resolve>" },
+    { name: "style", description: "Leave and read writing-style notes that never reach a Document", args: "<add|list|show>" },
     { name: "study", description: "Start the study partner: an interactive agent session beside nvim", args: "<contract>" },
     { name: "vault", description: "Commit vault edits with provenance", args: "<commit>" },
     doctorCommandSpec,
@@ -193,7 +195,7 @@ function productCommandSpec(name: string, description: string): CliCommandSpec {
  * commands; a worker has one; the rest are Julian's own tools.
  */
 const HELP_GROUPS: Array<{ title: string; commands: string[] }> = [
-  { title: "Brains", commands: ["goal", "area", "send", "agent", "document", "vault", "brain", "harness", "process", "service"] },
+  { title: "Brains", commands: ["goal", "area", "send", "agent", "document", "style", "vault", "brain", "harness", "process", "service"] },
   { title: "Workers", commands: ["send"] },
   { title: "Julian", commands: ["setup", "status", "open", "shell", "study", "usage", "rollup", "search", "eval", "doctor", "dev", "data", "completion"] },
 ];

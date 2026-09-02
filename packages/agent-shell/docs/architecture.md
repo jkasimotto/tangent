@@ -1,6 +1,6 @@
 # @tangent/agent-shell Architecture
 
-The published package API is `src/cli/`. The same package also carries the local Agent Shell application in `app/`. The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for `area`, `brain`, `goal`, `job`, `document`, `vault`, `agent`, `shell`, and `study`.
+The published package API is `src/cli/`. The same package also carries the local Agent Shell application in `app/`. The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for `area`, `brain`, `goal`, `job`, `document`, `style`, `vault`, `agent`, `shell`, and `study`.
 
 - `src/cli/spec.ts`: the help specifications for each public Agent Shell command.
 - `src/cli/client.ts`: the HTTP client. Loopback-only, default `http://127.0.0.1:4321`, overridable via `--server` or `TANGENT_SHELL_URL`. Every request has a response deadline and operation ID. A mutation transport failure says that the effect can already have committed. The client reads a tmux session when one is available.
@@ -42,6 +42,7 @@ The browser refreshes through `GET /api/work` v3 only. The controller reads seve
 - record modules: the only readers and writers of `job.v1`, worker report receipts, Brains, inboxes, Requests, Operation events, armed exact-prompt receipts, and rebuild state. `job-record.mjs` preserves numbered run history and reads both old execution schemas; `pipeline-record.mjs` is a one-release re-export.
 - `area-brain-domain.mjs`: milestone storage, Goal queue transitions, Operation projection, and detached audit export.
 - `area-presentations.mjs`: Area-keyed runtime attention records. They project only to `area.presentations`, use the existing Document readers, and are removed when an Area is done or archived.
+- `style-notes.mjs` and `style-note-provenance.mjs`: the append-only writing-style corpus at `~/.tangent/style-notes.jsonl` and the provenance it records at write time. The corpus is the only store, so a style note is invisible by absence and no comment surface changes (ADR-0057).
 
 The browser entry `app/public/shell.js` composes feature ports. `shell-coordinator.js` owns cross-feature navigation. Views and controllers receive cohesive `shell`, `work`, `areas`, `programs`, `launch`, `documents`, and chrome records. A record groups one authority; it is not a generic service locator. Browser capabilities must not be attached to functions. Gateway admission limits duplicate and total controller work. Telemetry does not publish projection invalidations.
 

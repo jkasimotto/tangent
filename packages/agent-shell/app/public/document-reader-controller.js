@@ -490,7 +490,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
   /** The stable part of the composer for the render key (typed text is synced, not keyed). */
   function commentComposerKey() {
     const composer = state.commentComposer;
-    return composer ? [composer.anchor?.kind, composer.placeLine, composer.editing?.index ?? -1, composer.replying?.line ?? -1, composer.notice] : null;
+    return composer ? [composer.kind ?? "comment", composer.anchor?.kind, composer.placeLine, composer.editing?.index ?? -1, composer.replying?.line ?? -1, composer.notice] : null;
   }
 
   /** The nearest rendered block above a DOM node, which knows its file line. */
@@ -610,6 +610,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     const composer = {
       surface: reader.quick ? "quick" : "full",
       file: reader.source.file,
+      kind: "comment",
       text: "",
       notice: selection?.crossed ? "The selection crossed a paragraph. The comment goes on the first one." : "",
       editing: null,
@@ -622,6 +623,21 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     state.commentComposer = composer;
     window.getSelection()?.removeAllRanges();
     reader.repaint();
+  }
+
+  /**
+   * Switches a new note between a comment and a style note. A style note is an
+   * observation about the writing, not a request to change it, so it is stored
+   * outside the Document and never reaches the reader, the comments listing, or
+   * a brain (docs/design/style-notes/design-record.md D1).
+   */
+  function setCommentKind(kind) {
+    const composer = state.commentComposer;
+    if (!composer || composer.editing || composer.replying) return;
+    syncCommentDraft();
+    composer.kind = kind === "style" ? "style" : "comment";
+    composer.notice = "";
+    commentReader().repaint();
   }
 
   /** Switches a new comment between the section in view and the whole Document. */
@@ -760,6 +776,28 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     return exact;
   }
 
+  /**
+   * Records one style note and leaves the Document alone. The Document is never
+   * saved, no markup is inserted, and there is nothing to undo, because nothing
+   * about the file changed. The server resolves who wrote the quoted words.
+   */
+  async function submitStyleNote(composer, source, saveSerial) {
+    if (!composer.text.trim()) return noteInComposer("Write what the writing did wrong.");
+    const quote = composer.anchor?.kind === "selection" ? composer.anchor.quote : "";
+    const response = await fetch("/api/style-notes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: source.file, note: composer.text.trim(), quote }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return noteInComposer(data.error || "The style note was not saved.");
+    if (state.commentComposer === composer && saveSerial === commentSaveSerial) {
+      state.commentComposer = null;
+      commentReader().repaint();
+    }
+    showToast("Style note saved. It stays out of the Document.");
+  }
+
   /** One base-hash save of the whole Document text; returns the raw reply so a 409 can be handled. */
   async function saveDocumentText(text, summary, baseHash) {
     const source = commentReader().source;
@@ -808,6 +846,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     if (!composer || !source || composer.file !== source.file) return;
     const saveSerial = ++commentSaveSerial;
     syncCommentDraft();
+    if (composer.kind === "style" && !composer.editing && !composer.replying) return submitStyleNote(composer, source, saveSerial);
     if (!composer.text.trim()) return noteInComposer("Write the comment first.");
     const summary = composer.editing ? "edited a comment" : composer.replying ? "replied to a comment" : "added a comment";
     let attempt = composerResult(source, composer);
@@ -1011,5 +1050,5 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** Opens the explicit next-step decision page. */
 
-  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, openDocumentPeek, leaveQuickPath, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, bindDocumentPeekReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, readerCopyPayload, cacheSelectionCommentAnchor, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentScope, existingCommentAnchor, replyInsertionAnchor, editComment, replyComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, commentIdentity, commentIndexInDocument, syncCommentCursor, activeCommentRecord, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, notifyDocumentComments };
+  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, openDocumentPeek, leaveQuickPath, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, bindDocumentPeekReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, readerCopyPayload, cacheSelectionCommentAnchor, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentKind, setCommentScope, existingCommentAnchor, replyInsertionAnchor, editComment, replyComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, commentIdentity, commentIndexInDocument, syncCommentCursor, activeCommentRecord, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, notifyDocumentComments };
 }

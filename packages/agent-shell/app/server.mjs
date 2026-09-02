@@ -73,6 +73,9 @@ import { createProgramRoutes } from "./program-routes.mjs";
 import { createProcessRoutes } from "./process-routes.mjs";
 import { parseSkillNote, projectSkills, routeSkills, skillSlugFromFile } from "./area-skills.mjs";
 import { createDocumentRoutes } from "./document-routes.mjs";
+import { createStyleNoteRoutes } from "./style-note-routes.mjs";
+import { createStyleNotes } from "./style-notes.mjs";
+import { findQuoteLine, launchFromAgentContext, observerFor, resolveNoteAuthor, vaultHead } from "./style-note-provenance.mjs";
 import { projectDesk } from "./desk-projection.mjs";
 import { createShellControlRoutes } from "./shell-control-routes.mjs";
 import { createGoalStopOperation } from "./goal-stop-operation.mjs";
@@ -348,6 +351,11 @@ const REPAIRS_ROOT = process.env.TANGENT_REPAIRS_ROOT
 // One JSON record per process note (`<area>/process-<slug>.md`): when it was
 // last due, when the brain was told, and the Goal it created (ADR-0043).
 const PROCESSES_ROOT = process.env.TANGENT_PROCESSES_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "processes");
+// The append-only writing-style corpus. It sits beside the other root-level
+// JSONL logs and outside the vault, because a style note must never become a
+// Document comment (design-record D1 and D2).
+const STYLE_NOTES_FILE = process.env.TANGENT_STYLE_NOTES_FILE ?? path.join(os.homedir(), ".tangent", "style-notes.jsonl");
+const styleNotes = createStyleNotes({ file: STYLE_NOTES_FILE });
 
 // Persist the additive subject identity for pre-lifecycle Request records.
 // The v1 envelope stays readable, and no request status or answer changes.
@@ -5097,6 +5105,7 @@ const WORKER_REFUSED_ROUTES = new Set([
   "/api/pipelines/append", "/api/pipelines/control", "/api/goals/attempts/replace", "/api/goals/attempts/resume",
   "/api/jobs/create", "/api/jobs/start", "/api/jobs/append", "/api/jobs/advance", "/api/jobs/stop", "/api/jobs/replace", "/api/agents/stop", "/api/agents/resume",
   "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/document/resolve", "/api/document",
+  "/api/style-notes",
   "/api/brains/start", "/api/brains/stop", "/api/brains/reply", "/api/brains/verdict", "/api/brains/verdict/undo",
   "/api/brains/succeed",
   "/api/brains/requests", "/api/brains/requests/withdraw", "/api/brains/requests/answer", "/api/brains/requests/dismiss",
@@ -7779,6 +7788,55 @@ const documentRoutes = createDocumentRoutes({
   notifyComments: notifyBrainOfDocumentComments,
   resolve: resolveVaultDocumentComment,
 });
+
+/**
+ * Resolves one session name to the harness, model, and effort it ran with, or
+ * null when no durable record names it. The server is the only place that can
+ * answer this (design-record section 2.6), so both the observer and the blamed
+ * author come through here rather than through a CLI that guessed.
+ */
+async function recordedSessionLaunch(session) {
+  const name = String(session ?? "").trim();
+  if (!name) return null;
+  const [brains, pipelines] = await Promise.all([readAllBrains(BRAINS_ROOT), readAllPipelines(PIPELINES_ROOT)]);
+  return launchFromAgentContext(resolveAgentContext({ session: name, brains, pipelines, goals: [] }));
+}
+
+const styleNoteRoutes = createStyleNoteRoutes({
+  /**
+   * Records one style note about a vault Document. Nothing is written to the
+   * vault and no notice is sent: invisibility comes from absence, so this path
+   * deliberately shares no step with saveVaultDocument.
+   */
+  async add(input, session) {
+    const safe = safeMarkdownPath(TREES_ROOT, input.file);
+    if (!safe) return { status: 400, error: "a style note needs a vault-relative Markdown file" };
+    const document = await readVaultDocument(safe.relative);
+    if (!document) return { status: 404, error: `no Document ${safe.relative}` };
+    const located = input.quote ? findQuoteLine(document.text, input.quote) : null;
+    const [actor, head] = await Promise.all([commandProvenance(session), vaultHead({ runGit: runRepositoryGit, root: TREES_ROOT })]);
+    const [observerLaunch, author] = await Promise.all([
+      recordedSessionLaunch(actor.session),
+      resolveNoteAuthor({ runGit: runRepositoryGit, root: TREES_ROOT, file: safe.relative, line: located?.line ?? null, launchForSession: recordedSessionLaunch }),
+    ]);
+    const result = await styleNotes.add({
+      note: input.note,
+      tags: input.tags,
+      document: { file: safe.relative, area: document.area, title: document.title, vaultCommit: head },
+      quote: input.quote ? { text: input.quote, line: located?.line ?? null, heading: located?.heading ?? null } : null,
+      author,
+      observer: observerFor(actor, observerLaunch),
+    });
+    return result.error ? { status: 400, error: result.error } : { status: 200, entry: result.entry };
+  },
+  /** Reads the corpus back, filtered, with the counts a distillation starts from. */
+  async list(filters) {
+    const result = await styleNotes.read(filters);
+    if (!filters.id) return result;
+    const entry = result.entries.find((item) => item.id === filters.id) ?? null;
+    return { ...result, entries: entry ? [entry] : [], counts: null };
+  },
+});
 const areaMapRoutes = createAreaMapRoutes({
   pictures: areaPictures,
   proposals: areaMapProposals,
@@ -8897,6 +8955,14 @@ async function areaExists(area) {
   return Boolean(area) && flattenAreaPaths(await readTree(TREES_ROOT)).includes(area);
 }
 
+/**
+ * POST routes that change nothing any shell surface shows. A style note is
+ * recorded outside the vault and outside every work surface (design-record
+ * D1), so it must not invalidate a projection or wake a repaint either. Any
+ * other route belongs in the normal invalidation path below.
+ */
+const SILENT_POST_ROUTES = new Set(["/api/style-notes"]);
+
 /** Converts an unexpected mutation failure to an HTTP operation result. */
 function serverError(error) {
   return { status: 500, error: String(error.stderr ?? error.message ?? error) };
@@ -8923,7 +8989,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true });
       return;
     }
-    if (req.method === "POST") {
+    if (req.method === "POST" && !SILENT_POST_ROUTES.has(url.pathname)) {
       res.once("finish", () => {
         if (res.statusCode < 400) {
           sessionObservation.invalidate();
@@ -8971,6 +9037,7 @@ const server = http.createServer(async (req, res) => {
     if (await areaPresentationRoutes.handle(req, res, url)) return;
     if (await goalPresentationRoutes.handle(req, res, url)) return;
     if (await documentRoutes.handle(req, res, url)) return;
+    if (await styleNoteRoutes.handle(req, res, url)) return;
     if (await shellControlRoutes.handle(req, res, url)) return;
     if (await voiceRoutes.handle(req, res, url)) return;
     if (await goalQueryRoutes.handle(req, res, url)) return;

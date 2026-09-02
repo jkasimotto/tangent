@@ -340,6 +340,41 @@ export const documentCommandSpec: CliCommandSpec = {
   ]
 };
 
+export const styleCommandSpec: CliCommandSpec = {
+  name: "style",
+  description: "Leave and read writing-style notes; they never reach a Document, its comments, or a notice",
+  subcommands: [
+    {
+      name: "add",
+      description: "Record one observation about how a Document's writing went wrong or right. It writes no vault file, makes no commit, and tells nobody.",
+      args: "<file> <note...>",
+      options: [
+        { name: "note", takesValue: true, description: "The observation, when it is not written after the file" },
+        { name: "quote", takesValue: true, description: "The exact words the note is about; they are stored whole, so the note survives their rewrite" },
+        { name: "tag", takesValue: true, description: "Free-text problem tag; repeat it for several" },
+        serverOption,
+        jsonOption
+      ]
+    },
+    {
+      name: "list",
+      description: "Read the corpus back, newest first, with counts by model, harness, tag, and Area",
+      options: [
+        { name: "area", takesValue: true, description: "Only notes on Documents in this Area or under it" },
+        { name: "file", takesValue: true, description: "Only notes on one exact Document" },
+        { name: "since", takesValue: true, description: "Only notes written at or after an ISO time" },
+        { name: "model", takesValue: true, description: "Only notes whose annotated words were written by this model" },
+        { name: "harness", takesValue: true, description: "Only notes whose annotated words were written by this harness" },
+        { name: "tag", takesValue: true, description: "Only notes carrying this tag" },
+        { name: "limit", takesValue: true, description: "Maximum notes to print (default 40)" },
+        serverOption,
+        jsonOption
+      ]
+    },
+    { name: "show", description: "Show one style note whole, including the words it quoted", args: "<id>", options: [serverOption, jsonOption] }
+  ]
+};
+
 export const agentCommandSpec: CliCommandSpec = {
   name: "agent",
   description: "List, inspect, stop, resume, and message live Agent sessions",

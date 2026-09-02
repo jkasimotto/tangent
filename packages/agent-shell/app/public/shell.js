@@ -383,27 +383,45 @@ function commentAsideHtml(comment, readOnly = false) {
   </aside>`;
 }
 
+/**
+ * The choice between a comment and a style note, on a new comment only. An
+ * edit or a reply is always about an existing comment, so the switch would be
+ * meaningless there. A style note leaves the Document untouched, so the switch
+ * says so where Julian can read it before he writes.
+ */
+function commentKindHtml(composer) {
+  if (composer.editing || composer.replying) return "";
+  const style = composer.kind === "style";
+  return `<span class="document-comment-kind" role="group" aria-label="What this is">
+      <button type="button" data-comment-kind="comment" aria-pressed="${!style}">Comment</button>
+      <button type="button" data-comment-kind="style" aria-pressed="${style}">Style note</button>
+    </span>`;
+}
+
 /** The inline comment composer, at its anchor, with its scope and printed keys. */
 function commentComposerHtml(composer) {
   const anchor = composer.anchor;
+  const style = composer.kind === "style" && !composer.editing && !composer.replying;
   const where = composer.editing
     ? `<span>Editing your comment</span>`
     : composer.replying
       ? `<span>Replying at this comment's anchor</span>`
+    : style
+      ? `<span>${anchor.kind === "selection" ? `On “${escapeHtml(clip(anchor.quote, 50))}”. ` : ""}Kept out of the Document; nobody is told.</span>`
     : anchor.kind === "selection"
       ? `<span>On “${escapeHtml(clip(anchor.quote, 70))}”</span>`
       : `<span class="document-comment-scope" role="group" aria-label="Where this comment goes">
           <button type="button" data-comment-scope="section" aria-pressed="${anchor.kind === "section"}" ${composer.section ? "" : "disabled"}>${composer.section ? `Section “${escapeHtml(clip(composer.section.title, 40))}”` : "This section"}</button>
           <button type="button" data-comment-scope="document" aria-pressed="${anchor.kind === "document"}">Whole Document</button>
         </span>`;
-  const label = composer.editing ? "Edit comment" : composer.replying ? "Reply to comment" : "New comment";
+  const label = composer.editing ? "Edit comment" : composer.replying ? "Reply to comment" : style ? "New style note" : "New comment";
   return `<form class="document-comment-composer" data-comment-composer data-command-enter-submit aria-label="${label}">
-    <textarea id="comment-text" rows="2" placeholder="${composer.replying ? "Your reply" : "Your comment"}" aria-label="${label}">${escapeHtml(composer.text)}</textarea>
+    <textarea id="comment-text" rows="2" placeholder="${composer.replying ? "Your reply" : style ? "What the writing did wrong" : "Your comment"}" aria-label="${label}">${escapeHtml(composer.text)}</textarea>
     <div class="document-comment-composer-row">
-      <div class="document-comment-composer-where">${where}</div>
+      <div class="document-comment-composer-where">${commentKindHtml(composer)}${where}</div>
       <div class="document-comment-composer-actions">
         <button class="quiet-button" type="button" data-cancel-comment>Cancel <kbd>esc</kbd></button>
-        <button class="primary-button" type="submit">${composer.replying ? "Add reply" : "Save comment"} <kbd>⌘↵</kbd></button>
+        <button class="primary-button" type="submit">${composer.replying ? "Add reply" : style ? "Save style note" : "Save comment"} <kbd>⌘↵</kbd></button>
       </div>
     </div>
     ${composer.notice ? `<p class="document-comment-composer-notice" role="alert">${escapeHtml(composer.notice)}</p>` : ""}
@@ -573,7 +591,7 @@ const {
   openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf,
   bindDocumentPeekReader,
   readerSelection, readerCopyPayload, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine,
-  openCommentComposer, setCommentScope, syncCommentDraft, cancelCommentComposer, noteInComposer,
+  openCommentComposer, setCommentKind, setCommentScope, syncCommentDraft, cancelCommentComposer, noteInComposer,
   composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer,
   commentIdentity, syncCommentCursor, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment,
   resolveActiveComment, stepComment, notifyDocumentComments,
@@ -1855,7 +1873,7 @@ shellBindings = bindShellEvents({
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   },
   documents: {
-    openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
+    openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentKind, setCommentScope,
     cancelCommentComposer, submitCommentComposer, commentIdentity, syncCommentCursor,
     activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, readerCopyPayload, openReaderAgent,

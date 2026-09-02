@@ -359,3 +359,93 @@ test("resolve checks a fresh semantic anchor and never posts when it changed", {
     fixture.cleanup();
   }
 });
+
+test("a style note posts to the corpus, saves no Document, and offers no undo", { concurrency: false }, async () => {
+  const text = "# Design\n\n## Section\n\nAlpha selected words omega.\n";
+  const fixture = readerFixture(text);
+  try {
+    const posts = [];
+    globalThis.fetch = async (url, options) => {
+      posts.push({ url, body: JSON.parse(options.body) });
+      return { ok: true, status: 200,
+        /** Returns the recorded corpus entry. */
+        async json() { return { note: { id: "note-1" } }; } };
+    };
+    fixture.controller.openCommentComposer();
+    assert.equal(fixture.state.commentComposer.kind, "comment", "the composer opens as a comment, which is the common case");
+    fixture.controller.setCommentKind("style");
+    fixture.state.commentComposer.text = "Three clauses before the subject.";
+    await fixture.controller.submitCommentComposer();
+
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].url, "/api/style-notes", "a style note never reaches the Document save route");
+    assert.deepEqual(posts[0].body, { file: "otto/test/design.md", note: "Three clauses before the subject.", quote: "" });
+    assert.equal(fixture.state.document.text, text, "the Document Julian reads is untouched");
+    assert.equal(fixture.state.document.comments.length, 0, "no comment was created");
+    assert.equal(fixture.state.commentComposer, null, "the composer closes on success");
+    assert.deepEqual(fixture.toasts, ["Style note saved. It stays out of the Document."]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("a style note on selected words carries those exact words to the corpus", { concurrency: false }, async () => {
+  const fixture = readerFixture("# Design\n\n## Section\n\nAlpha selected words omega.\n");
+  try {
+    const text = fixture.screen.querySelector("[data-line]").firstChild;
+    const range = fixture.dom.window.document.createRange();
+    range.setStart(text, 6);
+    range.setEnd(text, 20);
+    fixture.dom.window.getSelection().addRange(range);
+    let body = null;
+    globalThis.fetch = async (_url, options) => {
+      body = JSON.parse(options.body);
+      return { ok: true, status: 200,
+        /** Returns the recorded corpus entry. */
+        async json() { return { note: { id: "note-1" } }; } };
+    };
+    fixture.controller.openCommentComposer();
+    fixture.controller.setCommentKind("style");
+    fixture.state.commentComposer.text = "Buried lede.";
+    await fixture.controller.submitCommentComposer();
+    assert.equal(body.quote, "selected words", "the snapshot is the words as the reader showed them");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("a refused style note keeps the draft and the Document, and says why", { concurrency: false }, async () => {
+  const fixture = readerFixture("# Design\n\nBody.\n");
+  try {
+    globalThis.fetch = async () => ({ ok: false, status: 404,
+      /** Returns the server's refusal. */
+      async json() { return { error: "no Document otto/test/design.md" }; } });
+    fixture.controller.openCommentComposer();
+    fixture.controller.setCommentKind("style");
+    fixture.state.commentComposer.text = "Buried lede.";
+    await fixture.controller.submitCommentComposer();
+    assert.equal(fixture.state.commentComposer.notice, "no Document otto/test/design.md");
+    assert.equal(fixture.state.commentComposer.text, "Buried lede.", "the draft survives the refusal");
+    assert.deepEqual(fixture.toasts, []);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("the kind switch belongs to a new note only, and an empty style note is refused before any request", { concurrency: false }, async () => {
+  const fixture = readerFixture("# Design\n\n{>>Julian: Say why.<<}\n");
+  try {
+    globalThis.fetch = () => { throw new Error("an empty style note must never reach the server"); };
+    fixture.controller.openCommentComposer();
+    fixture.controller.setCommentKind("style");
+    fixture.state.commentComposer.text = "   ";
+    await fixture.controller.submitCommentComposer();
+    assert.equal(fixture.state.commentComposer.notice, "Write what the writing did wrong.");
+
+    fixture.controller.editComment(0);
+    fixture.controller.setCommentKind("style");
+    assert.notEqual(fixture.state.commentComposer.kind, "style", "an edit of an existing comment can never become a style note");
+  } finally {
+    fixture.cleanup();
+  }
+});

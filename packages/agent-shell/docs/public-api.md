@@ -6,7 +6,7 @@ Public import paths:
 - `@tangent/agent-shell/cli`
 - `@tangent/agent-shell/area-resources`
 
-The first two paths export the CLI runners and help specifications for `send`, `area`, `brain`, `goal`, `document`, `agent`, `handover`, `process`, `shell`, `study`, and `vault`. They also export the study contract. The third path exports the parser for an Area note's `## Resources` section. The root `tangent service` command reads Area folders through it. Agent Shell exports no other server module.
+The first two paths export the CLI runners and help specifications for `send`, `area`, `brain`, `goal`, `document`, `style`, `agent`, `handover`, `process`, `shell`, `study`, and `vault`. They also export the study contract. The third path exports the parser for an Area note's `## Resources` section. The root `tangent service` command reads Area folders through it. Agent Shell exports no other server module.
 
 The root `tangent` command loads this package only when one of these nouns is used. The root package owns `tangent service` (servers and watchers). `tangent process start|stop|restart|close` still reach it for one release with a hint (ADR-0043).
 
@@ -49,6 +49,7 @@ Non-Work screens load their own bounded routes. These include `/api/navigation/s
 - `tangent goal own|release` changes the Goal session binding without stealing a live owner. Neither starts an agent.
 - `tangent goal done|wont-do` changes Goal state only on Julian's explicit instruction.
 - `tangent document comments|resolve` reads or resolves Julian's inline Document comments.
+- `tangent style add <file> "<observation>" [--quote <words>] [--tag <tag>]` records one writing-style note. `tangent style list` and `tangent style show <id>` read the corpus. A style note writes no vault file, makes no commit, sends no notice, and never appears in a Document or its comment listing. `POST /api/style-notes` is refused for worker sessions; `GET /api/style-notes` reads the corpus with counts by model, harness, tag, and Area.
 - `tangent vault commit <paths...> -m "<verb>: <area> <summary>"` commits only the named vault paths with provenance trailers. A worker session (`@tangent_kind goal`) is refused.
 
 Every request carries the caller's tmux session in the `x-tangent-session` header. The server refuses Goal, Area, Document, brain, and pipeline mutations from worker sessions. Reads stay open (ADR-0040).

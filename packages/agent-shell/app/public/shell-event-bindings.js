@@ -43,7 +43,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   } = launch;
   const {
-    openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
+    openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentKind, setCommentScope,
     cancelCommentComposer, submitCommentComposer, commentIdentity, syncCommentCursor, activeCommentIdentity, focusCommentIdentity,
     editActiveComment, replyToActiveComment, resolveActiveComment, stepComment,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, readerCopyPayload, openReaderAgent,
@@ -1726,6 +1726,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest?.("[data-comment-new]")) return openCommentComposer();
     const commentStep = target.closest?.("[data-document-peek-comment-step]");
     if (commentStep) return stepComment(Number(commentStep.dataset.documentPeekCommentStep));
+    const commentKind = target.closest?.("[data-comment-kind]");
+    if (commentKind) return setCommentKind(commentKind.dataset.commentKind);
     const commentScope = target.closest?.("[data-comment-scope]");
     if (commentScope) return setCommentScope(commentScope.dataset.commentScope);
     if (target.closest?.("[data-cancel-comment]")) return cancelCommentComposer();
@@ -2099,6 +2101,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest("[data-comment-new]")) return openCommentComposer();
     const commentStep = target.closest("[data-comment-step]");
     if (commentStep) return stepComment(Number(commentStep.dataset.commentStep));
+    const commentKind = target.closest("[data-comment-kind]");
+    if (commentKind) return setCommentKind(commentKind.dataset.commentKind);
     const commentScope = target.closest("[data-comment-scope]");
     if (commentScope) return setCommentScope(commentScope.dataset.commentScope);
     if (target.closest("[data-cancel-comment]")) return cancelCommentComposer();

@@ -213,6 +213,28 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     throw Object.assign(new Error(conflict.error), conflict);
   }
 
+  /** Rejects an exact operation when any read-only evidence path changed after planning. */
+  async function rejectChangedGuards(manifest, manifestFile) {
+    const changed = [];
+    for (const guard of manifest.guards ?? []) {
+      const content = await readTarget(guard.file);
+      const hash = contentHash(content);
+      if (hash !== guard.oldHash) changed.push({ ...guard, currentHash: hash });
+    }
+    if (!changed.length) return;
+    const conflict = {
+      status: 409,
+      conflict: true,
+      code: "guard-race",
+      retryable: false,
+      operationId: manifest.operationId,
+      changedPaths: changed.map((guard) => guard.file),
+      error: "exact vault evidence changed while the operation was preparing",
+    };
+    await writeManifest(manifestFile, { ...manifest, state: "conflict", conflict, failedAt: new Date().toISOString() });
+    throw Object.assign(new Error(conflict.error), conflict);
+  }
+
   /** Returns one path's blob identity from a Git revision, or null when absent. */
   async function revisionBlob(revision, file) {
     try {
@@ -302,6 +324,7 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       if (installRef) {
         if (recheckTargets) {
           await rejectChangedTargets(manifest, manifestFile);
+          await rejectChangedGuards(manifest, manifestFile);
           if (manifest.exactClean) await rejectDirtyExactTargets(manifest, manifestFile);
           await rejectChangedDirectoryGuards(manifest, manifestFile);
         }
@@ -418,6 +441,21 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     finally { lease.active = false; release(); }
   }
 
+  /** Reads one exact vault target behind the install barrier or returns a typed recovery failure. */
+  async function readExact(file) {
+    return withRead(async () => {
+      if (recoveryRequired || recoveryPending) {
+        throw Object.assign(new Error("Exact vault recovery must finish before this target can be read."), {
+          status: 503,
+          code: "resource-transaction-recovery",
+          retryable: true,
+        });
+      }
+      const content = await readTarget(file);
+      return { file, content, hash: contentHash(content) };
+    });
+  }
+
   /** Waits until readers can observe a complete transaction boundary. */
   async function waitForReadable() {
     await withRead(() => {
@@ -521,8 +559,15 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
     };
   }
 
+  /** Converts one read-only exact evidence path into a journal guard. */
+  function journalGuard(guard) {
+    const content = guard.oldContent === null || guard.oldContent === undefined ? null : Buffer.from(guard.oldContent);
+    if (!safeVaultTarget(root, guard.file)) throw new Error(`unsafe vault guard: ${guard.file}`);
+    return { file: guard.file, oldHash: contentHash(content) };
+  }
+
   /** Commits and installs one generalized exact-target operation under the map lock. */
-  async function saveExact(buildPlan, { operationId, worldId = "area-tree", area = "", session = null, intent = {} } = {}) {
+  async function saveExact(buildPlan, { operationId, worldId = "area-tree", area = "", session = null, intent = {}, rehydrate = null } = {}) {
     if (!operationId || typeof buildPlan !== "function") throw new Error("exact vault transactions require an operation ID and plan builder");
     await ensureRecovered();
     if (recoveryRequired) return { status: 503, error: "Area map recovery requires attention", recoveryRequired };
@@ -534,8 +579,11 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       if (recoveryRequired) return { status: 503, error: "Area map recovery requires attention", recoveryRequired };
       try {
         const prior = JSON.parse(await readFile(manifestFile, "utf8"));
-        if (prior.digest !== requestDigest) return { status: 409, conflict: true, operationId, error: "operation ID was already used for a different exact vault change" };
-        if (prior.state === "committed") return { ...prior.result, idempotent: true };
+        if (prior.digest !== requestDigest) return { status: 409, conflict: true, code: "operation-id-reused", retryable: false, operationId, error: "operation ID was already used for a different exact vault change" };
+        if (prior.state === "committed") {
+          const current = typeof rehydrate === "function" ? await rehydrate(prior.result, { idempotent: true }) : prior.result;
+          return { ...current, committed: true, operationId, idempotent: true };
+        }
       } catch (error) { if (error.code !== "ENOENT") throw error; }
       const plan = await buildPlan();
       const unique = new Set();
@@ -545,7 +593,17 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
         unique.add(target.file);
       }
       targets.sort((left, right) => Number(targetBytes(left, "new") === null) - Number(targetBytes(right, "new") === null) || left.file.localeCompare(right.file));
-      if (!targets.length) return { ...(plan.result ?? {}), committed: true, idempotent: true, operationId };
+      const guards = (plan.guards ?? []).map(journalGuard);
+      for (const guard of guards) if (unique.has(guard.file)) throw new Error(`exact vault guard also appears as a target: ${guard.file}`);
+      if (!targets.length) {
+        const result = { ...(plan.result ?? {}), committed: true, operationId, idempotent: false };
+        await writeManifest(manifestFile, {
+          schema: "area-map-transaction.v3", operationId, worldId, digest: requestDigest, state: "committed",
+          preparedAt: new Date().toISOString(), committedAt: new Date().toISOString(), shardCount: 0, targets: [], guards, result,
+        });
+        const current = typeof rehydrate === "function" ? await rehydrate(result, { idempotent: false }) : result;
+        return { ...current, committed: true, operationId, idempotent: false };
+      }
       const cleanupDirectories = [...new Set(plan.cleanupDirectories ?? [])].sort((left, right) => right.split("/").length - left.split("/").length || right.localeCompare(left));
       for (const value of cleanupDirectories) if (!safeVaultTarget(root, value)) throw new Error(`unsafe cleanup directory: ${value}`);
       const prepared = await vault.prepareExactCommit({
@@ -558,25 +616,26 @@ export function createAreaMapTransactionRepository({ root, repository, vault, ru
       const result = { ...(plan.result ?? {}), committed: true, operationId, idempotent: false };
       const manifest = {
         schema: "area-map-transaction.v3", operationId, worldId, digest: requestDigest, state: "prepared", exactClean: true,
-        preparedAt: new Date().toISOString(), shardCount: targets.filter((target) => target.file.endsWith(".excalidraw")).length, prepared, targets, cleanupDirectories,
+        preparedAt: new Date().toISOString(), shardCount: targets.filter((target) => target.file.endsWith(".excalidraw")).length, prepared, targets, guards, cleanupDirectories,
         directoryGuards: plan.directoryGuards ?? [], result,
       };
       await writeManifest(manifestFile, manifest);
       await checkpoint("prepared", phaseFields(manifest));
       const committed = await finishPrepared(manifest, manifestFile, { installRef: true, recheckTargets: true });
-      return committed.result;
+      return typeof rehydrate === "function" ? { ...await rehydrate(committed.result, { idempotent: false }), committed: true, operationId, idempotent: false } : committed.result;
     }).catch((error) => {
       if (error?.simulatedCrash) throw error;
       emitEvent("area_map_save_phase", { operationId, phase: "failed", shardCount: 0, duration: 0 });
       reportError(`Exact vault transaction failed: ${error.message}`);
       return {
         status: Number(error?.status ?? 503), committed: false, operationId, error: error.message,
+        code: error?.code ?? "transaction-failed", retryable: error?.retryable === true,
         ...(error?.conflict ? { conflict: true, changedPaths: error.changedPaths ?? [] } : {}),
       };
     });
   }
 
-  return { read, recover: ensureRecovered, saveExact, saveMany, waitForReadable, withRead };
+  return { read, readExact, recover: ensureRecovered, saveExact, saveMany, waitForReadable, withRead };
 }
 
 export default { createAreaMapTransactionRepository };

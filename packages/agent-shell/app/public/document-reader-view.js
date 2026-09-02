@@ -145,6 +145,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         <div class="document-reader-actions">
           ${documentOutlineMenu()}
           ${documentCopyButton("full")}
+          ${state.document?.area ? `<button class="primary-button" type="button" data-discuss-current-document="${escapeHtml(state.document.area)}">Discuss with ${escapeHtml(areaLabel(state.document.area))} Brain</button>` : ""}
           ${repositoryFile ? "" : documentCommentControls()}
           ${state.goalDetail?.goal ? "" : `<button class="document-keys-action" type="button" data-document-keys aria-keyshortcuts="Shift+/" title="Document reading keys (?)">Keys <kbd>?</kbd></button>`}
           ${repositoryFile ? "" : brain ? `<details class="reader-brain-actions">
@@ -298,6 +299,8 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
           <div class="document-peek-actions">
             ${loaded ? documentCopyButton("quick") : ""}
             ${peekCommentControls(loaded)}
+            ${area ? `<button class="quiet-button" type="button" data-show-document-on-map="${escapeHtml(area)}" data-peek-key="map" aria-label="Show ${escapeHtml(title)} on ${escapeHtml(areaLabel(area))} Map">Show on Map</button><button class="primary-button" type="button" data-discuss-document="${escapeHtml(area)}" data-peek-key="discuss">Discuss with ${escapeHtml(areaLabel(area))} Brain</button>` : ""}
+            <button class="quiet-button" type="button" data-open-work-from-document data-peek-key="work">Work</button>
             <button class="quiet-button document-keys-action" type="button" data-document-keys aria-keyshortcuts="Shift+/" title="Document reading keys (?)">Keys <kbd>?</kbd></button>
             <button class="quiet-button" type="button" data-promote-document-peek data-peek-key="promote">Open full reader</button>
             <button class="quiet-button" type="button" data-close-document-peek data-peek-key="close" aria-keyshortcuts="Escape" title="Close quick reader (Esc)">Close <kbd>esc</kbd></button>

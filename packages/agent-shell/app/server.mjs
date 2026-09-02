@@ -7084,13 +7084,16 @@ const areaRoutesOperations = {
     if (!area || !areas.includes(area)) return null;
     return querySubtreeMilestones({ root: BRAINS_ROOT, area, areas, ...options });
   },
-  /** Searches the cached Document, Area-note, and Brain navigation corpus. */
+  /** Searches the cached vault corpus and retained Work destinations. */
   async search(query, requestedLimit) {
     return queryNavigationIndex({
       index: await navigationIndex(),
       query,
       requestedLimit,
       brains: workSources.adapters.brains.rows(),
+      areas: workSources.adapters.areas.rows(),
+      goals: workSources.adapters.goals.rows(),
+      agents: workSources.adapters.agents.rows(),
     });
   },
   /** Writes one detached audit archive. Normal product reads never use this file. */

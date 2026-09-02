@@ -41,7 +41,7 @@ test("refresh lifecycle responds to pushes and cleans up both transports", () =>
   listeners.error();
   listeners.changed();
   lifecycle.stop();
-  assert.equal(refreshes, 1);
+  assert.equal(refreshes, 2);
   assert.deepEqual(streamStates, ["open", "retrying"]);
   assert.equal(closed, true);
   assert.equal(cleared, 7);

@@ -9,11 +9,13 @@ import { activeBrainForArea, nearestActiveBrain } from "./brain-ownership.js";
 export function bindShellEvents({ shell, chrome, prompts, work, areas, programs, launch, documents }) {
   const { state, post, actionTelemetry, paint, refresh, showToast } = shell;
   const {
-    screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
+    screen, backButton, mapTab, workTab, areasTab, promptsTab, forYouButton, problemsButton, contextBrainButton, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
+    workLensLayer, workLensContent, openWorkLens, closeWorkLens, showMapHome,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
-    showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap, drillAreaMap, closeAreaMap, openAreaMapFind, toggleAreaMapOnly,
-    toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane, resizeAreaWorkspacePane, areaWorkspaceMapOwnsFocus,
+    showDescribe, toggleAwake, openModal, closeModal, modalConfirm, captureReturnPoint, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap, drillAreaMap, closeAreaMap, openAreaMapFind, toggleAreaMapOnly,
+    toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane, resizeAreaWorkspacePane, areaWorkspaceMapOwnsFocus, returnFromBrain,
+    discussDocumentWithBrain, switchDocumentDiscussion, showMapFromDocument, closeDocumentContext, resumeDocumentContext, dismissResumeContext,
   } = chrome;
   const {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
@@ -50,6 +52,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading, openDocumentPeek,
     leaveQuickPath,
   } = documents;
+  /** The currently interactive non-modal surface; Work lives above #screen. */
+  const surfaceRoot = () => state.workLens ? workLensContent : screen;
   const awakeButton = document.querySelector("#awake-button");
   // One chord engine for every surface (design agent-shell-keymap 4.2).
   const chords = createChordEngine(window.setTimeout.bind(window), window.clearTimeout.bind(window));
@@ -59,6 +63,17 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   let harnessReturnPoint = null;
   let areaProcessesReturnPoint = null;
   const copyOperations = { full: { serial: 0, timer: null, cached: null }, quick: { serial: 0, timer: null, cached: null } };
+  /** True while the complete Work inventory owns the temporary top surface. */
+  const workVisible = () => Boolean(state.workLens) || state.view === "work";
+  /** True only while no later layer has retained Work underneath it. */
+  const workTop = () => {
+    const documentOpen = Boolean(state.documentPeek && !state.documentPeek.suspended);
+    return workVisible()
+      && modalLayer.hidden
+      && !state.goTo
+      && !state.sessionPeek
+      && (!documentOpen || workLensLayer.classList.contains("top-layer"));
+  };
 
   /** Returns from one worker agent to its exact Work or Document context. */
   function leaveGoalAgent() {
@@ -73,13 +88,22 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return point ? restoreReturnPoint(point) : showWork();
   }
 
+  /** Promotes a full reader into the retained Document and responsible Brain. */
+  async function discussFullDocument(origin = document.activeElement) {
+    const file = state.document?.file;
+    const area = state.document?.area;
+    if (!file || !area) return showToast("This Document has no responsible Area Brain.");
+    await openDocumentPeek(file, { origin });
+    discussDocumentWithBrain(area);
+  }
+
   /** Stores one cursor without rebuilding the element that received a pointer event. */
   function rememberWorkCursor(row) {
     if (!row?.dataset.workCursor) return false;
     state.workCursor = row.dataset.workCursor;
     localStorage.setItem("agent-shell.work-cursor", state.workCursor);
     for (const item of visibleCursorRows()) item.classList.toggle("cursor", item === row);
-    paintWorkCaption(screen);
+    paintWorkCaption(surfaceRoot());
     return true;
   }
 
@@ -129,7 +153,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       localStorage.setItem("agent-shell.work-cursor", state.workCursor);
     }
     paint(true);
-    if (restoreFocus) window.setTimeout(() => [...screen.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === state.workCursor)?.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus({ preventScroll: true }), 0);
+    if (restoreFocus) window.setTimeout(() => [...surfaceRoot().querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === state.workCursor)?.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus({ preventScroll: true }), 0);
   }
 
   /**
@@ -139,10 +163,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    */
   function revealCursor(cursor) {
     for (let guard = 0; guard < 8; guard += 1) {
-      const row = [...screen.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === cursor);
+      const row = [...surfaceRoot().querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === cursor);
       if (!row || !row.hidden) return Boolean(row);
       const parentFile = row.dataset.subgoalOf;
-      const parentRow = parentFile ? [...screen.querySelectorAll("[data-goal-anchor]")].find((item) => item.dataset.goalAnchor === parentFile) : null;
+      const parentRow = parentFile ? [...surfaceRoot().querySelectorAll("[data-goal-anchor]")].find((item) => item.dataset.goalAnchor === parentFile) : null;
       if (parentRow && workRowIsCollapsed(parentRow)) {
         setSubgoalsExpanded(parentFile, true);
         state.searchOrigin?.openedFolds.push({ kind: "goal", id: parentFile });
@@ -168,7 +192,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   }
 
   const searchBar = createWorkSearchBar({
-    state, document, bar: workSearch, input: workSearchInput, count: workSearchCount, keys: workSearchKeys, screen,
+    state, document, bar: workSearch, input: workSearchInput, count: workSearchCount, keys: workSearchKeys, screen: surfaceRoot, isWorkVisible: workVisible,
+    isWorkTop: workTop,
     paint, setWorkCursor, revealCursor, closeRevealedFold, announce: announceWork,
   });
 
@@ -186,7 +211,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   /** Returns the visible rows that participate in Work cursor movement. */
   function visibleCursorRows(selector = "[data-work-cursor]") {
-    return [...screen.querySelectorAll(selector)].filter((row) => !row.hidden);
+    return [...surfaceRoot().querySelectorAll(selector)].filter((row) => !row.hidden);
   }
 
   /** Resolves the stored cursor, with the first visible row as its fallback. */
@@ -332,7 +357,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return child ? setWorkCursor(child) : false;
     }
     const file = row.dataset.goalAnchor;
-    const children = file ? [...screen.querySelectorAll("[data-subgoal-of]")].filter((item) => item.dataset.subgoalOf === file) : [];
+    const children = file ? [...surfaceRoot().querySelectorAll("[data-subgoal-of]")].filter((item) => item.dataset.subgoalOf === file) : [];
     if (!children.length) return false;
     if (workRowIsCollapsed(row)) {
       setSubgoalsExpanded(file, true);
@@ -358,10 +383,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     window.setTimeout(() => {
       if (point.view === state.view && Number.isFinite(point.scrollTop)) screen.scrollTop = point.scrollTop;
       const exact = point.focusKey
-        ? [...screen.querySelectorAll("[data-focus-key]")].find((item) => item.dataset.focusKey === point.focusKey)
+        ? [...surfaceRoot().querySelectorAll("[data-focus-key]")].find((item) => item.dataset.focusKey === point.focusKey)
         : null;
-      const row = state.view === "work"
-        ? [...screen.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === (point.workCursor || state.workCursor))
+      const row = workVisible()
+        ? [...surfaceRoot().querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === (point.workCursor || state.workCursor))
         : null;
       (exact ?? row?.querySelector("[data-work-row-title], [data-work-cursor-control]") ?? workTab)?.focus?.({ preventScroll: true });
     }, 0);
@@ -383,7 +408,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     stopLaunchFocusRequest();
     /** Tries to focus the requested launch control after one paint. */
     const attempt = () => {
-      const popover = screen.querySelector("[data-launch-popover]");
+      const popover = surfaceRoot().querySelector("[data-launch-popover]");
       if (!popover) return false;
       if (state.launch.loading) {
         popover.focus?.({ preventScroll: true });
@@ -488,7 +513,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    * the primary action, printed letters run the secondary ones.
    */
   function handleLaunchPopoverKey(event) {
-    const popover = screen.querySelector("[data-launch-popover]");
+    const popover = surfaceRoot().querySelector("[data-launch-popover]");
     if (!popover) return false;
     const active = event.target;
     // Tab visits controls, and each column once, on its checked value. The
@@ -639,7 +664,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.launch.command = "";
       state.launch.editing = false;
       paint(true);
-      window.setTimeout(() => screen.querySelector("[data-launch-edit]")?.focus({ preventScroll: true }), 0);
+      window.setTimeout(() => surfaceRoot().querySelector("[data-launch-edit]")?.focus({ preventScroll: true }), 0);
       return true;
     }
     return false;
@@ -654,7 +679,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   function enterCursorSession() {
     const row = cursorRow();
     if (!row) return showToast("There is no Work row to enter.");
-    setWorkCursor(row, false);
+    // Entering a session stacks a temporary layer over Work. Record the cursor
+    // in place so the row control itself remains the exact return target.
+    rememberWorkCursor(row);
     const value = row.dataset.workCursor;
     if (value.startsWith("goal:")) return openGoalRun(value.slice(5));
     if (value.startsWith("definition:")) {
@@ -721,10 +748,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
           const confirm = modalLayer.querySelector("[data-modal-confirm]");
           if (confirm) confirm.disabled = true;
           closeModal({ restoreFocus: false });
-          const row = [...screen.querySelectorAll("[data-goal-anchor]")].find((item) => item.dataset.goalAnchor === goal.file);
+          const row = [...surfaceRoot().querySelectorAll("[data-goal-anchor]")].find((item) => item.dataset.goalAnchor === goal.file);
           if (row) {
             optimisticallyRemoveWorkRow(row, operation, "Parking");
-            for (const child of screen.querySelectorAll("[data-presentation-goal], [data-card-goal]")) {
+            for (const child of surfaceRoot().querySelectorAll("[data-presentation-goal], [data-card-goal]")) {
               if (child.dataset.presentationGoal === goal.file || child.dataset.cardGoal === goal.file) child.remove();
             }
           } else announceWork("Parking");
@@ -931,6 +958,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const onAreaRow = Boolean(row?.classList.contains("work-group-row") || row?.dataset.processFile);
       const brain = onAreaRow ? activeBrainForArea(state.brains, area) : nearestActiveBrain(state.brains, area);
       const session = state.sessions.find((item) => item.name === brain?.session);
+      if (workVisible()) {
+        const returnPoint = captureReturnPoint();
+        closeWorkLens({ restoreFocus: false, remember: true });
+        return toggleMapBrain(brain?.area ?? area, { returnPoint });
+      }
       if (session) return openSessionLayer(session, "brain");
       const point = captureNavigationPoint(row?.querySelector("[data-work-row-title], [data-work-cursor-control]"));
       const opened = openOrStartBrain(area);
@@ -1012,7 +1044,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const rows = visibleCursorRows();
       if (!rows.length) return showToast("There is no Work row to move to.");
       const index = rows.indexOf(row);
-      const pageRows = Math.max(1, Math.floor(screen.clientHeight / Math.max(1, row?.offsetHeight || 40) / 2));
+      const pageRows = Math.max(1, Math.floor(surfaceRoot().clientHeight / Math.max(1, row?.offsetHeight || 40) / 2));
       if (id === "firstLast") return setWorkCursor(rows[0]);
       if (id === "halfPage") return setWorkCursor(rows[Math.min(rows.length - 1, Math.max(0, index) + pageRows)]);
       return setWorkCursor(rows[index < 0 ? 0 : Math.min(rows.length - 1, index + 1)]);
@@ -1313,7 +1345,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   /** The scroll owner for the full or quick Document surface. */
   function documentReadingSurface(quick) {
-    return quick ? documentPeekLayer.querySelector(".document-peek-scroll") : screen.querySelector(".document-reader-scroll");
+    return quick ? documentPeekLayer.querySelector(".document-peek-scroll") : surfaceRoot().querySelector(".document-reader-scroll");
   }
 
   /** True when the native Selection belongs to this reading surface. */
@@ -1564,7 +1596,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    */
   function readerResumeAttemptButton(quick) {
     if (quick) return null;
-    const reader = screen.querySelector(".document-reader");
+    const reader = surfaceRoot().querySelector(".document-reader");
     if (!reader) return null;
     const buttons = [...reader.querySelectorAll("[data-resume-agent]")];
     return buttons.find((button) => button.parentElement?.querySelector(":scope > em")) ?? buttons[0] ?? null;
@@ -1664,7 +1696,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return true;
     }
     if (command === documentReadingCommands.closeReader) {
-      (quick ? closeDocumentPeek : leaveReader)();
+      (quick ? closeDocumentContext : leaveReader)();
       return true;
     }
     return false;
@@ -1690,7 +1722,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   /** Opens one Area's existing process table and remembers its Work opener. */
   function openAreaProcesses(area, trigger) {
-    areaProcessesReturnPoint = captureNavigationPoint(trigger);
+    const navigationPoint = captureNavigationPoint(trigger);
+    const returnPoint = state.workLens ? captureReturnPoint() : null;
+    areaProcessesReturnPoint = { navigationPoint, returnPoint };
+    if (returnPoint) closeWorkLens({ restoreFocus: false, remember: true });
     state.areaSelection = area;
     state.areaHistory = false;
     state.whatHappened = null;
@@ -1718,8 +1753,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       copyOperations.quick.cached = null;
       return writeReaderCopy(payload, "quick");
     }
-    if (target === documentPeekLayer) return closeDocumentPeek();
-    if (target.closest?.("[data-close-document-peek]")) return closeDocumentPeek();
+    if (target === documentPeekLayer) return closeDocumentContext();
+    const switcher = target.closest?.("[data-document-discussion-surface]");
+    if (switcher) return switchDocumentDiscussion(switcher.dataset.documentDiscussionSurface);
+    const discuss = target.closest?.("[data-discuss-document]");
+    if (discuss) return discussDocumentWithBrain(discuss.dataset.discussDocument);
+    if (target.closest?.("[data-show-document-on-map]")) return showMapFromDocument();
+    if (target.closest?.("[data-open-work-from-document]")) return openWorkLens({ mode: "all" });
+    if (target.closest?.("[data-open-go-to-from-document]")) return openGoTo();
+    if (target.closest?.("[data-close-document-peek]")) {
+      if (state.documentDiscussion?.active === "brain") return returnFromBrain();
+      return closeDocumentContext();
+    }
     if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: true });
     if (target.closest?.("[data-promote-document-peek]")) return promoteDocumentPeek();
     if (target.closest?.("[data-retry-document-peek]")) return retryDocumentPeek();
@@ -1752,8 +1797,22 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   document.addEventListener("click", async (event) => {
     const target = event.target;
+    if (target.closest?.("#map-tab")) return showMapHome();
+    if (target.closest?.("[data-resume-document-context]")) return resumeDocumentContext();
+    if (target.closest?.("[data-dismiss-resume-context]")) return dismissResumeContext();
+    if (target.closest?.("#work-tab")) return openWorkLens({ mode: "all" });
+    if (target.closest?.("#for-you-button")) return openWorkLens({ mode: "for-you" });
+    if (target.closest?.("#problems-button")) return openWorkLens({ mode: "problems" });
+    if (target.closest?.("#context-brain-button")) return toggleMapBrain();
+    if (target.closest?.("[data-discuss-current-document]")) return void discussFullDocument(target.closest("[data-discuss-current-document]"));
+    if (target.closest?.("[data-close-work-lens]")) return closeWorkLens();
+    if (target.closest?.("[data-retry-work]")) return refresh({ trigger: "work-retry" });
+    if (target.closest?.("[data-retry-go-to]")) {
+      return renderGoToList();
+    }
     if (target.closest?.("[data-map-brain]")) return toggleMapBrain();
     if (target.closest?.("[data-close-map-brain]")) return closeMapBrain();
+    if (target.closest?.("[data-toggle-workspace-map]")) return;
     if (target.closest?.("[data-map-column]")) {
       const interactive = target.closest?.("button, input, select, textarea, a, dialog, [role='dialog'], [contenteditable]:not([contenteditable='false'])");
       focusMapCompanion("map", { moveDomFocus: !interactive });
@@ -1780,8 +1839,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     const cursor = target.closest?.("[data-work-cursor]");
     const areaJump = target.closest?.("[data-move-work-area]");
-    if (areaJump && state.view === "work") return moveAreaCursor(Number(areaJump.dataset.moveWorkArea), cursor ?? cursorRow());
-    if (cursor && state.view === "work") rememberWorkCursor(cursor);
+    if (areaJump && workVisible()) return moveAreaCursor(Number(areaJump.dataset.moveWorkArea), cursor ?? cursorRow());
+    if (cursor && workVisible()) rememberWorkCursor(cursor);
     const workSearchButton = target.closest?.("[data-work-search]");
     if (workSearchButton) return searchBar.open();
     const workKeys = target.closest?.("[data-work-keys]");
@@ -1789,7 +1848,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     // The caption key line's entries run their command on the cursor row
     // (work-screen-refresh D7): the line teaches the key and takes the pointer.
     const captionCommand = target.closest?.("[data-work-caption-command]");
-    if (captionCommand && state.view === "work") return executeWorkCommand(captionCommand.dataset.workCaptionCommand, cursorRow());
+    if (captionCommand && workVisible()) return executeWorkCommand(captionCommand.dataset.workCaptionCommand, cursorRow());
     const mapButton = target.closest?.("[data-open-area-map]");
     if (mapButton) return openAreaMap(mapButton.dataset.openAreaMap, mapButton);
     if (target.closest?.("[data-map-back]")) return closeAreaMap();
@@ -1815,6 +1874,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (stopBrain) return confirmStopBrain(stopBrain.dataset.stopBrainArea, stopBrain.dataset.stopBrainAttempt);
     const areaBrain = target.closest("[data-open-area-brain]");
     if (areaBrain) {
+      const workRow = areaBrain.closest("[data-work-cursor]");
+      if (workRow) return executeWorkCommand("openBrain", workRow);
       const point = captureNavigationPoint(areaBrain);
       if (state.launchTarget && state.launchTarget !== BRAIN_LAUNCH_TARGET) {
         launchReturnPoint = point;
@@ -2127,7 +2188,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return replyAboutRow(replyRow.dataset.replyArea, replyRow.dataset.replySession, replyRow.dataset.replySubject);
     }
     const openBrain = target.closest("[data-open-brain]");
-    if (openBrain) return openBrainSession(openBrain.dataset.openBrain);
+    if (openBrain) {
+      const workRow = openBrain.closest("[data-work-cursor]");
+      if (workRow) return executeWorkCommand("openBrain", workRow);
+      return openBrainSession(openBrain.dataset.openBrain);
+    }
     const openSession = target.closest("[data-open-session]");
     if (openSession) {
       state.agentSessionName = openSession.dataset.openSession;
@@ -2158,6 +2223,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (launchFor) {
       const file = launchFor.dataset.launchFor;
       if (file === BRAIN_LAUNCH_TARGET) {
+        if (workVisible() && launchFor.dataset.brainArea) {
+          const point = captureReturnPoint();
+          const area = launchFor.dataset.brainArea;
+          closeWorkLens({ restoreFocus: false, remember: true });
+          return toggleMapBrain(area, { returnPoint: point });
+        }
         if (state.launchTarget && state.launchTarget !== BRAIN_LAUNCH_TARGET) {
           launchReturnPoint = captureNavigationPoint(launchFor);
           launchParentSurface = null;
@@ -2373,7 +2444,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (!goal) return;
       try {
         await post("/api/goals/accept", { file: goal.file });
-        state.view = "work";
+        if (state.sessionPeek) closeSessionLayer();
+        if (state.view !== "area-workspace") showMapHome({ focus: false });
+        openWorkLens({ mode: "all", focus: false });
         await refresh();
         paint(true);
         showToast("The agent run ended. The goal stays open.");
@@ -2648,7 +2721,24 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   goToButton.innerHTML = `Go to ${shortcutKbd("goTo")}`;
-  goToButton.addEventListener("click", openGoTo);
+  let goToTerminalPointerOrigin = null;
+  goToButton.addEventListener("pointerdown", () => {
+    const origin = document.activeElement;
+    goToTerminalPointerOrigin = origin?.closest?.(".xterm, [data-terminal-standin]") ? origin : null;
+  });
+  goToButton.addEventListener("click", () => {
+    const terminalReturn = goToTerminalPointerOrigin;
+    goToTerminalPointerOrigin = null;
+    openGoTo();
+    // Pointer focus reaches global chrome before click. When that route is
+    // the terminal's visible alternative to Command-K, preserve the composer
+    // as the exact place revealed after Go To or its selected Document closes.
+    if (state.goTo && terminalReturn) state.goTo.returnFocus = terminalReturn;
+  });
+
+  workLensContent?.addEventListener("scroll", () => {
+    if (state.workLens) state.workLens.scrollTop = workLensContent.scrollTop;
+  }, { passive: true });
 
   goToInput.addEventListener("input", () => {
     if (!state.goTo) return;
@@ -2701,6 +2791,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     event.stopPropagation();
     if (event.target === goToLayer) return closeGoTo();
     if (event.target.closest?.("[data-close-go-to]")) return closeGoTo();
+    if (event.target.closest?.("[data-retry-go-to]")) return renderGoToList();
     const row = event.target.closest?.("[data-go-to-row]");
     if (row) return chooseGoToRow(state.goTo?.rows[Number(row.dataset.goToRow)]);
   });
@@ -2755,6 +2846,15 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.querySelector("#session-layer").addEventListener("click", async (event) => {
+    if (event.target.closest?.("[data-session-go-to]")) {
+      const terminalReturn = event.currentTarget.querySelector(".xterm-helper-textarea, [data-terminal-standin]");
+      openGoTo();
+      // A pointer focuses the header button before its click handler runs.
+      // The visible terminal route still returns to the composer that the
+      // button temporarily left, not to chrome above it.
+      if (state.goTo && terminalReturn) state.goTo.returnFocus = terminalReturn;
+      return;
+    }
     const copy = event.target.closest?.("[data-copy-session-tag]");
     if (copy) {
       const tag = copy.dataset.copySessionTag;
@@ -2788,7 +2888,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   function trapTabInside(layer, stopSelector, isTop) {
     layer.addEventListener("keydown", (event) => {
       if (event.key !== "Tab" || !isTop()) return;
-      const stops = [...layer.querySelectorAll(stopSelector)];
+      const stops = [...layer.querySelectorAll(stopSelector)].filter((stop) => {
+        for (let element = stop; element && element !== layer; element = element.parentElement) {
+          if (element.hidden || element.hasAttribute("inert")) return false;
+          const style = window.getComputedStyle?.(element);
+          if (style?.display === "none" || style?.visibility === "hidden") return false;
+        }
+        return true;
+      });
       if (!stops.length) return;
       const first = stops[0];
       const last = stops.at(-1);
@@ -2806,7 +2913,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   }
 
   // Tab stays inside the quick Document layer while it is the top surface.
-  trapTabInside(documentPeekLayer, 'button:not([disabled]), a[href], [tabindex="-1"].document-peek-surface', () => Boolean(state.documentPeek) && !state.goTo);
+  trapTabInside(documentPeekLayer, 'button:not([disabled]), a[href], [tabindex="-1"].document-peek-surface', () => Boolean(state.documentPeek && !state.documentPeek.suspended) && !state.goTo);
 
   // The finder is the top layer whenever it is open, including above a quick
   // Document. Tab and Shift-Tab stay on its own controls, so no focus reaches
@@ -2820,15 +2927,19 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   /** Returns the one visible surface that may interpret this event. */
   function keyboardContext(event) {
     const target = event.target;
+    const documentOpen = Boolean(state.documentPeek && !state.documentPeek.suspended);
+    const workOnTop = Boolean(state.workLens) && (!documentOpen || workLensLayer.classList.contains("top-layer")) && !state.sessionPeek;
+    const sessionOnTop = Boolean(target.closest?.(".terminal-host")) || Boolean(state.sessionPeek)
+      && (!documentOpen || document.querySelector("#session-layer")?.classList.contains("top-layer"));
     return resolveKeyboardContext({
       modal: !modalLayer.hidden,
       goTo: Boolean(state.goTo),
-      documentPeek: Boolean(state.documentPeek),
-      session: Boolean(state.sessionPeek) || Boolean(target.closest?.(".terminal-host")),
+      documentPeek: documentOpen && !workOnTop && !sessionOnTop,
+      session: sessionOnTop,
       focusPicker: Boolean(state.areaFocusPicker),
       transient: !shellMenu.hidden || Boolean(state.launchTarget) || Boolean(state.whatHappened) || Boolean(state.commentComposer),
       textEntry: Boolean(target.closest?.("input, textarea, select, [contenteditable='true']")),
-      view: state.view,
+      view: workOnTop || !documentOpen && workVisible() ? "work" : state.view,
     });
   }
 
@@ -2846,7 +2957,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const count = Number(chords.countFor("work")) || 0;
     chords.clear("work");
     const index = rows.indexOf(current);
-    const pageRows = Math.max(1, Math.floor(screen.clientHeight / Math.max(1, current?.offsetHeight || 40) / 2));
+    const pageRows = Math.max(1, Math.floor(surfaceRoot().clientHeight / Math.max(1, current?.offsetHeight || 40) / 2));
     const target = countedRowIndex(motion, { index, count, length: rows.length, pageRows });
     if (target !== null) return setWorkCursor(rows[target]);
     if (motion === motions.sectionNext || motion === motions.sectionPrevious) {
@@ -2872,9 +2983,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (shortcutMatches(event, KEYMAP.session)) {
       event.preventDefault();
       if (state.sessionPeek) closeSessionLayer();
-      else if (state.view === "work") enterCursorSession();
-      else if (state.view === "document") openReaderAgent();
-      else showToast("Return to Work to choose a session.");
+      else if (workVisible()) enterCursorSession();
+      else if (state.documentDiscussion?.active === "brain") returnFromBrain();
+      else if (state.documentPeek && !state.documentPeek.suspended) discussDocumentWithBrain(state.documentPeek.document?.area || state.documentPeek.area);
+      else if (state.view === "area-workspace") toggleMapBrain();
+      else if (state.view === "document") void discussFullDocument();
+      else showToast("Choose an Area before opening its Brain.");
       return true;
     }
     if (shortcutMatches(event, KEYMAP.findWork)) {
@@ -2896,7 +3010,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const form = event.target.closest?.("[data-command-enter-submit]");
     if (!form && state.view === "harnesses") {
       event.preventDefault();
-      screen.querySelector("[data-save-harnesses]")?.click();
+      surfaceRoot().querySelector("[data-save-harnesses]")?.click();
       return true;
     }
     if (!form) return false;
@@ -2961,6 +3075,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (state.activeOnly) return toggleActiveOnly();
     if (state.areaFocusOnly) return toggleStarredOnly();
     if (state.areaFocus.length) return clearAreaFocus();
+    if (state.workLens) return closeWorkLens();
     workTab.focus();
   }
 
@@ -2971,12 +3086,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    */
   function leaveCurrentSurface() {
     if (closeNearestOpenDetails()) return true;
-    if (state.view === "area-workspace") {
-      closeAreaMap();
+    if (workVisible()) {
+      unwindWork();
       return true;
     }
-    if (state.view === "work") {
-      unwindWork();
+    if (state.view === "area-workspace") {
+      closeAreaMap();
       return true;
     }
     if (state.view === "harnesses") {
@@ -3016,8 +3131,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return true;
     }
     if (state.view === "areas" && areaProcessesReturnPoint) {
-      const point = areaProcessesReturnPoint;
+      const route = areaProcessesReturnPoint;
       areaProcessesReturnPoint = null;
+      if (route.returnPoint) {
+        restoreReturnPoint(route.returnPoint);
+        restoreNavigationPoint(route.navigationPoint);
+        return true;
+      }
+      const point = route.navigationPoint;
       state.view = point.view;
       paint(true);
       restoreNavigationPoint(point);
@@ -3049,7 +3170,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return true;
     }
     if (event.target.id !== "area-search") return false;
-    const rows = [...screen.querySelectorAll("[data-select-area]")];
+    const rows = [...surfaceRoot().querySelectorAll("[data-select-area]")];
     const selected = rows.findIndex((row) => row.dataset.selectArea === state.areaSelection);
     const listMotion = resolveMotion(event, { textOwned: true });
     if ((listMotion === motions.next || listMotion === motions.previous) && rows.length) {
@@ -3071,11 +3192,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     // shortcut may reinterpret its provisional key value.
     if (keyboardEventIsComposing(event)) return;
     const context = keyboardContext(event);
-    const mapFindKey = areaWorkspaceMapOwnsFocus() && !event.altKey && !event.shiftKey && ((event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === "f" || !event.metaKey && !event.ctrlKey && event.key === "/" && context !== "text-entry");
+    const mapFindKey = context !== "work" && areaWorkspaceMapOwnsFocus() && !event.altKey && !event.shiftKey && ((event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === "f" || !event.metaKey && !event.ctrlKey && event.key === "/" && context !== "text-entry");
     if (mapFindKey) {
       event.preventDefault(); event.stopPropagation(); openAreaMapFind(); return;
     }
-    if (areaWorkspaceMapOwnsFocus() && context !== "text-entry" && !event.metaKey && !event.ctrlKey && !event.altKey && event.shiftKey && String(event.key).toLowerCase() === "o" && !event.target.closest?.("[data-tangent-area-map]")) {
+    if (context !== "work" && areaWorkspaceMapOwnsFocus() && context !== "text-entry" && !event.metaKey && !event.ctrlKey && !event.altKey && event.shiftKey && String(event.key).toLowerCase() === "o" && !event.target.closest?.("[data-tangent-area-map]")) {
       event.preventDefault(); event.stopPropagation(); toggleAreaMapOnly(); return;
     }
 
@@ -3123,12 +3244,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (context === "go-to") return;
     if (context === "document-peek") {
       if (shortcutMatches(event, KEYMAP.goTo)) return void handleGlobalShortcut(event);
-      if (handleDocumentReadingKey(event, { quick: true })) return;
       if (event.key === "Escape") {
         event.preventDefault();
-        closeDocumentPeek();
-      } else if (shortcutMatches(event, KEYMAP.session) || shortcutMatches(event, KEYMAP.findWork)) {
+        if (state.documentDiscussion?.active === "brain") returnFromBrain();
+        else closeDocumentContext();
+      } else if (handleDocumentReadingKey(event, { quick: true })) {
+        return;
+      } else if (shortcutMatches(event, KEYMAP.session)) {
         event.preventDefault();
+        if (state.documentDiscussion?.active === "brain") returnFromBrain();
+        else discussDocumentWithBrain(state.documentPeek?.document?.area || state.documentPeek?.area);
+      } else if (shortcutMatches(event, KEYMAP.findWork)) {
+        return void handleGlobalShortcut(event);
       }
       return;
     }
@@ -3139,7 +3266,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (shortcutMatches(event, KEYMAP.session) && (state.sessionPeek || state.view === "area-workspace")) {
         event.preventDefault();
         event.stopPropagation();
-        if (state.sessionPeek) closeSessionLayer(); else closeAreaMap();
+        if (state.sessionPeek) closeSessionLayer(); else returnFromBrain();
       }
       return;
     }
@@ -3185,10 +3312,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (handleGlobalShortcut(event)) return;
     if (handleCommandEnter(event)) return;
-    if (areaWorkspaceMapOwnsFocus() && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && String(event.key).toLowerCase() === "b" && !event.target.closest?.("[data-map-brain-pane]")) {
-      event.preventDefault(); event.stopPropagation(); toggleMapBrain(); return;
-    }
-    if (areaWorkspaceMapOwnsFocus() && event.key === "Escape") {
+    if (context !== "work" && areaWorkspaceMapOwnsFocus() && event.key === "Escape") {
       event.preventDefault(); event.stopPropagation();
       return closeAreaMap();
     }
@@ -3288,6 +3412,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   window.addEventListener("resize", () => {
     try { terminalFit(); } catch {}
+    if (state.documentDiscussion) switchDocumentDiscussion(state.documentDiscussion.active, { focus: false });
   });
 
   screen.addEventListener("pointerdown", (event) => {

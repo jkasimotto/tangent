@@ -20,6 +20,7 @@ export function createSplitWorkspaceController({
   const minSizePx = Object.fromEntries(descriptors.map((descriptor) => [descriptor.id, descriptor.minSizePx]));
   const roots = new Map();
   const instances = new Map();
+  const portals = new Map();
   let availableWidth = host.clientWidth || globalThis.innerWidth || 0;
   let current = reconcileSplitPresentation(layout, availableWidth, minSizePx, separatorPx);
   let destroyed = false;
@@ -64,21 +65,24 @@ export function createSplitWorkspaceController({
     const visible = current.presentation.kind === "wide"
       ? current.order.filter((id) => current.open.has(id))
       : [current.presentation.active];
-    for (const [index, id] of current.order.entries()) {
+    for (const id of current.order) {
       const root = roots.get(id);
       if (!root) continue;
-      const shown = visible.includes(id);
+      const portal = portals.get(id);
+      const shown = Boolean(portal) || visible.includes(id);
       root.hidden = !shown;
       root.toggleAttribute("inert", !shown);
       root.classList.toggle("focused", shown && current.focused === id);
       root.setAttribute("aria-label", descriptorById.get(id).label);
-      if (reorder) {
-        if (index > 0 && visible.length === 2) host.append(separator);
+      if (portal) portal.append(root);
+      else if (reorder) {
+        const hostVisible = current.order.filter((paneId) => visible.includes(paneId) && !portals.has(paneId));
+        if (hostVisible.indexOf(id) > 0 && hostVisible.length === 2) host.append(separator);
         host.append(root);
       }
     }
     host.dataset.presentation = current.presentation.kind;
-    const visibleOrder = current.order.filter((id) => visible.includes(id));
+    const visibleOrder = current.order.filter((id) => visible.includes(id) && !portals.has(id));
     if (visibleOrder.length === 2) {
       const fixed = visibleOrder[1];
       const maximum = Math.max(minSizePx[fixed], availableWidth - minSizePx[visibleOrder[0]] - separatorPx);
@@ -149,6 +153,27 @@ export function createSplitWorkspaceController({
   function update(value) {
     for (const instance of instances.values()) instance.update?.(value);
   }
+  /** Restores one previously captured visit layout around the same pane roots. */
+  function restore(layout) {
+    if (!layout) return false;
+    current = reconcileSplitPresentation({ ...layout, open: new Set(layout.open), order: [...layout.order], sizePx: { ...layout.sizePx }, presentation: { ...layout.presentation } }, availableWidth, minSizePx, separatorPx);
+    apply();
+    return true;
+  }
+  /** Moves one stable pane root into a temporary context without remounting it. */
+  function portal(id, target) {
+    if (!target || !descriptorById.has(id)) return null;
+    ensureMounted(id);
+    portals.set(id, target);
+    apply({ fit: false });
+    return instances.get(id) ?? null;
+  }
+  /** Returns one portaled pane to the retained workspace. */
+  function unportal(id) {
+    if (!portals.delete(id)) return false;
+    apply({ fit: false });
+    return true;
+  }
   /** Replaces one pane instance for an explicit domain retarget. */
   async function replace(descriptor) {
     const previous = descriptorById.get(descriptor.id);
@@ -171,6 +196,7 @@ export function createSplitWorkspaceController({
     for (const instance of instances.values()) await instance.dispose?.("leave");
     instances.clear();
     roots.clear();
+    portals.clear();
     host.replaceChildren();
   }
 
@@ -201,7 +227,7 @@ export function createSplitWorkspaceController({
   instances.get(current.focused)?.focus?.();
 
   return {
-    show, hide, focus, setOrder, setSize, setPrimary, update, replace, measure, snapshot,
+    show, hide, focus, setOrder, setSize, setPrimary, update, restore, replace, portal, unportal, measure, snapshot,
     /** Returns one stable pane root for integration and tests. */
     root: (id) => roots.get(id) ?? null,
     /** Returns one mounted content instance for domain actions. */

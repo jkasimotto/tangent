@@ -33,6 +33,7 @@ export function createTerminalController({ state, showToast, record = null }) {
 
   /** Disposes the mounted terminal and its transport. */
   function disposeTerminal() {
+    if (terminal && terminalSession) state.terminalScrolls?.set?.(terminalSession, terminal.buffer?.active?.viewportY ?? 0);
     terminalGeneration += 1;
     window.clearTimeout(terminalReconnectTimer);
     terminalReconnectTimer = null;
@@ -84,6 +85,8 @@ export function createTerminalController({ state, showToast, record = null }) {
     terminalSession = sessionName;
     const generation = ++terminalGeneration;
     const opened = { at: performance.now(), frames: 0, measuredMs: null, socketMs: null, firstDataMs: null, connects: 0 };
+    const restoredViewport = state.terminalScrolls?.get?.(sessionName);
+    let viewportRestored = !Number.isFinite(restoredViewport);
     /** Milliseconds since this mount began, rounded. */
     const sinceMount = () => Math.round(performance.now() - opened.at);
     // A screen still black after two seconds is reported once with the phase
@@ -154,7 +157,12 @@ export function createTerminalController({ state, showToast, record = null }) {
           opened.firstDataMs = sinceMount();
           trace("open", { session: sessionName, ...opened });
         }
-        terminal?.write(typeof event.data === "string" ? event.data : new Uint8Array(event.data));
+        const data = typeof event.data === "string" ? event.data : new Uint8Array(event.data);
+        terminal?.write(data, () => {
+          if (viewportRestored || generation !== terminalGeneration) return;
+          viewportRestored = true;
+          terminal?.scrollToLine?.(restoredViewport);
+        });
       };
       socket.onopen = () => {
         if (terminalSocket !== socket) return;

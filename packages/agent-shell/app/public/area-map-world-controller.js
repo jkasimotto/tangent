@@ -173,11 +173,15 @@ export function createAreaMapWorldController({
     scrollY: Number(validView?.pan?.y ?? 0),
     zoom: Number(validView?.zoom ?? 1) || 1,
   };
-  let locatedArea = world.locatedArea;
-  let cameraTarget = locatedArea;
-  let cameraTrail = [];
-  let restrictionArea = world.areas.some((node) => node.key === locatedArea) ? locatedArea : null;
-  let selection = new Set();
+  const initialAreaKeys = new Set(world.areas.map((node) => node.key));
+  let locatedArea = initialAreaKeys.has(validView?.locatedArea) ? validView.locatedArea : world.locatedArea;
+  let cameraTarget = initialAreaKeys.has(validView?.cameraTarget) ? validView.cameraTarget : locatedArea;
+  let cameraTrail = (validView?.cameraTrail ?? []).filter((area, index, values) => initialAreaKeys.has(area) && area !== cameraTarget && values.indexOf(area) === index);
+  let restrictionArea = validView && Object.hasOwn(validView, "restrictionArea")
+    ? initialAreaKeys.has(validView.restrictionArea) ? validView.restrictionArea : null
+    : initialAreaKeys.has(locatedArea) ? locatedArea : null;
+  const initialElementIds = new Set(composition.scene.elements.map((element) => element.id));
+  let selection = new Set((validView?.selection ?? []).filter((id) => initialElementIds.has(id)));
   let findRevealId = null;
   let hiddenIds = new Set();
   let projectedScene = composition.scene;
@@ -311,6 +315,11 @@ export function createAreaMapWorldController({
       zoom: camera.zoom,
       foldedAreas: [...folded].sort(),
       detailAreas: [...detailAreas].sort(),
+      locatedArea,
+      cameraTarget,
+      cameraTrail: [...cameraTrail],
+      restrictionArea,
+      selection: [...selection].sort(),
     };
     writeStored(storage, viewKey(world.worldId), value);
     pendingView = value;
@@ -625,6 +634,7 @@ export function createAreaMapWorldController({
     const element = regionElement(area);
     findRevealId = null;
     selection = new Set(element ? [element.id] : []);
+    saveView();
     notify("selection");
     if (element) void prioritizeLoads(area, { includeDescendants: false, requireSelectedDeferred: true });
     return element;
@@ -635,7 +645,7 @@ export function createAreaMapWorldController({
     const selectable = new Set(projectedScene.elements.filter((element) => !element.isDeleted).map((element) => element.id));
     const next = new Set([...ids].filter((id) => selectable.has(id)));
     if (same([...selection].sort(), [...next].sort())) return;
-    selection = next; notify("selection");
+    selection = next; saveView(); notify("selection");
   }
 
   /** Shows one otherwise masked block while it is the current find match. */
@@ -687,7 +697,7 @@ export function createAreaMapWorldController({
 
   /** Unwinds selection and camera history without changing Only. */
   function escape() {
-    if (selection.size) { selection = new Set(); findRevealId = null; notify("selection"); return { kind: "selection" }; }
+    if (selection.size) { selection = new Set(); findRevealId = null; saveView(); notify("selection"); return { kind: "selection" }; }
     if (cameraTrail.length) {
       const area = cameraTrail.at(-1); cameraTrail = cameraTrail.slice(0, -1);
       const element = fitArea(area, { push: false, select: false });
@@ -713,6 +723,32 @@ export function createAreaMapWorldController({
     if (["scrollX", "scrollY", "zoom"].every((field) => Math.abs(candidate[field] - camera[field]) < 0.0001)) return;
     camera = candidate;
     updateSemanticDetail(); saveView(); notify("camera");
+  }
+
+  /** Captures every private Map view property needed for an exact temporary return. */
+  function captureView() {
+    return clone({ camera, locatedArea, cameraTarget, cameraTrail, restrictionArea, selection: [...selection], findRevealId });
+  }
+
+  /** Restores one private Map view without changing authored world authority or history. */
+  function restoreView(value = {}) {
+    const areaKeys = new Set(world.areas.map((node) => node.key));
+    const elementIds = new Set(composition.scene.elements.map((element) => element.id));
+    camera = {
+      scrollX: Number(value.camera?.scrollX ?? camera.scrollX),
+      scrollY: Number(value.camera?.scrollY ?? camera.scrollY),
+      zoom: Number(value.camera?.zoom ?? camera.zoom) || 1,
+    };
+    locatedArea = areaKeys.has(value.locatedArea) ? value.locatedArea : locatedArea;
+    cameraTarget = areaKeys.has(value.cameraTarget) ? value.cameraTarget : locatedArea;
+    cameraTrail = (value.cameraTrail ?? []).filter((area, index, values) => areaKeys.has(area) && area !== cameraTarget && values.indexOf(area) === index);
+    restrictionArea = value.restrictionArea && areaKeys.has(value.restrictionArea) ? value.restrictionArea : null;
+    selection = new Set((value.selection ?? []).filter((id) => elementIds.has(id)));
+    findRevealId = value.findRevealId && elementIds.has(value.findRevealId) ? value.findRevealId : null;
+    updateSemanticDetail(); saveView();
+    onNavigation?.({ area: locatedArea, trail: [...cameraTrail], nextEscape: snapshot().nextEscape });
+    notify("view-restored");
+    return snapshot("view-restored");
   }
 
   /** Materializes one deferred shard in the existing world. */
@@ -813,15 +849,29 @@ export function createAreaMapWorldController({
     folded = new Set([...folded].filter((area) => keys.has(area)));
     detailAreas = new Set([...detailAreas].filter((area) => keys.has(area)));
     worldHistory.state.undo.length = 0; worldHistory.state.redo.length = 0; worldHistory.state.queue.length = 0; worldHistory.state.open = null;
-    authorityGeneration += 1; gesture = null; failedSave = null; saveBarrier?.resolve?.(); saveBarrier = null; selection = new Set(); save = { state: "saved", result: null };
+    const retainedSelection = [...selection];
+    authorityGeneration += 1; gesture = null; failedSave = null; saveBarrier?.resolve?.(); saveBarrier = null; save = { state: "saved", result: null };
     recoveryQueue = []; clearDraft(); install(fresh, "reload");
+    const elementIds = new Set(composition.scene.elements.map((element) => element.id));
+    selection = new Set(retainedSelection.filter((id) => elementIds.has(id)));
+    saveView(); notify("reload-selection");
     onNavigation?.({ area: locatedArea, trail: [...cameraTrail], nextEscape: snapshot().nextEscape });
     return clone(world);
   }
 
   /** Rebases local source-ID changes over current shards, then submits a new operation. */
   async function keepMine() {
-    if (!failedSave || save.state !== "conflict" || !reloadWorld) return null;
+    if (!failedSave) return null;
+    if (save.state === "blocked") {
+      storeDraft(save.result);
+      await draftWrites;
+      const result = { ...(save.result ?? {}), retained: true };
+      save = { state: "blocked", result };
+      notify("draft-kept");
+      recordEvent("area_map_draft", { phase: "kept", draftState: "active", pendingCount: recoveryQueue.length + 1, status: Number(result.status ?? 0), failureKind: failureKind(result), ...draftCorrelation(draft) });
+      return result;
+    }
+    if (save.state !== "conflict" || !reloadWorld) return null;
     const pending = failedSave;
     const mineState = pending.command[pending.direction];
     const baseState = pending.command[pending.direction === "after" ? "before" : "after"];
@@ -929,7 +979,7 @@ export function createAreaMapWorldController({
       if (changed && failedSave) storeDraft(save.result);
       return changed;
     },
-    selectArea, setSelection, setFindReveal, fitArea, navigateArea, setRestriction, toggleRestriction, escape, toggleFold, setFocus, setCamera,
+    selectArea, setSelection, setFindReveal, fitArea, navigateArea, setRestriction, toggleRestriction, escape, toggleFold, setFocus, setCamera, captureView, restoreView,
     materialize, prioritizeLoads, refreshFacts,
     /** Drains durable work, but never waits for a user Retry decision after a failed save. */
     async flush() {

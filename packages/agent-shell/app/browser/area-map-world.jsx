@@ -13,7 +13,7 @@ const EXCALIDRAW_UI_OPTIONS = Object.freeze({
 const PROJECTION_KINDS = new Set([
   "additive-pointer-selection", "additive-selection-repair", "area-pointer-preview", "area-selection", "area-transform-rejected",
   "camera-selection", "claim", "claimed-nudge", "no-change", "placed-block-selection", "pointer-down-selection",
-  "pointer-release-selection", "projection", "selection-repair", "stale-text-repair",
+  "pointer-release-selection", "projection", "selection-repair", "stale-text-repair", "view-return",
 ]);
 
 /** Keeps Excalidraw mounted while the outer world controller repaints its overlays. */
@@ -43,6 +43,30 @@ const clone = (value) => structuredClone(value);
 const selectedIds = (appState) => Object.keys(appState?.selectedElementIds ?? {}).filter((id) => appState.selectedElementIds[id]);
 /** Returns the visible leaf name of one Area key. */
 const leaf = (area) => String(area ?? "").split("/").at(-1) || "Area";
+/** Normalizes one published runtime count without inventing activity. */
+const runtimeCount = (value) => {
+  if (Array.isArray(value)) return value.length;
+  if (value && typeof value === "object" && "count" in value) return runtimeCount(value.count);
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0;
+};
+/** Builds the compact, coordinate-free facts shown beside one Area label. */
+export function areaRuntimeAnnotations(record) {
+  const runtime = record?.runtime ?? {};
+  const working = runtimeCount(runtime.working);
+  const forYou = runtimeCount(runtime.forYou);
+  const problems = runtimeCount(runtime.problems);
+  const facts = [
+    ...(working ? [{ verb: "work", label: `${working} working` }] : []),
+    ...(forYou ? [{ verb: "for-you", label: `${forYou} for you` }] : []),
+    ...(problems ? [{ verb: "problems", label: `${problems} ${problems === 1 ? "problem" : "problems"}` }] : []),
+  ];
+  return {
+    facts,
+    ready: Boolean(runtime.ready) && !forYou,
+    stale: Boolean(runtime.stale),
+  };
+}
 /** Reports whether an element is a disposable composed-world helper. */
 const ephemeral = (element) => element.customData?.tangentWorldEphemeral || element.customData?.tangent?.role === "endpoint-dot";
 /** Formats one rectangle for read-only diagnostics. */
@@ -149,6 +173,13 @@ export function AreaMapWorld({ host, bridge, options }) {
   });
   const controller = controllerRef.current;
   const [state, setState] = useState(controller.snapshot());
+  const selectedElement = state.composition.scene.elements.find((element) => state.selection.has(element.id));
+  const selectedTangent = selectedElement ? boardCore.tangentOf(selectedElement) : null;
+  const selectedRecord = selectedTangent ? options.getDocuments?.().find((record) => record.file === selectedTangent.ref) : null;
+  const selectedArea = selectedElement?.customData?.tangent?.area
+    ?? selectedRecord?.area
+    ?? selectedElement?.customData?.tangentWorld?.owner
+    ?? "";
   const initialDataRef = useRef({
     ...state.scene,
     appState: { ...(state.scene.appState ?? {}), scrollX: state.camera.scrollX, scrollY: state.camera.scrollY, zoom: { value: state.camera.zoom } },
@@ -159,6 +190,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const [picker, setPicker] = useState(null);
   const [pickerQuery, setPickerQuery] = useState("");
   const [widePicker, setWidePicker] = useState(false);
+  const [pickerEntities, setPickerEntities] = useState([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
@@ -192,6 +224,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const claimedRuntimeIdsRef = useRef(new Map());
   const claimedOriginsRef = useRef(new Map());
   const textEditRef = useRef(null);
+  const placedBlockEditEventRef = useRef(false);
   const fingerprintRef = useRef(boardCore.authoredFingerprint(state.scene.elements));
   const appliedProjectionRef = useRef("");
   const previousSaveStateRef = useRef(state.save.state);
@@ -300,8 +333,8 @@ export function AreaMapWorld({ host, bridge, options }) {
 
   /** Keeps the shell header aligned without moving map state into the shell. */
   useEffect(() => {
-    options.onViewState?.({ locatedArea: state.locatedArea, restrictionArea: state.restrictionArea, findOpen, nextEscape: state.nextEscape });
-  }, [findOpen, state.locatedArea, state.nextEscape, state.restrictionArea]);
+    options.onViewState?.({ locatedArea: state.locatedArea, selectedArea, restrictionArea: state.restrictionArea, findOpen, nextEscape: state.nextEscape });
+  }, [findOpen, selectedArea, state.locatedArea, state.nextEscape, state.restrictionArea]);
 
   /** Prints one action result and gives assistive technology a fresh live node. */
   function announce(message, { visible = true } = {}) {
@@ -323,7 +356,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (state.save.state === previousSaveStateRef.current) return;
     previousSaveStateRef.current = state.save.state;
     const message = {
-      saving: "Saving map…", saved: "Map saved.", blocked: "Map not saved. Retry.", conflict: "Map not saved. Reload or keep mine.", dirty: "Map change queued.",
+      saving: "Saving map…", saved: "Map saved.", blocked: "Map not saved. Retry.", conflict: "Map not saved. Reload saved or keep mine.", dirty: "Map change queued.",
     }[state.save.state];
     if (message) announce(message, { visible: false });
   }, [state.save.state]);
@@ -376,6 +409,22 @@ export function AreaMapWorld({ host, bridge, options }) {
     return element;
   }
 
+  /** Reconciles controller-owned camera state after an Excalidraw API fit. */
+  function syncCameraFromCanvas() {
+    const appState = api?.getAppState?.();
+    if (!appState) return;
+    controller.setCamera({ scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom?.value ?? appState.zoom });
+  }
+
+  /** Scrolls Excalidraw and keeps semantic overlays on the same live camera. */
+  function scrollCanvasTo(elements, settings) {
+    if (!api || !elements?.length) return false;
+    api.scrollToContent(elements, settings);
+    syncCameraFromCanvas();
+    requestAnimationFrame(syncCameraFromCanvas);
+    return true;
+  }
+
   /** Scrolls to one target chosen by camera history. */
   function scrollToArea(area, { push = true, select = true } = {}) {
     const element = controller.navigateArea(area, { push, select });
@@ -384,7 +433,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       programmaticSelectionRef.current = new Set([element.id]);
       projectCanvas({ appState: { selectedElementIds: { [element.id]: true } }, captureUpdate: "NEVER" }, "camera-selection");
     }
-    api.scrollToContent([element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
+    scrollCanvasTo([element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
     announce(`${leaf(area)} in view`);
     return element;
   }
@@ -398,14 +447,28 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Toggles the temporary ancestor-and-descendant restriction. */
   function toggleRestriction(area = restrictionTarget()) {
     const result = controller.toggleRestriction(area);
-    if (result.active && result.element && api) api.scrollToContent([result.element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
+    if (result.active && result.element && api) scrollCanvasTo([result.element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
     announce(result.active ? `Only ${areaName(result.area)}, ${result.excludedCount} Areas hidden` : "Whole map");
     return result;
   }
 
+  /** Captures controller-owned view state with Excalidraw's latest live camera. */
+  function captureLiveView() {
+    const view = controller.captureView();
+    const appState = api?.getAppState?.() ?? {};
+    return {
+      ...view,
+      camera: {
+        scrollX: Number(appState.scrollX ?? view.camera.scrollX),
+        scrollY: Number(appState.scrollY ?? view.camera.scrollY),
+        zoom: Number(appState.zoom?.value ?? appState.zoom ?? view.camera.zoom) || 1,
+      },
+    };
+  }
+
   /** Opens map find and records the camera and selection restored by Cancel. */
   function openFind() {
-    if (!findOpen) findOriginRef.current = { area: state.cameraTarget, restrictionArea: state.restrictionArea, selection: [...state.selection] };
+    if (!findOpen) findOriginRef.current = captureLiveView();
     setFindOpen(true); setFindKept(true);
     requestAnimationFrame(() => { findInputRef.current?.focus(); findInputRef.current?.select(); });
     return true;
@@ -438,7 +501,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       : state.composition.scene.elements.find((candidate) => candidate.id === row.elementId);
     if (!element) return false;
     if (row.kind !== "area") { controller.setFindReveal(element.id); controller.setSelection([element.id]); }
-    api.scrollToContent([element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
+    scrollCanvasTo([element], { fitToContent: true, animate: !matchMedia("(prefers-reduced-motion: reduce)").matches });
     if (say) announce(`${matchesFor(findQuery).length} matches, ${row.name} in view`, { visible: false });
     return true;
   }
@@ -471,7 +534,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     if (row.kind === "area") controller.setFindReveal(null);
     else { controller.setFindReveal(row.elementId); controller.setSelection([row.elementId]); }
     const target = row.kind === "area" ? element : state.composition.scene.elements.find((candidate) => candidate.id === row.elementId);
-    if (target && api) api.scrollToContent([target], { fitToContent: true, animate: false });
+    if (target && api) scrollCanvasTo([target], { fitToContent: true, animate: false });
     setFindOpen(false); setFindKept(true); findOriginRef.current = null;
     return true;
   }
@@ -481,11 +544,16 @@ export function AreaMapWorld({ host, bridge, options }) {
     const origin = findOriginRef.current;
     setFindOpen(false); setFindKept(false); findOriginRef.current = null;
     if (!origin) return;
-    controller.setFindReveal(null);
-    controller.setRestriction(origin.restrictionArea);
-    const element = controller.fitArea(origin.area, { push: false, select: false });
-    controller.setSelection(origin.selection);
-    if (element && api) api.scrollToContent([element], { fitToContent: true, animate: false });
+    const restored = controller.restoreView(origin);
+    projectCanvas({
+      appState: {
+        scrollX: restored.camera.scrollX,
+        scrollY: restored.camera.scrollY,
+        zoom: { value: restored.camera.zoom },
+        selectedElementIds: Object.fromEntries([...restored.selection].map((id) => [id, true])),
+      },
+      captureUpdate: "NEVER",
+    }, "find-cancel");
   }
 
   /** Returns the last scene point, or the current viewport center. */
@@ -534,8 +602,57 @@ export function AreaMapWorld({ host, bridge, options }) {
     publish(next.elements, api?.getAppState?.() ?? {});
     const runtime = worldCore.runtimeId(area, id);
     controller.setSelection([runtime]); programmaticSelectionRef.current = new Set([runtime]);
-    requestAnimationFrame(() => projectCanvas({ appState: { selectedElementIds: { [runtime]: true } }, captureUpdate: "NEVER" }, "placed-block-selection"));
+    const runtimeLabel = worldCore.runtimeId(area, `${id}-tangent-label`);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const snapshot = controller.snapshot();
+      const label = snapshot.composition.scene.elements.find((element) => element.id === runtimeLabel && element.type === "text");
+      if (!label || keepOpen) {
+        projectCanvas({ appState: { selectedElementIds: { [runtime]: true } }, captureUpdate: "NEVER" }, "placed-block-selection");
+        return;
+      }
+      projectCanvas({
+        elements: snapshot.scene.elements,
+        appState: { selectedElementIds: { [runtime]: true } },
+        captureUpdate: "NEVER",
+      }, "placed-block-selection");
+      requestAnimationFrame(() => {
+        const appState = api?.getAppState?.() ?? {};
+        const zoom = Number(appState.zoom?.value ?? 1) || 1;
+        const canvas = host.querySelector(".excalidraw canvas.interactive");
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const clientX = Number(appState.offsetLeft ?? rect.left) + (label.x + label.width / 2 + Number(appState.scrollX ?? 0)) * zoom;
+        const clientY = Number(appState.offsetTop ?? rect.top) + (label.y + label.height / 2 + Number(appState.scrollY ?? 0)) * zoom;
+        placedBlockEditEventRef.current = true;
+        canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, clientX, clientY, button: 0, detail: 2, view: window }));
+        placedBlockEditEventRef.current = false;
+        requestAnimationFrame(() => host.querySelector('textarea[data-type="wysiwyg"]')?.focus({ preventScroll: true }));
+      });
+    }));
     setPicker(keepOpen ? target : null); setPickerQuery("");
+  }
+
+  /** Runs one visible Map recovery choice and announces its truthful outcome. */
+  async function recoverMap(action) {
+    try {
+      const result = await controller[action]();
+      const next = controller.snapshot().save.state;
+      if (action === "keepMine" && !result) announce("Keep mine is unavailable. Retry or reload saved.");
+      else if (action === "keepMine" && next === "blocked") announce("Local draft kept. Retry or reload saved.");
+      else if (action === "keepMine" && next === "conflict") announce("Map not saved. Keep mine found another conflict.");
+      else if (action === "keepMine" && next === "saved") announce("Map saved with local changes.");
+      else if (action === "reload") announce("Saved map reloaded.");
+      return result;
+    } catch (error) {
+      announce(`Map not saved. ${String(error?.message ?? error)}`);
+      return null;
+    }
+  }
+
+  /** Closes Map help and returns keyboard ownership to the retained canvas. */
+  function closeHelp() {
+    setHelpOpen(false);
+    requestAnimationFrame(() => host.querySelector(".excalidraw")?.focus?.({ preventScroll: true }));
   }
 
   /** Sends one selected semantic block action to the shell. */
@@ -602,7 +719,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   }
 
   /** Captures one immutable pointer baseline before Excalidraw changes selection. */
-  function beginPointerGesture(origin, pointerDownState = { origin }) {
+  function beginPointerGesture(origin, pointerDownState = { origin }, tool = null) {
     if (pointerBaselineRef.current) return;
     if (textEditRef.current && api?.getAppState?.().editingTextElement) return;
     cancelDeferredCanvasUpdate();
@@ -615,6 +732,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     pointerSolverBaselineRef.current = solverBaseline(pointerBaselineRef.current);
     pointerCompositionRef.current = worldCore.composeAreaMapWorld(pointerBaselineRef.current);
     const pointerCommand = areaMapPointerCommand(pointerDownState);
+    const structuralTool = tool?.type === "selection";
     pointerStateRef.current = { ...pointerDownState, origin, command: pointerCommand }; pointerCurrentRef.current = origin;
     const liveSelection = controller.snapshot().selection;
     stableSelectionRef.current = new Set(liveSelection);
@@ -632,7 +750,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       projectCanvas({ appState: { selectedElementIds: Object.fromEntries([...nextSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" }, "additive-pointer-selection");
     }
     const deepest = areaAtPoint(pointerCompositionRef.current, origin, null, state.scopedAreas);
-    const hitRegionElement = !additive && !spatialAuthoredHit && deepest
+    const hitRegionElement = structuralTool && !additive && !spatialAuthoredHit && deepest
       ? pointerCompositionRef.current.scene.elements.find((element) => element.customData?.tangent?.role === "area-region" && element.customData.tangent.area === deepest)
       : null;
     if (hitRegionElement && !stableSelectionRef.current.has(hitRegionElement.id)) {
@@ -641,12 +759,14 @@ export function AreaMapWorld({ host, bridge, options }) {
       controller.setSelection(nextSelection); programmaticSelectionRef.current = nextSelection;
       projectCanvas({ appState: { selectedElementIds: { [hitRegionElement.id]: true } }, captureUpdate: "NEVER" }, "pointer-down-selection");
     }
-    const selectedElements = pointerCompositionRef.current.scene.elements.filter((element) => stableSelectionRef.current.has(element.id));
+    const selectedElements = structuralTool
+      ? pointerCompositionRef.current.scene.elements.filter((element) => stableSelectionRef.current.has(element.id))
+      : [];
     const hitBlock = selectedElements.some((element) => element.customData?.tangent?.role !== "area-region" && pointerHits(element, origin, zoom));
     const selectedRegion = selectedElements.find((element) => element.customData?.tangent?.role === "area-region");
     const hitRegion = Boolean(selectedRegion) && (pointerCommand.kind === "resize"
       || selectedRegion.customData.tangent.area === deepest && pointerHits(selectedRegion, origin, zoom));
-    const rejectedAreaTransform = Boolean(selectedRegion) && pointerCommand.kind === "ignore";
+    const rejectedAreaTransform = structuralTool && Boolean(selectedRegion) && pointerCommand.kind === "ignore";
     pointerStateRef.current = { ...pointerStateRef.current, rejectedAreaTransform };
     pointerSelectedRef.current = !rejectedAreaTransform && (hitBlock || hitRegion) ? new Set(stableSelectionRef.current) : new Set();
     pointerHandleRef.current = selectedRegion && pointerCommand.kind === "resize" ? pointerCommand.handle : null;
@@ -1059,8 +1179,12 @@ export function AreaMapWorld({ host, bridge, options }) {
     }
   }
 
-  /** Leaves the map through the shell-owned Work return point. */
+  /** Closes one Map-local layer before asking the shell for the retained opener. */
   function escape() {
+    if (findOpen) { cancelFind(); return { kind: "find" }; }
+    if (picker) { setPicker(null); setPickerQuery(""); return { kind: "picker" }; }
+    if (helpOpen) { closeHelp(); return { kind: "help" }; }
+    if (outlineOpen) { setOutlineOpen(false); return { kind: "outline" }; }
     options.onBack?.();
     return { kind: "back" };
   }
@@ -1187,10 +1311,11 @@ export function AreaMapWorld({ host, bridge, options }) {
       if (!event.metaKey && !event.ctrlKey && !event.altKey && findQuery && ["n", "N"].includes(event.key)) {
         stop(event); stepFind(event.key === "n" ? 1 : -1); return;
       }
-      if (event.key.toLowerCase() === "b") { stop(event); openPicker(); }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "b") { stop(event); openPicker(); }
     };
     /** Opens the selected semantic block on a host double click. */
     const doubleClick = (event) => {
+      if (placedBlockEditEventRef.current) return;
       const ids = selectedIds(api.getAppState?.());
       const block = state.composition.scene.elements.find((element) => ids.includes(element.id) && boardCore.tangentOf(element));
       if (block) { stop(event); openBlock(block); }
@@ -1218,6 +1343,25 @@ export function AreaMapWorld({ host, bridge, options }) {
     bridge.appState = () => api?.getAppState?.() ?? null;
     bridge.fitArea = (area, settings) => scrollToArea(area, settings);
     bridge.selectArea = (area) => selectArea(area);
+    bridge.captureView = captureLiveView;
+    bridge.restoreView = (value) => {
+      const restored = controller.restoreView(value);
+      projectCanvas({
+        appState: {
+          scrollX: restored.camera.scrollX,
+          scrollY: restored.camera.scrollY,
+          zoom: { value: restored.camera.zoom },
+          selectedElementIds: Object.fromEntries([...restored.selection].map((id) => [id, true])),
+        },
+        captureUpdate: "NEVER",
+      }, "view-return");
+      return restored;
+    };
+    bridge.focus = () => {
+      const target = host.querySelector(".excalidraw [tabindex='0'], .excalidraw canvas, .excalidraw");
+      target?.focus?.({ preventScroll: true });
+      return Boolean(target);
+    };
     bridge.flush = async () => {
       if (pointerBaselineRef.current && pointerSettlingRef.current) {
         pointerSettleTokenRef.current += 1;
@@ -1232,11 +1376,11 @@ export function AreaMapWorld({ host, bridge, options }) {
     bridge.keepMine = () => controller.keepMine();
     bridge.controller = controller;
     const initial = controller.snapshot();
-    if (api) {
+    if (api && !initial.viewRestored) {
       const element = controller.fitArea(initial.locatedArea, { push: false, select: false });
-      if (element) requestAnimationFrame(() => requestAnimationFrame(() => api.scrollToContent([element], { fitToContent: true, animate: false })));
+      if (element) requestAnimationFrame(() => requestAnimationFrame(() => scrollCanvasTo([element], { fitToContent: true, animate: false })));
     }
-    return () => { bridge.controller = null; bridge.rendered = () => null; };
+    return () => { bridge.controller = null; bridge.rendered = () => null; bridge.captureView = () => null; bridge.restoreView = () => null; bridge.focus = () => false; };
   }, [api]);
 
   useEffect(() => () => {
@@ -1250,9 +1394,22 @@ export function AreaMapWorld({ host, bridge, options }) {
     }
   }, [controller]);
 
+  useEffect(() => {
+    if (!picker || !widePicker || !options.searchDocuments) return undefined;
+    const request = new AbortController();
+    let current = true;
+    void options.searchDocuments(pickerQuery, { signal: request.signal }).then((rows) => {
+      if (current) setPickerEntities(rows ?? []);
+    }, (error) => {
+      if (current && error?.name !== "AbortError") announce("Vault search is unavailable; showing known Map entities", { visible: false });
+    });
+    return () => { current = false; request.abort(); };
+  }, [picker, widePicker, pickerQuery, options.searchDocuments]);
+
   const visibleNodes = state.world.areas.filter((node) => state.scopedAreas.has(node.key) && ![...state.folded].some((root) => node.key.startsWith(`${root}/`)));
-  const documents = options.getDocuments();
-  const areaTitles = new Map(documents.filter((item) => item.kind === "area" && item.area).map((item) => [item.area, item.title]));
+  const documents = [...new Map([...pickerEntities, ...options.getDocuments()].filter((item) => item?.file).map((item) => [item.file, item])).values()];
+  const areaRecords = new Map(documents.filter((item) => item.kind === "area" && item.area).map((item) => [item.area, item]));
+  const areaTitles = new Map([...areaRecords].map(([area, item]) => [area, item.title]));
   /** Returns the document title or leaf fallback for one Area. */
   const areaName = (area) => areaTitles.get(area) ?? leaf(area);
   /** Returns a full titled ancestry path for one Area. */
@@ -1265,7 +1422,9 @@ export function AreaMapWorld({ host, bridge, options }) {
     const count = Number(node.shard.blockCount ?? 0);
     const parent = node.parent === "@root" ? "map root" : areaPathName(node.parent);
     const foldState = state.folded.has(node.key) ? "folded" : "unfolded";
-    return `${areaName(node.key)}, child of ${parent}, depth ${node.depth + 1}, ${foldState}, ${node.shard.state}, ${count} ${count === 1 ? "block" : "blocks"}`;
+    const runtime = areaRuntimeAnnotations(areaRecords.get(node.key));
+    const runtimeWords = [...runtime.facts.map((fact) => fact.label), ...(runtime.ready ? ["Ready"] : []), ...(runtime.stale ? ["last known facts"] : [])];
+    return `${areaName(node.key)}, child of ${parent}, depth ${node.depth + 1}, ${foldState}, ${node.shard.state}, ${count} ${count === 1 ? "block" : "blocks"}${runtimeWords.length ? `, ${runtimeWords.join(", ")}` : ""}`;
   };
   const targetArea = picker?.area ?? state.locatedArea;
   const contextualChoices = boardCore.entityChoices(targetArea, documents);
@@ -1280,6 +1439,9 @@ export function AreaMapWorld({ host, bridge, options }) {
   const findWindowStart = Math.min(Math.max(0, activeFindIndex - 7), Math.max(0, findRows.length - 8));
   const visibleFindRows = findRows.slice(findWindowStart, findWindowStart + 8);
   const currentBlock = state.composition.scene.elements.find((element) => state.selection.has(element.id) && boardCore.tangentOf(element));
+  const currentBlockTangent = currentBlock ? boardCore.tangentOf(currentBlock) : null;
+  const currentBlockRecord = currentBlockTangent ? options.getDocuments?.().find((record) => record.file === currentBlockTangent.ref) : null;
+  const currentBlockTarget = currentBlockRecord?.title || currentBlockTangent?.ref || "Tangent block";
   const debug = typeof location !== "undefined" && new URLSearchParams(location.search).get("debug") === "area-map";
   const nodeByParent = new Map();
   for (const node of visibleNodes) { const list = nodeByParent.get(node.parent) ?? []; list.push(node); nodeByParent.set(node.parent, list); }
@@ -1303,7 +1465,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   function handleCanvasPointerDown(tool, pointerDownState) {
     if (tool?.type === "text") { textPlacementRef.current = pointerDownState.origin; return; }
     textPlacementRef.current = null;
-    beginPointerGesture(pointerDownState.origin, pointerDownState);
+    beginPointerGesture(pointerDownState.origin, pointerDownState, tool);
   }
 
   /** Closes the same command with Excalidraw's original pointer-down state. */
@@ -1422,8 +1584,8 @@ export function AreaMapWorld({ host, bridge, options }) {
   return <div className="TangentAreaMap theme--dark" data-tangent-area-map={state.locatedArea} data-tangent-area-map-world={options.world.worldId}>
     <StableWorldCanvas initialData={initialDataRef.current} handlers={canvasHandlersRef} />
     <div className="tangent-map-top-right">
-      <div className="tangent-map-toolbar-extra"><button type="button" onClick={openPicker} aria-keyshortcuts="b" title="Place a Tangent block (B)"><span aria-hidden="true">◈</span><span className="tangent-map-label">Block</span><kbd>B</kbd></button></div>
-      {currentBlock && <div className="tangent-map-verbs" role="group" aria-label="Tangent block actions"><button type="button" onClick={() => openBlock(currentBlock)}>Open <kbd>Enter</kbd></button><button type="button" onClick={() => hideBlock(currentBlock)}>Hide <kbd>X</kbd></button></div>}
+      <div className="tangent-map-toolbar-extra"><button type="button" onClick={openPicker} aria-keyshortcuts="b Shift+B" title="Place a Tangent block (B)"><span aria-hidden="true">◈</span><span className="tangent-map-label">Block</span><kbd>B</kbd></button></div>
+      {currentBlock && <div className="tangent-map-verbs" role="group" aria-label={`Actions for ${currentBlockTarget}`}><button type="button" aria-label={`Open ${currentBlockTarget}`} onClick={() => openBlock(currentBlock)}>Open <kbd>Enter</kbd></button><button type="button" aria-label={`Hide ${currentBlockTarget}`} onClick={() => hideBlock(currentBlock)}>Hide <kbd>X</kbd></button></div>}
       <button type="button" onClick={() => setOutlineOpen((value) => !value)} aria-expanded={outlineOpen} title="Outline"><span aria-hidden="true" className="tangent-map-glyph">≣</span><span className="tangent-map-label">Outline</span></button>
       <button type="button" onClick={() => setHelpOpen(true)} aria-keyshortcuts="?" title="Map keys (?)"><span aria-hidden="true" className="tangent-map-glyph">?</span><span className="tangent-map-label">Keys</span><kbd>?</kbd></button>
     </div>
@@ -1432,12 +1594,25 @@ export function AreaMapWorld({ host, bridge, options }) {
         const box = state.composition.regionRects.get(node.key);
         if (!box) return null;
         const name = areaName(node.key);
+        const areaRecord = areaRecords.get(node.key);
+        const runtime = areaRuntimeAnnotations(areaRecord);
+        const hasRuntime = Boolean(runtime.facts.length || runtime.ready || runtime.stale);
+        const left = (box.x + state.camera.scrollX) * state.camera.zoom + 12;
+        const top = (box.y + state.camera.scrollY) * state.camera.zoom + 10;
         const summary = !state.detailAreas.has(node.key) ? `${Number(node.shard.blockCount ?? 0)} blocks` : "";
         const findCurrent = activeFindRow?.kind === "area" && activeFindRow.area === node.key;
-        return <button type="button" key={node.key} data-area-map-label={node.key} className={findCurrent ? "find-match-current" : ""} style={{ left: `${(box.x + state.camera.scrollX) * state.camera.zoom + 12}px`, top: `${(box.y + state.camera.scrollY) * state.camera.zoom + 10}px` }} onClick={() => selectArea(node.key)} onDoubleClick={() => scrollToArea(node.key)} aria-label={accessibleAreaName(node)}><strong>{name}</strong>{state.folded.has(node.key) && <span>folded · Space</span>}{["loading", "deferred", "unreadable", "load-error"].includes(node.shard.state) && <span>{node.shard.state === "unreadable" ? "map file unreadable" : node.shard.state === "load-error" ? "load failed · click to retry" : node.shard.state}</span>}{summary && <span>{summary}</span>}</button>;
+        const ref = areaRecord?.file ?? `${node.key}/${leaf(node.key)}.md`;
+        return <React.Fragment key={node.key}>
+          <button type="button" data-area-map-label={node.key} className={findCurrent ? "find-match-current" : ""} style={{ left: `${left}px`, top: `${top}px` }} onClick={() => selectArea(node.key)} onDoubleClick={() => scrollToArea(node.key)} aria-label={accessibleAreaName(node)}><strong>{name}</strong>{state.folded.has(node.key) && <span>folded · Space</span>}{["loading", "deferred", "unreadable", "load-error"].includes(node.shard.state) && <span>{node.shard.state === "unreadable" ? "map file unreadable" : node.shard.state === "load-error" ? "load failed · click to retry" : node.shard.state}</span>}{summary && <span>{summary}</span>}</button>
+          {hasRuntime && <div data-area-runtime-facts={node.key} role="group" aria-label={`${name} runtime`} style={{ position: "absolute", left: `${left}px`, top: `${top + 30}px`, display: "flex", alignItems: "center", gap: "4px", pointerEvents: "auto", whiteSpace: "nowrap" }}>
+            {runtime.facts.map((fact) => <button key={fact.verb} type="button" data-area-runtime-action={fact.verb} style={{ position: "static", padding: "2px 7px", border: "1px solid color-mix(in srgb, var(--tangent-muted) 65%, transparent)", borderRadius: "999px", background: "color-mix(in srgb, var(--tangent-island) 92%, transparent)", fontSize: "11px" }} aria-label={`Open ${fact.verb === "work" ? "Work" : fact.verb === "for-you" ? "For you" : "Problems"} for ${name}: ${fact.label}`} onClick={(event) => { event.stopPropagation(); options.onEntityVerb?.({ kind: "area", area: node.key, ref, verb: fact.verb }); }}>{fact.label}</button>)}
+            {runtime.ready && <span style={{ padding: "2px 7px", border: "1px solid color-mix(in srgb, var(--tangent-muted) 65%, transparent)", borderRadius: "999px", background: "color-mix(in srgb, var(--tangent-island) 92%, transparent)", color: "var(--tangent-text)", fontSize: "11px" }}>Ready</span>}
+            {runtime.stale && <span style={{ padding: "2px 7px", border: "1px dashed var(--tangent-muted)", borderRadius: "999px", background: "var(--tangent-island)", color: "var(--tangent-muted)", fontSize: "11px" }}>Last known</span>}
+          </div>}
+        </React.Fragment>;
       })}
     </div>
-    <div className={`tangent-map-save ${state.save.state}`}>{state.save.state === "saving" ? "Saving…" : state.save.state === "dirty" ? "Pending save…" : state.save.state === "conflict" ? <>Not saved <button type="button" onClick={() => controller.reload().catch((error) => announce(String(error?.message ?? error)))}>Reload</button><button type="button" onClick={() => controller.keepMine()}>Keep mine</button></> : state.save.state === "blocked" ? <>Not saved <button type="button" onClick={() => controller.retry()}>Retry</button></> : state.draft && !state.draft.restored ? "Saved · Recovery available" : "Saved"}</div>
+    <div className={`tangent-map-save ${state.save.state}`} role="status" aria-live="polite" aria-label="Map save status">{state.save.state === "saving" ? "Saving…" : state.save.state === "dirty" ? "Pending save…" : state.save.state === "conflict" ? <>Not saved <button type="button" onClick={() => recoverMap("reload")}>Reload saved</button><button type="button" onClick={() => recoverMap("keepMine")}>Keep mine</button></> : state.save.state === "blocked" ? <>Not saved <button type="button" onClick={() => recoverMap("retry")}>Retry</button><button type="button" onClick={() => recoverMap("reload")}>Reload saved</button><button type="button" onClick={() => recoverMap("keepMine")}>Keep mine</button></> : state.draft && !state.draft.restored ? "Saved · Recovery available" : "Saved"}</div>
     {notice && <div className="tangent-map-location" aria-hidden="true">{notice}</div>}
     {announcement.text && <div key={announcement.id} className="tangent-map-live" role="status" aria-live="polite" aria-atomic="true">{announcement.text}</div>}
     {findOpen && <section className="tangent-map-find" role="search" aria-label="Find on the map">
@@ -1449,7 +1624,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       <strong className={findQuery.trim() && !findRows.length ? "miss" : ""}>{!findQuery.trim() ? "" : !findRows.length ? "No match" : `${activeFindIndex + 1} of ${findRows.length}`}</strong>
       <button type="button" onClick={() => stepFind(-1)} aria-label="Previous match">↑</button><button type="button" onClick={() => stepFind(1)} aria-label="Next match">↓</button><button type="button" onClick={cancelFind}>Cancel</button></div>
       <ul id="tangent-map-find-results" role="listbox">{visibleFindRows.map((row, offset) => { const index = findWindowStart + offset; return <li key={row.key}><button id={`tangent-map-find-${index}`} type="button" role="option" aria-selected={index === activeFindIndex} onClick={() => { setFindIndex(index); previewFind(row); }}><small>{row.kind}</small><span><strong>{row.name}</strong><em>{areaPathName(row.area)}</em></span>{row.hidden && <i>hidden</i>}</button></li>; })}</ul>
-      <p><kbd>↓</kbd> next · <kbd>↑</kbd> previous · <kbd>↵</kbd> keep · <kbd>Esc</kbd> Work</p>
+      <p><kbd>↓</kbd> next · <kbd>↑</kbd> previous · <kbd>↵</kbd> keep · <kbd>Esc</kbd> cancel</p>
     </section>}
     {outlineOpen && <section className="tangent-map-outline visible" aria-label="Area hierarchy">{outlineTree()}</section>}
     {picker && <div className={`tangent-map-dialog-backdrop dock-${picker.dock}`}><section className="tangent-map-picker" role="dialog" aria-modal="true" aria-label="Place a Tangent block">
@@ -1460,9 +1635,9 @@ export function AreaMapWorld({ host, bridge, options }) {
         else if (event.key === "Enter" && pickerChoices[0]) { stop(event); placeBlock(pickerChoices[0], event.shiftKey); }
       }} placeholder="Goal, Document, Area, or URL" />
       <ul role="listbox">{pickerChoices.slice(0, 30).map((choice) => <li key={`${choice.kind}:${choice.ref}`}><button type="button" onClick={() => placeBlock(choice)}><small>{choice.kind}</small><span>{choice.title}</span><em>{choice.status}</em></button></li>)}</ul>
-      <p><kbd>Tab</kbd> {widePicker ? "return here" : "whole vault"} · <kbd>Enter</kbd> place · <kbd>⇧Enter</kbd> place another · <kbd>Esc</kbd> Work</p>
+      <p><kbd>Tab</kbd> {widePicker ? "return here" : "whole vault"} · <kbd>Enter</kbd> place · <kbd>⇧Enter</kbd> place another · <kbd>Esc</kbd> close</p>
     </section></div>}
-    {helpOpen && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p><kbd>/</kbd> or <kbd>Ctrl-F</kbd> finds visible Areas. <kbd>⇧O</kbd> changes Only for the selected Area.</p><p>Space-drag pans. Command-wheel zooms. Command-Z undoes. Escape returns to Work.</p><p><kbd>b</kbd> brain beside · <kbd>Ctrl-L</kbd> / <kbd>Ctrl-H</kbd> switch columns.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={() => setHelpOpen(false)}>Close</button></section></div>}
+    {helpOpen && <div className="tangent-map-dialog-backdrop"><section className="tangent-map-help" role="dialog" aria-modal="true" aria-labelledby="tangent-map-help-title"><h2 id="tangent-map-help-title">Map keys</h2><p><kbd>V</kbd> select · <kbd>R</kbd> rectangle · <kbd>D</kbd> diamond · <kbd>O</kbd> ellipse · <kbd>A</kbd> arrow · <kbd>L</kbd> line · <kbd>P</kbd> draw · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>E</kbd> erase · <kbd>B</kbd> block</p><p><kbd>/</kbd> or <kbd>Ctrl-F</kbd> finds visible Areas. <kbd>⇧O</kbd> changes Only for the selected Area.</p><p>Space-drag pans. Command-wheel zooms. Command-Z undoes. Escape closes the top Map control or returns to the retained opener.</p><p>Use the named Brain control or <kbd>⌘⇧Enter</kbd> to open the relevant Brain. <kbd>Ctrl-L</kbd> / <kbd>Ctrl-H</kbd> switch columns.</p><p>With a block selected: <kbd>Enter</kbd> opens · <kbd>X</kbd> hides.</p><button type="button" autoFocus onClick={closeHelp}>Close</button></section></div>}
     {debug && <aside className="tangent-map-debug" aria-label="Area map diagnostics"><h2>Area map diagnostics</h2><p>dirty owners: {[...state.dirtyOwners].join(", ") || "none"}</p><table><thead><tr><th>owner</th><th>source</th><th>runtime</th><th>stored</th><th>constraint</th><th>load</th></tr></thead><tbody>{state.world.areas.map((node) => <tr key={node.key}><td>{node.parent}</td><td>{node.region.sourceId}</td><td>{worldCore.runtimeId(node.parent, node.region.sourceId)}</td><td>{rectWords(node.region.storedRect)}</td><td>{rectWords(state.composition.geometry.get(node.key)?.constraint)}</td><td>{node.shard.state}</td></tr>)}</tbody></table><details><summary>Authored identities</summary><ul>{[...state.composition.origins].filter(([, origin]) => !origin.regionKey).map(([runtime, origin]) => <li key={runtime}>{origin.owner} · {origin.sourceId} · {runtime}</li>)}</ul></details></aside>}
     {state.draft && !state.draft.restored && <section className="tangent-map-draft-choice"><strong>Draft from {new Date(state.draft.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong><button type="button" onClick={() => controller.restoreDraft()}>Restore</button><button type="button" onClick={() => controller.discardDraft()}>Discard</button></section>}
   </div>;

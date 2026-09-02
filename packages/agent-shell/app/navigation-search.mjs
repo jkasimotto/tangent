@@ -6,6 +6,80 @@ const MAX_RESULT_ROWS = 100;
 const MAX_AREA_FACET_ROWS = 2_000;
 const AREA_READ_CONCURRENCY = 24;
 
+/** Parses one Work timestamp without letting an invalid value affect rank. */
+function navigationTime(...values) {
+  for (const value of values) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+/** Returns the responsible Area recorded directly or through one Work owner. */
+function agentArea(agent, goalAreas) {
+  if (agent.areaId) return agent.areaId;
+  if (agent.owner?.kind === "assignment") return goalAreas.get(agent.owner.goalId) ?? "";
+  if (["brain", "repair"].includes(agent.owner?.kind)) return agent.owner.id ?? "";
+  return "";
+}
+
+/** Projects complete retained Work identities into routable navigation rows. */
+function workNavigationRows({ index, areas, goals, agents }) {
+  const areaRecords = new Map(index.areas.map((area) => [area.path, {
+    kind: "area",
+    id: area.path,
+    area: area.path,
+    name: area.name,
+    status: area.status,
+    docKind: "area",
+    changedAt: 0,
+  }]));
+  for (const area of areas) {
+    if (!area?.id) continue;
+    const current = areaRecords.get(area.id);
+    areaRecords.set(area.id, {
+      kind: "area",
+      id: area.id,
+      area: area.id,
+      name: area.label || current?.name || area.id.split("/").at(-1),
+      status: area.state || current?.status || "",
+      docKind: "area",
+      changedAt: 0,
+    });
+  }
+
+  const goalAreas = new Map(goals.filter((goal) => goal?.id && goal.areaId).map((goal) => [goal.id, goal.areaId]));
+  const goalRows = goals.filter((goal) => goal?.id && goal.areaId).map((goal) => ({
+    kind: "goal",
+    id: goal.id,
+    area: goal.areaId,
+    name: goal.title || goal.id.split("/").at(-1).replace(/\.md$/i, ""),
+    file: goal.id,
+    status: goal.lifecycle ?? "",
+    docKind: "goal",
+    changedAt: navigationTime(goal.startedAt),
+  }));
+  const agentRows = agents.filter((agent) => agent?.id && ["live", "unknown"].includes(agent.liveness)).map((agent) => {
+    const area = agentArea(agent, goalAreas);
+    const title = String(agent.workTitle ?? "").trim();
+    return {
+      kind: "agent",
+      id: agent.id,
+      area,
+      name: title ? `${title} · ${agent.id}` : agent.id,
+      session: agent.id,
+      goalId: agent.owner?.kind === "assignment" ? agent.owner.goalId : null,
+      target: agent.target ?? agent.id,
+      role: agent.role ?? "",
+      status: agent.liveness === "live" ? agent.activity ?? "live" : agent.liveness ?? "unknown",
+      docKind: "agent",
+      live: agent.liveness === "live",
+      changedAt: navigationTime(agent.activitySince, agent.observedAt, agent.createdAt),
+    };
+  });
+  return { areas: [...areaRecords.values()], goals: goalRows, agents: agentRows };
+}
+
 /** Builds the complete lightweight corpus used by deliberate navigation searches. */
 export async function buildNavigationIndex({ areaIds, readAreaDocuments, readAreaNote = async () => "" }) {
   const entries = await mapWithConcurrency(areaIds, AREA_READ_CONCURRENCY, async (area) => {
@@ -44,9 +118,11 @@ export function navigationIndexFromRecords({ areaIds, documents, notes = [] }) {
 }
 
 /** Returns one bounded result from a complete lightweight navigation corpus. */
-export function queryNavigationIndex({ index, query, requestedLimit, brains = [] }) {
+export function queryNavigationIndex({ index, query, requestedLimit, brains = [], areas = [], goals = [], agents = [] }) {
   const limit = Math.min(MAX_RESULT_ROWS, Math.max(1, Number(requestedLimit) || MAX_RESULT_ROWS));
+  const work = workNavigationRows({ index, areas, goals, agents });
   const rows = [
+    ...work.areas,
     ...index.notes,
     ...index.documents.map((document) => ({
       kind: "document",
@@ -58,6 +134,7 @@ export function queryNavigationIndex({ index, query, requestedLimit, brains = []
       changedAt: document.changedAt ?? document.mtime ?? 0,
       links: document.links ?? [],
     })),
+    ...work.goals,
     ...brains.map((brain) => ({
       kind: "brain",
       id: brain.areaId,
@@ -67,10 +144,15 @@ export function queryNavigationIndex({ index, query, requestedLimit, brains = []
       session: brain.agentId,
       changedAt: Date.parse(brain.updatedAt) || 0,
     })),
+    ...work.agents,
   ];
   const searchable = rows.map((row) => ({
     ...row,
-    kindLabel: row.kind === "brain" ? "Brain" : row.kind === "note" ? "Area note" : areaMapCore.kindLabel(row.docKind ?? "page"),
+    kindLabel: row.kind === "area" ? "Area"
+      : row.kind === "brain" ? "Brain"
+        : row.kind === "agent" ? "Agent"
+          : row.kind === "note" ? "Area note"
+            : areaMapCore.kindLabel(row.docKind ?? "page"),
   }));
   const matched = goToCore.matchRows(searchable, query, searchable.length);
   const normalizedQuery = goToCore.normalizedSearchText(query).replaceAll(" ", "");
@@ -87,12 +169,26 @@ export function queryNavigationIndex({ index, query, requestedLimit, brains = []
     rows: matched.slice(0, limit).map(({ kindLabel: _kindLabel, ...row }) => row),
     areas: index.areas,
     areasComplete: index.areasComplete,
-    kinds: index.kinds,
+    kinds: [
+      ...(work.areas.length ? ["area"] : []),
+      ...(work.goals.length ? ["goal"] : []),
+      ...index.kinds,
+      ...(brains.length ? ["brain"] : []),
+      ...(work.agents.length ? ["agent"] : []),
+    ].filter((kind, position, all) => all.indexOf(kind) === position),
   };
 }
 
 /** Builds and searches one complete navigation corpus. */
 export async function buildNavigationSearch(options) {
   const index = await buildNavigationIndex(options);
-  return queryNavigationIndex({ index, query: options.query, requestedLimit: options.requestedLimit, brains: options.brains });
+  return queryNavigationIndex({
+    index,
+    query: options.query,
+    requestedLimit: options.requestedLimit,
+    brains: options.brains,
+    areas: options.areas,
+    goals: options.goals,
+    agents: options.agents,
+  });
 }

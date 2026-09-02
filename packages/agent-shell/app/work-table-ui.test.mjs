@@ -105,7 +105,7 @@ test("Area Map controls and m open the broad root map, then drill and return wit
 
   press(window, "Escape");
   await settle(window);
-  assert.equal(document.activeElement, document.querySelector('[data-work-cursor="area:otto/tangent"] [data-open-area-map]'), "one Escape restores focus to the child row's Map control");
+  assert.equal(document.activeElement, document.querySelector('[data-work-cursor="area:otto/tangent"] [data-work-cursor-control]'), "one Escape restores focus to the exact control that owned the m command");
 });
 
 test("presented Documents are capped child rows whose visible dismiss control uses Julian's fenced route", async () => {
@@ -663,8 +663,8 @@ test("an Area brain row takes the cursor and Command-Shift-Enter enters its Brai
   press(window, "Enter", { metaKey: true, shiftKey: true });
   await settle(window);
   assert.equal(document.querySelector("[data-map-brain-pane] .map-brain-terminal").dataset.session, "otto-tangent--brain");
-  assert.match(document.querySelector("[data-map-brain-pane] > header").textContent, /Brain working/);
-  assert.equal(document.querySelector("[data-toggle-workspace-map]").textContent, "Map");
+  assert.match(document.querySelector("[data-map-brain-pane] > header").textContent, /Brain · working/);
+  assert.equal(document.querySelector("[data-toggle-workspace-map]").textContent, "Show Otto / Tangent on Map");
 });
 
 test("Command-Shift-Enter opens the brain chooser on an inactive Area and b does nothing", async () => {
@@ -678,8 +678,11 @@ test("Command-Shift-Enter opens the brain chooser on an inactive Area and b does
   assert.equal(document.querySelector("[data-launch-popover]"), null, "b does not open the brain chooser");
   press(window, "Enter", { metaKey: true, shiftKey: true });
   await settle(window);
-  assert.ok(document.querySelector("[data-launch-popover]"), "the shared agent-entry key opens the brain chooser");
-  assert.match(document.querySelector("[data-launch-popover] header").textContent, /Otto \/ Quiet/);
+  const pane = document.querySelector("[data-map-brain-pane]");
+  assert.ok(pane, "the shared agent-entry key opens the inactive Brain pane");
+  assert.match(pane.querySelector(":scope > header").textContent, /Otto \/ Quiet Brain · off/);
+  assert.match(pane.querySelector("[data-launch-primary]").textContent, /Wake brain/);
+  assert.match(pane.querySelector("[data-brain-start-over]").textContent, /Start over/);
 });
 
 test("Work keys expose their help and stay inert in text and terminal input", async () => {

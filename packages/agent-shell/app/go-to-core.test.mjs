@@ -164,6 +164,26 @@ test("the finder filters Documents by an Area subtree and kind", () => {
   assert.deepEqual(rows.map((item) => item.name), ["Map"]);
 });
 
+test("the finder preserves routable Area, Goal, and agent identities", () => {
+  const rows = buildGoToRows({
+    vault: { areas: [], documents: [] },
+    objects: [
+      { kind: "area", id: "otto/tangent", area: "otto/tangent", name: "Tangent", status: "open" },
+      { kind: "goal", id: "otto/tangent/goal-map.md", file: "otto/tangent/goal-map.md", area: "otto/tangent", name: "Map first", status: "open" },
+      { kind: "agent", id: "map-worker", session: "map-worker", area: "otto/tangent", name: "Map worker", live: true },
+    ],
+    /** Returns the fixture Area label unchanged. */
+    areaLabel: (value) => value,
+    /** Returns an empty fixture Brain state label. */
+    brainStateLabel: () => "",
+  });
+  assert.deepEqual(rows.map((item) => [item.kind, item.file ?? item.session ?? item.area]), [
+    ["agent", "map-worker"],
+    ["goal", "otto/tangent/goal-map.md"],
+    ["area", "otto/tangent"],
+  ]);
+});
+
 test("every Area has exactly one brain destination before, during, and after a live attempt", () => {
   const vault = { areas: [
     { path: "otto/missing" },

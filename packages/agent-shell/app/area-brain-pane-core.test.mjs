@@ -75,3 +75,37 @@ test("stopped and absent Brain panes focus their honest launch action", () => {
     window.close();
   }
 });
+
+test("a contextual Brain names its return and keeps a removable Document subject", () => {
+  const { window } = new JSDOM('<main id="host"></main>');
+  const host = window.document.querySelector("#host");
+  let subject = { title: "Map first contract" };
+  let removed = 0;
+  /** Supplies a no-effect pane dependency for this contextual fixture. */
+  const noop = () => {};
+  const descriptor = createAreaBrainPane({
+    area: "otto/tangent",
+    terminalController: { disposeTerminal: noop, mountTerminal: noop, focus: noop, fit: noop },
+    /** Returns the stopped Brain projection shown with its Document context. */
+    projection: () => ({
+      brain: null,
+      live: null,
+      label: "Tangent Brain · stopped",
+      presentation: { kind: "start" },
+      /** Renders the fixture launch action. */
+      launchHtml: () => '<button data-launch-primary>Start Brain</button>',
+    }),
+    escapeHtml: String,
+    onToggleMap: noop, onHideBrain: noop, onLeave: noop, onResume: noop, onSeedStart: noop,
+    returnLabel: "Document",
+    contextLabel: "Tangent on Map",
+    /** Returns the current Document subject. */
+    subject: () => subject,
+    /** Records removal and clears the current Document subject. */
+    onRemoveSubject: () => { removed += 1; subject = null; },
+  });
+  descriptor.mount({ host });
+  assert.match(host.querySelector("header").textContent, /Document.*Tangent Brain · stopped.*Map first contract.*Tangent on Map/s);
+  host.querySelector("[data-remove-brain-subject]").click();
+  assert.equal(removed, 1);
+});

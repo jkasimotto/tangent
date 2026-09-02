@@ -1,4 +1,5 @@
 import areaMapCore from "./area-map-core.js";
+import { workProblemAreas, workProblemCount, workProblemRows } from "./work-attention.js";
 import goalCardCore from "./goal-card-core.js";
 import areaWorkCore from "./area-work-core.js";
 import goToCore from "./go-to-core.js";
@@ -10,7 +11,7 @@ const PRESENTED_ROWS_PER_GOAL = 3;
 
 /** Creates the work desk from shell, launch, Area, and Program capabilities. */
 export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
-  const { state, api, post, paint, refresh, showToast, openModal, captureReturnPoint, saveDescribeSession, openSessionLayer, requestLaunchFocus = null, updateAreaMapFocus = null } = shell;
+  const { state, api, post, paint, refresh, showToast, openModal, captureReturnPoint, saveDescribeSession, openSessionLayer, openDocumentPeek, requestLaunchFocus = null, updateAreaMapFocus = null } = shell;
   const {
     launchSelection, launchRequestFields, syncLaunchDraft, preferredArea, launchOptionsFor, pipelineForGoal,
     pipelineRecordForGoal, launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
@@ -22,7 +23,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Repaints Focus in place while the persistent Area-map world is mounted. */
   function repaintFocus() {
-    if (!updateAreaMapFocus?.()) paint(true);
+    const mapChanged = Boolean(updateAreaMapFocus?.());
+    if (state.workLens || state.view === "work" || !mapChanged) paint(true);
   }
 
   /**
@@ -986,18 +988,26 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * Panels keep hierarchy order. Runtime activity never moves a subject.
    */
   function deskAreas(scope = null) {
+    const mode = state.workLens?.mode ?? "all";
+    const attentionOnly = mode !== "all";
     // Stars alone never change the desk (Julian, 2026-08-28: "I don't want my
     // view to change unless I press F"). Only starred-only scopes it.
-    const roots = state.areaFocusOnly ? areaFocusRoots() : [];
+    // An attention count is already an explicit scope. Persisted Work scopes
+    // must not turn a non-zero For you or Problems count into an empty lens.
+    const roots = !attentionOnly && state.areaFocusOnly ? areaFocusRoots() : [];
     /** True when one projected record stays inside the applied scope. */
-    const inFocus = scope ?? ((path) => isInAreaFocus(path, roots));
+    const focusAllows = scope ?? ((path) => isInAreaFocus(path, roots));
+    const lensArea = state.workLens?.area ?? "";
+    /** True when one Area path stays inside the active Work lens. */
+    const inFocus = (path) => focusAllows(path) && (!lensArea || path === lensArea || path.startsWith(`${lensArea}/`));
     // Active-only (A) keeps only the trees an agent runs on; the Areas with
     // nothing live lose their rows below, so they earn no header.
-    const activeOnly = Boolean(state.activeOnly);
-    const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"))
+    const activeOnly = !attentionOnly && Boolean(state.activeOnly);
+    const openTrees = attentionOnly ? goalTrees() : goalTrees().filter((tree) => goalTreeState(tree) !== "closed");
+    const trees = (attentionOnly ? openTrees : filteredGoalTrees(openTrees))
       .filter((tree) => inFocus(tree.path))
       .filter((tree) => !activeOnly || goalTreeIsActive(tree));
-    const descriptions = (state.workFilter === "inactive" ? [] : describeWorkSessions())
+    const descriptions = (attentionOnly || state.workFilter === "inactive" ? [] : describeWorkSessions())
       .filter((session) => inFocus(session.area));
     const core = areaMapCore;
     // Every Area, done and archived ones included, so a hidden sub-Area with
@@ -1008,7 +1018,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const doneAreas = new Set(allAreas().filter((area) => ["done", "archived"].includes(area.status)).map((area) => area.path));
     /** True when the Area or one of its ancestors is done or archived. */
     const underDoneArea = (path) => path.split("/").some((_part, index, parts) => doneAreas.has(parts.slice(0, index + 1).join("/")));
-    const headerAreas = new Set((roots.length ? allAreas() : areas()).map((area) => area.path));
+    const headerAreas = new Set((roots.length || attentionOnly ? allAreas() : areas()).map((area) => area.path));
     /** The focus roots this pass renders as roots; a scoped pass has none. */
     const panelRoots = scope ? [] : roots;
     const byPath = new Map(areaList.map((area) => [area.path, area]));
@@ -1029,12 +1039,18 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       // A live brain counts as work, the way a Describe session does: its
       // Area earns a header at the top level and a sub-header below one
       // (work-view-sub-areas Decision 1), never a peer panel of its parent.
-      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, liveBrainAreas.includes(area.path) ? 1 : 0, areaProcessesForArea(area.path).length ? 1 : 0, panelRoots.length ? areaPrograms.length : 0));
+      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, liveBrainAreas.includes(area.path) ? 1 : 0, activeLoopsForArea(area.path).length ? 1 : 0, areaProcessesForArea(area.path).length ? 1 : 0, panelRoots.length ? areaPrograms.length : 0));
     }
+    const attentionAreas = mode === "for-you"
+      ? new Set([
+        ...(state.work?.brains ?? []).filter((brain) => Number(brain.attentionCount ?? 0) > 0).map((brain) => brain.areaId),
+        ...(state.work?.goals ?? []).filter((goal) => goal.workState?.owner === "user").map((goal) => goal.areaId),
+      ])
+      : mode === "problems" ? workProblemAreas(state.work) : new Set();
     // Every not-done Area earns a row. A done Area keeps its row only while
     // it has open work under the current filter. Active-only keeps only the
     // Areas with something live.
-    const rowCounts = new Map([...openCounts].filter(([path, count]) => count > 0 || (!activeOnly && !underDoneArea(path))));
+    const rowCounts = new Map([...openCounts].filter(([path, count]) => count > 0 || attentionAreas.has(path) || (!activeOnly && !underDoneArea(path))));
     const panelDefs = core.deskPanels(rowCounts, panelRoots).filter((panel) => headerAreas.has(panel.path));
     const covered = new Set(panelDefs.flatMap((panel) => [panel.path, ...panel.sections]));
     const panels = panelDefs.map((panel) => {
@@ -1053,7 +1069,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         || state.programs.operations.some((program) => core.isInside(program.area, panel.path));
       return { area, trees: own.trees, descriptions: own.descriptions, sections, programs, brain, focusRoot, focusHasWork };
     }).filter((record) => record.area);
-    if (state.workFilter === "all" && !activeOnly) {
+    if (!attentionOnly && state.workFilter === "all" && !activeOnly) {
       for (const area of areaList) {
         if (covered.has(area.path)) continue;
         if (!(area.documents ?? []).length) continue;
@@ -1061,7 +1077,23 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         panels.push({ area, trees: [], descriptions: [], sections: [], programs: state.programs.operations.filter((program) => program.area === area.path) });
       }
     }
-    return core.orderPanels(panels, panelActivity).map((record, index) => ({ ...record, index }));
+    let ordered = core.orderPanels(panels, panelActivity);
+    if (mode !== "all") {
+      /** Every Area identity represented by one panel and its retained sections. */
+      const recordAreas = (record) => [record.area.path, ...record.sections.map((section) => section.area.path)];
+      /** True when a path is the target Area or structural context around it. */
+      const touches = (path, wanted) => [...wanted].some((area) => path === area || path.startsWith(`${area}/`) || area.startsWith(`${path}/`));
+      /** Drops sibling sections that have no item in this attention lens. */
+      const retain = (wanted) => ordered
+        .filter((record) => recordAreas(record).some((path) => touches(path, wanted)))
+        .map((record) => ({ ...record, sections: record.sections.filter((section) => touches(section.area.path, wanted)) }));
+      if (mode === "for-you") {
+        ordered = retain(attentionAreas);
+      } else if (mode === "problems") {
+        ordered = retain(attentionAreas);
+      }
+    }
+    return ordered.map((record, index) => ({ ...record, index }));
   }
 
 
@@ -1610,9 +1642,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // and menu so its brain stays reachable.
     const quiet = sub && !allTrees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status)))
       && !allDescriptions.length && !summary.questions && !brain?.live && !activeLoopsForArea(area.path).length;
+    const attentionOnly = (state.workLens?.mode ?? "all") !== "all";
     const starred = areaFocusRoots().includes(area.path);
-    const starButton = `<button class="work-star${starred ? " starred" : ""}" type="button" data-star-area="${escapeHtml(area.path)}" aria-pressed="${starred}" ${workCommandAttributes("starArea", `${starred ? "Unstar" : "Star"} ${areaLabel(area.path)} (f)`)} aria-label="${starred ? "Unstar" : "Star"} ${escapeHtml(areaLabel(area.path))}"><span aria-hidden="true">${starred ? "★" : "☆"}</span></button>`;
-    const mapButton = `<button class="desk-action" type="button" data-open-area-map="${escapeHtml(area.path)}" ${workCommandAttributes("map", `Open map for ${areaLabel(area.path)} (m)`)}>Map <kbd>m</kbd></button>`;
+    const starButton = attentionOnly ? "" : `<button class="work-star${starred ? " starred" : ""}" type="button" data-star-area="${escapeHtml(area.path)}" aria-pressed="${starred}" ${workCommandAttributes("starArea", `${starred ? "Unstar" : "Star"} ${areaLabel(area.path)} (f)`)} aria-label="${starred ? "Unstar" : "Star"} ${escapeHtml(areaLabel(area.path))}"><span aria-hidden="true">${starred ? "★" : "☆"}</span></button>`;
+    const foldControl = attentionOnly ? WORK_FOLD_SPACE : workFoldTriangle({ open: !folded, area: area.path, name });
+    const mapButton = `<button class="desk-action" type="button" data-open-area-map="${escapeHtml(area.path)}" data-focus-key="map:${escapeHtml(area.path)}" aria-label="Show ${escapeHtml(areaLabel(area.path))} on Map" ${workCommandAttributes("map", `Open map for ${areaLabel(area.path)} (m)`)}>Map <kbd>m</kbd></button>`;
     // The visible text identifies the agent as the brain. The shared agent
     // entry command supplies its key and keyboard label.
     const brainButton = `<button class="work-group-brain" type="button" ${route} ${workCommandAttributes("session", `${label} for ${areaLabel(area.path)} (${workCommand("session").keyDisplay})`)} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}" data-brain-verb="${escapeHtml(label)}"><span class="work-group-brain-text">brain</span>${workKey("session")}</button>${brainLoopMark(area.path)}`;
@@ -1620,7 +1654,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="${sub ? "row" : "rowgroup"}" id="${workGroupId(area.path)}">
         <div class="work-group-layout">
           <div class="work-group-identity">
-            <span class="work-group-name">${workFoldTriangle({ open: !folded, area: area.path, name })}<button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" data-open-document="${escapeHtml(areaNoteFile(area.path))}" ${workCommandAttributes("open", `Read the ${areaLabel(area.path)} note (↵)`)}>${escapeHtml(name)}</button>${starButton}</span>
+            <span class="work-group-name">${foldControl}<button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" data-open-document="${escapeHtml(areaNoteFile(area.path))}" ${workCommandAttributes("open", `Read the ${areaLabel(area.path)} note (↵)`)}>${escapeHtml(name)}</button>${starButton}</span>
             <span class="work-group-count">${escapeHtml(summary.text)}</span>
             ${!showState || !status
               ? ""
@@ -1738,7 +1772,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * status facts; CSS shows exactly one copy at each width, so nothing is
    * read twice.
    */
-  function workGoalRow(goal, { groupPath, labels, fact, subgoal = false, subArea = false, parent = "", hidden = false, subgoalCount = 0, expanded = true } = {}) {
+  function workGoalRow(goal, { groupPath, labels, fact, subgoal = false, subArea = false, parent = "", hidden = false, subgoalCount = 0, expanded = true, attention = "" } = {}) {
     const pipeline = pipelineForGoal(goal);
     const action = pipeline ? deskPipelineAction(goal, pipeline) : deskGoalAction(goal);
     const { facts, now } = deskGoalFactsData(goal);
@@ -1756,7 +1790,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       : "";
     const cursor = `goal:${goal.file}`;
     const searchText = [goal.title, areaLabel(goal.area), action.state, action.stepShort].filter(Boolean).join(" ");
-    return `<tr class="desk-goal work-row ${subgoal ? "subgoal" : "root-goal"}${subArea ? " under-sub-area" : ""} ${action.kind}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-search-text="${escapeHtml(searchText)}" data-goal-anchor="${escapeHtml(goal.file)}" data-work-area="${escapeHtml(goal.area)}"${subgoal ? ` data-subgoal-of="${escapeHtml(parent)}"` : ""}${hidden ? " hidden" : ""}>
+    return `<tr class="desk-goal work-row ${subgoal ? "subgoal" : "root-goal"}${subArea ? " under-sub-area" : ""} ${action.kind}${attention ? ` ${attention}` : ""}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-search-text="${escapeHtml(searchText)}" data-goal-anchor="${escapeHtml(goal.file)}" data-work-area="${escapeHtml(goal.area)}"${subgoal ? ` data-subgoal-of="${escapeHtml(parent)}"` : ""}${hidden ? " hidden" : ""}>
       <th class="work-cell-work" scope="row">
         <span class="work-cell-title">${disclosure}<span class="work-goal-copy"><span class="work-goal-primary"><button class="work-row-title" type="button" data-work-row-title ${titleRoute} data-focus-key="title:${escapeHtml(goal.file)}" title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</button>${subgoalNote}${path ? `<small class="work-row-path">${escapeHtml(path)}</small>` : ""}</span><span class="work-cell-agent-inline">${workAgentControl(goal, action, pipeline, liveSession, { inline: true })}</span></span></span>
         <small class="work-cell-facts">${escapeHtml(compact)}</small>
@@ -1813,18 +1847,26 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       || part.trees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status))));
   }
 
+  /** Rows for one exact Area under the active Work lens. */
+  function workAreaItemRows({ area, trees, descriptions }, facts, { subArea = false } = {}) {
+    const mode = state.workLens?.mode ?? "all";
+    const goals = orderedGoalTrees(trees).map((tree) => workTreeRows(tree, area.path, null, facts, { subArea })).join("");
+    if (mode === "for-you") return workBrainAttentionRows(area.path) + goals;
+    if (mode === "problems") return workRuntimeProblemRows(area.path) + workProcessProblemRows(area.path) + workDiagnosticProblemRows(area.path) + goals;
+    return [
+      ...areaPresentationRows(area),
+      ...areaProcessesForArea(area.path).map((item) => workProcessRow(item)),
+      ...descriptions.map((session) => workDefinitionRow(session)),
+    ].join("") + goals;
+  }
+
   /** One brain-owned Area group as one row group of the work table. */
   function workGroupBody(record, facts) {
     const { area, trees, descriptions, sections } = record;
     // The Area's own rows sit under its header. Each sub-Area with work gets
     // one flat sub-header in path order, and its rows sit under that, so no
     // row needs a path tag (work-view-sub-areas Decision 1).
-    const own = [
-      ...areaPresentationRows(area),
-      ...areaProcessesForArea(area.path).map((item) => workProcessRow(item)),
-      ...descriptions.map((session) => workDefinitionRow(session)),
-      ...orderedGoalTrees(trees).map((tree) => workTreeRows(tree, area.path, null, facts)),
-    ].join("");
+    const own = workAreaItemRows({ area, trees, descriptions }, facts);
     const body = own + workSubAreaSections(sections, area, facts);
     // A focused Area stays on the screen with nothing in it, and says why, so
     // Julian can see that his Focus is what emptied the table.
@@ -1865,17 +1907,163 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const folded = subAreaIsFoldedOnWork(section.area.path);
     const header = workGroupHeaderRow({ area: section.area, trees: section.trees, descriptions: section.descriptions, sections: folded ? descendants : [] }, facts, { parentPath: parentArea.path });
     if (folded) return header;
-    const rows = [
-      ...areaPresentationRows(section.area),
-      ...areaProcessesForArea(section.area.path).map((item) => workProcessRow(item)),
-      ...section.descriptions.map((session) => workDefinitionRow(session)),
-      ...orderedGoalTrees(section.trees).map((tree) => workTreeRows(tree, section.area.path, null, facts, { subArea: true })),
-    ].join("");
+    const rows = workAreaItemRows(section, facts, { subArea: true });
     return header + rows;
   }
 
+  /** Converts one bounded machine state to a short visible status word. */
+  function attentionStateLabel(value) {
+    return String(value || "unknown").split("-").map((word) => word ? `${word[0].toUpperCase()}${word.slice(1)}` : "").join(" ");
+  }
+
+  /**
+   * One bounded attention consequence. These rows deliberately do not infer
+   * new work: they expose the same Brain or Agent fact counted in the global
+   * frame, name its consequence, and provide the nearest safe inspection
+   * route that the Work desk already owns.
+   */
+  function workAttentionConsequenceRow({ cursor, area = "", title, kind, stateText, consequence, route = null, mode = "problems" }) {
+    const routeAttributes = route?.kind === "questions"
+      ? `data-review-questions="${escapeHtml(route.area)}"`
+      : route?.kind === "goal"
+        ? `data-open-close="${escapeHtml(route.goal)}"`
+        : route?.kind === "brain"
+          ? `data-open-area-brain="${escapeHtml(route.area)}"`
+          : "";
+    const routeLabel = route?.label || "Inspect";
+    const titleMarkup = route
+      ? `<button class="work-row-title" type="button" data-work-row-title ${routeAttributes} aria-label="${escapeHtml(`${routeLabel}: ${title}`)}">${escapeHtml(title)}</button>`
+      : `<span class="work-row-title" data-work-row-title tabindex="0">${escapeHtml(title)}</span>`;
+    const action = route ? `<button class="work-process-control" type="button" ${routeAttributes}>${escapeHtml(routeLabel)}</button>` : "";
+    return `<tr class="work-row work-attention-item ${escapeHtml(mode)}" data-work-cursor="${escapeHtml(cursor)}" data-search-text="${escapeHtml(`${title} ${kind} ${stateText} ${consequence}`)}" data-work-area="${escapeHtml(area)}" aria-label="${escapeHtml(`${kind} ${title}, ${stateText}. ${consequence}`)}">
+      <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}${titleMarkup}<small class="work-row-path">${escapeHtml(kind)}</small></span><small class="work-cell-facts work-problem-consequence">${escapeHtml(consequence)}</small></th>
+      <td class="work-cell-agent"><span>${escapeHtml(kind)}</span></td>
+      <td class="work-cell-status"><span class="desk-state waiting">${escapeHtml(stateText)}</span></td>
+      <td class="work-cell-controls"><span class="work-row-controls">${action}</span></td>
+    </tr>`;
+  }
+
+  /** One aggregate row for the direct Brain attention represented by Work. */
+  function workBrainAttentionRows(areaPath) {
+    return (state.work?.brains ?? [])
+      .filter((brain) => brain.areaId === areaPath && Number(brain.attentionCount ?? 0) > 0)
+      .map((brain) => {
+        const count = Number(brain.attentionCount);
+        return workAttentionConsequenceRow({
+          cursor: `attention:brain:${brain.areaId}`,
+          area: brain.areaId,
+          title: `${count} direct ${count === 1 ? "item" : "items"} from ${areaLabel(brain.areaId)} Brain`,
+          kind: "Brain attention",
+          stateText: "Needs you",
+          consequence: "Open the current questions, reviews, and decisions from this Brain.",
+          route: { kind: "questions", area: brain.areaId, label: "Review" },
+          mode: "for-you",
+        });
+      }).join("");
+  }
+
+  /** One Agent with unknown liveness as the exact consequence counted by Problems. */
+  function workAgentProblemRow(agent) {
+    const goal = agent.owner?.kind === "assignment" ? goalByFile(agent.owner.goalId) : null;
+    const stateText = attentionStateLabel(agent.liveness);
+    const observed = agent.evidence ? ` ${agent.evidence}` : "";
+    const consequence = `The Agent's liveness is unknown.${observed}`.trim();
+    const route = goal
+      ? { kind: "goal", goal: goal.file, label: "Inspect Goal" }
+      : agent.areaId ? { kind: "brain", area: agent.areaId, label: "Open Brain" } : null;
+    return workAttentionConsequenceRow({
+      cursor: `problem:agent:${agent.id}`,
+      area: agent.areaId ?? "",
+      title: agent.workTitle || agent.target || agent.id,
+      kind: "Agent problem",
+      stateText,
+      consequence,
+      route,
+    });
+  }
+
+  /** The Brain and Agent failures owned by one exact Area. */
+  function workRuntimeProblemRows(areaPath) {
+    const rows = workProblemRows(state.work, areaPath);
+    const brains = rows.brains.map((brain) => {
+      const stateText = attentionStateLabel(brain.workState);
+      const consequence = brain.workState === "unknown"
+        ? "The Brain's current state is unknown. Inspect it before making a runtime change."
+        : brain.status === "active" && brain.workState === "stopped"
+          ? "The active Brain has no live Agent. Inspect it before choosing whether to restart."
+          : "Automatic Brain recovery did not restore normal operation.";
+      return workAttentionConsequenceRow({
+        cursor: `problem:brain:${brain.areaId}`,
+        area: brain.areaId,
+        title: `${areaLabel(brain.areaId)} Brain`,
+        kind: "Brain problem",
+        stateText,
+        consequence,
+        route: { kind: "brain", area: brain.areaId, label: "Open Brain" },
+      });
+    });
+    const agents = rows.agents.map(workAgentProblemRow);
+    return [...brains, ...agents].join("");
+  }
+
+  /** A valid Work Agent can have no Area; its failure must still stay visible. */
+  function workUnassignedProblemRows() {
+    const rows = workProblemRows(state.work).agents.filter((agent) => !agent.areaId).map(workAgentProblemRow).join("");
+    if (!rows) return "";
+    return `<tbody class="work-group work-unassigned-problems" aria-label="Runtime problems without an Area">
+      <tr class="work-group-row"><th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="rowgroup"><div class="work-group-layout"><div class="work-group-identity"><span class="work-group-name">Runtime</span><span class="work-group-count">Area unknown</span></div></div></th></tr>
+      ${rows}
+    </tbody>`;
+  }
+
+  /** Bounded source/model failures that have no more specific consequence row. */
+  function workDiagnosticProblemRows(areaPath = "") {
+    const rows = workProblemRows(state.work, areaPath).diagnostics.filter((row) => areaPath ? row.areaId === areaPath : !row.areaId);
+    return rows.map((problem) => {
+      const cursor = `problem:diagnostic:${problem.source}:${problem.code}:${problem.areaId || "global"}`;
+      const count = Number(problem.count ?? 0);
+      const stateText = `${count} ${count === 1 ? "problem" : "problems"}`;
+      const samples = (problem.sampleIds ?? []).length ? ` Samples: ${problem.sampleIds.join(", ")}.` : "";
+      const consequence = `The ${problem.source} source could not publish a complete fact.${samples}`;
+      return `<tr class="work-row work-attention-item problems work-diagnostic-problem" data-work-cursor="${escapeHtml(cursor)}" data-problem-source="${escapeHtml(problem.source)}" data-problem-code="${escapeHtml(problem.code)}" data-search-text="${escapeHtml(`${problem.source} ${problem.code} ${stateText} ${samples}`)}"${problem.areaId ? ` data-work-area="${escapeHtml(problem.areaId)}"` : ""} aria-label="${escapeHtml(`${problem.source} ${problem.code}, ${stateText}. ${consequence}`)}">
+        <th class="work-cell-work" scope="row"><span class="work-cell-title">${WORK_FOLD_SPACE}<span class="work-row-title" data-work-row-title tabindex="0">${escapeHtml(problem.code)}</span><small class="work-row-path">${escapeHtml(problem.source)} source</small></span><small class="work-cell-facts work-problem-consequence">${escapeHtml(consequence)}</small></th>
+        <td class="work-cell-agent"><span>Projection</span></td>
+        <td class="work-cell-status"><span class="desk-state waiting">${escapeHtml(stateText)}</span></td>
+        <td class="work-cell-controls"><span class="work-row-controls"><button type="button" data-retry-work>Retry Work</button></span></td>
+      </tr>`;
+    }).join("");
+  }
+
+  /** Global diagnostics keep their own truthful row group instead of impersonating an Area. */
+  function workUnassignedDiagnosticRows() {
+    const rows = workDiagnosticProblemRows();
+    if (!rows) return "";
+    return `<tbody class="work-group work-unassigned-diagnostics" aria-label="Work source problems">
+      <tr class="work-group-row"><th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="rowgroup"><div class="work-group-layout"><div class="work-group-identity"><span class="work-group-name">Work sources</span><span class="work-group-count">Bounded diagnostics</span></div></div></th></tr>
+      ${rows}
+    </tbody>`;
+  }
+
+  /** Broken or exhausted Process rows counted by Problems, even if no occurrence is normally visible. */
+  function workProcessProblemRows(areaPath) {
+    const bounded = workProblemRows(state.work, areaPath).processes;
+    return bounded.map((problem) => {
+      const item = (state.programs.processes ?? []).find((process) => (process.id ?? process.file) === problem.id)
+        ?? {
+          ...problem,
+          area: problem.areaId,
+          file: problem.id,
+          slug: problem.slug || problem.id.split("/").at(-1),
+          when: problem.whenLabel || "",
+          error: problem.state === "broken" ? problem.stateDetail || "The Process definition is broken." : null,
+          state: attentionStateLabel(problem.state),
+        };
+      return workProcessRow(item, { attention: "work-attention-item problems" });
+    }).join("");
+  }
+
   /** One exact-Area Process row with inspect and authorized lifecycle controls. */
-  function workProcessRow(item) {
+  function workProcessRow(item, { attention = "" } = {}) {
     const stateText = item.error ? `Broken note: ${item.error}` : item.state || (item.status === "paused" ? "Paused" : "Active");
     const stateKind = item.error ? "waiting" : item.status === "paused" ? "complete" : item.due ? "waiting" : "working";
     const action = item.status === "paused" ? "resume" : "pause";
@@ -1883,10 +2071,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const identity = `data-process-area="${escapeHtml(item.area)}" data-process-slug="${escapeHtml(item.slug)}" data-process-file="${escapeHtml(item.file)}" data-process-event="${escapeHtml(item.eventId || "")}" data-process-revision="${escapeHtml(item.revision ?? 0)}"`;
     const lifecycle = item.error ? "" : `<button class="work-process-control" type="button" data-control-process data-process-action="${action}" ${identity} aria-label="${actionWord} process ${escapeHtml(item.slug)} in ${escapeHtml(areaLabel(item.area))}">${actionWord}</button>`;
     const remove = item.loop ? `<button class="work-process-control danger" type="button" data-remove-process ${identity} aria-label="Remove loop ${escapeHtml(item.slug)} from ${escapeHtml(areaLabel(item.area))}">Remove</button>` : "";
-    return `<tr class="work-process-row work-row ${item.status === "paused" ? "paused" : ""}" data-work-cursor="process:${escapeHtml(item.file)}" ${identity} data-search-text="${escapeHtml(`${item.title} ${item.slug} ${item.when} ${item.startPolicy || ""} ${stateText} ${item.stateDetail || ""}`)}" data-work-area="${escapeHtml(item.area)}" aria-label="Process ${escapeHtml(item.title)} in ${escapeHtml(areaLabel(item.area))}, ${escapeHtml(stateText)}">
+    const consequence = item.stateDetail && !item.error ? ` · ${item.stateDetail}` : "";
+    return `<tr class="work-process-row work-row ${item.status === "paused" ? "paused" : ""}${attention ? ` ${attention}` : ""}" data-work-cursor="process:${escapeHtml(item.file)}" ${identity} data-search-text="${escapeHtml(`${item.title} ${item.slug} ${item.when} ${item.startPolicy || ""} ${stateText} ${item.stateDetail || ""}`)}" data-work-area="${escapeHtml(item.area)}" aria-label="Process ${escapeHtml(item.title)} in ${escapeHtml(areaLabel(item.area))}, ${escapeHtml(stateText)}">
       <th class="work-cell-work" scope="row">
         <span class="work-cell-title">${WORK_FOLD_SPACE}<button class="work-row-title" type="button" data-open-document="${escapeHtml(item.file)}" data-focus-key="process:${escapeHtml(item.file)}" aria-label="Inspect process ${escapeHtml(item.title)}">${escapeHtml(item.title)}</button><small class="work-row-path">Process</small></span>
-        <small class="work-cell-facts">${escapeHtml(item.missedCount ? `${item.missedCount} runs missed since ${item.missedSince}` : item.when)}</small>
+        <small class="work-cell-facts${attention ? " work-problem-consequence" : ""}">${escapeHtml(item.missedCount ? `${item.missedCount} runs missed since ${item.missedSince}` : `${item.when || ""}${consequence}`)}</small>
       </th>
       <td class="work-cell-agent"><span class="work-process-when" title="${escapeHtml(item.when)}">${escapeHtml(item.when)}</span></td>
       <td class="work-cell-status"><span class="desk-state ${stateKind}" title="${escapeHtml(stateText)}">${escapeHtml(stateText)}</span></td>
@@ -1901,6 +2090,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * between subjects, not inside one (work-view-sub-areas Decision 7).
    */
   function subAreaIsFoldedOnWork(path) {
+    if ((state.workLens?.mode ?? "all") !== "all") return false;
     return state.foldedWorkAreas.has(path);
   }
 
@@ -1916,6 +2106,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // A star never changes which groups are open (area-star-focus Decision 5):
     // with stars added one at a time, "only the first root opens" folded the
     // Area Julian had just starred whenever it sorted after another root.
+    if ((state.workLens?.mode ?? "all") !== "all") return false;
     return state.foldedWorkAreas.has(path);
   }
 
@@ -1956,8 +2147,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * descendant branch even when an intermediate Goal remains expanded.
    */
   function workTreeRows(tree, groupPath, labels, facts, { subArea = false } = {}) {
+    const mode = state.workLens?.mode ?? "all";
     const closed = new Set(["done", "dropped", "parked", "deferred"]);
-    const goals = tree.goals.filter((goal, index) => index === 0 || !closed.has(goal.status));
+    const goals = mode === "all" ? tree.goals.filter((goal, index) => index === 0 || !closed.has(goal.status)) : tree.goals;
     const stack = [];
     const nodes = goals.map((goal) => {
       const parsedDepth = Number(goal.depth ?? 0);
@@ -1976,8 +2168,21 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       }
       return false;
     };
-    return nodes.map((node) => {
-      const expanded = !state.collapsedGoalTrees.has(node.goal.file);
+    const forYouGoals = new Set((state.work?.goals ?? []).filter((goal) => goal.workState?.owner === "user").map((goal) => goal.id));
+    const problemGoals = new Set(workProblemRows(state.work).goals.map((goal) => goal.id));
+    /** True when this Goal itself, rather than an ancestor kept for context, belongs to the lens. */
+    const matchesAttention = (node) => mode === "for-you"
+      ? forYouGoals.has(node.goal.file ?? node.goal.id)
+      : mode === "problems" && problemGoals.has(node.goal.file ?? node.goal.id);
+    const included = new Set();
+    if (mode !== "all") for (const node of nodes) {
+      if (!matchesAttention(node)) continue;
+      for (let current = node; current; current = current.parent) included.add(current);
+    }
+    return nodes.filter((node) => mode === "all" || included.has(node)).map((node) => {
+      const direct = matchesAttention(node);
+      const expanded = mode !== "all" || !state.collapsedGoalTrees.has(node.goal.file);
+      const subgoalCount = mode === "all" ? node.children.length : node.children.filter((child) => included.has(child)).length;
       const goalRow = workGoalRow(node.goal, {
         groupPath,
         labels,
@@ -1985,15 +2190,16 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         subgoal: Boolean(node.parent),
         subArea,
         parent: node.parent?.goal.file ?? "",
-        hidden: hiddenByAncestor(node),
-        subgoalCount: node.children.length,
+        hidden: mode === "all" && hiddenByAncestor(node),
+        subgoalCount,
         expanded,
+        attention: mode === "all" ? "" : direct ? `work-attention-item ${mode}` : "work-attention-context",
       });
       const children = [...(node.goal.presentations ?? []).map((item) => ({ type: "document", item })), ...(node.goal.cards ?? []).map((item) => ({ type: "card", item }))];
       const visible = children.slice(0, PRESENTED_ROWS_PER_GOAL);
-      const presentationRows = visible.map(({ type, item }) => type === "card" ? workCardRow(node.goal, item) : workPresentedDocumentRow(node.goal, item)).join("");
+      const presentationRows = mode === "all" ? visible.map(({ type, item }) => type === "card" ? workCardRow(node.goal, item) : workPresentedDocumentRow(node.goal, item)).join("") : "";
       const overflow = children.length - visible.length;
-      return `${goalRow}${presentationRows}${overflow > 0 ? workPresentationOverflowRow(node.goal, overflow) : ""}`;
+      return `${goalRow}${presentationRows}${mode === "all" && overflow > 0 ? workPresentationOverflowRow(node.goal, overflow) : ""}`;
     }).join("");
   }
 
@@ -2126,18 +2332,31 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** The complete work table: one caption, one header, one row group per Area. */
   function workTable(records) {
     const facts = readinessFacts();
+    const mode = state.workLens?.mode ?? "all";
     // Every top-level Area keeps its header, with `0 open` when nothing is
     // under it, so its brain and its sub-Areas stay reachable (work-view-
     // sub-areas, every Area has a row).
     const shown = records;
-    const bodies = shown.map((record) => workGroupBody(record, facts)).join("");
-    const rowCount = shown.reduce((count, record) => count + [record, ...record.sections]
+    const unassigned = mode === "problems" && !state.workLens?.area ? workUnassignedProblemRows() : "";
+    const diagnostics = mode === "problems" && !state.workLens?.area ? workUnassignedDiagnosticRows() : "";
+    const bodies = shown.map((record) => workGroupBody(record, facts)).join("") + unassigned + diagnostics;
+    const goalCount = shown.reduce((count, record) => count + [record, ...record.sections]
       .reduce((inner, part) => inner + part.trees.reduce((goals, tree) => goals + tree.goals.filter((goal) => !["done", "dropped", "parked", "deferred"].includes(goal.status)).length, 0), 0), 0);
+    const shownAreas = new Set(shown.flatMap((record) => [record.area.path, ...record.sections.map((section) => section.area.path)]));
+    const attentionCount = mode === "for-you"
+      ? (state.work?.brains ?? []).filter((row) => shownAreas.has(row.areaId)).reduce((count, row) => count + Number(row.attentionCount ?? 0), 0)
+        + (state.work?.goals ?? []).filter((row) => shownAreas.has(row.areaId) && row.workState?.owner === "user").length
+      : mode === "problems"
+        ? workProblemCount(workProblemRows(state.work, state.workLens?.area ?? ""))
+        : goalCount;
+    const countLabel = mode === "all"
+      ? `${attentionCount} ${attentionCount === 1 ? "Goal" : "Goals"}`
+      : `${attentionCount} ${attentionCount === 1 ? "item" : "items"}`;
     // The column group carries the widths. A narrow layout hides three cells,
     // and a fixed table keeps reserving width for a column whose cells are all
     // `display: none` unless a `<col>` states that width is zero.
     return `<table class="work-table">
-      <caption class="work-caption"><span class="work-caption-scope"><span>Work</span><span class="work-caption-count">${rowCount} ${rowCount === 1 ? "Goal" : "Goals"}</span>${starredOnlyButton()}${activeOnlyButton()}</span>${workCaptionHint()}</caption>
+      <caption class="work-caption"><span class="work-caption-scope"><span>Work</span><span class="work-caption-count">${countLabel}</span>${mode === "all" ? `${starredOnlyButton()}${activeOnlyButton()}` : ""}</span>${workCaptionHint()}</caption>
       <colgroup>${WORK_COLUMNS.map((column) => `<col class="work-col-${column.key}">`).join("")}</colgroup>
       <thead><tr>${WORK_COLUMNS.map((column) => `<th scope="col" class="work-head-${column.key}">${column.hidden ? `<span class="visually-hidden">${escapeHtml(column.label)}</span>` : escapeHtml(column.label)}</th>`).join("")}</tr></thead>
       ${bodies}
@@ -2146,16 +2365,26 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Renders the complete Work screen: the direct-ask table, then the work table. */
   function renderWork() {
+    if (!state.work) return `<section class="work-page"><div class="work-stale-banner" role="alert"><strong>Work is unavailable</strong><span>${escapeHtml(state.workTransport?.error || "No Work snapshot has loaded yet. Map remains available.")}</span><button type="button" data-retry-work>Retry</button></div></section>`;
     const records = deskAreas();
+    const mode = state.workLens?.mode ?? "all";
+    const problemRows = workProblemRows(state.work);
+    const hasUnassignedProblems = mode === "problems" && !state.workLens?.area
+      && (problemRows.agents.some((agent) => !agent.areaId) || problemRows.diagnostics.some((problem) => !problem.areaId));
     const roots = areaFocusRoots();
     const focusNames = areaFocusLabels(roots).join(" + ");
-    const emptyCopy = `${state.areaFocusOnly ? `Starred Areas (${escapeHtml(focusNames)}): ` : ""}${state.activeOnly ? "Nothing is running. " : ""}No open work.`;
-    const content = `${records.length
+    const emptyCopy = mode === "for-you" ? "No direct attention items."
+      : mode === "problems" ? "No recovery problems."
+        : `${state.areaFocusOnly ? `Starred Areas (${escapeHtml(focusNames)}): ` : ""}${state.activeOnly ? "Nothing is running. " : ""}No open work.`;
+    const content = `${records.length || hasUnassignedProblems
       ? workTable(records)
-      : `<div class="empty-state">${emptyCopy}</div>`}${workProcessSections(records)}`;
+      : `<div class="empty-state">${emptyCopy}</div>`}${mode === "all" ? workProcessSections(records) : ""}`;
 
+    const stale = state.workTransport?.state !== "current";
+    const freshness = stale ? `<div class="work-stale-banner" role="status"><strong>Last known Work</strong><span>${escapeHtml(state.workTransport?.error || "The current Work snapshot is unavailable. Your filters and cursor are retained.")}</span><button type="button" data-retry-work>Retry</button></div>` : "";
     return `
       <section class="work-page">
+        ${freshness}
         ${content}
         ${launchPopover()}
       </section>

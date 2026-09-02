@@ -35,6 +35,7 @@ const crossingFixture = params.get("crossing") === "1";
 const reflowAnchorFixture = params.get("reflow-anchor") === "1";
 const focusedFixture = params.get("focus") === "1";
 const deferredTargetFixture = params.get("deferred-target") === "1";
+const runtimeFixture = params.get("runtime") === "1";
 const scene = () => core.createEmptyScene();
 const scenes = new Map();
 
@@ -135,6 +136,8 @@ let documents = records.map(([area]) => ({
   file: area + "/" + area.split("/").at(-1) + ".md",
   title: area.split("/").at(-1).replace(/^./, (letter) => letter.toUpperCase()),
   status: "active",
+  ...(runtimeFixture && area === "neara/delivery/standards" ? { runtime: { working: 3, forYou: 1, problems: 1, stale: true } } : {}),
+  ...(runtimeFixture && area === "neara/hackathon" ? { runtime: { ready: true } } : {}),
 }));
 documents.push(
   { kind: "goal", area: "neara/delivery/standards", file: "neara/delivery/standards/goal-proof.md", title: "Standards proof", status: "active", live: true },
@@ -143,6 +146,7 @@ documents.push(
 
 window.worldEvents = [];
 window.mapTelemetry = [];
+window.entityVerbs = [];
 window.addEventListener("tangent:area-map", (event) => window.mapTelemetry.push(event.detail));
 window.loadCalls = [];
 window.loadResolvers = new Map();
@@ -176,6 +180,7 @@ window.editor = mountAreaBoardEditor(document.querySelector("#map"), {
     };
   },
   reloadWorld: async () => structuredClone(window.nextWorld ?? world),
+  onEntityVerb: (action) => window.entityVerbs.push(structuredClone(action)),
   onBack: () => { window.backCount = (window.backCount ?? 0) + 1; },
 });
 
@@ -186,6 +191,13 @@ window.pollFacts = async (selectedArea = "neara/delivery") => {
   if (typeof window.editor.refreshFacts === "function") await window.editor.refreshFacts(window.fixtureFocus);
   else if (typeof window.editor.updateFacts === "function") await window.editor.updateFacts(documents, window.fixtureFocus);
   else window.editor.fitArea(selectedArea);
+};
+
+window.pollRuntime = async () => {
+  documents = documents.map((document) => document.area === "neara/delivery/standards" && document.kind === "area"
+    ? { ...document, runtime: { working: 4, forYou: 0, problems: 2, stale: false } }
+    : document);
+  await window.editor.refreshFacts(window.fixtureFocus);
 };
 
 window.pollTree = async () => {
@@ -369,6 +381,118 @@ async function viewportPoint(page, x, y) {
     y: box.y + (y + appState.scrollY) * appState.zoom.value,
   };
 }
+
+test("Area runtime facts route to Work without changing Map geometry, and B stays Block", { timeout: 90_000 }, async (context) => {
+  const page = await openWorld(context, "?runtime=1");
+  const before = await regions(page);
+  const standards = page.locator('[data-area-runtime-facts="neara/delivery/standards"]');
+  const ready = page.locator('[data-area-runtime-facts="neara/hackathon"]');
+
+  await standards.getByRole("button", { name: "Open Work for Standards: 3 working" }).click();
+  await standards.getByRole("button", { name: "Open For you for Standards: 1 for you" }).click();
+  await standards.getByRole("button", { name: "Open Problems for Standards: 1 problem" }).click();
+  await standards.getByText("Last known", { exact: true }).waitFor();
+  await ready.getByText("Ready", { exact: true }).waitFor();
+  assert.deepEqual(await page.evaluate(() => window.entityVerbs), [
+    { kind: "area", area: "neara/delivery/standards", ref: "neara/delivery/standards/standards.md", verb: "work" },
+    { kind: "area", area: "neara/delivery/standards", ref: "neara/delivery/standards/standards.md", verb: "for-you" },
+    { kind: "area", area: "neara/delivery/standards", ref: "neara/delivery/standards/standards.md", verb: "problems" },
+  ]);
+
+  await page.evaluate(() => window.pollRuntime());
+  await standards.getByRole("button", { name: "Open Work for Standards: 4 working" }).waitFor();
+  await standards.getByRole("button", { name: "Open Problems for Standards: 2 problems" }).waitFor();
+  assert.equal(await standards.getByRole("button", { name: /For you/ }).count(), 0);
+  assert.equal(await standards.getByText("Last known", { exact: true }).count(), 0);
+  assert.deepEqual(await regions(page), before, "published runtime facts do not change authored or computed Area geometry");
+  assert.equal(await page.evaluate(() => window.mountCount), 1, "runtime facts repaint the stable map island");
+
+  await page.locator(".excalidraw canvas.interactive").focus();
+  await page.keyboard.press("b");
+  const picker = page.getByRole("dialog", { name: "Place a Tangent block" });
+  await picker.waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal(await picker.count(), 0);
+  assert.equal(await page.evaluate(() => window.backCount ?? 0), 0, "Escape closes the Block picker before leaving Map");
+
+  await page.getByTitle("Map keys (?)").click();
+  const help = page.getByRole("dialog", { name: "Map keys" });
+  assert.match(await help.textContent(), /B block/);
+  assert.doesNotMatch(await help.textContent(), /b brain beside/i);
+  assert.match(await help.textContent(), /named Brain control/);
+  await help.getByRole("button", { name: "Close" }).click();
+  await help.waitFor({ state: "detached" });
+  await page.waitForFunction(() => document.activeElement?.classList.contains("excalidraw"));
+
+  await page.keyboard.press("b");
+  await picker.waitFor();
+  await page.keyboard.press("Tab");
+  await picker.getByRole("heading", { name: "Place from the whole vault" }).waitFor();
+  await picker.getByRole("textbox").fill("Standards proof");
+  await page.keyboard.press("Enter");
+  try {
+    await page.waitForFunction(() => document.activeElement?.matches('textarea[data-type="wysiwyg"]'), null, { timeout: 5_000 });
+  } catch (error) {
+    const diagnostics = await page.evaluate(() => ({
+      active: { tag: document.activeElement?.tagName, type: document.activeElement?.getAttribute("data-type") },
+      appState: window.editor.appState(),
+      semanticBlocks: window.editor.current().elements.filter((element) => element.customData?.tangent && element.customData.tangent.role !== "area-region").map((element) => ({ id: element.id, ref: element.customData.tangent.ref, x: element.x, y: element.y, boundElements: element.boundElements })),
+      entityVerbs: window.entityVerbs,
+    }));
+    throw new Error(`B-created Block did not focus its bound text: ${JSON.stringify(diagnostics)}`, { cause: error });
+  }
+  const placedEdit = await page.evaluate(() => {
+    const editing = window.editor.appState().editingTextElement;
+    const block = window.editor.current().elements.find((element) => element.boundElements?.some((binding) => binding.id === editing?.id));
+    return { editingId: editing?.id, containerId: editing?.containerId, blockId: block?.id, activeType: document.activeElement?.getAttribute("data-type") };
+  });
+  assert.ok(placedEdit.editingId && placedEdit.blockId, `B-created Block exposes its bound text identity: ${JSON.stringify(placedEdit)}`);
+  assert.deepEqual({ containerId: placedEdit.containerId, activeType: placedEdit.activeType }, { containerId: placedEdit.blockId, activeType: "wysiwyg" }, `B-created Block immediately focuses its bound text: ${JSON.stringify(placedEdit)}`);
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !window.editor.appState().editingTextElement);
+  assert.equal(await page.getByRole("dialog", { name: "Place a Tangent block" }).count(), 0);
+  assert.equal(await page.evaluate(() => window.backCount ?? 0), 0, "finishing Block text stays on Map");
+});
+
+test("an existing semantic Document block opens in one direct keyboard action from Map", { timeout: 90_000 }, async (context) => {
+  const page = await openWorld(context);
+  const documentBlock = await page.evaluate(() => {
+    window.editor.fitArea("neara/hackathon", { push: false, select: false });
+    const controller = window.editor.controller();
+    const element = controller.snapshot().composition.scene.elements.find((candidate) => (
+      !candidate.isDeleted
+      && candidate.customData?.tangent?.kind === "document"
+      && candidate.customData.tangent.ref === "neara/hackathon/design-plan.md"
+    ));
+    if (!element) return null;
+    controller.setSelection([element.id]);
+    return {
+      id: element.id,
+      tangent: structuredClone(element.customData.tangent),
+      owner: element.customData?.tangentWorld?.owner,
+    };
+  });
+  assert.deepEqual(documentBlock && { tangent: documentBlock.tangent, owner: documentBlock.owner }, {
+    tangent: { kind: "document", ref: "neara/hackathon/design-plan.md" },
+    owner: "neara/hackathon",
+  }, "the selected map object is the existing source-owned Document block");
+  await page.waitForFunction((id) => (
+    window.editor.appState().selectedElementIds[id]
+    && window.editor.controller().snapshot().selection.has(id)
+  ), documentBlock.id);
+  assert.deepEqual(await page.evaluate(() => window.entityVerbs), [], "selecting a Document block does not open it");
+
+  await page.locator(".excalidraw canvas.interactive").focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => window.entityVerbs.length === 1);
+
+  assert.deepEqual(await page.evaluate(() => window.entityVerbs), [{
+    verb: "open",
+    kind: "document",
+    ref: "neara/hackathon/design-plan.md",
+  }], "one Enter from Map emits exactly one direct Document open action");
+  assert.equal(await page.evaluate(() => window.worldEvents.length), 0, "opening a Document does not edit Map authority");
+});
 
 test("a deferred restricted Area centers before content loads", { timeout: 90_000 }, async (context) => {
   const page = await openWorld(context, "?opening=1&deferred-target=1");

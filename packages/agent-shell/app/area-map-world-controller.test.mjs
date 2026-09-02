@@ -3,6 +3,7 @@ import { performance } from "node:perf_hooks";
 import test from "node:test";
 
 import core from "./public/area-board-core.js";
+import worldCore from "./public/area-map-world-core.js";
 import { areaMapPointerCommand, areaMapProjectionUpdate, areaMapStructuralHullChanged, createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "./public/area-map-world-controller.js";
 
 /** Creates one small complete world with source-owned content. */
@@ -228,9 +229,13 @@ test("Focus filters blocks without changing the isolated Area set", () => {
   controller.destroy();
 });
 
-test("server world view initializes camera but never overrides the newly opened Area", async () => {
+test("server world view restores the durable Map camera, location, folds, and selection", async () => {
   const world = fixtureWorld();
-  world.view = { schema: "area-map-view.v2", worldId: "world", locatedArea: "neara", pan: { x: 12, y: -9 }, zoom: 0.75, foldedAreas: ["neara/delivery"], detailAreas: ["neara"] };
+  const regionId = worldCore.composeAreaMapWorld(world).scene.elements.find((element) => element.customData?.tangent?.area === "neara")?.id;
+  world.view = {
+    schema: "area-map-view.v2", worldId: "world", locatedArea: "neara", cameraTarget: "neara", cameraTrail: ["neara/delivery"],
+    pan: { x: 12, y: -9 }, zoom: 0.75, foldedAreas: ["neara/delivery"], detailAreas: ["neara"], restrictionArea: null, selection: [regionId],
+  };
   const views = [];
   const controller = createAreaMapWorldController({
     world, storage: memoryStorage(),
@@ -238,16 +243,88 @@ test("server world view initializes camera but never overrides the newly opened 
     persistView: async (value) => views.push(value),
   });
   assert.equal(controller.snapshot().viewRestored, true);
-  assert.equal(controller.snapshot().locatedArea, "neara/delivery");
-  assert.deepEqual(controller.snapshot().camera, { scrollX: 12, scrollY: -9, zoom: 0.75 });
+  assert.deepEqual({
+    camera: controller.snapshot().camera,
+    locatedArea: controller.snapshot().locatedArea,
+    cameraTarget: controller.snapshot().cameraTarget,
+    cameraTrail: controller.snapshot().cameraTrail,
+    folded: [...controller.snapshot().folded],
+    restrictionArea: controller.snapshot().restrictionArea,
+    selection: [...controller.snapshot().selection],
+  }, {
+    camera: { scrollX: 12, scrollY: -9, zoom: 0.75 },
+    locatedArea: "neara",
+    cameraTarget: "neara",
+    cameraTrail: ["neara/delivery"],
+    folded: ["neara/delivery"],
+    restrictionArea: null,
+    selection: [regionId],
+  });
+  assert.equal(controller.snapshot().detailAreas.has("neara"), true);
   const authority = controller.world();
-  controller.fitArea("neara");
-  assert.equal(controller.snapshot().locatedArea, "neara");
+  controller.setCamera({ scrollX: 19, scrollY: -14, zoom: 0.85 });
   assert.deepEqual(controller.world(), authority);
   controller.destroy();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(views.at(-1).worldId, "world");
-  assert.equal(Object.hasOwn(views.at(-1), "locatedArea"), false);
+  assert.equal(views.at(-1).locatedArea, "neara");
+  assert.deepEqual(views.at(-1).selection, [regionId]);
+});
+
+test("private Map view survives controller teardown and exact stable-ID restoration", () => {
+  const storage = memoryStorage();
+  const first = createAreaMapWorldController({ world: fixtureWorld(), storage });
+  first.setRestriction(null);
+  first.toggleFold("neara/delivery");
+  first.setCamera({ scrollX: 73, scrollY: -28, zoom: 0.625 });
+  first.fitArea("neara");
+  const durable = first.captureView();
+  const selected = [...first.snapshot().selection];
+  first.destroy();
+
+  const restored = createAreaMapWorldController({ world: fixtureWorld(), storage });
+  assert.equal(restored.snapshot().viewRestored, true);
+  assert.deepEqual(restored.captureView(), durable);
+  assert.deepEqual(restored.snapshot().camera, { scrollX: 73, scrollY: -28, zoom: 0.625 });
+  assert.equal(restored.snapshot().folded.has("neara/delivery"), true);
+  assert.equal(restored.snapshot().locatedArea, "neara");
+  assert.deepEqual([...restored.snapshot().selection], selected);
+  restored.destroy();
+});
+
+test("captureView and restoreView round-trip the exact temporary Map return point", () => {
+  const controller = createAreaMapWorldController({ world: fixtureWorld(), storage: memoryStorage() });
+  const authority = controller.world();
+  controller.setRestriction(null);
+  controller.setCamera({ scrollX: 31, scrollY: -22, zoom: 0.7 });
+  controller.fitArea("neara");
+  const proof = controller.snapshot().scene.elements.find((element) => element.customData?.tangentWorld?.sourceId === "proof");
+  controller.setFindReveal(proof.id);
+  const returnPoint = controller.captureView();
+
+  controller.setFindReveal(null);
+  controller.setCamera({ scrollX: -400, scrollY: 250, zoom: 1.5 });
+  controller.navigateArea("neara/delivery");
+  controller.setRestriction("neara/delivery");
+  controller.setSelection([]);
+  const restored = controller.restoreView(returnPoint);
+
+  assert.deepEqual(controller.captureView(), returnPoint);
+  assert.deepEqual({
+    camera: restored.camera,
+    locatedArea: restored.locatedArea,
+    cameraTarget: restored.cameraTarget,
+    cameraTrail: restored.cameraTrail,
+    restrictionArea: restored.restrictionArea,
+    selection: [...restored.selection],
+    findRevealId: restored.findRevealId,
+  }, {
+    ...returnPoint,
+    selection: returnPoint.selection,
+  });
+  assert.deepEqual(controller.world(), authority, "temporary return state cannot change authored Map authority");
+  assert.equal(controller.undo(), false, "temporary return state cannot enter authored history");
+  controller.destroy();
 });
 
 test("one immutable region gesture saves and undoes with the same owner set", async () => {
@@ -274,12 +351,23 @@ test("one immutable region gesture saves and undoes with the same owner set", as
   controller.destroy();
 });
 
-test("an exhausted retryable head race is blocked for Retry instead of offered Keep mine", async () => {
+test("an exhausted retryable head race keeps its draft until Retry succeeds", async () => {
   const events = [];
   let attempts = 0;
   let reloads = 0;
+  let stored = null;
+  const draftStore = {
+    /** Starts without an earlier recovery draft. */
+    async load() { return null; },
+    /** Captures the draft that Keep mine must retain. */
+    async save(record) { stored = structuredClone(record); },
+    /** Clears recovery only after Retry saves the command. */
+    async remove() { stored = null; },
+    /** Releases the in-memory store. */
+    close() {},
+  };
   const controller = createAreaMapWorldController({
-    world: fixtureWorld(), storage: memoryStorage(),
+    world: fixtureWorld(), storage: memoryStorage(), draftStore,
     /** Captures the classified save and retry lifecycle. */
     onEvent: (event) => events.push(event),
     /** A retryable race has already exhausted the request-layer retries, then succeeds on the user's Retry. */
@@ -299,14 +387,21 @@ test("an exhausted retryable head race is blocked for Retry instead of offered K
   await controller.flush();
 
   assert.equal(controller.snapshot().save.state, "blocked");
-  assert.equal(await controller.keepMine(), null, "a retryable race cannot enter the three-way Keep mine flow");
+  const kept = await controller.keepMine();
+  assert.equal(kept.retained, true);
+  assert.equal(controller.snapshot().save.state, "blocked");
+  assert.equal(controller.snapshot().draft?.pending.length, 1);
+  assert.equal(stored?.pending.length, 1);
+  assert.equal(attempts, 1, "Keep mine retains the local recovery draft without issuing a blind save");
   assert.equal(reloads, 0);
   assert.ok(events.some((event) => event.name === "area_map_save" && event.phase === "failed" && event.failureKind === "head-race" && event.saveState === "blocked"));
+  assert.ok(events.some((event) => event.name === "area_map_draft" && event.phase === "kept"));
 
   await controller.retry();
   await controller.flush();
   assert.equal(controller.snapshot().save.state, "saved");
   assert.equal(attempts, 2);
+  assert.equal(stored, null);
   controller.destroy();
 });
 
@@ -530,6 +625,7 @@ test("reload cancels a stale save and preserves private world view state", async
   controller.toggleFold("neara/delivery");
   controller.setCamera({ scrollX: 41, scrollY: -17, zoom: 0.8 });
   controller.fitArea("neara");
+  const selectedBefore = [...controller.snapshot().selection];
   const changed = controller.world(); changed.areas[1].region.storedRect.x += 10;
   controller.commitWorld(changed, { changedAreas: ["neara/delivery"] }, "pointer");
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -546,6 +642,7 @@ test("reload cancels a stale save and preserves private world view state", async
   assert.equal(snapshot.folded.has("neara/delivery"), true);
   assert.deepEqual(snapshot.camera, { scrollX: 41, scrollY: -17, zoom: 0.8 });
   assert.equal(snapshot.locatedArea, "neara");
+  assert.deepEqual([...snapshot.selection], selectedBefore);
   assert.equal(controller.undo(), false);
   controller.destroy();
 });

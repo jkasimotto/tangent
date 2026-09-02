@@ -2,7 +2,7 @@ import { markdownHeadingAnchor } from "./markdown-structure.js";
 
 /** Creates the Document controller from shell, rendering, Work, and navigation ports. */
 export function createDocumentReaderController({ shell, rendering, work, navigation }) {
-  const { state, api, post, paint, showToast, screen, paintPeek, documentPeekLayer } = shell;
+  const { state, api, post, paint, showToast, screen, paintPeek, documentPeekLayer, focusSurface = () => false } = shell;
   const { documentComments, markdownHeadings, documentOutlineItems, documentGoal, renderDocumentArticle, documentCopyPayload, markdownToHtml } = rendering;
   const { goalByFile, currentGoal, sessionsForGoal, humanName, areaLabel, agentReference } = work;
   const {
@@ -303,6 +303,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
       }
     }
     const terminal = state.sessionPeek ? document.querySelector("#session-layer-terminal .xterm-helper-textarea, #session-layer-terminal textarea") : null;
+    if (!terminal && focusSurface()) return;
     try { (terminal ?? screen).focus({ preventScroll: true }); } catch {}
   }
 

@@ -38,6 +38,7 @@ import { createActionTelemetry } from "./action-telemetry.js";
 import { createWorkMutationOperations } from "./work-mutation-operations.js";
 import { reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
 import { areaBrainPaneMode } from "./area-brain-pane-core.js";
+import { areaHasReadyWork, workAttention } from "./work-attention.js";
 import { ASK_DISMISSALS_KEY, readDismissedAskIds } from "./ask-dismissal-core.js";
 import { renderPromptBestiary } from "./prompt-bestiary.js";
 
@@ -50,20 +51,34 @@ const workClient = createWorkClient({
   /** Records one browser Work metric through action telemetry. */
   record: (name, value, labels) => actionTelemetry.record("work-metric", name, { value, ...labels }),
 });
+
+/** Publishes one immutable Work snapshot into the established browser views. */
+function applyWorkSnapshot(snapshot, metadata = null) {
+  state.work = snapshot;
+  state.workTransport = metadata;
+  const desk = workV3DeskModel(snapshot);
+  state.vault = desk.vault;
+  state.sessions = desk.sessions;
+  state.pipelines = desk.pipelines;
+  state.brains = desk.brains;
+  state.programs = desk.programs;
+}
+
 const hydratedWork = workClient.hydrate();
 if (hydratedWork) {
-  state.work = hydratedWork.snapshot;
-  state.workTransport = hydratedWork.metadata;
+  applyWorkSnapshot(hydratedWork.snapshot, hydratedWork.metadata);
   state.loading = false;
 }
 
 const {
-  screen, "back-button": backButton, "work-tab": workTab, "areas-tab": areasTab, "prompts-tab": promptsTab, "bar-context": barContext,
+  screen, "back-button": backButton, "map-tab": mapTab, "work-tab": workTab, "areas-tab": areasTab, "prompts-tab": promptsTab, "bar-context": barContext,
+  "for-you-button": forYouButton, "problems-button": problemsButton, "context-brain-button": contextBrainButton,
   "find-button": findButton, "secondary-action": secondaryAction, "modal-layer": modalLayer,
   "modal-kicker": modalKicker, "modal-title": modalTitle, "modal-copy": modalCopy, "modal-field": modalField,
   "modal-actions": modalActions, toast, "status-pill": statusPill, "awake-button": awakeButton,
   "shell-menu": shellMenu, "go-to-button": goToButton, "go-to-layer": goToLayer,
   "go-to-input": goToInput, "go-to-list": goToList,
+  "work-lens-layer": workLensLayer, "work-lens-content": workLensContent, "work-lens-title": workLensTitle, "work-lens-freshness": workLensFreshness,
   "session-layer": sessionLayer, "session-layer-title": sessionLayerTitle, "session-layer-terminal": sessionLayerTerminal,
   "work-search": workSearch, "work-search-input": workSearchInput, "work-search-count": workSearchCount, "work-search-keys": workSearchKeys,
   "document-peek-layer": documentPeekLayer,
@@ -477,7 +492,7 @@ function forward(read) {
 }
 
 const workDeskView = createWorkDeskView({
-  shell: { state, api, post, paint, refresh, showToast, openModal: forward(() => openModal), captureReturnPoint, saveDescribeSession, openSessionLayer: forward(() => openSessionLayer), requestLaunchFocus: forward(() => shellBindings.requestLaunchFocus), updateAreaMapFocus: forward(() => refreshAreaMapFocus) },
+  shell: { state, api, post, paint, refresh, showToast, openModal: forward(() => openModal), captureReturnPoint, saveDescribeSession, openSessionLayer: forward(() => openSessionLayer), openDocumentPeek: forward(() => openDocumentPeek), requestLaunchFocus: forward(() => shellBindings.requestLaunchFocus), updateAreaMapFocus: forward(() => refreshAreaMapFocus) },
   launch: {
     launchSelection: forward(() => launchSelection), launchRequestFields: forward(() => launchRequestFields),
     syncLaunchDraft: forward(() => syncLaunchDraft), preferredArea: forward(() => preferredArea),
@@ -557,7 +572,11 @@ const {
 } = documentReaderView;
 
 const documentReaderController = createDocumentReaderController({
-  shell: { state, api, post, paint, showToast, screen, paintPeek: forward(() => renderDocumentPeekLayer), documentPeekLayer },
+  shell: {
+    state, api, post, paint, showToast, screen, paintPeek: forward(() => renderDocumentPeekLayer), documentPeekLayer,
+    /** Focuses the active Map surface when it is available. */
+    focusSurface: () => activeAreaBoard?.focus?.() ?? false,
+  },
   rendering: { documentComments, markdownHeadings, documentOutlineItems, documentGoal, renderDocumentArticle, documentCopyPayload, markdownToHtml },
   work: { goalByFile, currentGoal, sessionsForGoal, humanName, areaLabel, agentReference },
   navigation: {
@@ -567,8 +586,8 @@ const documentReaderController = createDocumentReaderController({
   },
 });
 const {
-  rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, navigateDocumentHistory,
-  openDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading,
+  rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument: openDocumentController, navigateDocumentHistory,
+  openDocumentPeek: openDocumentPeekController, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading,
   leaveQuickPath,
   openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf,
   bindDocumentPeekReader,
@@ -579,6 +598,32 @@ const {
   resolveActiveComment, stepComment, notifyDocumentComments,
 } = documentReaderController;
 
+/**
+ * Leaves the temporary Work lens before opening the full reader, while keeping
+ * that exact lens and control as the reader's return point. Quick Documents
+ * use their own stacked layer and therefore do not pass through this route.
+ */
+function openDocument(...args) {
+  const workReturn = state.workLens ? captureReturnPoint() : null;
+  if (workReturn) closeWorkLens({ restoreFocus: false, remember: true });
+  const result = openDocumentController(...args);
+  if (workReturn) state.documentReturn = workReturn;
+  return result;
+}
+
+/** Opens Document above Work when Work owns the action, preserving both layers. */
+function openDocumentPeek(...args) {
+  if (state.workLens) {
+    state.workLens.documentOnTop = true;
+    workLensLayer?.classList.remove("top-layer");
+    syncLayerInertness();
+  }
+  sessionLayer?.classList.remove("top-layer");
+  const result = openDocumentPeekController(...args);
+  updateHeader();
+  return result;
+}
+
 const shellCoordinator = createShellCoordinator({
   shell: { state, api, post, actionTelemetry, paint, refresh, showToast },
   chrome: {
@@ -586,6 +631,9 @@ const shellCoordinator = createShellCoordinator({
     modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
     restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill, openSessionLayer: forward(() => openSessionLayer),
     closeSessionLayer: forward(() => closeSessionLayer), documentPeekLayer, syncLayerInertness,
+    openWorkLens: forward(() => openWorkLens), closeWorkLens: forward(() => closeWorkLens),
+    showMapHome: forward(() => showMapHome), openAreaMap: forward(() => openAreaMap), drillAreaMap: forward(() => drillAreaMap), toggleMapBrain: forward(() => toggleMapBrain),
+    showMapFromDocument: forward(() => showMapFromDocument), showMapFromBrain: forward(() => showMapFromBrain),
   },
   work: {
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
@@ -721,7 +769,8 @@ function renderKey() {
 
 /** Makes stale stored cursor identities resolve to one visible row. */
 function reconcileWorkCursor() {
-  const rows = [...screen.querySelectorAll("[data-work-cursor]")].filter((row) => !row.hidden);
+  const root = state.workLens ? workLensContent : screen;
+  const rows = [...root.querySelectorAll("[data-work-cursor]")].filter((row) => !row.hidden);
   if (!rows.length) return;
   let row = rows.find((item) => item.dataset.workCursor === state.workCursor);
   if (!row) {
@@ -730,8 +779,99 @@ function reconcileWorkCursor() {
     localStorage.setItem("agent-shell.work-cursor", state.workCursor);
   }
   for (const item of rows) item.classList.toggle("cursor", item === row);
-  paintWorkCaption(screen);
+  paintWorkCaption(root);
   if (!state.sessionPeek && document.activeElement === document.body) row.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus({ preventScroll: true });
+}
+
+/** Returns the complete count behind each quiet global attention entry. */
+function mapFirstAttention() {
+  return workAttention(state.work);
+}
+
+/** Formats the published time without inventing freshness from browser time. */
+function workPublishedLabel() {
+  const value = state.workTransport?.publishedAt ?? state.work?.publishedAt;
+  if (!value) return "No Work snapshot is available";
+  const time = new Date(value);
+  const shown = Number.isNaN(time.getTime()) ? String(value) : time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return state.workTransport?.state === "current" ? `Current at ${shown}` : `Last known at ${shown}`;
+}
+
+/** Draws Work in its temporary layer without touching the retained workspace. */
+function renderWorkLens({ focus = false } = {}) {
+  if (!state.workLens || !workLensLayer || !workLensContent) return;
+  const focusKey = rememberScreenFocus();
+  const html = renderWork();
+  if (workLensContent.querySelector(".work-table")) reconcileHtml(workLensContent, html);
+  else workLensContent.innerHTML = html;
+  const mode = state.workLens.mode === "for-you" ? "For you" : state.workLens.mode === "problems" ? "Problems" : "All work";
+  const area = state.workLens.area ? ` · ${areaLabel(state.workLens.area)}` : "";
+  workLensTitle.textContent = `${mode}${area}`;
+  workLensFreshness.textContent = workPublishedLabel();
+  workLensFreshness.dataset.state = state.workTransport?.state === "current" ? "current" : "stale";
+  workLensLayer.hidden = false;
+  workLensLayer.classList.toggle("top-layer", Boolean(state.documentPeek && !state.documentPeek.suspended && !state.workLens.documentOnTop));
+  syncLayerInertness();
+  reconcileWorkCursor();
+  if (Number.isFinite(state.workLens.scrollTop)) workLensContent.scrollTop = state.workLens.scrollTop;
+  if (focus) {
+    const target = workLensContent.querySelector(`[data-work-cursor="${CSS.escape(state.workCursor)}"] [data-work-row-title], [data-work-cursor] [data-work-row-title]`)
+      ?? workLensLayer.querySelector("[data-close-work-lens]");
+    target?.focus?.({ preventScroll: true });
+  }
+  else if (focusKey) restoreScreenFocus(focusKey);
+}
+
+/** Opens Work as an exact-return lens above the current persistent surfaces. */
+function openWorkLens({ area = "", mode = "all", focus = true, returnFocus = null } = {}) {
+  if (!activeAreaWorkspace && state.view === "area-workspace") openAreaWorkspace({ area: state.mapArea, entryPane: "map", returnPoint: null });
+  if (!state.workLens) {
+    const origin = returnFocus ?? (document.activeElement === document.body ? null : document.activeElement);
+    state.workLens = {
+      area, mode, returnFocus: origin, returnFocusKey: origin?.dataset?.focusKey ?? "",
+      scrollTop: state.workLensMemory?.scrollTop ?? 0, documentOnTop: false,
+      mapView: activeAreaBoard?.captureView?.() ?? null,
+    };
+  } else Object.assign(state.workLens, { area, mode, documentOnTop: false });
+  state.workLensMemory = null;
+  renderWorkLens({ focus });
+  shellBindings?.paintWorkSearch?.();
+  updateHeader();
+}
+
+/** Closes only Work and restores the exact control on the retained surface. */
+function closeWorkLens({ restoreFocus = true, remember = true } = {}) {
+  const lens = state.workLens;
+  if (!lens) return;
+  lens.scrollTop = workLensContent?.scrollTop ?? lens.scrollTop ?? 0;
+  if (remember) state.workLensMemory = { ...lens, returnFocus: null };
+  state.workLens = null;
+  if (workLensLayer) {
+    workLensLayer.hidden = true;
+    workLensLayer.classList.remove("top-layer");
+  }
+  shellBindings?.paintWorkSearch?.();
+  syncLayerInertness();
+  updateHeader();
+  if (!restoreFocus) return;
+  const origin = lens.returnFocus;
+  if (origin?.isConnected && !origin.closest?.("[inert]")) return origin.focus?.({ preventScroll: true });
+  if (lens.returnFocusKey) {
+    const target = document.querySelector(`[data-focus-key="${CSS.escape(lens.returnFocusKey)}"]`);
+    if (target && !target.closest?.("[inert]")) return target.focus?.({ preventScroll: true });
+  }
+  activeAreaWorkspace?.focus?.(activeAreaWorkspace.snapshot().focused, { moveDomFocus: true });
+}
+
+/** Restores the durable Map and closes temporary context without remounting it. */
+function showMapHome({ focus = true } = {}) {
+  if (state.goTo) closeGoTo();
+  if (state.workLens) closeWorkLens({ restoreFocus: false });
+  if (state.documentPeek) closeDocumentContext({ restoreFocus: false });
+  if (state.view !== "area-workspace" || !activeAreaWorkspace) openAreaWorkspace({ area: state.mapArea, entryPane: "map", returnPoint: null });
+  else activeAreaWorkspace.show("map", { focus: true, moveDomFocus: focus });
+  state.mapReturn = null;
+  updateHeader();
 }
 
 /**
@@ -761,7 +901,7 @@ function updateHeader() {
   const goalSession = sessionForGoal(goal);
   const describeSession = describeWorkSession();
   const session = stopSession();
-  const isWork = state.view === "work";
+  const isWork = Boolean(state.workLens) || state.view === "work";
   const isDescribe = state.view === "describe";
   const isDescribeAgent = state.view === "describe-agent";
   const isAreas = state.view === "areas";
@@ -771,13 +911,17 @@ function updateHeader() {
   const isProgramCreate = state.view === "program-create";
   const isProgramSession = state.view === "program-session";
   const isHarnesses = state.view === "harnesses";
-  const isMap = state.view === "area-workspace" && Boolean(activeAreaWorkspace?.snapshot().open.has("map"));
+  const workspaceLayout = activeAreaWorkspace?.snapshot();
+  const isMap = state.view === "area-workspace" && Boolean(workspaceLayout?.open.has("map"));
   const isAreaWorkspace = state.view === "area-workspace";
   const program = currentProgram();
-  const isTopLevel = isWork || isAreas || isPrompts;
+  const mapHasReturn = Boolean(state.mapReturn || state.areaWorkspace?.returnPoint || workspaceLayout?.focused === "brain");
+  const isTopLevel = state.view === "work" && !state.workLens || isAreas || isPrompts || isAreaWorkspace && !mapHasReturn;
   backButton.classList.toggle("has-back", !isTopLevel);
   const backLabel = isTopLevel
     ? "Agent Shell"
+    : state.workLens
+      ? state.documentPeek && !state.documentPeek.suspended ? "Document" : "Map"
     : isDescribe || isDescribeAgent
       ? returnPointLabel(state.describeReturn)
     : isAreaEdit
@@ -789,7 +933,11 @@ function updateHeader() {
     : isHarnesses
       ? state.harnessReturnView === "areas" ? "Areas" : "Work"
     : isAreaWorkspace
-      ? "Work"
+      ? state.mapReturn?.kind === "work" ? "Work"
+        : state.mapReturn?.kind === "document" ? "Document"
+          : state.mapReturn?.kind === "brain" ? "Brain"
+            : workspaceLayout?.focused === "brain" ? "Map"
+              : returnPointLabel(state.areaWorkspace?.returnPoint)
     : state.view === "agent"
         ? state.agentReturnView === "document" && state.document ? "Document" : "Work"
         : state.view === "document"
@@ -800,7 +948,7 @@ function updateHeader() {
     ? `<span>Agent Shell</span><small>[${escapeHtml(deployedRevision)}]</small>`
     : escapeHtml(backLabel);
   // Browser-managed child screens share one visible Escape/Back operation.
-  if (state.view === "document" || isHarnesses || (isAreaWorkspace && activeAreaWorkspace?.snapshot().focused === "map")) backButton.innerHTML = `${escapeHtml(backButton.textContent)} <kbd>esc</kbd>`;
+  if (state.view === "document" || isHarnesses || (isAreaWorkspace && !isTopLevel)) backButton.innerHTML = `${escapeHtml(backButton.textContent)} <kbd>esc</kbd>`;
   else if (isAreaWorkspace) backButton.innerHTML = `${escapeHtml(backButton.textContent)} ${shortcutKbd("session")}`;
   const contextText = isDescribe
       ? "Message the brain"
@@ -823,7 +971,11 @@ function updateHeader() {
             : goal
               ? `${areaLabel(goal.area)} · ${goal.title}${goalSession ? ` · ${stateLabel(goal, goalSession)}` : ""}`
               : "";
-  if (isMap) barContext.innerHTML = `<span class="map-breadcrumb">${mapBreadcrumb()}</span><span class="map-context-kind">Map</span><span class="map-focus-controls">${mapFindControls()}<button type="button" data-map-brain>${activeAreaWorkspace?.snapshot().open.has("brain") ? "Hide Brain" : "Brain"} <kbd>b</kbd></button><button type="button" data-starred-only aria-pressed="${state.areaFocusOnly}">${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd></button><button type="button" data-active-only aria-pressed="${state.activeOnly}">${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd></button></span>`;
+  if (isMap) {
+    const brainArea = mapViewState.selectedArea || mapLocatedArea || state.mapArea;
+    const brainName = brainArea ? `${areaLabel(brainArea)} Brain` : "selected Area Brain";
+    barContext.innerHTML = `<span class="map-breadcrumb">${mapBreadcrumb()}</span><span class="map-context-kind">Map</span><span class="map-focus-controls">${mapFindControls()}<button type="button" data-map-brain aria-label="Open ${escapeHtml(brainName)}">${activeAreaWorkspace?.snapshot().open.has("brain") ? `Show ${escapeHtml(brainName)}` : `Open ${escapeHtml(brainName)}`} <kbd>⌘⇧↵</kbd></button><button type="button" data-starred-only aria-pressed="${state.areaFocusOnly}">${state.areaFocusOnly ? "★" : "☆"} Starred ${state.areaFocus.length || ""}<kbd>⌘⇧F</kbd></button><button type="button" data-active-only aria-pressed="${state.activeOnly}">${state.activeOnly ? "●" : "○"} Active <kbd>⌘⇧A</kbd></button></span>`;
+  }
   else if (isAreaWorkspace) barContext.textContent = `${areaLabel(activeAreaWorkspace?.area || state.mapArea)} · Brain`;
   else barContext.textContent = contextText;
 
@@ -832,6 +984,14 @@ function updateHeader() {
     : isPrompts
       ? "prompts"
       : "";
+  const attention = mapFirstAttention();
+  const workspaceSurface = workspaceLayout?.presentation?.kind === "single" ? workspaceLayout.presentation.active : workspaceLayout?.focused;
+  const mapSurfaceActive = isAreaWorkspace && workspaceSurface === "map" && (!state.documentPeek || state.documentPeek.suspended) && !state.workLens;
+  mapTab?.classList.toggle("active", mapSurfaceActive);
+  if (mapTab) {
+    if (mapSurfaceActive) mapTab.setAttribute("aria-current", "page");
+    else mapTab.removeAttribute("aria-current");
+  }
   workTab.textContent = "Work";
   workTab.classList.toggle("active", topLevel === "work");
   workTab.classList.remove("has-attention");
@@ -840,6 +1000,25 @@ function updateHeader() {
   for (const [button, active] of [[workTab, topLevel === "work"], [areasTab, false], [promptsTab, topLevel === "prompts"]]) {
     if (active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
+  }
+  if (forYouButton) {
+    forYouButton.hidden = false;
+    forYouButton.textContent = `For you ${attention.forYou}`;
+    forYouButton.setAttribute("aria-label", `${attention.forYou} items for you. Open filtered Work.`);
+  }
+  if (problemsButton) {
+    problemsButton.hidden = false;
+    problemsButton.textContent = `Problems ${attention.problems}`;
+    problemsButton.setAttribute("aria-label", `${attention.problems} problems. Open filtered Work.`);
+  }
+  if (contextBrainButton) {
+    const targetArea = state.documentDiscussion?.area || state.documentPeek?.document?.area || state.documentPeek?.area || mapViewState.selectedArea || mapLocatedArea || state.mapArea;
+    const brainSurfaceActive = isAreaWorkspace && workspaceSurface === "brain" && !state.workLens;
+    contextBrainButton.hidden = !targetArea || Boolean(state.workLens);
+    contextBrainButton.textContent = targetArea ? `${areaLabel(targetArea)} Brain` : "Brain";
+    contextBrainButton.setAttribute("aria-label", targetArea ? brainSurfaceActive ? `${areaLabel(targetArea)} Brain, current surface` : `Show ${areaLabel(targetArea)} Brain` : "Show the selected Area Brain");
+    contextBrainButton.setAttribute("aria-pressed", String(brainSurfaceActive));
+    contextBrainButton.classList.toggle("active", brainSurfaceActive);
   }
 
   secondaryAction.hidden = !session || ["work", "create", "describe", "areas", "prompts", "area-edit", "program-detail", "program-create", "program-session", "document"].includes(state.view);
@@ -901,19 +1080,31 @@ function updateLiveHeader() {
 }
 
 /** Selects and renders the current full-screen view. */
+function selectMapHomeState() {
+  const area = state.mapArea || state.areaSelection || preferredArea() || "";
+  state.mapArea = area;
+  state.areaWorkspace = { area, entryPane: "map", returnPoint: null };
+  state.view = "area-workspace";
+  state.renderedKey = "";
+}
+
+/** Selects and renders the current full-screen view. */
 function renderScreen() {
   const goal = currentGoal();
   const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "prompts", "area-edit", "program-detail", "program-create", "program-session", "document", "harnesses", "area-workspace"];
-  if (!goal && !goalFreeViews.includes(state.view)) state.view = "work";
+  if (state.view === "work" || !goal && !goalFreeViews.includes(state.view)) selectMapHomeState();
   const session = sessionForGoal(goal);
   const describeSession = describeWorkSession();
   if (["program-detail", "program-session"].includes(state.view) && !currentProgram()) state.view = "areas";
   if (state.view === "program-session" && !currentProgram()?.session) state.view = "program-detail";
-  if (state.view === "agent" && !session) state.view = state.agentReturnView === "document" && state.document ? "document" : "work";
+  if (state.view === "agent" && !session) {
+    if (state.agentReturnView === "document" && state.document) state.view = "document";
+    else selectMapHomeState();
+  }
   if (state.view === "describe-agent" && !describeSession && !state.describeSessionName) {
     state.describeSessionName = "";
     saveDescribeSession();
-    state.view = "work";
+    selectMapHomeState();
   }
   if (!state.sessionPeek) disposeTerminal();
   if (activeAreaWorkspace && state.view !== "area-workspace") {
@@ -946,13 +1137,14 @@ function renderScreen() {
   else if (state.view === "document") screen.innerHTML = renderDocument() + launchPopover();
   else if (state.view === "area-workspace") {
     if (!activeAreaWorkspace || activeAreaWorkspace.area !== state.mapArea) {
-      screen.innerHTML = `<section class="map-screen area-workspace-screen"><div data-area-workspace="${escapeHtml(state.mapArea || "")}"></div></section>`;
+      screen.innerHTML = `<section class="map-screen area-workspace-screen">${resumeContextBanner()}<div data-area-workspace="${escapeHtml(state.mapArea || "")}"></div></section>`;
       mountAreaWorkspace();
     }
   }
   else {
-    state.view = "work";
-    screen.innerHTML = renderWork();
+    selectMapHomeState();
+    screen.innerHTML = `<section class="map-screen area-workspace-screen">${resumeContextBanner()}<div data-area-workspace="${escapeHtml(state.mapArea || "")}"></div></section>`;
+    mountAreaWorkspace();
   }
 
   updateHeader();
@@ -979,27 +1171,62 @@ function openSessionLayer(session, kind = "agent", returnPoint = null) {
     if (openMapBrainSession(session)) return;
     return openAreaWorkspace({ area: session.area, entryPane: "brain", returnPoint: returnPoint ?? captureReturnPoint() });
   }
-  state.sessionPeek = { session: session.name, kind, returnPoint: returnPoint ?? captureReturnPoint() };
+  state.sessionPeek = { session: session.name, kind, returnPoint: returnPoint ?? captureReturnPoint(), returnFocus: document.activeElement };
   state.renderedKey = "";
+  // Work and a quick Document are retained beneath the session. Mount only
+  // the session layer: repainting either lower surface can replace the exact
+  // control that must receive focus when the session closes.
+  if (state.workLens || state.documentPeek && !state.documentPeek.suspended) {
+    renderSessionLayer();
+    updateHeader();
+    return;
+  }
   paint(true);
 }
 
 /** Returns to the exact screen and row below the session. */
 function closeSessionLayer() {
   const point = state.sessionPeek?.returnPoint;
+  const returnFocus = state.sessionPeek?.returnFocus;
+  const retainedWork = Boolean(point?.workLens && state.workLens);
   state.sessionPeek = null;
   disposeTerminal();
   sessionLayerTerminal.replaceChildren();
   sessionLayer.hidden = true;
+  sessionLayer.classList.remove("top-layer");
   syncLayerInertness();
-  if (point) restoreReturnPoint(point);
+  if (retainedWork) {
+    restoreReturnScroll(point.scroll);
+    const cursor = point.workLens?.cursor || point.state?.workCursor || state.workCursor;
+    const row = cursor ? workLensContent?.querySelector(`[data-work-cursor="${CSS.escape(cursor)}"]`) : null;
+    const target = row?.querySelector("[data-work-row-title], [data-work-cursor-control]");
+    if (target) target.focus?.({ preventScroll: true });
+    else if (returnFocus?.isConnected && !returnFocus.closest?.("[inert]")) returnFocus.focus?.({ preventScroll: true });
+    else if (point.workLens?.focusKey) restoreScreenFocus(point.workLens.focusKey);
+  }
+  else if (point) restoreReturnPoint(point);
   else paint(true);
+}
+
+/** Names the exact retained surface revealed by the session's Back action. */
+function sessionReturnSurface(peek) {
+  const point = peek?.returnPoint;
+  const origin = peek?.returnFocus ?? point?.focus ?? null;
+  if (origin?.closest?.("[data-map-brain-pane], [data-document-discussion-brain]")) return "Brain";
+  if (origin?.closest?.("#document-peek-layer")) return "Document";
+  if (point?.workLens) return point.workLens.documentOnTop && state.documentPeek ? "Document" : "Work";
+  if (origin?.closest?.("[data-map-column], [data-tangent-area-map]")) return "Map";
+  if (point?.state?.view === "area-workspace") return point.state.areaWorkspace?.entryPane === "brain" ? "Brain" : "Map";
+  return returnPointLabel(point, { brain: false });
 }
 
 /** Keeps the terminal above the current screen without replacing that screen. */
 function renderSessionLayer() {
   const peek = state.sessionPeek;
   sessionLayer.hidden = !peek;
+  const aboveRetainedDocument = Boolean(peek && state.documentPeek && !state.documentPeek.suspended);
+  const aboveRetainedWork = Boolean(peek && state.workLens && workLensLayer?.classList.contains("top-layer"));
+  sessionLayer.classList.toggle("top-layer", aboveRetainedDocument || aboveRetainedWork);
   syncLayerInertness();
   if (!peek) return;
   const session = state.sessions.find((item) => item.name === peek.session) ?? null;
@@ -1041,6 +1268,11 @@ function renderSessionLayer() {
         ? session.state
         : "";
   sessionLayer.querySelector("[data-copy-session-tag]")?.remove();
+  const returnSurface = sessionReturnSurface(peek);
+  const returnButton = sessionLayer.querySelector("[data-close-session-layer]");
+  const returnLabel = returnButton?.querySelector("[data-session-return-label]");
+  if (returnLabel) returnLabel.textContent = `Back to ${returnSurface}`;
+  returnButton?.setAttribute("aria-label", `Back to ${returnSurface}`);
   sessionLayerTitle.innerHTML = `<strong>${escapeHtml(primary)}</strong><span>${escapeHtml(secondary)}</span>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}`;
   const tag = escapeHtml(peek.session);
   sessionLayerTitle.insertAdjacentHTML("afterend", `<button class="session-tag" type="button" data-copy-session-tag="${tag}" aria-label="Copy tmux session tag ${tag}" title="Copy tmux session tag"><code>${tag}</code><span class="session-tag-feedback" role="status" aria-live="polite"></span></button>`);
@@ -1058,13 +1290,26 @@ function renderSessionLayer() {
 function syncLayerInertness() {
   const goToOpen = Boolean(state.goTo);
   const modalOpen = !modalLayer.hidden;
-  const documentPeekOpen = Boolean(state.documentPeek);
+  const documentPeekOpen = Boolean(state.documentPeek && !state.documentPeek.suspended);
+  const workOpen = Boolean(state.workLens);
+  const workOnTop = workOpen && workLensLayer?.classList.contains("top-layer");
   const sessionOpen = Boolean(state.sessionPeek);
-  screen.toggleAttribute("inert", goToOpen || modalOpen || documentPeekOpen || sessionOpen);
-  sessionLayer.toggleAttribute("inert", goToOpen || modalOpen || documentPeekOpen);
-  documentPeekLayer.toggleAttribute("inert", goToOpen || modalOpen);
+  const sessionOnTop = sessionOpen && sessionLayer?.classList.contains("top-layer");
+  const top = modalOpen ? "modal"
+    : goToOpen ? "go-to"
+      : sessionOnTop ? "session"
+        : workOnTop ? "work"
+          : documentPeekOpen ? "document"
+            : sessionOpen ? "session"
+              : workOpen ? "work"
+                : "screen";
+  screen.toggleAttribute("inert", goToOpen || modalOpen || documentPeekOpen || workOpen || sessionOpen);
+  workLensLayer?.toggleAttribute("inert", !workOpen || top !== "work");
+  sessionLayer.toggleAttribute("inert", !sessionOpen || top !== "session");
+  documentPeekLayer.toggleAttribute("inert", !documentPeekOpen || top !== "document");
   goToLayer.toggleAttribute("inert", modalOpen);
   modalLayer.removeAttribute("inert");
+  shellBindings?.paintWorkSearch?.();
 }
 
 /**
@@ -1075,17 +1320,60 @@ function syncLayerInertness() {
  */
 function renderDocumentPeekLayer() {
   const peek = state.documentPeek;
-  const open = Boolean(peek);
+  const open = Boolean(peek && !peek.suspended);
   documentPeekLayer.hidden = !open;
   syncLayerInertness();
   if (!open) {
-    documentPeekLayer.replaceChildren();
+    if (!peek) {
+      disposeDocumentBrainPane();
+      documentPeekLayer.replaceChildren();
+    }
     return;
   }
+  const documentOwnedFocus = Boolean(documentPeekLayer.querySelector("[data-document-discussion-context]")?.contains(document.activeElement));
   const focusKey = documentPeekLayer.contains(document.activeElement) ? document.activeElement?.dataset?.peekKey ?? "" : "";
-  documentPeekLayer.innerHTML = renderDocumentPeek(peek);
+  const discussion = state.documentDiscussion;
+  if (discussion) {
+    const oldScroll = documentPeekLayer.querySelector(".document-peek-scroll")?.scrollTop ?? peek.positions?.get?.(peek.file) ?? 0;
+    let context = documentPeekLayer.querySelector("[data-document-discussion-context]");
+    let brain = documentPeekLayer.querySelector("[data-document-discussion-brain]");
+    if (!context || !brain || activeDocumentBrainArea !== discussion.area) {
+      const retainedDocument = documentPeekLayer.querySelector(".document-peek-surface");
+      disposeDocumentBrainPane();
+      documentPeekLayer.innerHTML = `<section class="document-discussion-workspace" role="dialog" aria-modal="true" aria-label="Discuss ${escapeHtml(peek.document?.title || peek.title || "Document")}">
+        <nav class="document-discussion-switcher" aria-label="Document discussion surfaces">
+          <button type="button" data-document-discussion-surface="document">Document</button>
+          <button type="button" data-document-discussion-surface="brain">${escapeHtml(areaLabel(discussion.area))} Brain</button>
+          <button type="button" data-open-work-from-document>Work</button>
+          <button type="button" data-open-go-to-from-document>Go To</button>
+        </nav>
+        <div class="document-discussion-context-host" data-document-discussion-context></div><div class="document-discussion-brain-host" data-document-discussion-brain></div>
+      </section>`;
+      context = documentPeekLayer.querySelector("[data-document-discussion-context]");
+      brain = documentPeekLayer.querySelector("[data-document-discussion-brain]");
+      if (retainedDocument) context.append(retainedDocument);
+      mountDocumentBrainPane(brain, discussion.area);
+    }
+    reconcileHtml(context, renderDocumentPeek(peek));
+    const embeddedDocument = context.querySelector(".document-peek-surface");
+    if (embeddedDocument) {
+      embeddedDocument.setAttribute("role", "region");
+      embeddedDocument.removeAttribute("aria-modal");
+    }
+    const nextScroll = context.querySelector(".document-peek-scroll");
+    if (nextScroll) nextScroll.scrollTop = oldScroll;
+    activeDocumentBrainInstance?.update?.({ layout: documentDiscussionLayout() });
+    applyDocumentDiscussionPresentation({ focus: false });
+  } else {
+    const retainedDocument = documentPeekLayer.querySelector("[data-document-discussion-context] .document-peek-surface");
+    disposeDocumentBrainPane();
+    if (retainedDocument) documentPeekLayer.replaceChildren(retainedDocument);
+    reconcileHtml(documentPeekLayer, renderDocumentPeek(peek));
+  }
   const restored = focusKey ? documentPeekLayer.querySelector(`[data-peek-key="${focusKey}"]`) : null;
-  (restored ?? documentPeekLayer.querySelector(".document-peek-surface"))?.focus?.({ preventScroll: true });
+  if (restored) restored.focus?.({ preventScroll: true });
+  else if (discussion?.active === "document" && documentOwnedFocus) documentPeekLayer.querySelector(".document-peek-surface")?.focus?.({ preventScroll: true });
+  else if (!discussion) documentPeekLayer.querySelector(".document-peek-surface")?.focus?.({ preventScroll: true });
   mountMermaidDiagrams(documentPeekLayer.querySelector(".document-content"));
   bindDocumentPeekReader();
 }
@@ -1098,7 +1386,8 @@ function renderDocumentPeekLayer() {
  */
 function rememberScreenFocus() {
   const active = document.activeElement;
-  if (!active || !screen.contains(active)) return "";
+  const root = state.workLens ? workLensContent : screen;
+  if (!active || !root?.contains(active)) return "";
   return active.dataset?.focusKey ?? "";
 }
 
@@ -1106,7 +1395,7 @@ function rememberScreenFocus() {
 function restoreScreenFocus(key) {
   if (!key) return;
   const selector = String(key).replaceAll("\\", "\\\\").replaceAll('"', '\\"');
-  const target = screen.querySelector(`[data-focus-key="${selector}"]`);
+  const target = (state.workLens ? workLensContent : screen)?.querySelector(`[data-focus-key="${selector}"]`);
   if (target) target.focus({ preventScroll: true });
 }
 
@@ -1119,9 +1408,10 @@ const SCREEN_SCROLL_SELECTORS = [".document-reader-scroll", "[data-launch-popove
  * the top; the reading position must survive that.
  */
 function rememberScreenScroll() {
-  const positions = { view: state.view, screen: screen.scrollTop, inner: new Map() };
+  const root = state.workLens ? workLensContent : screen;
+  const positions = { view: state.workLens ? "work-lens" : state.view, screen: root?.scrollTop ?? 0, inner: new Map() };
   for (const selector of SCREEN_SCROLL_SELECTORS) {
-    const element = screen.querySelector(selector);
+    const element = root?.querySelector(selector);
     if (element) positions.inner.set(selector, element.scrollTop);
   }
   return positions;
@@ -1129,10 +1419,12 @@ function rememberScreenScroll() {
 
 /** Puts the captured scroll positions back after a repaint of the same view. */
 function restoreScreenScroll(positions) {
-  if (positions.view !== state.view) return;
-  if (positions.screen) screen.scrollTop = positions.screen;
+  const view = state.workLens ? "work-lens" : state.view;
+  if (positions.view !== view) return;
+  const root = state.workLens ? workLensContent : screen;
+  if (positions.screen && root) root.scrollTop = positions.screen;
   for (const [selector, top] of positions.inner) {
-    const element = screen.querySelector(selector);
+    const element = root?.querySelector(selector);
     if (element && top) element.scrollTop = top;
   }
 }
@@ -1168,15 +1460,25 @@ function captureReturnPoint() {
   // Same reason: the What happened look anchors to a fixed pixel position too.
   state.whatHappened = null;
   const positions = rememberScreenScroll();
-  return goToCore.returnPointFrom(state, { screen: positions.screen, inner: [...positions.inner] });
+  const point = goToCore.returnPointFrom(state, { screen: positions.screen, inner: [...positions.inner] });
+  point.focus = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+  point.focusKey = rememberScreenFocus();
+  point.workLens = state.workLens ? {
+    area: state.workLens.area, mode: state.workLens.mode, scrollTop: workLensContent?.scrollTop ?? state.workLens.scrollTop ?? 0,
+    returnFocus: state.workLens.returnFocus ?? null, returnFocusKey: state.workLens.returnFocusKey ?? "",
+    cursor: state.workCursor, focusKey: rememberScreenFocus(), mapView: state.workLens.mapView ?? null,
+    documentOnTop: Boolean(state.workLens.documentOnTop),
+  } : null;
+  return point;
 }
 
 /** Puts back the scroll positions one return point captured. */
 function restoreReturnScroll(scroll) {
   if (!scroll) return;
-  screen.scrollTop = scroll.screen;
+  const root = state.workLens ? workLensContent : screen;
+  if (root) root.scrollTop = scroll.screen;
   for (const [selector, top] of scroll.inner) {
-    const element = screen.querySelector(selector);
+    const element = root?.querySelector(selector);
     if (element) element.scrollTop = top;
   }
 }
@@ -1211,8 +1513,21 @@ function restoreReturnPoint(point) {
     revealArea(state.areaSelection);
     state.areaEdit = null;
   }
+  if (point.workLens) {
+    openWorkLens({ area: point.workLens.area, mode: point.workLens.mode, focus: false, returnFocus: point.workLens.returnFocus });
+    Object.assign(state.workLens, point.workLens);
+    const documentOpen = Boolean(state.documentPeek && !state.documentPeek.suspended);
+    workLensLayer?.classList.toggle("top-layer", documentOpen && !state.workLens.documentOnTop);
+    syncLayerInertness();
+    if (point.workLens.mapView) activeAreaBoard?.restoreView?.(point.workLens.mapView);
+  }
   paint(true);
-  window.setTimeout(() => restoreReturnScroll(point.scroll), 0);
+  window.setTimeout(() => {
+    restoreReturnScroll(point.scroll);
+    if (point.workLens?.focusKey) restoreScreenFocus(point.workLens.focusKey);
+    else if (point.focus?.isConnected && !point.focus.closest?.("[inert]")) point.focus.focus?.({ preventScroll: true });
+    else if (point.focusKey) restoreScreenFocus(point.focusKey);
+  }, 0);
 }
 
 /** Back from the reader: restore its return point, or the Work desk without one. */
@@ -1233,13 +1548,25 @@ function paint(force = false) {
   // layer is open: a rebuild would discard the exact surface Escape reveals.
   // Closing and promoting the layer are the only paths that repaint it
   // (design-quick-returnable-document-search D8).
-  if (state.documentPeek || state.goTo) return updateHeader();
+  const documentPeekOpen = Boolean(state.documentPeek && !state.documentPeek.suspended);
+  const workAboveDocument = Boolean(documentPeekOpen && state.workLens && !state.workLens.documentOnTop);
+  if (documentPeekOpen && !workAboveDocument || state.goTo) {
+    if (state.documentDiscussion && !state.goTo) applyDocumentDiscussionPresentation();
+    return updateHeader();
+  }
   if (state.loading) {
     screen.innerHTML = `<div class="loading">Loading Agent Shell…</div>`;
     return;
   }
   if (state.error) {
     screen.innerHTML = `<div class="error-card">${escapeHtml(state.error)}</div>`;
+    return;
+  }
+  if (state.workLens) {
+    if (state.view === "area-workspace" && activeAreaWorkspace) refreshAreaWorkspace();
+    renderWorkLens();
+    renderSessionLayer();
+    updateHeader();
     return;
   }
   // The Area workspace owns stable Map and Brain roots. Projection refreshes
@@ -1360,14 +1687,7 @@ async function diagnoseConnection(error, trigger) {
 async function performRefresh({ initial = false, trigger = initial ? "initial" : "direct" } = {}) {
   try {
     const result = await workClient.read();
-    state.work = result.snapshot;
-    state.workTransport = result.metadata;
-    const desk = workV3DeskModel(result.snapshot);
-    state.vault = desk.vault;
-    state.sessions = desk.sessions;
-    state.pipelines = desk.pipelines;
-    state.brains = desk.brains;
-    state.programs = desk.programs;
+    applyWorkSnapshot(result.snapshot, result.metadata);
     noteRuntimeIdentity(result.metadata?.gatewayBoot || "", result.metadata?.controllerBoot || "");
     reconcileCurrentAreaFocus();
     state.loading = false;
@@ -1376,9 +1696,8 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
     state.connection.retryAttempt = 0;
     state.connection.nextRetryAt = null;
     transitionConnection("online", trigger);
-    if (initial && state.currentFile && !state.work.goals.some((goal) => goal.id === state.currentFile)) {
+    if (initial && requestedGoal && state.currentFile && !state.work.goals.some((goal) => goal.id === state.currentFile)) {
       state.currentFile = "";
-      state.view = "work";
       localStorage.removeItem("agent-shell.current-goal");
     }
     updateStatusPill();
@@ -1388,12 +1707,18 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
   } catch (error) {
     state.loading = false;
     if (state.work) {
-      state.workTransport = { ...(state.workTransport ?? {}), state: "stale", staleReason: error.kind === "timeout" ? "request-timeout" : "refresh-error" };
+      state.workTransport = { ...(state.workTransport ?? {}), state: "stale", staleReason: error.kind === "timeout" ? "request-timeout" : "refresh-error", error: error.message };
       actionTelemetry.record("work", "retained-on-error", { kind: error.kind ?? "unknown", revision: state.work.revision });
       paint(true);
       return { retryAfterMs: await diagnoseConnection(error, trigger) };
     }
-    state.error = error.message;
+    // Work is a recoverable execution lens. Its first failure must not replace
+    // the independently loaded durable Map with a full-screen error.
+    state.workTransport = {
+      ...(state.workTransport ?? {}), state: "stale", staleReason: error.kind === "timeout" ? "request-timeout" : "refresh-error",
+      error: error.message,
+    };
+    state.error = state.view === "area-workspace" ? "" : error.message;
     const retryAfterMs = await diagnoseConnection(error, trigger);
     paint(true);
     return { retryAfterMs };
@@ -1563,9 +1888,13 @@ function selectModelConcept(concept) {
 
 /** The handles bindShellEvents returns; set once the bindings exist. */
 let shellBindings = null;
-let mapReturnCursor = "";
 let activeAreaBoard = null;
 let activeAreaWorkspace = null;
+let activeDocumentBrainInstance = null;
+let activeDocumentBrainArea = "";
+let documentBrainPortal = null;
+let activeMapBrainArea = "";
+const mapNavigationEntities = new Map();
 let mapLocatedArea = "";
 let mapViewState = { restrictionArea: "", findOpen: false };
 /** Prints the full launch path while keeping each Area segment actionable. */
@@ -1585,18 +1914,38 @@ function mapFindControls() {
 }
 /** Builds the live entity index consumed by Tangent blocks and their picker. */
 function areaMapEntities() {
-  const records = new Map((state.vault?.documents ?? []).map((record) => [record.file, record]));
+  const records = new Map([...mapNavigationEntities, ...(state.vault?.documents ?? []).map((record) => [record.file, record])]);
   for (const area of state.vault?.areas ?? []) {
     const leaf = area.path.split("/").at(-1);
     const file = `${area.path}/${leaf}.md`;
     const brain = (state.brains ?? []).find((item) => item.area === area.path);
-    records.set(file, { ...records.get(file), file, area: area.path, kind: "area", title: area.name || leaf, status: area.status || "", live: Boolean(brain?.live) });
+    const workArea = area.path;
+    const working = (state.work?.agents ?? []).filter((agent) => agent.areaId === workArea && agent.liveness === "live" && agent.activity === "working").length;
+    const { forYou, problems } = workAttention(state.work, workArea);
+    const stale = state.workTransport?.state !== "current";
+    records.set(file, { ...records.get(file), file, area: area.path, kind: "area", title: area.name || leaf, status: area.status || "", live: Boolean(brain?.live), runtime: { working, forYou, problems, ready: areaHasReadyWork(state.work, workArea), stale } });
     for (const goal of area.goals ?? []) {
       const live = Boolean(goal.run?.steps?.some((step) => step.live) || state.sessions.some((session) => session.name === goal.session));
       records.set(goal.file, { ...records.get(goal.file), ...goal, kind: "goal", live });
     }
   }
   return [...records.values()];
+}
+
+/** Searches the complete navigation corpus for source-owned block entities. */
+async function searchMapEntities(query, { signal } = {}) {
+  const result = await api(`/api/navigation/search?q=${encodeURIComponent(String(query ?? ""))}&limit=100`, { signal });
+  const entities = (result.rows ?? []).map((row) => {
+    if (row.kind === "area") {
+      const leaf = row.area.split("/").at(-1);
+      return { ...row, file: `${row.area}/${leaf}.md`, kind: "area", title: row.name };
+    }
+    if (row.kind === "goal") return { ...row, file: row.file || row.id, kind: "goal", title: row.name };
+    if (["document", "note"].includes(row.kind)) return { ...row, file: row.file || row.id, kind: "document", title: row.name };
+    return null;
+  }).filter(Boolean);
+  for (const entity of entities) mapNavigationEntities.set(entity.file, entity);
+  return entities;
 }
 /** Flushes and unmounts the lazy editor before another shell view replaces it. */
 function disposeAreaMap() {
@@ -1631,13 +1980,14 @@ function areaMapEntityVerb(action) {
   const source = areaBoardCore.splitReference(action.ref);
   const entity = areaMapEntities().find((record) => record.file === source.file);
   const area = action.kind === "area" ? source.file?.replace(/\/[^/]+\.md$/, "") : entity?.area ?? source.file?.replace(/\/[^/]+$/, "");
+  if (["work", "for-you", "problems"].includes(action.verb)) return openWorkLens({ area: action.area || area, mode: action.verb === "work" ? "all" : action.verb });
   if (action.verb === "enter") {
     if (action.kind === "goal" && source.file) return openGoalRun(source.file);
     if (action.kind === "area" && area) return openOrStartBrain(area);
   }
   if (action.kind === "link") { window.open(action.ref, "_blank", "noopener"); return; }
   if (action.kind === "area" && area) return drillAreaMap(area);
-  if (source.file) return openDocumentPeek(source.file, { origin: { kind: "area-map", area: mapLocatedArea || state.mapArea } });
+  if (source.file) return openDocumentPeek(source.file);
 }
 
 /** Finds only one exact Area's live Brain session. */
@@ -1645,17 +1995,25 @@ function areaBrainLiveSession(area) {
   const brain = brainForAreaCard(area);
   return brainSessions().find((session) => session.name === brain?.repair?.current?.session || (session.area === area && session.kind === "brain") || session.name === brain?.session) ?? null;
 }
+/** Saves one stopped Brain composer under its Area before another Brain opens. */
+function rememberBrainDraft(area) {
+  if (!area || state.brainDraft?.area !== area) return;
+  state.brainDrafts.set(area, { ...state.brainDraft });
+}
 /** Seeds the existing brain start form inside the companion. */
 function seedMapBrainDraft(area) {
+  rememberBrainDraft(state.brainDraft?.area);
   state.launchTarget = BRAIN_LAUNCH_TARGET;
   launchOptionsFor(area);
   state.launch.record = null; state.launch.steps = []; state.launch.active = 0; state.launch.command = ""; state.launch.editing = false; state.launch.instruction = ""; state.launch.choice = null;
-  state.brainDraft = { area, instruction: "" };
+  state.brainDraft = { area, instruction: "", ...(state.brainDrafts.get(area) ?? {}) };
   state.launchAnchor = null;
 }
 /** Creates the stable Brain descriptor for one exact Area. */
-function areaBrainPane(area) {
+function areaBrainPane(area, { discussion = false } = {}) {
   const controller = createTerminalController({ state, showToast, record: actionTelemetry.record });
+  /** True when this Brain accompanies the active Document discussion. */
+  const inDiscussion = () => Boolean(state.documentDiscussion?.area === area && state.documentPeek);
   return createAreaBrainPane({
     area,
     terminalController: controller,
@@ -1664,20 +2022,250 @@ function areaBrainPane(area) {
     projection() {
       const brain = brainForAreaCard(area);
       const live = areaBrainLiveSession(area);
-      return { brain, live, label: brainStateLabel(brain), presentation: areaBrainPaneMode(brain, live), launchHtml: launchPickerBlock };
+      const status = brainStateLabel(brain).replace(/^Brain\s*/i, "") || "stopped";
+      return { brain, live, label: `${areaLabel(area)} Brain · ${status}`, presentation: areaBrainPaneMode(brain, live), launchHtml: launchPickerBlock };
     },
-    /** Toggles the stable Map companion. */
-    onToggleMap: () => { activeAreaWorkspace?.toggleMap(); updateHeader(); },
-    /** Hides the Brain companion while Map is primary. */
-    onHideBrain: () => { activeAreaWorkspace?.toggleBrain(); updateHeader(); },
-    onLeave: leaveAreaWorkspace,
+    /** Returns to the named retained context without destroying either pane. */
+    onToggleMap: () => inDiscussion() ? showMapFromDocument() : showMapFromBrain(area),
+    /** Hides this Brain from its current retained context. */
+    onHideBrain: () => inDiscussion() ? endDocumentDiscussion() : closeMapBrain(),
+    /** Leaves this Brain for its named return surface. */
+    onLeave: () => inDiscussion() ? endDocumentDiscussion() : returnFromBrain(),
     onResume: openOrStartBrain,
     /** Reuses the existing stopped-Brain launch state. */
     onSeedStart: (target) => {
       if (state.launchTarget !== BRAIN_LAUNCH_TARGET || state.brainDraft?.area !== target) seedMapBrainDraft(target);
       launchOptionsFor(target);
     },
+    /** Names the retained surface behind this Brain. */
+    returnLabel: () => inDiscussion() ? "Document" : "Map",
+    /** Names the Map context for this Brain. */
+    contextLabel: () => `${areaLabel(area)} on Map`,
+    /** Names the action that hides this Brain. */
+    hideLabel: () => inDiscussion() ? "Document" : "Hide Brain",
+    /** Returns the active Document discussion subject, if any. */
+    subject: () => inDiscussion() ? state.documentDiscussion?.subject ?? null : null,
+    /** Removes the active Document discussion subject. */
+    onRemoveSubject: () => {
+      if (!state.documentDiscussion) return;
+      state.documentDiscussion.subject = null;
+      localStorage.setItem("agent-shell.resume-context.v1", JSON.stringify({ area, file: state.documentPeek?.file ?? "", title: state.documentPeek?.document?.title ?? state.documentPeek?.title ?? "Document", subject: false }));
+      activeDocumentBrainInstance?.update?.({ layout: documentDiscussionLayout() });
+    },
   });
+}
+
+/** Layout facts for the retained Document/Brain pair at the current width. */
+function documentDiscussionLayout() {
+  const narrow = window.innerWidth <= 900;
+  const active = state.documentDiscussion?.active === "brain" ? "brain" : "map";
+  return {
+    open: new Set(["map", "brain"]),
+    primary: active,
+    focused: active,
+    presentation: narrow ? { kind: "single", active } : { kind: "wide", active },
+  };
+}
+
+/** Releases only the browser presentation; it never stops the Area Brain. */
+function disposeDocumentBrainPane() {
+  if (documentBrainPortal) {
+    activeAreaWorkspace?.unportal?.("brain");
+    activeAreaWorkspace?.restore?.(documentBrainPortal.layout);
+    documentBrainPortal = null;
+    activeDocumentBrainInstance = null;
+    activeDocumentBrainArea = "";
+    return;
+  }
+  activeDocumentBrainInstance?.dispose?.();
+  activeDocumentBrainInstance = null;
+  activeDocumentBrainArea = "";
+}
+
+/** Mounts the contextual Brain once beside its retained Document. */
+function mountDocumentBrainPane(host, area) {
+  if (!host || !area) return;
+  if (activeAreaWorkspace && activeMapBrainArea === area) {
+    const layout = activeAreaWorkspace.snapshot();
+    activeAreaWorkspace.show("brain", { focus: false, moveDomFocus: false });
+    activeDocumentBrainInstance = activeAreaWorkspace.portal("brain", host);
+    activeDocumentBrainArea = area;
+    documentBrainPortal = { layout };
+    return;
+  }
+  activeDocumentBrainArea = area;
+  const descriptor = areaBrainPane(area, { discussion: true });
+  activeDocumentBrainInstance = descriptor.mount({ host });
+}
+
+/** Applies the two-wide/one-retained responsive rule without unmounting a surface. */
+function applyDocumentDiscussionPresentation({ focus = false } = {}) {
+  const discussion = state.documentDiscussion;
+  if (!discussion) return;
+  const context = documentPeekLayer.querySelector("[data-document-discussion-context]");
+  const brain = documentPeekLayer.querySelector("[data-document-discussion-brain]");
+  const narrow = window.innerWidth <= 900;
+  const brainActive = discussion.active === "brain";
+  const workspace = documentPeekLayer.querySelector(".document-discussion-workspace");
+  if (workspace) workspace.dataset.visibleSurface = brainActive ? "brain" : "context";
+  for (const [host, active] of [[context, !brainActive], [brain, brainActive]]) {
+    if (!host) continue;
+    host.hidden = narrow && !active;
+    host.toggleAttribute("inert", narrow && !active);
+    host.classList.toggle("focused", active);
+  }
+  for (const button of documentPeekLayer.querySelectorAll("[data-document-discussion-surface]")) {
+    const selected = button.dataset.documentDiscussionSurface === discussion.active;
+    button.setAttribute("aria-pressed", String(selected));
+  }
+  activeDocumentBrainInstance?.update?.({ layout: documentDiscussionLayout() });
+  if (!focus) return;
+  if (brainActive) activeDocumentBrainInstance?.focus?.();
+  else context?.querySelector(".document-peek-surface")?.focus?.({ preventScroll: true });
+}
+
+/** Starts an explicit Document discussion with a subject but sends nothing. */
+function openDocumentBrain(area, { includeSubject = false, returnPoint = null } = {}) {
+  const peek = state.documentPeek;
+  if (!peek || !area) return;
+  const title = peek.document?.title || peek.title || "Document";
+  state.documentDiscussion = { area, active: "brain", subject: includeSubject ? { file: peek.file, title } : null, returnPoint };
+  const resume = { area, file: peek.file, title, subject: includeSubject };
+  state.resumeContext = null;
+  localStorage.setItem("agent-shell.resume-context.v1", JSON.stringify(resume));
+  screen.querySelector("[data-resume-document-context]")?.remove();
+  renderDocumentPeekLayer();
+  applyDocumentDiscussionPresentation({ focus: true });
+}
+
+/** Adds the exact Document as a removable subject; sending remains manual. */
+function discussDocumentWithBrain(area) {
+  return openDocumentBrain(area, { includeSubject: true });
+}
+
+/** Switches one retained Document discussion at compact width, or just focus wide. */
+function switchDocumentDiscussion(surface, { focus = true } = {}) {
+  if (!state.documentDiscussion) return;
+  state.documentDiscussion.active = surface === "brain" ? "brain" : "document";
+  applyDocumentDiscussionPresentation({ focus });
+}
+
+/** Ends only the Brain discussion stage and restores the retained Document. */
+function endDocumentDiscussion() {
+  if (!state.documentDiscussion) return false;
+  const returnPoint = state.documentDiscussion.returnPoint;
+  state.documentDiscussion = null;
+  state.resumeContext = null;
+  localStorage.removeItem("agent-shell.resume-context.v1");
+  disposeDocumentBrainPane();
+  renderDocumentPeekLayer();
+  if (returnPoint) return restoreReturnPoint(returnPoint);
+  documentPeekLayer.querySelector(".document-peek-surface")?.focus?.({ preventScroll: true });
+  return true;
+}
+
+/** Hides Document context while Map is inspected, preserving its exact state. */
+function showMapFromDocument() {
+  const peek = state.documentPeek;
+  if (!peek) return showMapHome();
+  const area = state.documentDiscussion?.area || peek.document?.area || peek.area || state.mapArea;
+  const retainedWork = state.workLens ? {
+    ...state.workLens,
+    scrollTop: workLensContent?.scrollTop ?? state.workLens.scrollTop ?? 0,
+    documentOnTop: true,
+  } : null;
+  state.mapReturn = {
+    kind: "document",
+    focus: document.activeElement,
+    active: state.documentDiscussion?.active ?? "document",
+    workLens: retainedWork,
+  };
+  peek.suspended = true;
+  documentPeekLayer.hidden = true;
+  syncLayerInertness();
+  if (state.workLens) closeWorkLens({ restoreFocus: false, remember: false });
+  if (state.view !== "area-workspace" || !activeAreaWorkspace) openAreaWorkspace({ area: state.mapArea, entryPane: "map", returnPoint: null });
+  if (area) locateAreaMap(area);
+  activeAreaWorkspace?.show("map", { focus: true, moveDomFocus: true });
+  updateHeader();
+}
+
+/** Returns from the temporary Map route to the retained Document and focus. */
+function restoreDocumentFromMap() {
+  if (!state.mapReturn || !state.documentPeek?.suspended) return false;
+  const point = state.mapReturn;
+  state.mapReturn = null;
+  if (point.workLens) {
+    openWorkLens({ area: point.workLens.area, mode: point.workLens.mode, focus: false, returnFocus: point.workLens.returnFocus });
+    Object.assign(state.workLens, point.workLens, { documentOnTop: true });
+    workLensLayer?.classList.remove("top-layer");
+    if (Number.isFinite(point.workLens.scrollTop)) workLensContent.scrollTop = point.workLens.scrollTop;
+  }
+  state.documentPeek.suspended = false;
+  if (state.documentDiscussion) state.documentDiscussion.active = point.active === "brain" ? "brain" : "document";
+  documentPeekLayer.hidden = false;
+  syncLayerInertness();
+  if (state.documentDiscussion) applyDocumentDiscussionPresentation({ focus: false });
+  window.setTimeout(() => {
+    if (point.focus?.isConnected && !point.focus.closest?.("[inert]")) point.focus.focus?.({ preventScroll: true });
+    else if (state.documentDiscussion) applyDocumentDiscussionPresentation({ focus: true });
+    else documentPeekLayer.querySelector(".document-peek-surface")?.focus?.({ preventScroll: true });
+  }, 0);
+  return true;
+}
+
+/** Opens the named Area on retained Map and records Brain as the exact return. */
+function showMapFromBrain(area) {
+  if (!activeAreaWorkspace) return false;
+  state.mapReturn = { kind: "brain", focus: document.activeElement, area };
+  if (area) locateAreaMap(area);
+  activeAreaWorkspace.show("map", { focus: true, moveDomFocus: true });
+  updateHeader();
+  return true;
+}
+
+/** Restores the stable Brain terminal after its temporary Map route. */
+function restoreBrainFromMap() {
+  if (state.mapReturn?.kind !== "brain") return false;
+  state.mapReturn = null;
+  activeAreaWorkspace?.show("brain", { focus: true, moveDomFocus: true });
+  updateHeader();
+  return true;
+}
+
+/** Closes the contextual Document route and clears only its clean resume marker. */
+function closeDocumentContext({ restoreFocus = true } = {}) {
+  if (!state.documentPeek) return;
+  state.documentDiscussion = null;
+  state.resumeContext = null;
+  state.mapReturn = null;
+  localStorage.removeItem("agent-shell.resume-context.v1");
+  disposeDocumentBrainPane();
+  closeDocumentPeek();
+  updateHeader();
+  if (!restoreFocus) activeAreaWorkspace?.focus?.("map", { moveDomFocus: false });
+}
+
+/** Reopens crash-retained context only after Julian chooses the visible action. */
+async function resumeDocumentContext() {
+  const resume = state.resumeContext;
+  if (!resume?.file || !resume?.area) return;
+  await openDocumentPeek(resume.file, { origin: screen.querySelector("[data-resume-document-context]") });
+  openDocumentBrain(resume.area, { includeSubject: resume.subject !== false });
+}
+
+/** Discards a crash-resume suggestion without changing the underlying Document. */
+function dismissResumeContext() {
+  state.resumeContext = null;
+  localStorage.removeItem("agent-shell.resume-context.v1");
+  screen.querySelector("[data-resume-context-banner]")?.remove();
+}
+
+/** A restart never resumes or sends automatically; Map offers one explicit route. */
+function resumeContextBanner() {
+  const resume = state.resumeContext;
+  if (!resume?.file || !resume?.area) return "";
+  return `<aside class="resume-context-banner" data-resume-context-banner role="status"><span><strong>Resume Document discussion?</strong><small>${escapeHtml(resume.title || resume.file)} · ${escapeHtml(areaLabel(resume.area))} Brain. Nothing was sent.</small></span><button type="button" data-resume-document-context>Resume</button><button type="button" data-dismiss-resume-context>Dismiss</button></aside>`;
 }
 
 /** Creates the stable Map descriptor for this workspace visit. */
@@ -1688,6 +2276,7 @@ function areaMapPane(area) {
     api,
     documents: areaMapEntities,
     getDocuments: areaMapEntities,
+    searchDocuments: searchMapEntities,
     /** Reads the current Work Focus mask for Map reconciliation. */
     focus: () => ({ areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly }),
     onEvent: actionTelemetry.recordAreaMap,
@@ -1706,7 +2295,7 @@ function areaMapPane(area) {
 function mountAreaWorkspace() {
   const route = state.areaWorkspace;
   const host = screen.querySelector("[data-area-workspace]");
-  if (!host || !route?.area) return;
+  if (!host || !route) return;
   activeAreaWorkspace = createAreaWorkspaceController({
     host,
     area: route.area,
@@ -1717,6 +2306,7 @@ function mountAreaWorkspace() {
     /** Refreshes workspace chrome after a layout-only transition. */
     onLayoutChange() { if (activeAreaWorkspace) updateHeader(); },
   });
+  activeMapBrainArea = route.area;
   refreshAreaWorkspace();
 }
 
@@ -1734,14 +2324,15 @@ function refreshAreaWorkspace() {
 
 /** Opens one Area workspace and preserves the opener as its one return point. */
 function openAreaWorkspace({ area, entryPane, returnPoint }) {
-  if (!area) return showToast("This Brain has no Area.");
+  const located = String(area ?? "");
   if (activeAreaWorkspace) void activeAreaWorkspace.destroy();
   activeAreaWorkspace = null;
   activeAreaBoard = null;
-  mapLocatedArea = area;
+  activeMapBrainArea = "";
+  mapLocatedArea = located;
   mapViewState = { restrictionArea: "", findOpen: false };
-  state.mapArea = area;
-  state.areaWorkspace = { area, entryPane, returnPoint };
+  state.mapArea = located;
+  state.areaWorkspace = { area: located, entryPane, returnPoint };
   state.view = "area-workspace";
   state.sessionPeek = null;
   state.renderedKey = "";
@@ -1751,8 +2342,47 @@ function openAreaWorkspace({ area, entryPane, returnPoint }) {
 /** Opens an Area's living Map and remembers the exact Work return point. */
 function openAreaMap(area, trigger) {
   const row = trigger?.closest?.("[data-work-cursor]");
-  if (row?.dataset.workCursor) mapReturnCursor = row.dataset.workCursor;
+  if (state.workLens) {
+    const point = captureReturnPoint();
+    const opener = trigger?.matches?.("[data-open-area-map]") ? trigger : null;
+    if (point.workLens && opener?.dataset.focusKey) point.workLens.focusKey = opener.dataset.focusKey;
+    const documentSuspended = Boolean(state.documentPeek && !state.documentPeek.suspended);
+    state.mapReturn = { kind: "work", point, documentSuspended };
+    closeWorkLens({ restoreFocus: false, remember: true });
+    if (documentSuspended) {
+      state.documentPeek.suspended = true;
+      documentPeekLayer.hidden = true;
+      syncLayerInertness();
+    }
+  }
+  if (state.view === "area-workspace" && activeAreaWorkspace) {
+    if (area) locateAreaMap(area);
+    activeAreaWorkspace.show("map", { focus: true, moveDomFocus: true });
+    updateHeader();
+    return;
+  }
   openAreaWorkspace({ area, entryPane: "map", returnPoint: captureReturnPoint() });
+}
+/** Locates a contextual Map route even when the retained Only scope excludes it. */
+function locateAreaMap(area) {
+  if (!area) return;
+  const only = mapViewState.restrictionArea;
+  if (only && area !== only && !area.startsWith(`${only}/`)) activeAreaBoard?.toggleRestriction?.(only);
+  drillAreaMap(area);
+}
+/** Returns from a Work row's Show-on-Map route with its exact lens state. */
+function restoreWorkFromMap() {
+  if (state.mapReturn?.kind !== "work") return false;
+  const route = state.mapReturn;
+  state.mapReturn = null;
+  if (route.documentSuspended && state.documentPeek) {
+    state.documentPeek.suspended = false;
+    documentPeekLayer.hidden = false;
+    syncLayerInertness();
+    if (state.documentDiscussion) applyDocumentDiscussionPresentation({ focus: false });
+  }
+  restoreReturnPoint(route.point);
+  return true;
 }
 /** Opens the map-owned finder from shell chrome or a reserved shortcut. */
 function openAreaMapFind() { return activeAreaBoard?.openFind?.() ?? false; }
@@ -1767,8 +2397,8 @@ function drillAreaMap(area) {
 }
 /** Leaves both panes for the exact workspace return point. */
 function leaveAreaWorkspace() {
+  if (restoreDocumentFromMap()) return;
   const point = activeAreaWorkspace?.returnPoint ?? state.areaWorkspace?.returnPoint;
-  const entryPane = activeAreaWorkspace?.entryPane ?? state.areaWorkspace?.entryPane;
   if (state.launchTarget === BRAIN_LAUNCH_TARGET) { state.launchTarget = ""; state.brainDraft = null; state.launchAnchor = null; }
   const workspace = activeAreaWorkspace;
   activeAreaWorkspace = null;
@@ -1777,20 +2407,53 @@ function leaveAreaWorkspace() {
   void workspace?.destroy();
   if (point) {
     restoreReturnPoint(point);
-    if (entryPane === "map") window.setTimeout(() => {
-      const row = [...document.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === mapReturnCursor);
-      row?.querySelector("[data-open-area-map]")?.focus?.({ preventScroll: true });
-    }, 0);
   }
-  else showWork();
+  else {
+    state.areaWorkspace = { area: state.mapArea, entryPane: "map", returnPoint: null };
+    state.view = "area-workspace";
+    state.renderedKey = "";
+    paint(true);
+  }
 }
-/** Leaves the map through the same Work return point as the primary Back control. */
+/** Map is home; Escape only returns from a named route that opened above it. */
 function closeAreaMap() {
-  return leaveAreaWorkspace();
+  if (restoreWorkFromMap()) return true;
+  if (restoreDocumentFromMap()) return true;
+  if (restoreBrainFromMap()) return true;
+  if (activeAreaWorkspace?.snapshot().focused === "brain") return returnFromBrain();
+  if (state.areaWorkspace?.returnPoint) return leaveAreaWorkspace();
+  return false;
 }
 
-/** Keeps the accepted companion names as event-layer delegates. */
-function toggleMapBrain() { activeAreaWorkspace?.toggleBrain(); updateHeader(); }
+/** Opens the exact contextual Brain and leaves Map state mounted underneath. */
+function toggleMapBrain(area = state.documentDiscussion?.area || mapViewState.selectedArea || mapLocatedArea || state.mapArea, { returnPoint = null } = {}) {
+  if (state.documentPeek && !state.documentPeek.suspended) {
+    return openDocumentBrain(area || state.documentPeek.document?.area || state.documentPeek.area, { returnPoint });
+  }
+  if (!area) return showToast("Choose an Area on Map before opening its Brain.");
+  if (!activeAreaWorkspace) return openAreaWorkspace({ area, entryPane: "brain", returnPoint: returnPoint ?? captureReturnPoint() });
+  state.brainReturn = returnPoint ? { kind: "work", point: returnPoint } : { kind: "map", focus: document.activeElement };
+  /** Shows and focuses the retained Brain pane. */
+  const show = () => {
+    activeAreaWorkspace?.show("brain", { focus: true, moveDomFocus: true });
+    refreshAreaWorkspace();
+  };
+  if (activeMapBrainArea === area) return show();
+  rememberBrainDraft(activeMapBrainArea);
+  activeMapBrainArea = area;
+  return void activeAreaWorkspace.replace(areaBrainPane(area)).then(show);
+}
+/** Returns from Brain to its named retained surface and exact focus. */
+function returnFromBrain() {
+  if (state.documentDiscussion) return endDocumentDiscussion();
+  const point = state.brainReturn;
+  state.brainReturn = null;
+  if (point?.kind === "work" && point.point) return restoreReturnPoint(point.point);
+  activeAreaWorkspace?.show("map", { focus: true, moveDomFocus: !point?.focus });
+  if (point?.focus?.isConnected) point.focus.focus?.({ preventScroll: true });
+  updateHeader();
+  return true;
+}
 /** Hides Brain only when it is the companion pane. */
 function closeMapBrain() { if (activeAreaWorkspace?.snapshot().primary !== "brain") activeAreaWorkspace?.hide("brain"); updateHeader(); }
 /** Delegates focus to the generic split controller. */
@@ -1805,12 +2468,19 @@ function areaWorkspaceMapOwnsFocus() { return state.view === "area-workspace" &&
 /** Adds or explicitly retargets the Brain pane without changing Map state. */
 function openMapBrainSession(session) {
   if (state.view !== "area-workspace" || !activeAreaWorkspace) return false;
+  if (state.workLens) {
+    const point = captureReturnPoint();
+    closeWorkLens({ restoreFocus: false, remember: true });
+    state.brainReturn = { kind: "work", point };
+  }
   state.sessionPeek = null;
-  if (session?.area === activeAreaWorkspace.area) {
+  if (session?.area === activeMapBrainArea) {
     activeAreaWorkspace.show("brain", { focus: true, moveDomFocus: true });
     refreshAreaWorkspace();
     return true;
   }
+  rememberBrainDraft(activeMapBrainArea);
+  activeMapBrainArea = session.area;
   void activeAreaWorkspace.replace(areaBrainPane(session.area)).then(() => {
     activeAreaWorkspace?.show("brain", { focus: true, moveDomFocus: true });
     refreshAreaWorkspace();
@@ -1820,12 +2490,15 @@ function openMapBrainSession(session) {
 shellBindings = bindShellEvents({
   shell: { state, post, paint, refresh, showToast },
   chrome: {
-    screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
+    screen, backButton, mapTab, workTab, areasTab, promptsTab, forYouButton, problemsButton, contextBrainButton, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
-    confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, restoreReturnPoint,
+    workLensLayer, workLensContent, openWorkLens, closeWorkLens, showMapHome,
+    confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, captureReturnPoint, restoreReturnPoint,
     showDecision, showDescribe, toggleAwake, openModal, closeModal, modalConfirm: getModalConfirm, openSessionLayer, closeSessionLayer,
     openAreaMap, drillAreaMap, closeAreaMap, openAreaMapFind, toggleAreaMapOnly, toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane,
-    resizeAreaWorkspacePane, areaWorkspaceMapOwnsFocus,
+    resizeAreaWorkspacePane, areaWorkspaceMapOwnsFocus, returnFromBrain,
+    discussDocumentWithBrain, switchDocumentDiscussion, showMapFromDocument, closeDocumentContext,
+    resumeDocumentContext, dismissResumeContext,
   },
   prompts: {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
@@ -1873,11 +2546,17 @@ window.addEventListener("storage", (event) => {
 });
 
 void (async () => {
-  await refresh({ initial: true });
-  if (requestedDocument) await openDocument(requestedDocument);
-  else if (requestedGoal) selectGoal(requestedGoal);
-  else if (state.view === "areas") await showAreas();
-  else if (state.view === "prompts") await showPrompts();
+  // Mount the durable Map before live Work reconciliation. The complete-world
+  // endpoint accepts an empty location and restores its saved camera.
+  if (state.view === "area-workspace") {
+    state.loading = false;
+    openAreaWorkspace({ area: state.mapArea, entryPane: "map", returnPoint: null });
+  }
+  const initialRefresh = refresh({ initial: true });
+  if (requestedDocument) await openDocumentPeek(requestedDocument, { origin: document.querySelector("#map-tab") });
+  else if (requestedGoal) { await initialRefresh; selectGoal(requestedGoal); }
+  else if (state.view === "areas") { await initialRefresh; await showAreas(); }
+  else if (state.view === "prompts") { await initialRefresh; await showPrompts(); }
 })();
 // Mutations and reconciliation push invalidations. The slow timer is only a
 // recovery path for a suspended browser or a dropped event stream.

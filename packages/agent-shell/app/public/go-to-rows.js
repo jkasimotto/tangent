@@ -14,7 +14,7 @@ function fileName(file) {
 }
 
 /** Builds finder rows without coupling matching and projection to the shell controller. */
-export function buildGoToRows({ vault, brains = [], query = "", area = "", kind = "", view = "list", areaLabel, brainStateLabel }) {
+export function buildGoToRows({ vault, brains = [], objects = [], query = "", area = "", kind = "", view = "list", areaLabel, brainStateLabel }) {
   if (!vault) return null;
   const rows = [];
   // A done or archived Area, and everything under it, leaves Go To unless the
@@ -27,6 +27,28 @@ export function buildGoToRows({ vault, brains = [], query = "", area = "", kind 
     if (record.kind !== "document" && !(record.kind === "note" && !record.missing)) continue;
     if (folded(record.area)) continue;
     rows.push({ key: record.file, kind: record.kind, kindLabel: record.kind === "note" ? "Area note" : areaMapCore.kindLabel(record.docKind ?? "page"), docKind: record.docKind ?? record.kind, name: record.title, area: record.area, areaLabel: areaLabel(record.area), detail: "", changedAt: Number(record.changedAt ?? record.mtime ?? 0), live: false, file: record.file, links: record.links ?? [] });
+  }
+  // Areas, Goals, and agents have product-specific routes. Keep their server
+  // identities intact instead of pretending they are Documents.
+  for (const record of objects) {
+    if (!record?.kind || !["area", "goal", "agent"].includes(record.kind)) continue;
+    if (folded(record.area)) continue;
+    rows.push({
+      key: `${record.kind}:${record.id ?? record.file ?? record.session ?? record.area}`,
+      kind: record.kind,
+      kindLabel: record.kind === "area" ? "Area" : record.kind === "goal" ? "Goal" : "Agent",
+      docKind: record.kind,
+      name: record.name,
+      area: record.area ?? "",
+      areaLabel: areaLabel(record.area ?? ""),
+      detail: record.status ?? record.role ?? "",
+      changedAt: Number(record.changedAt ?? 0),
+      live: Boolean(record.live),
+      file: record.file,
+      session: record.session,
+      id: record.id,
+      goalId: record.goalId,
+    });
   }
   // A brain is a destination for every Area, even before its first attempt.
   // Merge runtime records into the Area list so stopped records and duplicate

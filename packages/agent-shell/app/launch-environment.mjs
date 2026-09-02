@@ -33,6 +33,22 @@ function conversationFieldProblem(harness) {
     if (typeof harness[field] !== "string") return `harness "${harness.id}" ${field} must be a string`;
     if (field !== "transcripts" && !harness[field].includes("{id}")) return `harness "${harness.id}" ${field} must contain {id}`;
   }
+  return providerFieldProblem(harness, `harness "${harness.id}"`);
+}
+
+/**
+ * The first problem with one entry's optional `provider`, or null.
+ *
+ * A provider is the account that served the model, not the vendor that built
+ * it and not the harness that called it: the same model id billed through a
+ * gateway bills at a different rate. It is declared on a harness, and a model
+ * option may override it, because one pi-code harness reaches three
+ * providers. It is optional everywhere; an entry that declares none is
+ * inferred from what the launch already says.
+ */
+function providerFieldProblem(entry, what) {
+  if (entry.provider === undefined || entry.provider === null) return null;
+  if (typeof entry.provider !== "string" || !entry.provider.trim()) return `${what} provider must be a non-empty string`;
   return null;
 }
 
@@ -71,6 +87,8 @@ export function parseHarnessRegistry(text) {
       if (model.effortSet && !Array.isArray(effortSets[model.effortSet])) {
         return { error: `model "${model.id || "(unnamed)"}" references unknown effort set "${model.effortSet}"` };
       }
+      const problem = providerFieldProblem(model, `model "${model.id || "(unnamed)"}"`);
+      if (problem) return { error: problem };
     }
   }
   return { modelSets, effortSets, harnesses };
@@ -281,7 +299,71 @@ export function resolveLaunch(registry, ref) {
     harness: harness.id,
     model: model ? model.id : null,
     effort: effort ? effort.id : null,
+    provider: declaredProvider(harness, model),
   };
+}
+
+/**
+ * The account that served one launch: the fourth axis beside harness, model
+ * and effort.
+ *
+ * The most specific statement wins, and a statement about this launch beats a
+ * statement about the harness as a whole: a model option's declared provider
+ * first, then the provider its own arguments name on the command line, then
+ * the harness's declared provider, then what the harness family implies. One
+ * pi-code harness reaches three providers and names each of them in the model
+ * arguments, so an option that names one must not be read as its harness's.
+ *
+ * It is never part of {@link launchRef}: that string is stored in the tmux
+ * option `@tangent_launch_ref`, in every Area harness contract, and in
+ * launch-memory.json, and `parseLaunch` rejects a fourth part. Provider
+ * travels beside the reference, not inside it.
+ */
+export function declaredProvider(harness, model) {
+  return named(model?.provider)
+    ?? providerInArgs(model?.args)
+    ?? named(harness?.provider)
+    ?? providerInArgs(harness?.command)
+    ?? familyProvider(harness?.id);
+}
+
+/** One declared provider, trimmed, or null when nothing was declared. */
+function named(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/** The provider a command line names outright, as pi-code's options do. */
+function providerInArgs(args) {
+  const match = String(args ?? "").match(/--provider[= ]+(\S+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * The provider a harness family implies when nothing states one.
+ *
+ * This keeps the data model correct before anyone edits harnesses.md. A
+ * harness the table does not know returns null rather than a guess: an
+ * unknown provider prices nothing and says so, which is the honest outcome.
+ */
+function familyProvider(harnessId) {
+  const id = String(harnessId ?? "");
+  if (id.startsWith("claude")) return "anthropic";
+  if (id.startsWith("codex")) return "openai";
+  return null;
+}
+
+/**
+ * The provider one stored launch reference resolves to against a registry.
+ *
+ * Called at launch time so the attempt keeps the provider it actually ran on.
+ * Reading it back later from a registry that has since changed would rewrite
+ * history.
+ */
+export function launchProvider(registry, ref) {
+  const harness = (registry?.harnesses ?? []).find((entry) => entry.id === String(ref?.harness ?? ""));
+  if (!harness) return null;
+  const model = ref?.model ? harnessModels(registry, harness).find((entry) => entry.id === ref.model) ?? null : null;
+  return declaredProvider(harness, model);
 }
 
 /**
@@ -316,6 +398,8 @@ export function validateHarnessRegistry(registry) {
       if (option.effortSet && !Array.isArray(effortSets[option.effortSet])) {
         return `model "${option.id}" references unknown effort set "${option.effortSet}"`;
       }
+      const problem = providerFieldProblem(option, `model "${option.id}"`);
+      if (problem) return problem;
     }
   }
   for (const [name, options] of Object.entries(effortSets)) {

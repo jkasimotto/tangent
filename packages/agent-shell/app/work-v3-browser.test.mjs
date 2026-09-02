@@ -30,7 +30,10 @@ function snapshot() {
 test("browser boot reads only v3 Work and paints every bounded row kind", async () => {
   const fixture = { vault: { areas: [], documents: [] }, sessions: [], brains: [], pipelines: [] };
   const { document, gets } = await bootWorkTable(fixture, { workProjection: snapshot(), workFilter: "all" });
-  assert.deepEqual(gets.map((value) => new URL(value).pathname), ["/api/work"]);
+  // Work is read from one v3 route and nothing else. The top bar's cost
+  // figure rides its own route, on its own clock, so a moving dollar never
+  // repaints the desk.
+  assert.deepEqual(gets.map((value) => new URL(value).pathname).sort(), ["/api/cost", "/api/work"]);
   assert.deepEqual([...document.querySelectorAll(".work-table thead th")].map((cell) => cell.textContent.trim()), ["Goal", "Agent", "Status", "Controls"]);
   assert.equal(document.querySelector("[data-goal-anchor='otto/tangent/goal-parent.md'] .desk-state").textContent, "Working");
   assert.equal(document.querySelector("[data-subgoal-of='otto/tangent/goal-parent.md']") !== null, true);

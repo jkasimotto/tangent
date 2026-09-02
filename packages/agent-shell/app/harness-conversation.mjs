@@ -23,7 +23,11 @@ export function expandHome(value) {
  */
 export function newConversation(harness, makeId = randomUUID) {
   if (!harness?.sessionIdArg) return null;
-  return { provider: harness.id, id: makeId() };
+  // `provider` has always held a harness id here, which collides with the
+  // provider axis that now means the account a model was served by. The
+  // record carries both keys with the same value: readers take `harness`,
+  // and `provider` stays so records already on disk keep working.
+  return { harness: harness.id, provider: harness.id, id: makeId() };
 }
 
 /** The launch line with the harness's session id flag appended, or unchanged. */
@@ -44,7 +48,7 @@ export function resumeCommand(harness, { command = "", id = "" } = {}) {
 }
 
 /** Reads the first line of one file without loading the rest. */
-async function firstLine(file) {
+export async function firstLine(file) {
   const handle = await open(file, "r");
   try {
     const chunks = [];
@@ -64,7 +68,7 @@ async function firstLine(file) {
 }
 
 /** The local YYYY/MM/DD folder codex uses for one instant. */
-function dayFolder(at) {
+export function dayFolder(at) {
   const date = new Date(at);
   /** Two-digit month or day. */
   const pad = (n) => String(n).padStart(2, "0");

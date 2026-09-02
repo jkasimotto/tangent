@@ -1,0 +1,171 @@
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { startShellServer } from "./focus-shell-http-fixture.mjs";
+import { claudeProjectKey, piProjectKey } from "./harness-transcripts.mjs";
+import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
+
+isolateTmuxTests();
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const area = "otto/costing";
+
+/** Writes one JSONL transcript, creating the folders it needs. */
+async function writeJsonl(file, rows) {
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, rows.map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
+}
+
+/**
+ * Builds a complete fixture machine: a vault with a harness registry that
+ * points at scratch transcript folders, one Job and one brain that ran there,
+ * and the transcripts themselves. Nothing here touches the real vault, the
+ * real transcript roots, or the real Agent Shell state.
+ */
+async function buildMachine({ pricingDocument = null } = {}) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "cost-http-"));
+  const trees = path.join(root, "trees");
+  const workspace = path.join(root, "workspace");
+  const claudeTranscripts = path.join(root, "transcripts", "claude");
+  const piTranscripts = path.join(root, "transcripts", "pi");
+  const areaDirectory = path.join(trees, area);
+  await mkdir(areaDirectory, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
+  await writeFile(path.join(areaDirectory, "costing.md"), `---\ntype: area\n---\n\n# Costing\n\n## Resources\n\n- Repository: ${workspace}\n`, "utf8");
+  await writeFile(path.join(trees, "harnesses.md"), [
+    "# Harnesses", "",
+    "```tangent.harnesses.v2",
+    JSON.stringify({
+      version: 2,
+      modelSets: { claude: [{ id: "opus-5", label: "Opus 5", args: "--model opus" }] },
+      effortSets: {},
+      harnesses: [
+        { id: "claude-otto", command: "true", modelSet: "claude", provider: "anthropic", sessionIdArg: "--session-id {id}", transcripts: claudeTranscripts },
+        { id: "pi-code", command: "true", provider: "resetdata-glm", sessionIdArg: "--session {id}", transcripts: piTranscripts },
+        // Declares no transcripts folder, so its attempts are unattributable
+        // by construction and must be named rather than dropped.
+        { id: "codex-gw", command: "true" },
+      ],
+    }, null, 2),
+    "```", "",
+  ].join("\n"), "utf8");
+  if (pricingDocument !== null) await writeFile(path.join(trees, "pricing.md"), pricingDocument, "utf8");
+
+  const cwd = workspace;
+  const jobConversation = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const brainConversation = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const piConversation = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+
+  // The Job's own conversation, plus a subagent beside it. The ledger is the
+  // last word here, so it is what the figure uses.
+  await writeJsonl(path.join(claudeTranscripts, claudeProjectKey(cwd), `${jobConversation}.jsonl`), [
+    { type: "assistant", message: { id: "m1", role: "assistant", model: "claude-opus-5", usage: { input_tokens: 10, output_tokens: 10 } } },
+    { type: "cost-state", totalCostUSD: 20, modelUsage: { "claude-opus-5": { inputTokens: 10, outputTokens: 10, costUSD: 20 } } },
+  ]);
+  await writeJsonl(path.join(claudeTranscripts, claudeProjectKey(cwd), jobConversation, "subagents", "agent-one.jsonl"), [
+    { type: "assistant", message: { id: "m2", role: "assistant", model: "claude-opus-5", usage: { input_tokens: 0, output_tokens: 1000 } } },
+  ]);
+  await writeJsonl(path.join(claudeTranscripts, claudeProjectKey(cwd), `${brainConversation}.jsonl`), [
+    { type: "cost-state", totalCostUSD: 5, modelUsage: { "claude-sonnet-5": { inputTokens: 1, outputTokens: 1, costUSD: 5 } } },
+  ]);
+  // pi, at the path pi actually writes to.
+  await writeJsonl(path.join(piTranscripts, piProjectKey(cwd), `2026-09-03T04-00-00_${piConversation}.jsonl`), [
+    { type: "session", cwd },
+    { type: "message", message: { role: "assistant", provider: "resetdata-glm", model: "zai/glm-5.2", usage: { input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 } } },
+  ]);
+
+  const startedAt = new Date(Date.now() - 60_000).toISOString();
+  await mkdir(path.join(root, "pipelines", area), { recursive: true });
+  await writeFile(path.join(root, "pipelines", area, "thing.json"), JSON.stringify({
+    goal: `${area}/goal-thing.md`, area, slug: "thing",
+    steps: [{
+      id: "step-1",
+      attempts: [
+        { id: "a1", resolvedLaunch: { ref: { harness: "claude-otto", model: "opus-5", effort: null, provider: "anthropic" }, command: "true" }, providerSession: { harness: "claude-otto", provider: "claude-otto", id: jobConversation }, cwd, startedAt, endedAt: null },
+        // A resume of the same conversation. It must not be charged twice.
+        { id: "a2", resolvedLaunch: { ref: { harness: "claude-otto", model: "opus-5", effort: null, provider: "anthropic" }, command: "true" }, providerSession: { harness: "claude-otto", provider: "claude-otto", id: jobConversation }, cwd, startedAt, endedAt: null },
+        { id: "a3", resolvedLaunch: { ref: { harness: "pi-code", model: null, effort: null, provider: "resetdata-glm" }, command: "true" }, providerSession: { harness: "pi-code", provider: "pi-code", id: piConversation }, cwd, startedAt, endedAt: null },
+        { id: "a4", resolvedLaunch: { ref: { harness: "codex-gw", model: null, effort: null, provider: null }, command: "true" }, providerSession: null, cwd, startedAt, endedAt: null },
+      ],
+    }],
+  }), "utf8");
+  await mkdir(path.join(root, "brains"), { recursive: true });
+  await writeFile(path.join(root, "brains", "otto-costing.json"), JSON.stringify({
+    area,
+    generations: [{ generation: 1, session: "brain-1", resolvedLaunch: { ref: { harness: "claude-otto", model: "opus-5", effort: null, provider: "anthropic" }, command: "true" }, providerSession: { harness: "claude-otto", provider: "claude-otto", id: brainConversation }, cwd, startedAt, endedAt: null }],
+  }), "utf8");
+
+  return { root, trees, workspace };
+}
+
+test("the cost endpoint prices a day of real records, including subagents and brains", async (context) => {
+  const machine = await buildMachine();
+  const base = await startShellServer(context, { here, ...machine });
+  if (!base) return;
+
+  const snapshot = await (await fetch(`${base}/api/cost?days=1&wait=1`)).json();
+  assert.equal(snapshot.status, "ready");
+
+  // 20 from the Job's Claude ledger, charged once across two attempts that
+  // share the conversation; 5 from the brain; 1.58 from pi's million input
+  // tokens at the seeded ResetData rate.
+  assert.equal(Number(snapshot.amount.toFixed(4)), 26.58);
+  assert.equal(snapshot.conversations, 3);
+  assert.deepEqual(snapshot.byHarness.map((entry) => entry.harness), ["claude-otto", "pi-code"]);
+  assert.deepEqual(snapshot.byModel.map((entry) => entry.id).sort(), ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "resetdata-glm/zai/glm-5.2"]);
+
+  // The brain is in the breakdown beside the Job, not folded away.
+  assert.equal(snapshot.work.some((entry) => entry.scope === "brain"), true);
+  assert.equal(snapshot.work.some((entry) => entry.scope === "job"), true);
+
+  // The one attempt that could not be reached is named, and the figure
+  // refuses to call itself complete because of it.
+  assert.equal(snapshot.complete, false);
+  assert.deepEqual(snapshot.excluded, [{ reason: "the codex-gw harness declares no transcripts folder", detail: null, count: 1 }]);
+});
+
+test("the cost endpoint answers from its snapshot instead of walking transcripts again", async (context) => {
+  const machine = await buildMachine();
+  const base = await startShellServer(context, { here, ...machine });
+  if (!base) return;
+
+  const first = await (await fetch(`${base}/api/cost?days=1&wait=1`)).json();
+  const started = Date.now();
+  const second = await (await fetch(`${base}/api/cost?days=1`)).json();
+  const elapsed = Date.now() - started;
+  assert.equal(second.computedAt, first.computedAt);
+  assert.ok(elapsed < 500, `a warm read took ${elapsed}ms`);
+});
+
+test("a rate written into the vault pricing Document overrides the seeded one", async (context) => {
+  const machine = await buildMachine({
+    pricingDocument: [
+      "# Pricing", "",
+      "```tangent.pricing.v1",
+      JSON.stringify({ version: 1, providers: { "resetdata-glm": { models: { "zai/glm-5.2": { input: 10, output: 10, cacheWrite: 10, cacheWrite1h: 10, cacheRead: 10 } } } } }),
+      "```", "",
+    ].join("\n"),
+  });
+  const base = await startShellServer(context, { here, ...machine });
+  if (!base) return;
+
+  const snapshot = await (await fetch(`${base}/api/cost?days=1&wait=1`)).json();
+  // pi's million input tokens now cost 10 instead of the seeded 1.58.
+  assert.equal(Number(snapshot.amount.toFixed(4)), 35);
+});
+
+test("a broken pricing Document keeps the seeded rates and says what went wrong", async (context) => {
+  const machine = await buildMachine({ pricingDocument: "# Pricing\n\n```tangent.pricing.v1\n{ not json\n```\n" });
+  const base = await startShellServer(context, { here, ...machine });
+  if (!base) return;
+
+  const snapshot = await (await fetch(`${base}/api/cost?days=1&wait=1`)).json();
+  assert.equal(Number(snapshot.amount.toFixed(4)), 26.58);
+  assert.equal(snapshot.complete, false);
+  assert.equal(snapshot.excluded.some((entry) => entry.reason === "the pricing Document could not be read"), true);
+});

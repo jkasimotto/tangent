@@ -107,7 +107,7 @@ save();
   assert.equal(tmuxAfterResume.sessions[resumed.body.session].options["@tangent_launch"], "Codex · Sol");
   assert.equal(resumed.body.launchLabel, "Codex · Sol");
   const resumedRecord = await readBrain(brains, "otto/tangent");
-  assert.deepEqual(resumedRecord.generations.at(-1).resolvedLaunch.ref, { harness: "codex", model: "sol", effort: null });
+  assert.deepEqual(resumedRecord.generations.at(-1).resolvedLaunch.ref, { harness: "codex", model: "sol", effort: null, provider: "openai" });
   assert.equal(resumedRecord.generations.at(-1).resolvedLaunch.command, "codex --model sol");
   assert.equal(Object.values(tmuxAfterResume.sessions).some((session) => session.options["@tangent_kind"] === "work-definition"), false);
   // Julian's description is the woken attempt's first message, verbatim (ADR-0041).

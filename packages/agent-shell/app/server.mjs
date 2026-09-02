@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { doneCascade } from "./goal-cascade.mjs";
 import { describeAreaResources, resolveWorkFolder, unboundAreaMessage } from "./area-resources.mjs";
-import { launchRef, parseLaunch, resolveLaunch } from "./launch-environment.mjs";
+import { launchProvider, launchRef, parseLaunch, resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createLaunchMemory } from "./launch-memory.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
@@ -81,6 +81,8 @@ import { createParkGoalReceipts } from "./park-goal-receipts.mjs";
 import { createShellStateRoutes } from "./shell-state-routes.mjs";
 import { createVoiceRoutes } from "./voice-routes.mjs";
 import { activeBrainRoute, brainRouteAreas } from "./brain-notice-route.mjs";
+import { createCostRoutes } from "./cost-routes.mjs";
+import { createCostService } from "./cost-service.mjs";
 import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
 import { filterGoalSummaries, goalQueryFilters, hasGoalQueryFilters } from "./goal-query-filters.mjs";
 import { changeGoalDependencies, dependencySlugs, projectGoalDependencies, writeDependencySlugs } from "./goal-dependencies.mjs";
@@ -3530,7 +3532,7 @@ async function startPipelineStep(record, index, trace = null, options = {}) {
     instanceId: INSTANCE_ID,
     target: immutableTarget,
     resolvedLaunch: {
-      ref: step.launch ? structuredClone(step.launch) : null,
+      ref: await stampLaunchProvider(step.launch),
       command: step.command,
       label: step.label,
     },
@@ -3558,6 +3560,21 @@ async function registryHarness(harnessId) {
   const registry = await launchCatalog.registry();
   if (registry.error) return null;
   return registry.harnesses.find((entry) => entry.id === harnessId) ?? null;
+}
+
+/**
+ * Stamps the provider axis onto one launch reference at launch time.
+ *
+ * Provider is the account that served the model, the fourth axis beside
+ * harness, model and effort. It is recorded when the attempt starts and never
+ * read back from the registry afterwards, because a registry edit would then
+ * rewrite what finished work ran on. It stays out of `launchRef()`, which is
+ * capped at three parts.
+ */
+async function stampLaunchProvider(ref) {
+  if (!ref) return null;
+  const registry = await launchCatalog.registry();
+  return { ...structuredClone(ref), provider: registry.error ? null : launchProvider(registry, ref) };
 }
 
 /** True when two context fill readings differ. */
@@ -4544,7 +4561,7 @@ async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
       replacementAttemptId,
       replacementTarget,
       resolvedLaunch: {
-        ref: { harness: accepted.harness, model: accepted.model, effort: accepted.effort },
+        ref: { harness: accepted.harness, model: accepted.model, effort: accepted.effort, provider: accepted.provider ?? null },
         command: accepted.command,
         label: accepted.label,
       },
@@ -8102,6 +8119,19 @@ const voiceRoutes = createVoiceRoutes({
   /** Sends transcribed text through the durable Area inbox. */
   send(body) { return agentRouteOperations.send(body); },
 });
+// The top bar reads this. It answers from the snapshot it holds and reads the
+// next one behind the request, so the number is simply there without a press.
+const costService = createCostService({
+  pipelinesRoot: PIPELINES_ROOT,
+  brainsRoot: BRAINS_ROOT,
+  pricingFile: path.join(TREES_ROOT, "pricing.md"),
+  /** Reads the harness registry the shell already keeps. */
+  registry: () => launchCatalog.registry(),
+});
+const costRoutes = createCostRoutes({
+  /** Answers with the estimated cost of one window. */
+  read(options) { return costService.read(options); },
+});
 const goalQueryRoutes = createGoalQueryRoutes({
   /**
    * Lists summarized Goals in one Area, its subtree, or the whole vault.
@@ -8383,7 +8413,7 @@ async function attachFoundConversations(goal, detail, registry) {
     if (found.length === 1) {
       attempt.resume.conversationId = found[0].id;
       attempt.resume.command = resumeCommand(harness, { command: attempt.resolvedLaunch?.command ?? "", id: found[0].id });
-      attempt.providerSession = await rememberFoundConversation(goal, attempt.id, { provider: harness.id, id: found[0].id });
+      attempt.providerSession = await rememberFoundConversation(goal, attempt.id, { harness: harness.id, provider: harness.id, id: found[0].id });
     }
   }
 }
@@ -8399,7 +8429,7 @@ async function rememberFoundConversation(goal, attemptId, conversation) {
     const attempt = (record?.steps ?? []).flatMap((step) => step.attempts ?? []).find((item) => item.id === attemptId);
     if (!attempt) return conversation;
     if (attempt.providerSession?.id) return attempt.providerSession;
-    attempt.providerSession = { provider: conversation.provider, id: conversation.id };
+    attempt.providerSession = { harness: conversation.harness ?? conversation.provider, provider: conversation.provider, id: conversation.id };
     await writePipeline(PIPELINES_ROOT, record);
     return attempt.providerSession;
   });
@@ -8973,6 +9003,7 @@ const server = http.createServer(async (req, res) => {
     if (await documentRoutes.handle(req, res, url)) return;
     if (await shellControlRoutes.handle(req, res, url)) return;
     if (await voiceRoutes.handle(req, res, url)) return;
+    if (await costRoutes.handle(req, res, url)) return;
     if (await goalQueryRoutes.handle(req, res, url)) return;
     if (await launchRoutes.handle(req, res, url)) return;
     if (await workMutationRoutes.handle(req, res, url)) return;

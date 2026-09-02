@@ -839,7 +839,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainRestart.session, "test-brain-g2");
   assert.equal(brainRestart.generation, 2);
   const restartedBrain = await fetch(`${base}/api/brains/show?session=test-brain-g2`).then((response) => response.json());
-  assert.deepEqual(restartedBrain.brain.resolvedLaunch.ref, { harness: "fake", model: "one", effort: "high" });
+  assert.deepEqual(restartedBrain.brain.resolvedLaunch.ref, { harness: "fake", model: "one", effort: "high", provider: null });
   assert.equal(restartedBrain.brain.resolvedLaunch.command, "fake-agent --model one --effort high", "a restart resolves the current Area Brain configuration for the new attempt");
   assert.match(restartedBrain.prompt, /^Wave 1 dispatched: pipeline-demo runs step 9\. Next: wait for it\./, "Julian's message is the first message");
   openedSessions.push("test-brain-g2");
@@ -871,7 +871,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainResume.generation, 3);
   openedSessions.push("test-brain-g3");
   assert.equal(brainResume.brain.foundingInstruction.text, "Get the test Area done.");
-  assert.deepEqual(brainResume.brain.resolvedLaunch.ref, { harness: "fake", model: "one", effort: "high" });
+  assert.deepEqual(brainResume.brain.resolvedLaunch.ref, { harness: "fake", model: "one", effort: "high", provider: null });
   assert.equal(brainResume.brain.resolvedLaunch.command, "fake-agent --model one --effort high");
 
   const resumedRequest = await fetch(`${base}/api/brains/requests`, {

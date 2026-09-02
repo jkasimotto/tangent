@@ -16,7 +16,10 @@ test("claude and pi get a fresh uuid at launch, codex does not", () => {
   /** A fixed id so the test can read the appended flag. */
   const makeId = () => "11111111-2222-4333-8444-555555555555";
   const claudeConversation = newConversation(claude, makeId);
-  assert.deepEqual(claudeConversation, { provider: "claude-otto", id: "11111111-2222-4333-8444-555555555555" });
+  // `harness` and `provider` both hold the harness id: `provider` was
+  // always a harness id here, and it stays so records already on disk keep
+  // working now that the word also names the account a model was served by.
+  assert.deepEqual(claudeConversation, { harness: "claude-otto", provider: "claude-otto", id: "11111111-2222-4333-8444-555555555555" });
   assert.equal(launchWithConversation(claude, "claude-otto --model claude-opus-5", claudeConversation), "claude-otto --model claude-opus-5 --session-id 11111111-2222-4333-8444-555555555555");
   const piConversation = newConversation(pi, makeId);
   assert.equal(launchWithConversation(pi, "pi-code --thinking high", piConversation), "pi-code --thinking high --session-id 11111111-2222-4333-8444-555555555555");

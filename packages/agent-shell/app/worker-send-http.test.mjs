@@ -224,3 +224,60 @@ test("a worker's exact Area send records a handover receipt, and nothing else ca
   assert.equal(julianReplace.status, 403);
   assert.match(julianReplace.body.error, /^only the brain starts workers/);
 });
+
+test("a durable I am done handover completes a live worker's Assignment and leaves the next pending", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "worker-done-send-"));
+  const { trees, workspace } = await buildVault(root);
+  const openedSessions = [];
+  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
+  if (!base) return;
+
+  const brain = await post(base, "/api/brains/start", { area, instruction: "Own the send probe." });
+  assert.equal(brain.status, 200, JSON.stringify(brain.body));
+  openedSessions.push(brain.body.session);
+  const created = await post(base, "/api/goals/create", { area, caller: brain.body.session, goal: { title: "Durable done", doneWhen: "Both Assignments finish." } });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const started = await post(base, "/api/goals/start", {
+    file: created.body.file,
+    caller: brain.body.session,
+    steps: [
+      { instruction: "Implement it.", command: "sleep 300" },
+      { instruction: "Review it.", command: "sleep 300", kind: "review" },
+    ],
+  });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  openedSessions.push(started.body.session);
+
+  const ambiguous = await post(base, "/api/agents/send", { to: area, from: started.body.session, text: "I am done? The proof is not final." });
+  assert.equal(ambiguous.status, 200, JSON.stringify(ambiguous.body));
+  let queue = await readPipeline(path.join(root, "pipelines"), area, started.body.pipeline.slug);
+  assert.equal(queue.steps[0].status, "running", "ambiguous completion wording is only a note");
+  const premature = await post(base, "/api/agents/send", { to: area, from: started.body.session, text: "I am done." });
+  assert.equal(premature.status, 200, JSON.stringify(premature.body));
+  queue = await readPipeline(path.join(root, "pipelines"), area, started.body.pipeline.slug);
+  assert.equal(queue.steps[0].status, "running", "a conclusion without the required facts is only a note");
+
+  const done = await post(base, "/api/agents/send", { to: area, from: started.body.session, text: "I am done. Commit abc123 passes the focused test." });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  queue = await readPipeline(path.join(root, "pipelines"), area, started.body.pipeline.slug);
+  assert.equal(queue.steps[0].status, "complete");
+  assert.equal(queue.steps[1].status, "pending");
+  assert.equal(queue.currentAssignmentId, null);
+  assert.equal(queue.steps[0].handoverReceipts.length, 3, "the earlier notes and completion receipt are all durable");
+  assert.equal(queue.steps[0].handoverReceipts[2].queue.assignmentStatus, "complete");
+
+  const sessions = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  assert.equal(sessions.sessions.some((session) => session.name === started.body.session), true, "completion does not require the preserved worker session to exit");
+
+  const advanced = await post(base, "/api/pipelines/control", {
+    goal: created.body.file,
+    action: "advance",
+    step: 2,
+    expectedRevision: queue.revision,
+    idempotencyKey: "advance-after-durable-done",
+    caller: brain.body.session,
+  });
+  assert.equal(advanced.status, 200, JSON.stringify(advanced.body));
+  assert.equal(advanced.body.next.index, 2);
+  openedSessions.push(advanced.body.next.session);
+});

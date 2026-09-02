@@ -97,6 +97,7 @@ async function runFixture(argv, handler = () => Response.json({ error: "unexpect
   const previousFetch = globalThis.fetch;
   const previousLog = console.log;
   const previousTmux = process.env.TMUX;
+  const previousExitCode = process.exitCode;
   const requests = [];
   const printed = [];
   delete process.env.TMUX;
@@ -119,10 +120,11 @@ async function runFixture(argv, handler = () => Response.json({ error: "unexpect
   };
   try {
     await runAreaCli(argv);
-    return { requests, printed, text: printed.join("\n") };
+    return { requests, printed, text: printed.join("\n"), exitCode: process.exitCode };
   } finally {
     globalThis.fetch = previousFetch;
     console.log = previousLog;
+    process.exitCode = previousExitCode;
     if (previousTmux === undefined) delete process.env.TMUX;
     else process.env.TMUX = previousTmux;
   }
@@ -325,6 +327,14 @@ test("resource associate refuses ambiguous source prefixes and unsafe retry iden
     runFixture(["resource", "associate", AREA, "generic-link-one", "--operation-id", "unsafe operation id"], handler),
     /--operation-id must be 1-128 safe/,
   );
+  const structured = await runFixture(["resource", "associate", AREA, "generic-link", "--operation-id", "brain-associate-json", "--json"], handler);
+  assert.deepEqual(JSON.parse(structured.text), {
+    code: "area-resource-command-failed",
+    error: '"generic-link" matches 2 generic Link Blocks; use the full source element ID: generic-link-one, generic-link-two',
+    retryable: false,
+    operationId: "brain-associate-json",
+  });
+  assert.equal(structured.exitCode, 1);
   assert.equal(applies, 0);
 });
 
@@ -561,29 +571,35 @@ test("edit and remove use a stable direct locator, while inherited and ambiguous
   }, ambiguousProjection), /matches 2 Map resources; use more of the resource ID/);
 });
 
-test("typed server conflicts preserve status, code, operation ID, and safe recovery payload", async () => {
-  let caught;
-  try {
-    await runFixture(["resource", "remove", AREA, DIRECT_ID, "--operation-id", "brain-conflict-1", "--json"], ({ url }) => {
-      if (url.pathname.endsWith("/apply")) {
-        return Response.json({
-          error: "The catalog changed.",
-          code: "catalog-revision-changed",
-          operationId: "brain-conflict-1",
-          projection: projection(),
-        }, { status: 409 });
-      }
-      return Response.json({ error: "unexpected" }, { status: 404 });
-    });
-  } catch (error) {
-    caught = error;
-  }
-  assert.ok(caught instanceof Error);
-  assert.equal(caught.message, "The catalog changed.");
-  assert.equal(caught.status, 409);
-  assert.equal(caught.code, "catalog-revision-changed");
-  assert.equal(caught.operationId, "brain-conflict-1");
-  assert.equal(caught.payload.projection.state, "current");
+test("--json keeps typed server failures structured through the root CLI boundary", async () => {
+  const recovery = {
+    code: "catalog-revision-changed",
+    projection: projection(),
+  };
+  const output = await runFixture(["resource", "remove", AREA, DIRECT_ID, "--operation-id", "brain-conflict-1", "--json"], ({ url }) => {
+    if (url.pathname.endsWith("/apply")) {
+      return Response.json({
+        status: 409,
+        error: "Map resources changed. Reload them before saving.",
+        code: "catalog-revision-changed",
+        retryable: false,
+        operationId: "brain-conflict-1",
+        recovery,
+        privateTransaction: "must-not-cross-cli",
+      }, { status: 409 });
+    }
+    return Response.json({ error: "unexpected" }, { status: 404 });
+  });
+  assert.equal(output.exitCode, 1);
+  assert.deepEqual(JSON.parse(output.text), {
+    status: 409,
+    code: "catalog-revision-changed",
+    error: "Map resources changed. Reload them before saving.",
+    retryable: false,
+    operationId: "brain-conflict-1",
+    recovery,
+  });
+  assert.doesNotMatch(output.text, /privateTransaction/);
 });
 
 test("a lost mutation response names the exact body operation ID for a safe retry", async () => {

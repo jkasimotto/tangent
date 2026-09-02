@@ -13,7 +13,15 @@ export async function runAreaCli(argv = process.argv.slice(2)): Promise<void> {
     repeatable: ["candidate"],
   });
   const subcommand = args._[0];
-  if (subcommand === "resource") return resourceCommand(args);
+  if (subcommand === "resource") {
+    try { return await resourceCommand(args); }
+    catch (error) {
+      if (!booleanArg(args.json)) throw error;
+      printJson(resourceFailureEnvelope(error, args));
+      process.exitCode = 1;
+      return;
+    }
+  }
   if (!subcommand || args.help) return help();
   if (subcommand === "list") return listCommand(args);
   if (subcommand === "show") return showCommand(args);
@@ -211,6 +219,34 @@ type MapSourceShard = {
 
 const RESOURCE_OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const RESOURCE_KINDS = new Set(["worktree", "repository", "link"]);
+
+/** Returns one stable machine-readable failure without exposing arbitrary exception fields. */
+function resourceFailureEnvelope(error: unknown, args: Args): Record<string, unknown> {
+  const typed = error && typeof error === "object" ? error as Error & {
+    status?: unknown;
+    code?: unknown;
+    operationId?: unknown;
+    payload?: unknown;
+  } : null;
+  const payload = typed?.payload && typeof typed.payload === "object" && !Array.isArray(typed.payload)
+    ? typed.payload as Record<string, unknown>
+    : null;
+  const status = Number(payload?.status ?? typed?.status);
+  const suppliedCode = String(payload?.code ?? typed?.code ?? "").trim();
+  const code = suppliedCode || "area-resource-command-failed";
+  const message = String(payload?.error ?? typed?.message ?? error ?? "The Area resource command failed.");
+  const requestedOperationId = stringArg(args["operation-id"])?.trim();
+  const suppliedOperationId = String(payload?.operationId ?? typed?.operationId ?? requestedOperationId ?? "").trim();
+  const operationId = RESOURCE_OPERATION_ID.test(suppliedOperationId) ? suppliedOperationId : "";
+  return {
+    ...(Number.isInteger(status) && status > 0 ? { status } : {}),
+    code,
+    error: message,
+    retryable: payload?.retryable === true,
+    ...(operationId ? { operationId } : {}),
+    ...(payload?.recovery && typeof payload.recovery === "object" && !Array.isArray(payload.recovery) ? { recovery: payload.recovery } : {}),
+  };
+}
 
 /** Dispatches the Brain-facing `tangent area resource` inventory and mutation commands. */
 async function resourceCommand(args: Args): Promise<void> {

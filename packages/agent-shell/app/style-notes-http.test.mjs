@@ -121,10 +121,16 @@ test("a style note is recorded with provenance and changes nothing else in the w
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n");
   await writeFile(path.join(area, "test.md"), "---\ntype: area\n---\n\n# Test\n");
   await writeFile(design, DOCUMENT_BEFORE);
+  // The two surfaces that read a Document's comment count out of the vault
+  // index rather than out of the reader: the prompt a worker is given, and the
+  // For Julian row a brain wrote. Both must read the same after a style note.
+  await writeFile(path.join(area, "goal-render-the-scene.md"), "---\ntype: goal\nstatus: active\ndone_when: The scene renders.\n---\n\n# Render the scene\n\n## Sources\n\n- [[design-scene]]\n");
+  await writeFile(path.join(area, "plan.md"), "# Plan\n\n## For Julian\n\n- Decide [[design-scene]]: Do the anchors matter?\n");
   // The brain that wrote the authored paragraph, so its session resolves to a
   // harness, model, and effort exactly as the live server resolves one.
   await writeFile(path.join(brains, "otto", "test", "brain.json"), JSON.stringify({
     schema: "area-brain.v1", area: "otto/test", status: "stopped", generation: 1, session: AUTHOR_SESSION,
+    planFile: "otto/test/plan.md",
     generations: [{ generation: 1, session: AUTHOR_SESSION, resolvedLaunch: { harness: "claude-otto", model: "opus-5", effort: "high" } }],
   }));
 
@@ -169,7 +175,35 @@ test("a style note is recorded with provenance and changes nothing else in the w
   const vaultFilesBefore = await snapshot(trees);
   const brainsBefore = await snapshot(brains);
   const messagesBefore = await readFile(messageLog, "utf8").catch(() => "");
+  const goalFile = "otto/test/goal-render-the-scene.md";
+  const promptBefore = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(goalFile)}`).then((response) => response.json());
+  const forJulianBefore = await fetch(`${base}/api/brains/show?area=otto/test`).then((response) => response.json());
   assert.equal(commentsBefore.comments.length, 2, "the fixture carries the two comment shapes the real vault uses");
+  assert.equal(typeof promptBefore.markdown, "string", `the Goal brief was built: ${JSON.stringify(promptBefore).slice(0, 200)}`);
+  assert.match(promptBefore.markdown, /\(2 open comments from Julian\)/, "the worker prompt counts the two comments before the note");
+  assert.equal(forJulianBefore.brain.forJulian[0].commentCount, 2, "the For Julian row counts them too");
+
+  // A repaint is woken by a server-sent `changed` frame, so an open stream is
+  // the only way to observe that a style note wakes none. The frames are
+  // collected for the whole test and read twice: once here, and once at the
+  // end against a Document save that must wake one.
+  const frames = [];
+  const events = await fetch(`${base}/api/events`);
+  const eventReader = events.body.getReader();
+  context.after(() => eventReader.cancel().catch(() => {}));
+  /** Collects every event frame until the stream closes. */
+  const collect = async () => {
+    const decoder = new TextDecoder();
+    try {
+      for (;;) {
+        const { done, value } = await eventReader.read();
+        if (done) return;
+        frames.push(decoder.decode(value));
+      }
+    } catch {}
+  };
+  collect();
+  await new Promise((resolve) => setTimeout(resolve, 200));
 
   const filed = await postStyleNote(base, {
     file,
@@ -214,6 +248,20 @@ test("a style note is recorded with provenance and changes nothing else in the w
   const countFor = (vault) => vault.documents.find((item) => item.file === file)?.commentCount;
   assert.equal(countFor(vaultAfter), countFor(vaultBefore), "the Area badge count is unchanged");
   assert.equal(countFor(vaultAfter), 2, "the two existing comments still count as open work; the style note does not");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(frames.join("").includes("event: changed"), false, "the note woke no repaint: the route is outside the POST invalidation path");
+  const promptAfter = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(goalFile)}`).then((response) => response.json());
+  assert.equal(promptAfter.markdown, promptBefore.markdown, "the prompt a worker is given is unchanged, down to the byte");
+  const forJulianAfter = await fetch(`${base}/api/brains/show?area=otto/test`).then((response) => response.json());
+  assert.deepEqual(forJulianAfter.brain.forJulian, forJulianBefore.brain.forJulian, "the For Julian rows keep their count and their wording");
+
+  // The copy path strips comment markup author-blind. A style note is not in
+  // the text at all, so what Julian copies out is the prose and nothing else.
+  const { cleanDocumentMarkdown } = await import("./public/document-copy.js");
+  const copied = cleanDocumentMarkdown(documentAfter.text);
+  assert.ok(!copied.includes("Three clauses"), "the observation is not in what Julian copies");
+  assert.ok(!copied.includes("{>>"), "and neither is any marker");
+  assert.ok(copied.includes("The render pass runs once."), "while the prose the comments were anchored to still copies out");
 
   // Durability: the note survives the rewrite of the words it annotates.
   await writeFile(design, DOCUMENT_BEFORE.replace("The {==render pass==}", `The scene is stable.\n\nThe {==render pass==}`));
@@ -257,6 +305,19 @@ test("a style note is recorded with provenance and changes nothing else in the w
   assert.match(shown, /Note: The heading promises more than the section gives\./);
   assert.match(shown, /Observed by /);
   assert.deepEqual(await snapshot(treesAfterNote), vaultFilesAfterNote, "the CLI path writes no vault file either");
+
+  // The control for the silence: the same server, the same stream, one real
+  // comment. Without it, "no frame arrived" could mean the stream was dead.
+  assert.equal(frames.join("").includes("event: changed"), false, "no style note on any path woke a repaint");
+  const current = await fetch(`${base}/api/document?file=${encodeURIComponent(file)}`).then((response) => response.json());
+  const saved = await fetch(`${base}/api/document`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file, text: `${current.text}\n{>>Julian: A third one.<<}\n`, summary: "added a comment", baseHash: current.hash }),
+  });
+  assert.equal(saved.status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.ok(frames.join("").includes("event: changed"), "a real comment does wake a repaint, so the silence above is a fact about style notes");
 });
 
 test("a worker gets the standard refusal, so \"workers only send\" stays visible on this route too", async (context) => {

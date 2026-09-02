@@ -241,13 +241,5 @@ export function createStyleNotes({ file, now = () => new Date().toISOString(), n
     return { entries: kept, skipped, total: entries.length, counts: summarizeStyleNotes(kept) };
   }
 
-  /** One entry by its exact id, or null. */
-  async function show(id) {
-    const wanted = String(id ?? "").trim();
-    if (!wanted) return null;
-    const { entries } = await read();
-    return entries.find((entry) => entry.id === wanted) ?? null;
-  }
-
-  return { add, read, show, file };
+  return { add, read, file };
 }

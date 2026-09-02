@@ -98,7 +98,13 @@ async function listCommand(args: Args): Promise<void> {
     return;
   }
   console.log(`${notes.length} style note${notes.length === 1 ? "" : "s"}${result.skipped ? `, ${result.skipped} unreadable line${result.skipped === 1 ? "" : "s"} skipped` : ""}.`);
-  for (const line of [countLine("by model", counts?.byModel), countLine("by harness", counts?.byHarness), countLine("by tag", counts?.byTag)].filter(Boolean)) console.log(line);
+  for (const line of [
+    countLine("by model", counts?.byModel),
+    countLine("by harness", counts?.byHarness),
+    countLine("by tag", counts?.byTag),
+    countLine("by area", counts?.byArea),
+    unattributedLine(counts, notes.length),
+  ].filter(Boolean)) console.log(line);
   const limit = numberArg(args.limit) ?? DEFAULT_LIMIT;
   for (const note of notes.slice(0, limit)) {
     console.log("");
@@ -129,6 +135,18 @@ async function showCommand(args: Args): Promise<void> {
   if (note.tags.length) console.log(`Tags: ${note.tags.join(", ")}`);
   console.log(authorLine(note));
   console.log(`Observed by ${note.observer.kind}${note.observer.session ? ` (${note.observer.session})` : ""}.`);
+}
+
+/**
+ * How many notes name no author, printed whenever any do not. Without it the
+ * model and harness counts read as the whole story, when they can cover a
+ * handful of a large corpus: anything Julian wrote in the reader carries no
+ * session trailer to blame. A distillation that ranks models has to see how
+ * much of the corpus it is ranking.
+ */
+function unattributedLine(counts: StyleCounts | undefined, shown: number): string {
+  if (!counts?.unknownAuthors) return "";
+  return `${counts.unknownAuthors} of ${shown} note${shown === 1 ? "" : "s"} name no author.`;
 }
 
 /** One `by model: a 3, b 1` line, or an empty string when nothing was counted. */

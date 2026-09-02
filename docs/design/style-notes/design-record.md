@@ -258,7 +258,7 @@ Field rules:
 - `quote` is null for a whole-document observation. `quote.text` is the snapshot that makes the note survive the rewrite. It is capped at 2000 characters and is stored exactly as the reader showed it.
 - `quote.line` and `quote.heading` are locators at the moment of writing. They are never repaired later.
 - `document.vaultCommit` is the vault `HEAD` when the note was written, so a harvest can read the exact text back out of git.
-- `author.source` is one of `blame-trailer`, `no-trailer`, `quote-not-found`, `unknown-session`. It says why an unknown author is unknown.
+- `author.source` is one of `blame-trailer`, `quote-not-found`, `no-blame`, `no-trailer`, `unknown-session`. It says why an unknown author is unknown. `no-blame` is the case where the words were located but git has no answer for the line: no repository, an untracked file, or a line that is still uncommitted.
 - `observer.kind` is `julian` or `brain`. A `julian` observer has no harness fields.
 
 Every field is a fact at the moment of writing. No field is a live pointer.
@@ -332,6 +332,7 @@ Nothing in this table needs code. It follows from D1 and from the record shape.
 |---|---|---|
 | The Agent Shell server is not running | The command fails and prints the connection error. Nothing is written. | Fail closed. A dropped note is worse than a failed command, because the caller cannot tell. |
 | The quote is not found in the file | The note is written. `quote.line` is null. `author.source` is `quote-not-found`. | The observation is worth more than the anchor. |
+| `git blame` has no answer for the line | `author.known` is false, `author.source` is `no-blame`. | An untracked or uncommitted line has no author yet. Naming a different reason would be a guess. |
 | `git blame` gives a commit with no `Tangent-Tmux` trailer | `author.known` is false, `author.source` is `no-trailer`. | Expected for anything Julian edited in the reader (section 2.5). |
 | The blamed session has no Job or brain record | `author.known` is false, `author.source` is `unknown-session`. | Records are pruned. Guessing would poison the corpus. |
 | Two writers append at the same time | Both lines land. | One `appendFile` call in append mode writes one line. The caps on `note` and `quote.text` keep a line small, which makes an interleaved write very unlikely. Not guaranteed by the file system. |

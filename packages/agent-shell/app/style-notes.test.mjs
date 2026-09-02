@@ -75,8 +75,6 @@ test("the corpus appends, reads back newest first, and creates its file on first
   const lines = (await readFile(file, "utf8")).trim().split("\n");
   assert.equal(lines.length, 2, "each note is exactly one line");
   assert.equal(JSON.parse(lines[0]).note, "First.", "the file itself stays append only");
-  assert.equal((await notes.show("id-1")).note, "First.");
-  assert.equal(await notes.show("missing"), null);
 });
 
 test("one corrupt line is counted and skipped, never thrown", async (context) => {

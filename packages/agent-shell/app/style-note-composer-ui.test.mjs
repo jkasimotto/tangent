@@ -25,20 +25,25 @@ const DOCUMENT = [
   "The {==render pass==}{>>Julian: Name the pass.<<} runs once.",
 ].join("\n");
 
-/** Loads shell.js into a fresh JSDOM window, as the other rendering tests do. */
-async function loadShell() {
+/**
+ * Loads shell.js into a fresh JSDOM window, as the other rendering tests do,
+ * and closes it when the test ends. A JSDOM window holds timers and its own
+ * event loop, so a test file that leaves one open passes and then never lets
+ * the process exit.
+ */
+async function loadShell(t) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
   window.HTMLCanvasElement.prototype.getContext = () => null;
   window.setInterval = () => 0;
-  window.fetch = async () => ({
-    ok: true,
-    status: 200,
-    /** Empty body: these tests exercise pure rendering, not the polled state. */
-    async json() { return {}; },
-  });
+  // shell.js loads its initial state at the bottom of the file. These tests
+  // only need its pure rendering functions, which are defined before that, so
+  // the boot request is left unsettled: a stub that resolves starts a chain
+  // that outlives the test and then touches a closed window.
+  window.fetch = () => new Promise(() => {});
   window.eval(shellBundle);
+  t.after(() => window.close());
   return window;
 }
 
@@ -52,16 +57,16 @@ function composerOn(kind) {
   return { kind, file: "otto/test/design-scene.md", text: "Three clauses before the subject.", notice: "", editing: null, replying: null, section: null, anchor: { kind: "selection", quote: "render pass" }, placeLine: 4 };
 }
 
-test("the composer offers the choice between a comment and a style note before anything is written", async () => {
-  const window = await loadShell();
+test("the composer offers the choice between a comment and a style note before anything is written", async (t) => {
+  const window = await loadShell(t);
   const html = render(window, composerOn("comment"));
   assert.match(html, /data-comment-kind="comment" aria-pressed="true"/);
   assert.match(html, /data-comment-kind="style" aria-pressed="false"/);
   assert.match(html, /Save comment/);
 });
 
-test("choosing a style note says it stays out of the Document, where Julian reads it before writing", async () => {
-  const window = await loadShell();
+test("choosing a style note says it stays out of the Document, where Julian reads it before writing", async (t) => {
+  const window = await loadShell(t);
   const html = render(window, composerOn("style"));
   assert.match(html, /data-comment-kind="style" aria-pressed="true"/);
   assert.match(html, /Kept out of the Document; nobody is told\./);
@@ -70,8 +75,8 @@ test("choosing a style note says it stays out of the Document, where Julian read
   assert.match(html, /On “render pass”/, "the words the note is about are still named");
 });
 
-test("an edit and a reply show no kind switch, because both are about an existing comment", async () => {
-  const window = await loadShell();
+test("an edit and a reply show no kind switch, because both are about an existing comment", async (t) => {
+  const window = await loadShell(t);
   const comment = documentComments.parseComments(DOCUMENT)[0];
   for (const composer of [
     { ...composerOn("style"), editing: comment, anchor: { kind: "edit" } },
@@ -83,8 +88,8 @@ test("an edit and a reply show no kind switch, because both are about an existin
   }
 });
 
-test("a style note never renders in the reading column, and existing comments keep their asides", async () => {
-  const window = await loadShell();
+test("a style note never renders in the reading column, and existing comments keep their asides", async (t) => {
+  const window = await loadShell(t);
   const html = render(window, null);
   assert.doesNotMatch(html, /Three clauses/, "the observation lives only in the corpus");
   assert.doesNotMatch(html, /\{&gt;&gt;|\{>>/, "no comment markup leaks into the reading column");

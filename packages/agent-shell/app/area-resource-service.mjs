@@ -176,7 +176,7 @@ export function createAreaResourceService({
   /** Returns durable evidence plus the current explicit-discovery view. */
   async function evidence(input) {
     const area = await requireArea(typeof input === "string" ? input : input?.area);
-    const base = await projection.evidence({ area });
+    const base = await projection.evidence({ area, ...(Array.isArray(input?.owners) ? { owners: input.owners } : {}) });
     if (!base || base.state === "unavailable") return base;
     const panel = await projection.read({ area });
     const merged = mergeSuggestions(panel, discoveryStore.get(area)?.suggestions, { ...base, owner: area });
@@ -186,7 +186,10 @@ export function createAreaResourceService({
   /** Reads the panel without starting Git, provider, or filesystem observation work. */
   async function read(input) {
     const area = await requireArea(typeof input === "string" ? input : input?.area);
-    const [panel, facts] = await Promise.all([projection.read({ area }), projection.evidence({ area })]);
+    const panel = await projection.read({ area });
+    let facts = { owner: area, decisions: [] };
+    try { facts = { ...await projection.evidence({ area }), owner: area }; }
+    catch { /* The panel owns source-specific partial/unavailable facts for GET. */ }
     return mergeSuggestions(panel, discoveryStore.get(area)?.suggestions, { ...facts, owner: area });
   }
 
@@ -225,6 +228,19 @@ export function createAreaResourceService({
   /** Applies one catalog mutation using evidence from the same service view. */
   async function apply(input) {
     const result = await mutations.apply(input);
+    if (Number(result?.status ?? 200) < 400) {
+      const reviewed = input?.mutation?.kind === "add-suggestion" ? input.mutation.selection?.suggestion
+        : input?.mutation?.kind === "dismiss-suggestion" ? input.mutation.suggestion
+          : null;
+      const retained = reviewed ? discoveryStore.get(input.viewedFrom) : null;
+      if (reviewed && retained) {
+        const identity = suggestionIdentity(reviewed);
+        discoveryStore.set(input.viewedFrom, {
+          ...retained,
+          suggestions: (retained.suggestions ?? []).filter((item) => suggestionIdentity(item) !== identity),
+        });
+      }
+    }
     return result;
   }
 

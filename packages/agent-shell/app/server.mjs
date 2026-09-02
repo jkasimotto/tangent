@@ -119,6 +119,15 @@ import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
 import { createAreaMapWorldRoutes } from "./area-map-world-routes.mjs";
 import { createAreaMapTransactionRepository } from "./area-map-transaction-repository.mjs";
 import { createAreaMapWorldViewStore } from "./area-map-world-view-store.mjs";
+import { createAreaResourceCatalogAuthority } from "./area-resource-authority.mjs";
+import { readAreaShowMapResources } from "./area-resource-catalog.mjs";
+import { discoverAreaResources } from "./area-resource-discovery.mjs";
+import { createAreaResourceMutationCoordinator } from "./area-resource-mutations.mjs";
+import { createAreaResourceObservations } from "./area-resource-observations.mjs";
+import { createAreaResourceProjection } from "./area-resource-projection.mjs";
+import { createAreaResourceRepresentationCoordinator } from "./area-resource-representations.mjs";
+import { createAreaResourceRoutes } from "./area-resource-routes.mjs";
+import { createAreaResourceService } from "./area-resource-service.mjs";
 import { areaMapWorldEnabled } from "./public/area-map-rollout.js";
 import { workerWallNotice } from "./worker-wall-notice.mjs";
 import { dismissAreaDocument, markAreaDocumentOpened, presentAreaDocuments, projectAreaPresentations, pruneMissingAreaPresentations, readAreaPresentations, removeAreaPresentations, withdrawAreaDocument } from "./area-presentations.mjs";
@@ -270,6 +279,7 @@ const areaMapTransactions = createAreaMapTransactionRepository({
   root: TREES_ROOT, repository: areaCanvasRepository, vault: vaultRepository, runGit: runRepositoryGit,
   transactionRoot: path.join(MAP_STATE_ROOT, "transactions"), recordEvent: recordAreaMapEvent,
 });
+const areaResourceCatalogAuthority = createAreaResourceCatalogAuthority({ transactions: areaMapTransactions });
 const areaMapWorldViews = createAreaMapWorldViewStore({ root: MAP_STATE_ROOT });
 const launchMemory = createLaunchMemory(process.env.TANGENT_LAUNCH_MEMORY ?? path.join(os.homedir(), ".tangent", "agent-shell", "launch-memory.json"));
 const launchCatalog = createLaunchCatalog({
@@ -322,6 +332,7 @@ const areaMapContextRoutes = createAreaMapContextRoutes({ root: TREES_ROOT, repo
 });
 const areaMapWorldIndex = createAreaMapWorldIndex({ root: TREES_ROOT, repository: areaMapTransactions,
   runGit: runRepositoryGit, recordEvent: recordAreaMapEvent,
+  resolveResource: areaResourceCatalogAuthority.resolve,
   /** Lists the vault's complete Area hierarchy. */
   listAreas: async () => flattenAreaPaths(await readTree(TREES_ROOT)),
 });
@@ -330,6 +341,73 @@ const areaMapWorldRoutes = createAreaMapWorldRoutes({ index: areaMapWorldIndex,
   saveGesture: (writes, options) => areaMapTransactions.saveMany(writes, options),
   viewStore: areaMapWorldViews,
 });
+const areaResourceObservations = createAreaResourceObservations();
+const areaResourceProjection = createAreaResourceProjection({
+  root: TREES_ROOT,
+  transactions: areaMapTransactions,
+  observations: areaResourceObservations,
+  /** Keeps Area-note read failures distinct from an intentionally empty section. */
+  readNote: (area) => readFile(path.join(TREES_ROOT, areaNoteFile(area)), "utf8"),
+  ownerExists: mapAreaExists,
+});
+let areaResourceService;
+/** Reports inherited done/archive state for one resource-owning Area. */
+async function resourceAreaReadOnly(area) { return Boolean(await hiddenAreaStatus(area)); }
+const areaResourceMutations = createAreaResourceMutationCoordinator({
+  transactions: areaMapTransactions,
+  /** Returns the same scoped panel projection that the Brain and browser read. */
+  projectionReader: (area) => areaResourceService.read({ area }),
+  /** Rederives durable note evidence and joins retained explicit discovery evidence. */
+  evidenceReader: (area, options) => areaResourceService.evidence({ area, ...options }),
+  areaExists: mapAreaExists,
+  areaReadOnly: resourceAreaReadOnly,
+  /** Invalidates only locators whose catalog-backed observation may have changed. */
+  onCommitted: async ({ request, result }) => {
+    const locators = [
+      result?.resource?.locator,
+      request?.mutation?.resource,
+      request?.mutation?.oldResource,
+    ];
+    for (const locator of locators) if (locator?.owner && locator?.id) areaResourceObservations.invalidate(locator);
+  },
+});
+const areaResourceRepresentations = createAreaResourceRepresentationCoordinator({
+  transactions: areaMapTransactions,
+  resolveCatalogResource: areaResourceCatalogAuthority.resolve,
+  readAreaStatus: hiddenAreaStatus,
+});
+areaResourceService = createAreaResourceService({
+  projection: areaResourceProjection,
+  observations: areaResourceObservations,
+  mutations: areaResourceMutations,
+  representations: areaResourceRepresentations,
+  discover: discoverAreaResources,
+  jobsRoot: PIPELINES_ROOT,
+  areaExists: mapAreaExists,
+});
+const areaResourceRoutes = createAreaResourceRoutes({ operations: areaResourceService });
+
+/** Reads the additive active-only Area-show resource list without failing legacy fields. */
+async function areaShowMapResources(area) {
+  return readAreaShowMapResources(TREES_ROOT, area, {
+    /** Converts exact catalog failures into the Area-show discriminated read union. */
+    readCatalog: async (owner) => {
+      try { return await areaResourceCatalogAuthority.read(owner); }
+      catch (error) {
+        return {
+          state: "unavailable",
+          owner,
+          error: {
+            owner,
+            code: error?.code ?? "catalog-load-failed",
+            message: error?.message ?? `Map resources for ${owner} could not be loaded.`,
+            retryable: error?.retryable === true,
+          },
+        };
+      }
+    },
+  });
+}
 // One JSON record per Goal for a solo (non-pipeline) session's context
 // continuations: the same mechanism pipeline steps keep inline on the step
 // (design-worker-context-handover D6).
@@ -4932,6 +5010,7 @@ const WORKER_REFUSED_ROUTES = new Set([
   "/api/brains/requests", "/api/brains/requests/withdraw", "/api/brains/requests/answer", "/api/brains/requests/dismiss",
   "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control", "/api/processes/check", "/api/processes/request-start", "/api/processes/start", "/api/processes/defer", "/api/processes/dismiss", "/api/processes/restore", "/api/processes/skip",
   "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions", "/api/areas/map-promotions/complete",
+  "/api/areas/map-resources/resolve", "/api/areas/map-resources/refresh", "/api/areas/map-resources/discover", "/api/areas/map-resources/inspect-target", "/api/areas/map-resources/apply", "/api/areas/map-resources/representation",
   "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
 
@@ -4947,6 +5026,7 @@ const REPAIR_REFUSED_ROUTES = new Set([
   "/api/brains/requests/answer", "/api/brains/requests/dismiss", "/api/operations/new", "/api/operations/control",
   "/api/programs/new", "/api/programs/control", "/api/processes/create", "/api/processes/remove", "/api/processes/control",
   "/api/areas/canvas", "/api/areas/picture", "/api/areas/picture/withdraw", "/api/areas/map-proposals", "/api/areas/map-proposals/withdraw", "/api/areas/map-proposals/decide", "/api/areas/map-promotions", "/api/areas/map-promotions/complete",
+  "/api/areas/map-resources/resolve", "/api/areas/map-resources/refresh", "/api/areas/map-resources/discover", "/api/areas/map-resources/inspect-target", "/api/areas/map-resources/apply", "/api/areas/map-resources/representation",
   "/api/processes/check", "/api/processes/request-start", "/api/processes/start", "/api/processes/defer", "/api/processes/dismiss", "/api/processes/restore", "/api/processes/skip", "/api/harnesses", "/api/launch/default", "/api/spawn", "/api/agent",
 ]);
 
@@ -6905,11 +6985,14 @@ const agentRouteOperations = {
       const inbox = await readInbox(BRAINS_ROOT, projected.area);
       projected = resolveAgentContext({ session, brains, notices: unreadNotices(inbox).map((notice) => ({ ...notice, area: inbox.area })) });
       const brain = brains.find((record) => record.area === projected.area);
+      const mapResources = projected.area && !isRootArea(projected.area)
+        ? await areaShowMapResources(projected.area)
+        : { state: "current", rows: [] };
       // A brain has no generated prompt: its instructions are the Area note
       // chain in its folder, and its first message was Julian's own words.
       return brain
-        ? { ...projected, prompt: currentGeneration(brain)?.firstMessage ?? brainFirstMessage(brain.foundingInstruction?.text), promptError: null }
-        : { ...projected, prompt: null, promptError: "the durable brain record is unavailable" };
+        ? { ...projected, mapResources, prompt: currentGeneration(brain)?.firstMessage ?? brainFirstMessage(brain.foundingInstruction?.text), promptError: null }
+        : { ...projected, mapResources, prompt: null, promptError: "the durable brain record is unavailable" };
     }
     const [pipelines, goalIndex] = await Promise.all([readAllPipelines(PIPELINES_ROOT), goalsByFile()]);
     projected = resolveAgentContext({ session, brains, pipelines, goals: [...goalIndex.values()] });
@@ -7041,6 +7124,7 @@ const areaRoutesOperations = {
       resources: "",
       resolved: {},
       workFolder: null,
+      mapResources: { state: "current", rows: [] },
       skills: [],
       projectSkills: [],
       goals: [],
@@ -7050,6 +7134,7 @@ const areaRoutesOperations = {
     const text = await areaNote(area);
     const workFolder = await areaWorkFolder(area);
     const resolved = await describeAreaResources(TREES_ROOT, area);
+    const mapResources = await areaShowMapResources(area);
     const canvas = await areaMapTransactions.read(area);
     const openProposals = await areaMapProposals.list(area, { openOnly: true });
     const mapSummary = canvas.ok ? areaCanvasSummary(canvas.scene) : null;
@@ -7062,6 +7147,7 @@ const areaRoutesOperations = {
       // that declared it, and the folder a worker would actually start in.
       resolved,
       workFolder,
+      mapResources,
       // Every skill on the route from the vault root to this Area, root
       // first, and the bound repository's own project skills (D20).
       skills: await routeSkills(TREES_ROOT, area),
@@ -7132,6 +7218,8 @@ const areaRoutesOperations = {
       runGit: runVaultGit, runGitCapture: captureVaultGit, transaction: areaMapTransactions,
       operationId: String(body.operationId ?? "").trim() || randomUUID(),
     });
+    areaResourceMutations.clearUndo();
+    areaResourceService.discoveryStore.clear();
     await moveSessionBindings(moved);
     return moved;
   },
@@ -8793,6 +8881,7 @@ const server = http.createServer(async (req, res) => {
     if (await jobRoutes.handle(req, res, url)) return;
     if (await pipelineRoutes.handle(req, res, url)) return;
     if (await agentRoutes.handle(req, res, url)) return;
+    if (await areaResourceRoutes.handle(req, res, url)) return;
     if (await areaRoutes.handle(req, res, url)) return;
     if (await areaCanvasRoutes.handle(req, res, url)) return;
     if (AREA_MAP_WORLD_ENABLED && await areaMapWorldRoutes.handle(req, res, url)) return;

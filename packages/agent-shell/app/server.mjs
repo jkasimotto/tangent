@@ -3697,6 +3697,13 @@ function workerHandoverOperationId(sessionName, text, report, idempotencyKey, ki
 /** The send flags a worker has (D5), each with the queue effect it stands for. */
 const WORKER_SEND_KINDS = new Set(["note", "done", "blocked"]);
 
+/** Interprets only the exact durable worker conclusions named in its prompt. */
+function workerPlainHandoverKind(text) {
+  if (/^I am done\.\s+\S/i.test(text)) return "done";
+  if (/^I cannot continue\.\s+\S/i.test(text)) return "blocked";
+  return "note";
+}
+
 /**
  * Builds a stored report for the hidden compatibility handover transport.
  * Existing readers keep working because they already know these shapes.
@@ -7142,9 +7149,10 @@ const agentRouteOperations = {
         return { status: 403, error: `this worker reports only to ${organizerArea ?? "its recorded organizer"}: tangent send ${organizerArea ?? "<brain-area>"} \"<plain note>\"` };
       }
       if (target && target !== requested) return { status: 403, error: "a worker must name its organizer Area, not a session" };
-      const result = await handoverPipelineStep(sender.session, text, null, String(body.idempotencyKey ?? body.operationId ?? ""), "note");
+      const handoverKind = workerPlainHandoverKind(text);
+      const result = await handoverPipelineStep(sender.session, text, null, String(body.idempotencyKey ?? body.operationId ?? ""), handoverKind);
       if (result.status !== 200) return { status: result.status, error: result.error };
-      await recordRuntimeEvent("job.assignment.reported", { operationId: body.idempotencyKey ?? body.operationId, address: result.pipeline?.goal, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: sender.session, assignmentId: result.receipt?.assignmentId ?? null, outcome: "note" });
+      await recordRuntimeEvent("job.assignment.reported", { operationId: body.idempotencyKey ?? body.operationId, address: result.pipeline?.goal, run: result.pipeline?.run, revision: result.pipeline?.revision, actorSession: sender.session, assignmentId: result.receipt?.assignmentId ?? null, outcome: handoverKind });
       const delivery = result.route;
       return {
         status: 200,

@@ -36,6 +36,7 @@ const reflowAnchorFixture = params.get("reflow-anchor") === "1";
 const focusedFixture = params.get("focus") === "1";
 const deferredTargetFixture = params.get("deferred-target") === "1";
 const runtimeFixture = params.get("runtime") === "1";
+const resourcesFixture = params.get("resources") === "1";
 const scene = () => core.createEmptyScene();
 const scenes = new Map();
 
@@ -51,7 +52,21 @@ standards.elements.push(...core.createBlockElements({
   width: 220,
   height: 100,
 }));
+if (resourcesFixture) {
+  // Production shape: several worktrees, one review link, and one generic link share one Area
+  // beside its Goal, while an ancestor keeps its own worktree.
+  standards.elements.push(
+    ...core.createBlockElements({ id: "standards-wt-a", kind: "resource", ref: "wt-a", title: "stale a", status: "", x: 180, y: 300, width: 240, height: 110 }),
+    ...core.createBlockElements({ id: "standards-wt-b", kind: "resource", ref: "wt-b", title: "stale b", status: "", x: 440, y: 300, width: 240, height: 110 }),
+    ...core.createBlockElements({ id: "standards-review", kind: "resource", ref: "review-7", title: "stale review", status: "", x: 440, y: 180, width: 240, height: 110 }),
+    ...core.createBlockElements({ id: "standards-generic", kind: "link", ref: "https://example.com/review/17", title: "Review 17", status: "", x: 180, y: 430, width: 240, height: 110 }),
+  );
+}
 scenes.set("neara/delivery/standards", standards);
+
+const delivery = scene();
+if (resourcesFixture) delivery.elements.push(...core.createBlockElements({ id: "delivery-wt-c", kind: "resource", ref: "wt-c", title: "stale c", status: "", x: 780, y: 140, width: 240, height: 110 }));
+scenes.set("neara/delivery", delivery);
 
 const hackathon = scene();
 hackathon.elements.push(...core.createBlockElements({
@@ -69,7 +84,6 @@ scenes.set("neara/hackathon", hackathon);
 
 for (const area of [
   "neara",
-  "neara/delivery",
   "neara/delivery/standards/clearance",
   "neara/delivery/standards/clearance/rules",
 ]) scenes.set(area, scene());
@@ -115,7 +129,7 @@ const nodes = records.map(([key, parent, storedRect, state]) => ({
     hash: "hash-" + key,
     state,
     elementCount: scenes.get(key)?.elements.length ?? 0,
-    blockCount: ["neara/delivery/standards", "neara/hackathon"].includes(key) ? 1 : 0,
+    blockCount: (scenes.get(key)?.elements ?? []).filter((element) => element.type === "rectangle" && element.customData?.tangent?.ref).length,
     ...(state === "ready" ? { scene: scenes.get(key) ?? scene() } : {}),
     ...(state === "unreadable" ? { errors: ["fixture map file unreadable"] } : {}),
   },
@@ -144,6 +158,31 @@ documents.push(
   { kind: "document", area: "neara/hackathon", file: "neara/hackathon/design-plan.md", title: "Hackathon plan", status: "draft", live: false },
 );
 
+const resourceRoot = "/private/tmp/tangent-world-fixture";
+const resourceFacts = new Map([
+  ["wt-a", { label: "Checkout A", target: { kind: "worktree", path: resourceRoot + "/wt-a" }, local: { state: "current", value: { state: "available", checkout: { kind: "branch", head: "aaa", branchRef: "refs/heads/feature/a" }, repositoryPath: resourceRoot + "/repo" }, checkedAt: "2026-09-02T01:00:00.000Z" }, link: null }],
+  ["wt-b", { label: "Checkout B", target: { kind: "worktree", path: resourceRoot + "/wt-b" }, local: { state: "current", value: { state: "available", checkout: { kind: "branch", head: "bbb", branchRef: "refs/heads/feature/b" }, repositoryPath: resourceRoot + "/repo" }, checkedAt: "2026-09-02T01:00:00.000Z" }, link: null }],
+  ["wt-c", { label: "Checkout C", target: { kind: "worktree", path: resourceRoot + "/wt-c" }, local: { state: "current", value: { state: "available", checkout: { kind: "branch", head: "ccc", branchRef: "refs/heads/feature/c" }, repositoryPath: resourceRoot + "/repo" }, checkedAt: "2026-09-02T01:00:00.000Z" }, link: null }],
+  ["review-7", { label: "Review seven", target: { kind: "link", url: "https://github.com/neara/delivery/pull/7" }, local: null, link: { kind: "github-pr", owner: "neara", repository: "delivery", number: 7, lifecycle: { state: "current", value: { stateLabel: "Merged", treatment: "success", providerUpdatedAt: "2026-09-02T00:00:00.000Z" } } } }],
+]);
+window.resourceCalls = [];
+window.copied = [];
+Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (value) => { window.copied.push(value); } } });
+/** Serves only the read routes the composed Map needs for its resource Blocks. */
+const resourceApi = async (url, init = {}) => {
+  const body = init.body ? JSON.parse(init.body) : null;
+  window.resourceCalls.push({ url, body });
+  if (url === "/api/areas/map-resources/resolve" || url === "/api/areas/map-resources/refresh") {
+    return { resolutions: body.resources.map((locator) => {
+      const fact = resourceFacts.get(locator.id);
+      if (!fact) return { state: "gone", value: { locator, reason: "missing-record", lastKnown: null, representation: { state: "current", value: "on-map" }, warnings: [] } };
+      return { state: "current", value: { locator, ...structuredClone(fact), representation: { state: "current", value: "on-map" }, origin: null, warnings: [] } };
+    }) };
+  }
+  if (url.startsWith("/api/areas/map-resources?")) return { state: "current", viewedFrom: new URL(url, location.origin).searchParams.get("area"), catalogs: [], counts: { state: "current", confirmedAssociations: 0, suggestions: 0, legacyReview: 0 }, suggestions: [], legacyReview: [], rows: [] };
+  throw new Error("Unexpected world fixture resource route: " + url);
+};
+
 window.worldEvents = [];
 window.mapTelemetry = [];
 window.entityVerbs = [];
@@ -157,6 +196,7 @@ window.editor = mountAreaBoardEditor(document.querySelector("#map"), {
   world,
   scene: scene(),
   getDocuments: () => documents,
+  api: resourceApi,
   focus: window.fixtureFocus,
   onWorldChange: (nextWorld, changedAreas, changedOwners) => {
     const sourceOwners = new Set(changedOwners);
@@ -287,6 +327,9 @@ function regexEscape(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Block counts a fixture variant adds on top of the default one-Block Areas; tests set and clear it. */
+const blockCountOverrides = new Map();
+
 /** Returns the exact parent-aware accessible name for one fixture Area. */
 function labelName(area, { title = null, state = null, folded = false } = {}) {
   const parts = area.split("/");
@@ -295,7 +338,7 @@ function labelName(area, { title = null, state = null, folded = false } = {}) {
   const name = title ?? display(parts.at(-1));
   const parent = parts.length === 1 ? "map root" : parts.slice(0, -1).map(display).join(" / ");
   const load = state ?? ({ "neara/essential": "deferred", "neara/portland": "unreadable" }[area] ?? "ready");
-  const blocks = ["neara/delivery/standards", "neara/hackathon"].includes(area) ? 1 : 0;
+  const blocks = blockCountOverrides.get(area) ?? (["neara/delivery/standards", "neara/hackathon"].includes(area) ? 1 : 0);
   return `${name}, child of ${parent}, depth ${parts.length}, ${folded ? "folded" : "unfolded"}, ${load}, ${blocks} ${blocks === 1 ? "block" : "blocks"}`;
 }
 
@@ -1277,4 +1320,104 @@ test("a structural block insertion anchors its auto-reflowed Area across reload"
   });
   assert.deepEqual(reloaded, { resolved: after.resolved, deliveryResolved: after.deliveryResolved, drawn: after.drawn });
   assert.deepEqual(reloadedBlock, blockAfter, "reload preserves the block and owner coordinates exactly");
+});
+
+/** Returns every resource-bearing source Block by ID with its owner-local geometry. */
+async function sourceBlocks(page) {
+  return page.evaluate(() => Object.fromEntries(window.editor.controller().world().areas
+    .filter((node) => node.shard?.scene)
+    .flatMap((node) => node.shard.scene.elements
+      .filter((element) => element.type === "rectangle" && element.customData?.tangent?.ref)
+      .map((element) => [element.id, { owner: node.key, x: element.x, y: element.y, width: element.width, height: element.height, deleted: element.isDeleted, tangent: element.customData.tangent }]))));
+}
+
+test("resource Blocks ride the shared world pipeline through Area move, growth, fold, Outline, and Find", { timeout: 120_000 }, async (context) => {
+  blockCountOverrides.set("neara/delivery/standards", 5);
+  blockCountOverrides.set("neara/delivery", 1);
+  context.after(() => blockCountOverrides.clear());
+  const page = await openWorld(context, "?resources=1");
+  const exactA = "/private/tmp/tangent-world-fixture/wt-a";
+
+  await page.waitForFunction(() => {
+    const labels = (window.editor.rendered?.() ?? []).filter((element) => element.type === "text").map((element) => element.text);
+    return ["WORKTREE\nCheckout A\nfeature/a", "WORKTREE\nCheckout B\nfeature/b", "WORKTREE\nCheckout C\nfeature/c", "GITHUB PR  ✓\nReview seven\nneara/delivery#7 · Merged"].every((text) => labels.includes(text))
+      && (window.editor.rendered?.() ?? []).some((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-success-rail");
+  });
+  const sourceBefore = await sourceBlocks(page);
+  assert.deepEqual(Object.keys(sourceBefore).sort(), ["delivery-wt-c", "hackathon-plan", "standards-generic", "standards-proof", "standards-review", "standards-wt-a", "standards-wt-b"]);
+  assert.ok(Object.values(sourceBefore).every((block) => !block.deleted));
+  const standardsBefore = await authoredBlocks(page, "neara/delivery/standards", { rendered: true });
+  const deliveryBefore = await authoredBlocks(page, "neara/delivery", { rendered: true });
+  assert.equal(standardsBefore.length, 5, "the Goal, three resources, and the generic Link all render as composed Blocks of Standards");
+  assert.equal(deliveryBefore.length, 1);
+  const regionsBefore = await regions(page);
+  /** Reports whether one composed Block lies inside one composed region rectangle. */
+  const inside = (block, region) => block.x >= region.x - 0.01 && block.y >= region.y - 0.01
+    && block.x + block.width <= region.x + region.width + 0.01 && block.y + block.height <= region.y + region.height + 0.01;
+  assert.ok(standardsBefore.every((block) => inside(block, regionsBefore["neara/delivery/standards"])), "every resource Block starts inside its owning Area");
+
+  // Moving an ancestor carries every resource Block with it and writes no resource source.
+  const move = await moveArea(page, "neara", { x: 50, y: 30 });
+  const delta = { x: move.after.x - move.before.x, y: move.after.y - move.before.y };
+  const standardsMoved = await authoredBlocks(page, "neara/delivery/standards", { rendered: true });
+  const deliveryMoved = await authoredBlocks(page, "neara/delivery", { rendered: true });
+  for (const [before, after] of [...standardsBefore.map((block, index) => [block, standardsMoved[index]]), [deliveryBefore[0], deliveryMoved[0]]]) {
+    assert.equal(after.sourceId, before.sourceId);
+    assert.ok(Math.abs((after.x - before.x) - delta.x) < 1 && Math.abs((after.y - before.y) - delta.y) < 1, `${before.sourceId} did not follow the ancestor move: ${JSON.stringify({ before, after, delta })}`);
+  }
+  assert.deepEqual(await sourceBlocks(page), sourceBefore, "an ancestor move leaves every resource source Block untouched");
+  assert.deepEqual((await page.evaluate(() => window.worldEvents.at(-1))).sourceOwners, ["@root"]);
+
+  // Growing the owning Area keeps every resource Block inside it and still writes no resource source.
+  const eventsBeforeGrowth = await page.evaluate(() => window.worldEvents.length);
+  await beginSouthEastResize(page, "neara/delivery/standards", 320, 4);
+  await page.mouse.up();
+  await page.waitForFunction((count) => window.worldEvents.length > count, eventsBeforeGrowth);
+  const regionsGrown = await regions(page);
+  assert.ok(regionsGrown["neara/delivery/standards"].width > regionsBefore["neara/delivery/standards"].width + 250);
+  const standardsGrown = await authoredBlocks(page, "neara/delivery/standards", { rendered: true });
+  assert.ok(standardsGrown.every((block) => inside(block, regionsGrown["neara/delivery/standards"])), "resource Blocks stay inside the grown Area");
+  assert.ok(standardsGrown.every((block) => inside(block, regionsGrown["neara/delivery"])), "resource Blocks stay inside the force-widened ancestor");
+  assert.deepEqual(await sourceBlocks(page), sourceBefore, "Area growth leaves every resource source Block untouched");
+  assert.deepEqual((await page.evaluate((index) => window.worldEvents[index], eventsBeforeGrowth)).sourceOwners, ["neara/delivery"]);
+
+  // Folding an ancestor hides descendant resource Blocks in the render plan only.
+  await selectArea(page, "neara/delivery");
+  await page.keyboard.press("Space");
+  await page.getByText("folded · Space", { exact: true }).waitFor();
+  await page.waitForFunction(() => !(window.editor.rendered?.() ?? []).some((element) => !element.isDeleted && element.customData?.tangent?.ref === "wt-a"));
+  assert.equal((await authoredBlocks(page, "neara/delivery/standards", { rendered: true })).length, 0, "fold removes descendant resource Blocks from the render plan");
+  assert.deepEqual(await sourceBlocks(page), sourceBefore, "fold never deletes a resource source Block");
+  await page.keyboard.press("Space");
+  await page.waitForFunction(() => (window.editor.rendered?.() ?? []).filter((element) => !element.isDeleted && element.customData?.tangentWorld?.owner === "neara/delivery/standards" && element.customData?.tangent?.ref).length === 5);
+
+  // The Outline lists every resource under its owner with its exact target, and Enter copies the exact path.
+  await page.keyboard.press("Meta+Shift+o");
+  const outline = page.getByRole("region", { name: "Area hierarchy" });
+  await outline.waitFor();
+  const rowA = outline.getByRole("treeitem", { name: /^Worktree: Checkout A\./ });
+  await rowA.waitFor();
+  const nameA = await rowA.getAttribute("aria-label");
+  assert.ok(nameA.includes("Area neara/delivery/standards"), `the Outline name carries the owning Area: ${nameA}`);
+  assert.ok(nameA.includes(`Target ${exactA}.`), `the Outline name carries the exact path: ${nameA}`);
+  assert.ok(nameA.endsWith("Copy path with Enter."), `the Outline name teaches the keyboard action: ${nameA}`);
+  assert.equal(await rowA.getAttribute("aria-level"), "4", "resource rows nest under their owning Area");
+  assert.match(await outline.getByRole("treeitem", { name: /Review seven/ }).getAttribute("aria-label"), /Merged/);
+  assert.ok((await outline.getByRole("treeitem", { name: /Checkout C/ }).getAttribute("aria-label")).includes("Area neara/delivery"));
+  await rowA.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => window.copied.length === 1);
+  assert.deepEqual(await page.evaluate(() => window.copied), [exactA], "Outline Enter copies the exact absolute path with no newline");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !document.querySelector(".tangent-map-outline"));
+
+  // Find sees resource Blocks by their resolved words.
+  await page.locator("#map").dispatchEvent("keydown", { key: "/" });
+  const find = page.getByRole("search", { name: "Find on the map" });
+  await find.waitFor();
+  await find.getByRole("textbox").fill("Checkout B");
+  await find.getByRole("option", { name: /Checkout B/ }).waitFor();
+  await find.getByRole("textbox").fill("wt-c");
+  await find.getByRole("option", { name: /Checkout C/ }).waitFor();
+  assert.deepEqual(await sourceBlocks(page), sourceBefore, "Outline and Find never change resource source Blocks");
 });

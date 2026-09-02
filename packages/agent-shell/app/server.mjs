@@ -3699,8 +3699,8 @@ const WORKER_SEND_KINDS = new Set(["note", "done", "blocked"]);
 
 /** Interprets only the exact durable worker conclusions named in its prompt. */
 function workerPlainHandoverKind(text) {
-  if (/^I am done\.\s+\S/i.test(text)) return "done";
-  if (/^I cannot continue\.\s+\S/i.test(text)) return "blocked";
+  if (/^I am done\.(?:\\[rn]|\s)+\S/i.test(text)) return "done";
+  if (/^I cannot continue\.(?:\\[rn]|\s)+\S/i.test(text)) return "blocked";
   return "note";
 }
 

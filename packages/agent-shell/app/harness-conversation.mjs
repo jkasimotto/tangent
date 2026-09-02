@@ -44,7 +44,7 @@ export function resumeCommand(harness, { command = "", id = "" } = {}) {
 }
 
 /** Reads the first line of one file without loading the rest. */
-async function firstLine(file) {
+export async function firstLine(file) {
   const handle = await open(file, "r");
   try {
     const chunks = [];
@@ -64,7 +64,7 @@ async function firstLine(file) {
 }
 
 /** The local YYYY/MM/DD folder codex uses for one instant. */
-function dayFolder(at) {
+export function dayFolder(at) {
   const date = new Date(at);
   /** Two-digit month or day. */
   const pad = (n) => String(n).padStart(2, "0");

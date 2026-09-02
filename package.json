@@ -13,6 +13,7 @@
     "packages/agent-runtime",
     "packages/agent-shell",
     "packages/core",
+    "packages/pricing",
     "packages/repo",
     "packages/governance",
     "packages/usage-core",

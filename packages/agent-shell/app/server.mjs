@@ -81,6 +81,8 @@ import { createParkGoalReceipts } from "./park-goal-receipts.mjs";
 import { createShellStateRoutes } from "./shell-state-routes.mjs";
 import { createVoiceRoutes } from "./voice-routes.mjs";
 import { activeBrainRoute, brainRouteAreas } from "./brain-notice-route.mjs";
+import { createCostRoutes } from "./cost-routes.mjs";
+import { createCostService } from "./cost-service.mjs";
 import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
 import { filterGoalSummaries, goalQueryFilters, hasGoalQueryFilters } from "./goal-query-filters.mjs";
 import { changeGoalDependencies, dependencySlugs, projectGoalDependencies, writeDependencySlugs } from "./goal-dependencies.mjs";
@@ -8102,6 +8104,10 @@ const voiceRoutes = createVoiceRoutes({
   /** Sends transcribed text through the durable Area inbox. */
   send(body) { return agentRouteOperations.send(body); },
 });
+// The top bar reads this. It answers from the snapshot it holds and reads
+// the next one behind the request, so the number is there without a press.
+const costService = createCostService({ pipelinesRoot: PIPELINES_ROOT, brainsRoot: BRAINS_ROOT, registry: () => launchCatalog.registry() });
+const costRoutes = createCostRoutes({ read: (options) => costService.read(options) });
 const goalQueryRoutes = createGoalQueryRoutes({
   /**
    * Lists summarized Goals in one Area, its subtree, or the whole vault.
@@ -8973,6 +8979,7 @@ const server = http.createServer(async (req, res) => {
     if (await documentRoutes.handle(req, res, url)) return;
     if (await shellControlRoutes.handle(req, res, url)) return;
     if (await voiceRoutes.handle(req, res, url)) return;
+    if (await costRoutes.handle(req, res, url)) return;
     if (await goalQueryRoutes.handle(req, res, url)) return;
     if (await launchRoutes.handle(req, res, url)) return;
     if (await workMutationRoutes.handle(req, res, url)) return;

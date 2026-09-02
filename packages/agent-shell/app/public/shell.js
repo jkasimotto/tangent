@@ -10,6 +10,7 @@ import { createShellState } from "./shell-state.js";
 import { shellDom } from "./shell-dom.js";
 import { createRefreshCoordinator, startRebuildRefresh, startRefreshLifecycle } from "./refresh-lifecycle.js";
 import { createWorkClient } from "./work-client.js";
+import { renderCostReadout } from "./cost-readout.js";
 import { workV3DeskModel } from "./work-v3-desk-model.js";
 import { reconcileHtml } from "./dom-reconcile.js";
 import { FENCE_OPEN, fenceCloser, frontmatterLineCount, markdownHeadingAnchor, markdownHeadings, markdownTableAlignments, markdownTableCells, scanMarkdownBlocks, visibleMarkdown } from "./markdown-structure.js";
@@ -62,6 +63,7 @@ const {
   "find-button": findButton, "secondary-action": secondaryAction, "modal-layer": modalLayer,
   "modal-kicker": modalKicker, "modal-title": modalTitle, "modal-copy": modalCopy, "modal-field": modalField,
   "modal-actions": modalActions, toast, "status-pill": statusPill, "awake-button": awakeButton,
+  "cost-readout": costReadout, "cost-amount": costAmount, "cost-breakdown": costBreakdown,
   "shell-menu": shellMenu, "go-to-button": goToButton, "go-to-layer": goToLayer,
   "go-to-input": goToInput, "go-to-list": goToList,
   "session-layer": sessionLayer, "session-layer-title": sessionLayerTitle, "session-layer-terminal": sessionLayerTerminal,
@@ -1384,6 +1386,7 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
     updateStatusPill();
     if (state.goTo) renderGoToList();
     paint(initial);
+    void refreshCost();
     return null;
   } catch (error) {
     state.loading = false;
@@ -1398,6 +1401,23 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
     paint(true);
     return { retryAfterMs };
   }
+}
+
+/**
+ * Reads the estimated cost and writes it into the top bar.
+ *
+ * The server answers from the snapshot it holds and reads the next one behind
+ * the request, so this never delays a Work refresh and never needs a press. A
+ * failure leaves the last figure standing rather than blanking the bar.
+ */
+async function refreshCost() {
+  try {
+    const snapshot = await api("/api/cost?days=1");
+    if (snapshot) state.cost = snapshot;
+  } catch {
+    return;
+  }
+  renderCostReadout({ readout: costReadout, amount: costAmount, breakdown: costBreakdown }, state.cost);
 }
 
 const refreshCoordinator = createRefreshCoordinator(performRefresh);

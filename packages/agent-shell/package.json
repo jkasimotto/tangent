@@ -34,6 +34,7 @@
     "@excalidraw/excalidraw": "^0.18.1",
     "@tangent/agent-runtime": "^0.1.0",
     "@tangent/core": "^0.1.0",
+    "@tangent/pricing": "^0.1.0",
     "@tangent/repo": "^0.1.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-webgl": "^0.18.0",

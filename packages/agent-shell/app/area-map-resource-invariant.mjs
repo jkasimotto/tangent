@@ -27,7 +27,7 @@ export async function validateAreaResourceSceneTransition({ owner, currentScene,
     byResource.set(id, rows);
   }
   for (const [id, sourceIds] of byResource) if (sourceIds.length > 1) {
-    return failure(409, "duplicate-resource-target", "One Area resource can have only one visible or hidden Map Block.", {
+    return failure(409, "resource-representation-conflict", "One Area resource can have only one visible or hidden Map Block.", {
       resource: { owner, id },
       sourceElementIds: sourceIds,
     });

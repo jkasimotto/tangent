@@ -48,7 +48,7 @@ test("visible and hidden duplicate representations are rejected before save", as
   const next = structuredClone(current);
   next.elements.push(...scene(ACTIVE, "copied-resource", true).elements);
   const result = await validateAreaResourceSceneTransition({ owner: "otto/tangent", currentScene: current, nextScene: next, resolveResource });
-  assert.equal(result.code, "duplicate-resource-target");
+  assert.equal(result.code, "resource-representation-conflict");
   assert.deepEqual(result.sourceElementIds, [`resource-${ACTIVE}`, "copied-resource"]);
 });
 

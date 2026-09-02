@@ -285,7 +285,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         ? `<div class="document-peek-scroll" tabindex="-1" aria-label="Quick Document reading surface">${renderDocumentArticle(loaded, { readOnly: loaded.repositoryFile === true })}</div>`
         : `<div class="loading" role="status">Opening ${escapeHtml(title)}…</div>`;
     return `
-      <section class="document-peek-surface" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}" tabindex="-1">
+      <section class="document-peek-surface" role="region" aria-label="${escapeHtml(title)}" tabindex="-1">
         <header class="document-peek-header">
           <div class="document-peek-route">
             <div class="document-history-controls" aria-label="Reading history">

@@ -4,19 +4,11 @@ export function createAreaBrainPane({
   terminalController,
   projection,
   escapeHtml,
-  onToggleMap,
-  onHideBrain,
-  onLeave,
   onResume,
   onSeedStart,
-  returnLabel = "Map",
-  contextLabel = "Map",
-  hideLabel = "Hide Brain",
   subject = () => null,
   onRemoveSubject = () => {},
 }) {
-  /** Resolves labels that change while one stable Brain is portaled. */
-  const label = (value) => typeof value === "function" ? value() : value;
   return {
     id: "brain",
     label: "Brain",
@@ -40,27 +32,22 @@ export function createAreaBrainPane({
       }
 
       /** Reconciles lifecycle words without replacing a matching live terminal. */
-      function update(snapshot = {}) {
+      function update() {
         if (disposed) return;
         const active = host.ownerDocument.activeElement;
         const ownedFocus = host.contains(active);
         const facts = projection();
         const nextMode = facts.presentation.kind === "terminal" ? `live:${facts.presentation.session}` : facts.presentation.kind;
-        const primaryBrain = snapshot.layout?.primary === "brain";
         if (mode === nextMode) {
           const title = host.querySelector(":scope > header strong");
           if (title) title.textContent = facts.label;
-          const map = host.querySelector("[data-toggle-workspace-map]");
-          if (map) map.textContent = `Show ${label(contextLabel)}`;
-          const leave = host.querySelector("[data-leave-area-workspace]");
-          if (leave) leave.innerHTML = `${escapeHtml(label(returnLabel))} <kbd>⌘⇧↵</kbd>`;
-          const hide = host.querySelector("[data-hide-workspace-brain]");
-          if (hide) { hide.hidden = primaryBrain; hide.textContent = label(hideLabel); }
           const nextSubject = subject();
           const subjectHost = host.querySelector("[data-brain-subject]");
           if (subjectHost) {
+            const subjectOwnedFocus = subjectHost.contains(active);
             subjectHost.hidden = !nextSubject;
             subjectHost.querySelector("span").textContent = nextSubject?.title ?? "";
+            if (!nextSubject && subjectOwnedFocus) focusDestination();
           }
           if (facts.presentation.kind === "start") {
             onSeedStart(area);
@@ -81,18 +68,15 @@ export function createAreaBrainPane({
         launchMarkup = "";
         host.dataset.mode = mode;
         const currentSubject = subject();
-        host.innerHTML = `<header><button type="button" data-leave-area-workspace>${escapeHtml(label(returnLabel))} <kbd>⌘⇧↵</kbd></button><strong>${escapeHtml(facts.label)}</strong>${facts.live ? `<button class="session-tag" type="button" data-copy-session-tag="${escapeHtml(facts.live.name)}"><code>${escapeHtml(facts.live.name)}</code></button>` : ""}<span class="document-discussion-subject-chip" data-brain-subject${currentSubject ? "" : " hidden"}><small>Subject</small><span>${escapeHtml(currentSubject?.title ?? "")}</span><button type="button" data-remove-brain-subject aria-label="Remove Document subject">×</button></span><button type="button" data-toggle-workspace-map>Show ${escapeHtml(label(contextLabel))}</button><button type="button" data-hide-workspace-brain${primaryBrain ? " hidden" : ""}>${escapeHtml(label(hideLabel))}</button></header><div class="map-brain-content"></div>`;
+        host.innerHTML = `<header><strong>${escapeHtml(facts.label)}</strong>${facts.live ? `<button class="session-tag" type="button" data-copy-session-tag="${escapeHtml(facts.live.name)}"><code>${escapeHtml(facts.live.name)}</code></button>` : ""}<span class="document-discussion-subject-chip" data-brain-subject${currentSubject ? "" : " hidden"}><small>Subject</small><span>${escapeHtml(currentSubject?.title ?? "")}</span><button type="button" data-remove-brain-subject aria-label="Remove Document subject">×</button></span></header><div class="map-brain-content"></div>`;
         const content = host.querySelector(".map-brain-content");
-        host.querySelector("[data-toggle-workspace-map]")?.addEventListener("click", onToggleMap);
-        host.querySelector("[data-hide-workspace-brain]")?.addEventListener("click", onHideBrain);
-        host.querySelector("[data-leave-area-workspace]")?.addEventListener("click", onLeave);
         host.querySelector("[data-remove-brain-subject]")?.addEventListener("click", onRemoveSubject);
         if (facts.presentation.kind === "terminal") {
           content.innerHTML = `<div class="terminal-host map-brain-terminal" data-session="${escapeHtml(facts.live.name)}"></div>`;
           terminalController.mountTerminal(content.firstElementChild, facts.live.name);
         } else if (facts.presentation.kind === "resuming") {
           content.innerHTML = '<p class="map-brain-state">Resuming brain…</p>';
-          void onResume(area, host.querySelector("[data-toggle-workspace-map]"));
+          void onResume(area);
         } else {
           onSeedStart(area);
           launchMarkup = facts.launchHtml();

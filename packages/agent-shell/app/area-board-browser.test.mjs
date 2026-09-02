@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
+import { WebSocketServer } from "ws";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { workTableFixture } from "./work-table-fixture.mjs";
 import { legacyFixtureWork } from "./work-table-harness.mjs";
@@ -230,6 +231,8 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
   work.vault.areas.push(
     { path: "otto", name: "otto", goals: [], documents: [] },
     { path: "otto/tangent/desk", name: "desk", goals: [], documents: [] },
+    { path: "neara", name: "neara", goals: [], documents: [] },
+    { path: "neara/designwarden", name: "designwarden", goals: [], documents: [] },
   );
   /** Returns one source-compatible empty scene. */
   const empty = () => ({ type: "excalidraw", version: 2, source: "test", elements: [], appState: { viewBackgroundColor: "#ffffff" }, files: {} });
@@ -242,7 +245,8 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
       { key: "otto/tangent/desk", parent: "otto/tangent", children: [], depth: 2, region: { key: "otto/tangent>otto/tangent/desk", owner: "otto/tangent", child: "otto/tangent/desk", sourceId: "tangent-desk", labelSourceId: "tangent-desk-label", source: "stored", storedRect: { x: 120, y: 120, width: 360, height: 260 } }, shard: { owner: "otto/tangent/desk", hash: "desk-1", state: "ready", elementCount: 0, scene: empty() } },
       { key: "otto/other", parent: "otto", children: [], depth: 1, region: { key: "otto>otto/other", owner: "otto", child: "otto/other", sourceId: "otto-other", labelSourceId: "otto-other-label", source: "stored", storedRect: { x: 940, y: 120, width: 340, height: 260 } }, shard: { owner: "otto/other", hash: "other-1", state: "ready", elementCount: 0, scene: empty() } },
       { key: "otto/standards", parent: "otto", children: [], depth: 1, region: { key: "otto>otto/standards", owner: "otto", child: "otto/standards", sourceId: "otto-standards", labelSourceId: "otto-standards-label", source: "stored", storedRect: { x: 940, y: 420, width: 340, height: 260 } }, shard: { owner: "otto/standards", hash: "standards-1", state: "ready", elementCount: 0, scene: empty() } },
-      { key: "neara", parent: "@root", children: [], depth: 0, region: { key: "@root>neara", owner: "@root", child: "neara", sourceId: "root-neara", labelSourceId: "root-neara-label", source: "stored", storedRect: { x: 1300, y: 100, width: 420, height: 320 } }, shard: { owner: "neara", hash: "neara-1", state: "ready", elementCount: 0, scene: empty() } },
+      { key: "neara", parent: "@root", children: ["neara/designwarden"], depth: 0, region: { key: "@root>neara", owner: "@root", child: "neara", sourceId: "root-neara", labelSourceId: "root-neara-label", source: "stored", storedRect: { x: 1300, y: 100, width: 520, height: 420 } }, shard: { owner: "neara", hash: "neara-1", state: "ready", elementCount: 0, scene: empty() } },
+      { key: "neara/designwarden", parent: "neara", children: [], depth: 1, region: { key: "neara>neara/designwarden", owner: "neara", child: "neara/designwarden", sourceId: "neara-designwarden", labelSourceId: "neara-designwarden-label", source: "stored", storedRect: { x: 120, y: 120, width: 320, height: 220 } }, shard: { owner: "neara/designwarden", hash: "designwarden-1", state: "ready", elementCount: 0, scene: empty() } },
     ],
   };
   const designDocument = { file: "otto/tangent/design-map-first-proof.md", area: "otto/tangent", kind: "document", docKind: "design", title: "Map-first proof", links: [], mtime: 1 };
@@ -251,6 +255,26 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
   const workProjection = legacyFixtureWork(work);
   let rejectMapSaves = false;
   let rejectedMapSaveAttempts = 0;
+  let brainConnections = 0;
+  let resolveReplacementConnection;
+  const replacementConnection = new Promise((resolve) => { resolveReplacementConnection = resolve; });
+  const websocketServer = new WebSocketServer({ noServer: true });
+  websocketServer.on("connection", (socket, request) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    const session = url.searchParams.get("session") ?? "";
+    if (session !== "otto-tangent--brain") {
+      socket.send(`\r\n${session} ready\r\n`);
+      return;
+    }
+    brainConnections += 1;
+    if (brainConnections === 1) {
+      socket.send("\r\nOtto / Tangent Brain ready\r\n");
+      setTimeout(() => socket.close(1012, "fixture transport restart"), 80);
+      return;
+    }
+    if (brainConnections === 2) resolveReplacementConnection(socket);
+    else socket.send("\r\nOtto / Tangent Brain ready\r\n");
+  });
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
     if (url.pathname === "/api/work") {
@@ -288,12 +312,17 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     if (url.pathname.startsWith("/api/")) return sendJson(response, 200, { ok: true });
     await serveStaticAsset(url, response, here);
   });
+  server.on("upgrade", (request, socket, head) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    if (url.pathname !== "/term") return socket.destroy();
+    websocketServer.handleUpgrade(request, socket, head, (client) => websocketServer.emit("connection", client, request));
+  });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath();
   let browser = null;
   try {
     browser = await chromium.launch({ executablePath, headless: true });
-    const page = await browser.newPage({ viewport: { width: 1440, height: 760 } });
+    const page = await browser.newPage({ viewport: { width: 2048, height: 900 } });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.addInitScript(() => localStorage.setItem("tangent.area-map-view.v2:work-world", JSON.stringify({
       schema: "area-map-view.v2", worldId: "work-world", pan: { x: -40, y: -30 }, zoom: 0.8,
@@ -303,9 +332,26 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
     assert.equal(await page.locator("#map-tab").getAttribute("aria-current"), "page", "Map is the first announced surface before Work is opened");
+    const shellBack = page.locator("#back-button");
+    assert.equal(await shellBack.getAttribute("aria-haspopup"), "menu", "top-level Agent Shell opens a menu");
+    assert.equal(await shellBack.getAttribute("aria-controls"), "shell-menu");
+    assert.equal(await shellBack.getAttribute("aria-expanded"), "false");
+    await shellBack.click();
+    assert.equal(await page.locator("#shell-menu").isVisible(), true);
+    assert.equal(await shellBack.getAttribute("aria-expanded"), "true");
+    await shellBack.click();
+    assert.equal(await page.locator("#shell-menu").isHidden(), true);
+    assert.equal(await shellBack.getAttribute("aria-expanded"), "false");
     assert.match(await page.locator("#bar-context").textContent(), /otto \/ tangentMap/i, "the wide header names the active Area and Map surface");
     assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain/, "the wide header exposes the responsible named Brain");
+    assert.match(await page.locator("#context-brain-button kbd").textContent(), /⌘⇧↵/, "the visible contextual Brain action names its working shortcut");
+    assert.equal(await page.locator("#context-brain-button").getAttribute("aria-keyshortcuts"), "Meta+Shift+Enter");
+    assert.deepEqual(await page.locator(".primary-tabs > button:visible").allTextContents(), ["Map", "Work"], "Map and Work are the only primary destinations");
+    assert.equal(await page.locator(".app-bar [data-map-brain]").count(), 0, "the 2048px header has no duplicate Brain row action");
+    assert.equal(await page.locator(".map-screen > header").count(), 0, "the Map has no duplicate header row");
+    assert.equal(await page.locator("#prompts-tab").evaluate((button) => button.closest("#shell-menu") !== null), true, "Model lives in the shell menu instead of primary navigation");
     assert.equal(await page.locator(".tangent-map-toolbar-extra .tangent-map-label").textContent(), "Block", "the wide Map names its primary creation action");
+    await page.setViewportSize({ width: 1440, height: 760 });
     const wideForYou = page.locator("#for-you-button");
     assert.match(await wideForYou.textContent(), /^For you \d+$/, "direct attention is a visible named route");
     await wideForYou.click();
@@ -350,16 +396,25 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     assert.equal(await page.evaluate(() => window.brainFocusKey), "q", "typing immediately reaches the composer without another pointer click");
     const brainFirstTerminal = brainFirstPane.locator(".xterm").first();
     await brainFirstTerminal.evaluate((node) => { node.dataset.workspaceIdentity = "brain-first"; });
-    const openMap = brainFirstPane.locator("[data-toggle-workspace-map]");
-    assert.match(await openMap.textContent(), /^Show Otto \/ Tangent on Map$/, "every Area Brain has one visible, responsible-Area Map action");
-    await openMap.click();
-    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
-    assert.equal(await brainFirstTerminal.getAttribute("data-workspace-identity"), "brain-first", "opening Map preserves the exact xterm node");
+    const reconnectStatus = brainFirstPane.locator("[data-terminal-transport-status]");
+    await reconnectStatus.waitFor({ state: "visible" });
+    assert.equal(await reconnectStatus.getAttribute("data-state"), "reconnecting", "a lasting transport loss is explained inside its terminal");
+    const replacementSocket = await replacementConnection;
+    assert.equal(brainConnections, 2, "the replacement transport opened exactly once");
+    assert.equal(await reconnectStatus.getAttribute("data-state"), "reconnecting", "socket open alone does not claim recovery");
+    assert.doesNotMatch(await page.locator("#toast").textContent(), /reconnect/i, "terminal recovery never interrupts the shell with a global toast");
+    replacementSocket.send("\r\nreplacement terminal frame\r\n");
+    await page.waitForFunction(() => document.querySelector("[data-terminal-transport-status]")?.getAttribute("data-state") === "restored");
+    assert.equal(await brainFirstTerminal.getAttribute("data-workspace-identity"), "brain-first", "replacement data restores the same xterm node");
+    assert.equal(await brainFirstComposer.evaluate((composer) => document.activeElement === composer), true, "recovery does not move composer focus");
+    await reconnectStatus.waitFor({ state: "hidden" });
+    assert.equal(await brainFirstPane.locator("[data-toggle-workspace-map], [data-leave-area-workspace], [data-hide-workspace-brain]").count(), 0, "Brain metadata has no duplicate navigation row");
+    assert.match(await page.locator("#back-button").textContent(), /^Work ⌘⇧↵$/i, "the global Back route names its working Brain return chord");
+    assert.equal(await page.locator("#back-button").getAttribute("aria-keyshortcuts"), "Meta+Shift+Enter");
+    assert.equal(await page.locator("#back-button").getAttribute("aria-haspopup"), null, "a child Back route does not claim menu behavior");
+    assert.equal(await page.locator("#back-button").getAttribute("aria-expanded"), null);
     assert.equal(await page.locator("[data-area-workspace]").getAttribute("data-presentation"), "wide", "1200px and wider keeps both retained panes beside each other");
     await page.locator("#back-button").click();
-    assert.equal(await brainFirstTerminal.getAttribute("data-workspace-identity"), "brain-first", "wide Brain → Map → Brain preserves the exact terminal");
-    assert.equal(await brainFirstComposer.evaluate((composer) => document.activeElement === composer), true, "wide Brain → Map → Brain restores composer focus");
-    await brainFirstPane.locator("[data-leave-area-workspace]").click();
     await row.waitFor();
     await row.dispatchEvent("click");
     await row.locator("[data-work-cursor-control]").focus();
@@ -437,7 +492,23 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     await only.click();
     await waitForOnly(false);
     await page.getByRole("button", { name: "Neara, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
+    await page.getByRole("button", { name: "Designwarden, child of Neara, depth 2, unfolded, ready, 0 blocks" }).waitFor();
     await page.getByRole("button", { name: "Other, child of Otto, depth 2, folded, ready, 0 blocks" }).waitFor();
+
+    // The contextual Brain follows the exact selected Area. Map and Work use
+    // the same pane implementation, while the global route owns navigation.
+    const designwardenLabel = page.locator('[data-area-map-label="neara/designwarden"]');
+    await designwardenLabel.dispatchEvent("click");
+    await page.waitForFunction(() => document.querySelector("#context-brain-button")?.dataset.brainArea === "neara/designwarden");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Neara \/ Designwarden Brain\s+⌘⇧↵/, "the global Brain action follows the selected Area and shows its shortcut");
+    await page.locator("#context-brain-button").click();
+    const mismatchPane = page.locator("[data-map-brain-pane]");
+    assert.match(await mismatchPane.locator(":scope > header strong").textContent(), /Neara \/ Designwarden Brain · No brain/, "Map opens the selected Area's exact Brain identity and lifecycle");
+    assert.equal(await mismatchPane.locator("[data-toggle-workspace-map], [data-leave-area-workspace], [data-hide-workspace-brain]").count(), 0, "the same Brain pane has metadata without local navigation");
+    await page.locator("#map-tab").click();
+    await page.locator('[data-area-map-label="otto/tangent"]').dispatchEvent("click");
+    await page.waitForFunction(() => document.querySelector("#context-brain-button")?.dataset.brainArea === "otto/tangent");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain\s+⌘⇧↵/, "returning to Tangent restores the same contextual route used from Work");
     await page.locator("[data-map-column]").focus();
     await page.keyboard.press("Shift+o");
     await waitForOnly(true);
@@ -503,18 +574,20 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     assert.match(await mapDocument.textContent(), /Map-first proof/, "Enter opens the selected Map block directly");
     assert.match(await blockedSave.textContent(), /Not saved/, "opening a Document keeps the failed Map draft");
     await mapDocument.getByRole("button", { name: "Discuss with Otto / Tangent Brain" }).click();
-    const discussionSubject = page.locator("[data-map-brain-pane]:visible [data-brain-subject]");
+    const discussionSubject = page.locator("[data-map-brain-pane] [data-brain-subject]:visible");
+    const discussionPane = discussionSubject.locator("xpath=ancestor::*[@data-map-brain-pane][1]");
     await discussionSubject.waitFor();
     assert.match(await discussionSubject.textContent(), /Map-first proof/, "the responsible Brain receives the exact removable subject");
-    assert.match(await page.locator("[data-map-brain-pane] > header").textContent(), /Otto \/ Tangent Brain/);
+    assert.match(await discussionPane.locator(":scope > header").textContent(), /Otto \/ Tangent Brain/);
     assert.match(await blockedSave.textContent(), /Not saved/, "opening the responsible Brain keeps the failed Map draft");
     await discussionSubject.getByRole("button", { name: "Remove Document subject" }).click();
     await discussionSubject.waitFor({ state: "hidden" });
-    await page.locator("[data-map-brain-pane] [data-leave-area-workspace]").click();
+    assert.match(await page.locator("#back-button").textContent(), /^Document ⌘⇧↵$/i, "the global Back route names the working Brain return chord");
+    await page.locator("#back-button").click();
     await mapDocument.waitFor();
     await mapDocument.getByRole("button", { name: "Close" }).click();
     await mapDocument.waitFor({ state: "detached" });
-    await page.keyboard.press("Meta+/");
+    await page.locator("#work-tab").click();
     await page.locator("#work-lens-layer").waitFor();
     assert.match(await blockedSave.textContent(), /Not saved/, "opening Work keeps the failed Map draft");
     await page.locator("[data-close-work-lens]").click();
@@ -527,9 +600,22 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     await blockedSave.getByText("Saved", { exact: true }).waitFor();
 
     await page.locator(".excalidraw canvas.interactive").evaluate((canvas) => { canvas.dataset.companionIdentity = "original"; });
+    const mapBrainRoute = await page.locator("#context-brain-button").evaluate((button) => ({ area: button.dataset.brainArea, hidden: button.hidden, text: button.textContent, active: { tag: document.activeElement?.tagName, className: String(document.activeElement?.className ?? "") } }));
+    assert.deepEqual({ area: mapBrainRoute.area, hidden: mapBrainRoute.hidden }, { area: "otto/tangent", hidden: false }, `Map keeps the exact Tangent Brain route before its shortcut: ${JSON.stringify(mapBrainRoute)}`);
+    assert.match(mapBrainRoute.active.className, /excalidraw/, "successful Map recovery returns focus to the retained editor instead of body");
     await page.keyboard.press("Meta+Shift+Enter");
-    const pane = page.locator("[data-map-brain-pane]");
-    await pane.waitFor();
+    const pane = page.locator('[data-map-brain-pane]:has(.map-brain-terminal[data-session="otto-tangent--brain"])');
+    try { await pane.waitFor({ timeout: 3_000 }); }
+    catch (error) {
+      const diagnostics = await page.evaluate(() => ({
+        active: { tag: document.activeElement?.tagName, id: document.activeElement?.id, className: String(document.activeElement?.className ?? "") },
+        context: document.querySelector("#context-brain-button")?.outerHTML,
+        panes: [...document.querySelectorAll("[data-map-brain-pane]")].map((item) => ({ hidden: item.hidden, mode: item.dataset.mode, header: item.querySelector(":scope > header")?.textContent })),
+        launch: document.querySelector("[data-launch-popover]")?.outerHTML,
+        toast: document.querySelector("#toast")?.textContent,
+      }));
+      throw new Error(`the named Map Brain shortcut did not open Tangent: ${JSON.stringify(diagnostics)}`, { cause: error });
+    }
     assert.equal(await pane.isVisible(), true, "the named Brain shortcut docks the exact Area brain on a wide map");
     assert.match(await pane.locator(":scope > header").textContent(), /Brain · working/);
     assert.equal(await pane.locator(".map-brain-terminal").getAttribute("data-session"), "otto-tangent--brain");
@@ -553,6 +639,7 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     await page.keyboard.press("ArrowLeft");
     const resizedBrainWidth = await pane.evaluate((node) => node.getBoundingClientRect().width);
     assert.ok(resizedBrainWidth > widths.pane, `the keyboard separator resizes Brain without route logic: ${resizedBrainWidth}`);
+    await page.locator("#map-tab").click();
     await page.locator('[data-map-breadcrumb="otto"]').click();
     assert.equal(await pane.locator(".map-brain-terminal").getAttribute("data-session"), "otto-tangent--brain", "Map drill does not close or retarget Brain");
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "Map drill preserves the same Map controller");
@@ -585,19 +672,19 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     assert.deepEqual(terminalKeyOwnership, [["m", false], ["b", false], ["Escape", false], ["Control-H", false], ["Control-L", false]], "Brain terminal keys reach xterm without split interception");
     await page.locator("[data-map-column]").click({ position: { x: 20, y: 20 } });
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "focus changes never remount the canvas");
-    await pane.locator("[data-hide-workspace-brain]").click();
-    assert.equal(await pane.isVisible(), false, "Hide Brain hides only its mounted companion pane");
-    await page.keyboard.press("Meta+Shift+Enter");
-    assert.equal(await pane.isVisible(), true, "the named Brain shortcut reopens the same companion");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain\s+⌘⇧↵/, "Map exposes one visible named route back to its Brain");
+    await page.locator("#context-brain-button").click();
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    assert.equal(await pane.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer), true, "reopening Brain after Map focus returns typing to its composer");
-    assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "close and reopen keep the map island");
+    assert.equal(await pane.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer), true, "the global Brain route returns typing to its composer");
+    assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "Map and Brain navigation keeps the map island");
     const companionTerminal = pane.locator(".xterm").first();
     await companionTerminal.evaluate((node) => { node.dataset.responsiveIdentity = "original"; });
+    await page.locator("#map-tab").click();
     await page.setViewportSize({ width: 800, height: 760 });
     await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "single");
     assert.equal(await page.locator("[data-split-pane]").count(), 2, "narrow presentation keeps both pane roots mounted");
     assert.equal(await pane.isVisible(), false, "the primary Map is the initial narrow pane");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain\s+⌘⇧↵/, "the 800px Map keeps the Brain shortcut label visible");
     await page.keyboard.press("Meta+Shift+Enter");
     assert.equal(await pane.isVisible(), true, "the named Brain shortcut selects the mounted Brain in narrow mode");
     assert.equal(await page.locator("[data-map-column]").isVisible(), false);
@@ -611,8 +698,9 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     assert.equal(await page.evaluate(() => window.compactMapBrainKey), "n", "the 800px Map → Brain route accepts typing without another click");
     assert.equal(await companionTerminal.getAttribute("data-responsive-identity"), "original", "narrow selection preserves the exact xterm node");
     assert.equal(await page.locator("#map-tab").getAttribute("aria-current"), null, "the hidden compact Map is not announced as current");
-    assert.equal(await page.locator("#context-brain-button").getAttribute("aria-pressed"), "true", "the visible compact Brain is announced as current");
-    assert.match(await page.locator("#context-brain-button").getAttribute("aria-label"), /current surface$/);
+    assert.equal(await page.locator("#context-brain-button").getAttribute("aria-pressed"), "true", "the compact Brain state is reflected by the one contextual route");
+    assert.equal(await page.locator("#context-brain-button").isHidden(), true, "the open Brain action is not duplicated on the Brain surface");
+    assert.match(await page.locator("#back-button").textContent(), /^Map ⌘⇧↵$/i, "the compact Brain has one visible global Map return chord");
     const compactActions = await page.locator(".app-bar button:visible").evaluateAll((buttons) => buttons.map((button) => {
       const box = button.getBoundingClientRect();
       return { label: button.getAttribute("aria-label") || button.textContent, left: box.left, right: box.right, top: box.top, bottom: box.bottom };
@@ -624,11 +712,12 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "single");
     assert.equal(await pane.isVisible(), true, "a later narrow interval restores the last narrow pane");
     assert.equal(await page.locator("[data-map-column]").isVisible(), false);
-    await pane.locator("[data-toggle-workspace-map]").click();
-    assert.equal(await page.locator("[data-map-column]").isVisible(), true, "the Brain Map action selects the mounted Map in narrow mode");
+    await page.locator("#map-tab").click();
+    assert.equal(await page.locator("[data-map-column]").isVisible(), true, "the global Map route selects the mounted Map in narrow mode");
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "narrow selection preserves the exact canvas");
-    await page.locator("#back-button").click();
-    assert.equal(await pane.isVisible(), true, "Back from compact Map restores Brain as the exact opener");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain\s+⌘⇧↵/);
+    await page.locator("#context-brain-button").click();
+    assert.equal(await pane.isVisible(), true, "the contextual Brain route restores the exact compact companion");
     assert.equal(await companionTerminal.getAttribute("data-responsive-identity"), "original", "Brain → Map → Brain keeps the exact terminal node");
     assert.equal(await pane.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer), true, "Brain → Map → Brain restores composer focus");
     // The terminal-visible route is the pointer alternative to Command-K.
@@ -650,6 +739,13 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     await page.keyboard.press("Enter");
     const compactReader = page.locator("#document-peek-layer .document-peek-surface");
     await compactReader.waitFor();
+    assert.equal(await compactReader.getAttribute("role"), "region");
+    assert.equal(await page.locator('#document-peek-layer [aria-modal="true"]').count(), 0, "the visible global header is not outside an asserted Document modal");
+    await compactReader.focus();
+    await page.keyboard.press("Shift+Tab");
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "go-to-button", "Shift-Tab reaches the visible global header from the Document");
+    await page.keyboard.press("Tab");
+    assert.equal(await compactReader.evaluate((reader) => reader.contains(document.activeElement)), true, "Tab returns from global chrome to the Document");
     assert.match(await compactReader.getByRole("button", { name: /Discuss with Otto \/ Tangent Brain/ }).textContent(), /Otto \/ Tangent Brain/);
     await compactReader.getByRole("button", { name: /Close/ }).click();
     await compactReader.waitFor({ state: "detached" });
@@ -676,6 +772,31 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
       const focused = await page.locator(expected).evaluate((control) => document.activeElement === control);
       assert.equal(focused, true, `compact header focus reaches ${expected} in visible order`);
     }
+    if (await only.getAttribute("aria-pressed") === "true") {
+      await only.click();
+      await waitForOnly(false);
+    }
+    await designwardenLabel.dispatchEvent("click");
+    await page.waitForFunction(() => document.querySelector("#context-brain-button")?.dataset.brainArea === "neara/designwarden");
+    const shortcutLayout = await page.locator("#context-brain-button").evaluate((button) => {
+      const key = button.querySelector("kbd");
+      const outer = button.getBoundingClientRect();
+      const inner = key?.getBoundingClientRect();
+      return inner && {
+        left: inner.left, right: inner.right, top: inner.top, bottom: inner.bottom,
+        outerLeft: outer.left, outerRight: outer.right, outerTop: outer.top, outerBottom: outer.bottom,
+        width: inner.width, height: inner.height, visibility: getComputedStyle(key).visibility,
+      };
+    });
+    assert.ok(shortcutLayout && shortcutLayout.width > 0 && shortcutLayout.height > 0
+      && shortcutLayout.visibility === "visible"
+      && shortcutLayout.left >= shortcutLayout.outerLeft - 1
+      && shortcutLayout.right <= shortcutLayout.outerRight + 1
+      && shortcutLayout.top >= shortcutLayout.outerTop - 1
+      && shortcutLayout.bottom <= shortcutLayout.outerBottom + 1,
+    `the complete Designwarden Brain shortcut is visible at 800px: ${JSON.stringify(shortcutLayout)}`);
+    await page.locator('[data-area-map-label="otto/tangent"]').dispatchEvent("click");
+    await page.waitForFunction(() => document.querySelector("#context-brain-button")?.dataset.brainArea === "otto/tangent");
     const compactBlockAction = page.getByRole("button", { name: /^Block/ });
     await compactBlockAction.waitFor();
     assert.equal(await compactBlockAction.locator(".tangent-map-label").isVisible(), true, "the primary Block action keeps its visible name at 800px");
@@ -719,14 +840,18 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     const exposedDialogs = await page.locator('[role="dialog"]:visible').evaluateAll((dialogs) => dialogs
       .filter((dialog) => !dialog.closest("[inert], [hidden]"))
       .map((dialog) => dialog.getAttribute("aria-label") || dialog.getAttribute("aria-labelledby")));
-    assert.deepEqual(exposedDialogs, ["Map-first proof"], `assistive technology sees only the top quick reader dialog: ${JSON.stringify(exposedDialogs)}`);
-    await compactReader.getByRole("button", { name: "Discuss with Otto / Tangent Brain" }).click();
+    assert.deepEqual(exposedDialogs, [], `the quick Document does not claim modal ownership of visible global routes: ${JSON.stringify(exposedDialogs)}`);
+    assert.equal(await page.locator("#context-brain-button").getAttribute("data-brain-area"), "otto/tangent");
+    await page.locator("#context-brain-button").click();
     const compactDiscussionBrain = page.locator("#document-peek-layer [data-map-brain-pane]");
     await compactDiscussionBrain.waitFor();
+    assert.equal(await page.locator('#document-peek-layer [aria-modal="true"]').count(), 0, "the combined Document discussion is also nonmodal");
+    assert.deepEqual(await page.locator(".document-discussion-switcher button:visible").allTextContents(), ["Document", "Otto / Tangent Brain"], "compact discussion switches only between its two retained surfaces");
     assert.match(await compactDiscussionBrain.locator("[data-brain-subject]").textContent(), /Map-first proof/, "the 800px discussion names the exact Document subject");
     assert.equal(await compactDiscussionBrain.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer), true, "the 800px discussion Brain accepts typing immediately");
     assert.match(await page.locator(".tangent-map-save").textContent(), /Not saved/, "the compact discussion preserves the failed local Map draft");
-    await compactDiscussionBrain.locator("[data-leave-area-workspace]").click();
+    assert.match(await page.locator("#back-button").textContent(), /^Document ⌘⇧↵$/i);
+    await page.locator("#back-button").click();
     await compactReader.waitFor();
     await compactReader.getByRole("button", { name: /Close/ }).click();
     await compactReader.waitFor({ state: "detached" });
@@ -747,7 +872,7 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
       }),
     }));
     assert.ok(compactWorkLayout.scrollWidth <= compactWorkLayout.width + 1, `the 800px Work lens has no clipped horizontal controls: ${JSON.stringify(compactWorkLayout)}`);
-    assert.ok(compactWorkLayout.controls.every((box) => box.left >= 0 && box.right <= 800 && box.top >= 0 && box.bottom <= 760), `every visible Work control remains reachable at 800px: ${JSON.stringify(compactWorkLayout.controls)}`);
+    assert.ok(compactWorkLayout.controls.every((box) => box.left >= 0 && box.right <= 800), `every Work control stays horizontally reachable in the 800px scroll surface: ${JSON.stringify(compactWorkLayout.controls)}`);
     const compactQuery = page.locator("#work-search-input");
     await compactQuery.fill("compact");
     const compactWorkerRow = page.locator('[data-goal-anchor="otto/tangent/goal-compact-table.md"]');
@@ -782,7 +907,6 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     assert.equal(await page.evaluate(() => document.activeElement?.dataset.pollFocusProof), "before", "a session poll preserves the exact Map focus instead of stealing it for Brain");
     await page.setViewportSize({ width: 1440, height: 760 });
     await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "wide");
-    await pane.locator("[data-hide-workspace-brain]").click();
     await page.getByRole("button", { name: "Outline", exact: true }).click();
     await page.getByRole("treeitem", { name: "Otto, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
     await page.locator('[data-area-map-label="otto/tangent"]').waitFor();
@@ -872,6 +996,8 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     assert.deepEqual(cameraAfterWork, cameraBeforeWork, "Work Show on Map restores the exact retained camera");
   } finally {
     await browser?.close();
+    for (const client of websocketServer.clients) client.terminate();
+    await new Promise((resolve) => websocketServer.close(resolve));
     await new Promise((resolve) => server.close(resolve));
   }
 });

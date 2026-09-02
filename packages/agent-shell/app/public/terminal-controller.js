@@ -1,8 +1,11 @@
 import terminalKeys from "./terminal-keys.js";
 import terminalSelectionApi from "./terminal-selection.js";
 
+const RECONNECT_STATUS_DELAY_MS = 700;
+const RESTORED_STATUS_DURATION_MS = 1_200;
+
 /** Owns terminal construction, transport, fitting, selection, and disposal. */
-export function createTerminalController({ state, showToast, record = null }) {
+export function createTerminalController({ state, record = null }) {
   let terminal = null;
   /**
    * Writes one timing record for the open path, so a slow or black terminal
@@ -25,6 +28,9 @@ export function createTerminalController({ state, showToast, record = null }) {
   let terminalSession = "";
   let terminalSelection = null;
   let terminalReconnectTimer = null;
+  let terminalStatusDelayTimer = null;
+  let terminalStatusClearTimer = null;
+  let terminalStatus = null;
   let terminalMeasureFrame = null;
   let stalledTimer = null;
   let terminalGeneration = 0;
@@ -37,6 +43,10 @@ export function createTerminalController({ state, showToast, record = null }) {
     terminalGeneration += 1;
     window.clearTimeout(terminalReconnectTimer);
     terminalReconnectTimer = null;
+    window.clearTimeout(terminalStatusDelayTimer);
+    terminalStatusDelayTimer = null;
+    window.clearTimeout(terminalStatusClearTimer);
+    terminalStatusClearTimer = null;
     window.clearTimeout(stalledTimer);
     stalledTimer = null;
     if (terminalMeasureFrame !== null) window.cancelAnimationFrame?.(terminalMeasureFrame);
@@ -50,6 +60,8 @@ export function createTerminalController({ state, showToast, record = null }) {
       terminalSocket.close(1000, "terminal view closed");
     }
     terminalSocket = null;
+    terminalStatus?.remove();
+    terminalStatus = null;
     terminal?.dispose();
     terminal = null;
     terminalFit = null;
@@ -114,6 +126,14 @@ export function createTerminalController({ state, showToast, record = null }) {
     terminal.loadAddon(terminalFit);
     terminal.open(host);
     loadTerminalWebgl(terminal);
+    terminalStatus = host.ownerDocument.createElement("div");
+    terminalStatus.className = "terminal-transport-status";
+    terminalStatus.hidden = true;
+    terminalStatus.setAttribute("data-terminal-transport-status", "");
+    terminalStatus.setAttribute("role", "status");
+    terminalStatus.setAttribute("aria-live", "polite");
+    terminalStatus.setAttribute("aria-atomic", "true");
+    host.append(terminalStatus);
     terminalSelection = terminalSelectionApi?.preserveTerminalSelection({
       terminal,
       host,
@@ -142,6 +162,52 @@ export function createTerminalController({ state, showToast, record = null }) {
     terminalResizeObserver.observe(host);
     let reconnectAttempt = 0;
     let connectionWasLost = false;
+    /** Updates the non-focusing status that belongs to this terminal pane. */
+    const setTerminalStatus = (text = "", status = "") => {
+      if (!terminalStatus) return;
+      terminalStatus.textContent = text;
+      terminalStatus.hidden = !text;
+      if (status) terminalStatus.setAttribute("data-state", status);
+      else terminalStatus.removeAttribute("data-state");
+    };
+    /** Delays transient outage feedback so a quick recovery stays silent. */
+    const scheduleReconnectStatus = () => {
+      window.clearTimeout(terminalStatusClearTimer);
+      terminalStatusClearTimer = null;
+      if (terminalStatus?.getAttribute("data-state") === "restored") setTerminalStatus();
+      if (terminalStatusDelayTimer !== null || terminalStatus?.getAttribute("data-state") === "reconnecting") return;
+      terminalStatusDelayTimer = window.setTimeout(() => {
+        terminalStatusDelayTimer = null;
+        if (generation !== terminalGeneration || !connectionWasLost) return;
+        setTerminalStatus("Terminal display disconnected · reconnecting", "reconnecting");
+      }, RECONNECT_STATUS_DELAY_MS);
+    };
+    /** Treats replacement terminal bytes, not a socket open, as recovery. */
+    const restoreTerminalStatus = () => {
+      if (!connectionWasLost) return;
+      connectionWasLost = false;
+      reconnectAttempt = 0;
+      window.clearTimeout(terminalStatusDelayTimer);
+      terminalStatusDelayTimer = null;
+      if (terminalStatus?.getAttribute("data-state") !== "reconnecting") {
+        setTerminalStatus();
+        return;
+      }
+      setTerminalStatus("Terminal display restored", "restored");
+      terminalStatusClearTimer = window.setTimeout(() => {
+        terminalStatusClearTimer = null;
+        if (generation === terminalGeneration && terminalStatus?.getAttribute("data-state") === "restored") setTerminalStatus();
+      }, RESTORED_STATUS_DURATION_MS);
+    };
+    /** Shows one persistent terminal-local failure and stops retry feedback. */
+    const showTerminalError = (text, status) => {
+      connectionWasLost = false;
+      window.clearTimeout(terminalStatusDelayTimer);
+      terminalStatusDelayTimer = null;
+      window.clearTimeout(terminalStatusClearTimer);
+      terminalStatusClearTimer = null;
+      setTerminalStatus(text, status);
+    };
     /** Connects this stable xterm instance to a replaceable transport. */
     const connect = (measured) => {
       if (generation !== terminalGeneration || terminalSession !== sessionName) return;
@@ -153,10 +219,12 @@ export function createTerminalController({ state, showToast, record = null }) {
       const connectedAt = sinceMount();
       socket.binaryType = "arraybuffer";
       socket.onmessage = (event) => {
+        if (generation !== terminalGeneration || terminalSocket !== socket) return;
         if (opened.firstDataMs === null) {
           opened.firstDataMs = sinceMount();
           trace("open", { session: sessionName, ...opened });
         }
+        restoreTerminalStatus();
         const data = typeof event.data === "string" ? event.data : new Uint8Array(event.data);
         terminal?.write(data, () => {
           if (viewportRestored || generation !== terminalGeneration) return;
@@ -167,22 +235,23 @@ export function createTerminalController({ state, showToast, record = null }) {
       socket.onopen = () => {
         if (terminalSocket !== socket) return;
         opened.socketMs ??= sinceMount();
-        reconnectAttempt = 0;
         reportedSize = attachedSize;
         fit();
-        if (connectionWasLost) showToast("Terminal reconnected.");
-        connectionWasLost = false;
       };
       socket.onclose = (event) => {
         if (generation !== terminalGeneration || terminalSocket !== socket) return;
         terminalSocket = null;
         trace("close", { session: sessionName, code: event.code, reason: event.reason || "", connectedAt, closedMs: sinceMount(), hadData: opened.firstDataMs !== null, attempt: reconnectAttempt });
-        if (event.code === 4404) {
-          showToast("The tmux session ended.");
+        if (event.code === 4403) {
+          showTerminalError("Terminal display unavailable · open in another Agent Shell", "ownership-error");
           return;
         }
-        if (!connectionWasLost) showToast("Terminal connection lost. Reconnecting…");
+        if (event.code === 4404) {
+          showTerminalError("Terminal session ended", "ended");
+          return;
+        }
         connectionWasLost = true;
+        scheduleReconnectStatus();
         const delay = Math.min(5_000, 250 * (2 ** Math.min(reconnectAttempt, 5)));
         reconnectAttempt += 1;
         terminalReconnectTimer = window.setTimeout(connectWhenMeasured, delay);

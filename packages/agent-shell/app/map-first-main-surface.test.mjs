@@ -43,12 +43,55 @@ function servedDocument() {
   return { ...DOCUMENT, text: "# Map-first proof\n\nKeep the durable Map beneath this discussion.", hash: "map-first-proof-1", comments: [] };
 }
 
+/** Supplies one production-shaped launch choice for stopped-Brain actions. */
+function fixtureLaunchOptions(area = AREA) {
+  const choice = { harness: "codex", model: "sol", command: "codex --model sol", label: "Codex · Sol", source: "otto" };
+  return {
+    area,
+    harnesses: [{ id: "codex", label: "Codex", command: "codex", models: [{ id: "sol", label: "Sol", args: "--model sol", efforts: [] }] }],
+    remembered: choice, default: choice, workDefault: choice, brainDefault: choice,
+    declarations: { work: { mode: "inherit" }, brain: { mode: "work" } },
+  };
+}
+
 /** Clicks one selector and reports a useful missing-control failure. */
 function click(document, selector) {
   const target = document.querySelector(selector);
   assert.ok(target, `Expected ${selector}`);
   target.click();
   return target;
+}
+
+/** Proves the one global Brain route names and opens the exact Map context. */
+function assertContextBrainAction(document) {
+  const control = document.querySelector("#context-brain-button");
+  assert.ok(control, "the global contextual Brain action exists");
+  assert.equal(control.hidden, false, "the contextual Brain action is visible from the active surface");
+  assert.equal(control.textContent.replace(/\s+/g, " ").trim(), "Otto / Tangent Brain ⌘⇧↵");
+  assert.equal(control.getAttribute("aria-keyshortcuts"), "Meta+Shift+Enter");
+  assert.equal(control.getAttribute("aria-label"), "Open Otto / Tangent Brain (⌘⇧↵)");
+  assert.equal(control.dataset.brainArea, AREA, "the global action targets the selected Area exactly");
+  return control;
+}
+
+/** Proves the Brain row contains metadata and no competing route controls. */
+function assertBrainMetadataHeader(document, { session = "otto-tangent--brain" } = {}) {
+  const pane = document.querySelector("#document-peek-layer:not([hidden]) [data-map-brain-pane]")
+    ?? document.querySelector("[data-map-brain-pane]:not([hidden])")
+    ?? document.querySelector("[data-map-brain-pane]");
+  const header = pane?.querySelector(":scope > header");
+  assert.ok(header, "the shared Brain pane has one metadata row");
+  assert.match(header.querySelector("strong")?.textContent ?? "", /Otto \/ Tangent Brain · \S+/);
+  assert.equal(header.querySelector("[data-leave-area-workspace], [data-toggle-workspace-map], [data-hide-workspace-brain]"), null, "the metadata row has no local navigation");
+  assert.equal(header.querySelector("kbd"), null, "the metadata row does not duplicate global shortcuts");
+  const buttons = [...header.querySelectorAll("button")];
+  assert.equal(buttons.every((button) => button.matches(".session-tag, [data-remove-brain-subject]")), true, "metadata actions only copy the session tag or remove a Document subject");
+  const tag = header.querySelector("[data-copy-session-tag]");
+  if (session) {
+    assert.equal(tag?.dataset.copySessionTag, session, "the metadata row keeps the exact session tag");
+    assert.equal(tag?.querySelector("code")?.textContent, session);
+  } else assert.equal(tag, null, "a stopped Brain does not invent a live session tag");
+  return header;
 }
 
 /** Waits for one semantic proof state without coupling it to machine speed. */
@@ -83,7 +126,7 @@ async function openProofBrain(window) {
   assert.ok(row, "Go To includes the named Tangent Brain");
   row.click();
   await settle(window, 5);
-  assert.match(document.querySelector("[data-map-brain-pane] > header strong")?.textContent ?? "", /Tangent Brain/);
+  assertBrainMetadataHeader(document);
 }
 
 /** Filters out telemetry and reports only actions that could send or start work. */
@@ -179,12 +222,12 @@ function focusRouteMap(document) {
 async function openRouteBrain(window) {
   const { document } = window;
   focusRouteMap(document);
-  const named = document.querySelector("#context-brain-button");
-  assert.match(named.getAttribute("aria-label"), /Show Otto \/ Tangent Brain/);
+  const named = assertContextBrainAction(document);
   press(window, "Enter", { metaKey: true, shiftKey: true });
   await settle(window, 6);
   const pane = document.querySelector("[data-map-brain-pane]");
-  assert.match(pane.querySelector(":scope > header strong")?.textContent ?? "", /Otto \/ Tangent Brain/);
+  assertBrainMetadataHeader(document);
+  assert.equal(named.hidden, true, "the entry action does not compete with the active Brain");
   assert.equal(document.querySelector("#context-brain-button").getAttribute("aria-pressed"), "true");
   assert.equal(document.activeElement?.hasAttribute("data-terminal-standin"), true, "Brain gives its composer immediate focus");
   return pane;
@@ -195,7 +238,8 @@ async function openRouteDocument(window) {
   const block = window.document.querySelector(`[data-map-document-ref="${DOCUMENT.file}"]`);
   await activateNamedControl(window, block, /Open .*design-map-first-proof\.md/);
   const reader = window.document.querySelector("#document-peek-layer .document-peek-surface");
-  assert.equal(reader.getAttribute("role"), "dialog");
+  assert.equal(reader.getAttribute("role"), "region");
+  assert.equal(reader.hasAttribute("aria-modal"), false);
   assert.equal(reader.getAttribute("aria-label"), DOCUMENT.title);
   return { block, reader };
 }
@@ -273,11 +317,12 @@ test("journey 4: a Map Document opens its named Brain with a removable subject a
 
     const discuss = document.querySelector("[data-discuss-document]");
     assert.equal(discuss.textContent.trim(), "Discuss with Otto / Tangent Brain");
-    discuss.click();
+    const contextualBrain = assertContextBrainAction(document);
+    contextualBrain.click();
     await settle(window, 5);
 
     assert.ok(document.querySelector(".document-discussion-workspace"));
-    assert.match(document.querySelector("[data-map-brain-pane] > header strong")?.textContent ?? "", /Tangent Brain/);
+    assertBrainMetadataHeader(document);
     const subject = document.querySelector("[data-brain-subject]");
     assert.equal(subject.hidden, false);
     assert.equal(subject.querySelector("span").textContent, DOCUMENT.title);
@@ -288,8 +333,14 @@ test("journey 4: a Map Document opens its named Brain with a removable subject a
     assert.equal(subject.hidden, true, "the exact Document subject is removable");
     assert.deepEqual(automaticBrainMutations(posts), []);
 
-    click(document, "[data-leave-area-workspace]");
-    await settle(window);
+    if (width <= 900) {
+      await activateNamedControl(window, document.querySelector('[data-document-discussion-surface="document"]'), /^Document$/);
+    } else {
+      reader.focus();
+      await settle(window);
+      assert.equal(document.querySelector('[data-document-discussion-surface="document"]').getAttribute("aria-pressed"), "true", "wide reader focus owns global discussion chrome");
+    }
+    await activateNamedControl(window, document.querySelector("#back-button"), /^Document/);
     assert.equal(document.querySelector(".document-discussion-workspace"), null, "Back removes only the Brain stage");
     assert.equal(document.querySelector("#document-peek-layer").hidden, false, "the quick reader remains");
     assert.equal(document.querySelector("#document-peek-layer .document-peek-surface"), reader, "discussion keeps the exact Document surface mounted");
@@ -430,7 +481,7 @@ test("Go To opens the exact Brain and agent, and a full-screen agent keeps a vis
     await settle(window, 6);
     assert.equal(workLayer.hidden, true, "Go To removes Work from above the selected Brain");
     assert.equal(workLayer.hasAttribute("inert"), true, "the hidden Work lens cannot intercept Brain input");
-    assert.match(document.querySelector("[data-map-brain-pane] > header strong")?.textContent ?? "", /Tangent Brain/);
+    assertBrainMetadataHeader(document);
     assert.equal(document.activeElement?.hasAttribute("data-terminal-standin"), true, `the ${width}px Brain accepts typing immediately`);
 
     click(document, "#back-button");
@@ -472,6 +523,8 @@ test("a failed Work refresh repaints above a retained Document and closes back o
     assert.equal(work.hidden, true);
     assert.equal(reader.hidden, false, "closing Work reveals the same quick Document");
     assert.equal(reader.hasAttribute("inert"), false);
+    assert.equal(document.querySelector("#work-tab").getAttribute("aria-current"), null, "retained Work is not announced as current beneath Document");
+    assert.equal(assertContextBrainAction(document).hidden, false, "the active Document keeps its visible contextual Brain route above retained Work");
     assert.equal(reader.querySelector(".document-peek-surface"), readerSurface, "the failed refresh never remounts the retained Document");
     assert.equal(readerSurface.scrollTop, 37, "the retained Document keeps its reading position");
     assert.equal(document.activeElement, readerSurface, "closing Work restores the exact Document focus target");
@@ -511,7 +564,13 @@ test("Work → Document → Map returns through the retained Document to the exa
     assert.equal(work.hidden, true, `the ${width}px Map route temporarily hides Work with the Document`);
     assert.equal(document.querySelector("#document-peek-layer").hidden, true);
 
-    click(document, "#back-button");
+    click(document, "#go-to-button");
+    await settle(window, 5);
+    const areaResult = [...document.querySelectorAll("[data-go-to-row]")].find((item) => item.querySelector(".search-result-kind")?.textContent.trim() === "Area" && /Tangent/i.test(item.textContent));
+    assert.ok(areaResult, "Go To includes the retained Map Area while the Document is suspended");
+    areaResult.click();
+    await settle(window, 5);
+    press(window, "Escape");
     await settle(window, 5);
     assert.equal(document.querySelector("#document-peek-layer .document-peek-surface"), reader, "Back restores the exact retained Document");
     assert.equal(work.hidden, false, "Back also restores Work beneath the Document");
@@ -523,6 +582,7 @@ test("Work → Document → Map returns through the retained Document to the exa
     await settle(window, 5);
     assert.equal(work.hidden, false, "closing Document reveals Work instead of skipping to Map");
     assert.equal(work.hasAttribute("inert"), false);
+    assert.doesNotMatch(document.querySelector("#back-button").textContent, /Document/i, "closing Document removes its Map return instead of leaving stale Document chrome");
     assert.equal(searchBar.hidden, false, "closing Document reveals the retained Work search");
     assert.equal(searchBar.hasAttribute("inert"), false);
     assert.equal(retainedSearch.value, "routine");
@@ -552,8 +612,7 @@ test("Work → Document → Go To → Brain returns to Document above the retain
     assert.ok(document.querySelector(".document-discussion-workspace"));
     assert.deepEqual(automaticBrainMutations(posts), [], "generic Brain navigation sends and starts nothing");
 
-    click(document, "[data-leave-area-workspace]");
-    await settle(window, 6);
+    await activateNamedControl(window, document.querySelector("#back-button"), /^Document/);
     const restoredReader = document.querySelector("#document-peek-layer .document-peek-surface");
     assert.ok(restoredReader, "Brain Back restores the Document reader");
     assert.equal(restoredReader.getAttribute("aria-label"), reader.getAttribute("aria-label"));
@@ -680,6 +739,98 @@ test("Go To routes a bounded unknown agent to its exact Problems consequence", a
   }
 });
 
+test("Work → Map → Brain returns through Map and keeps the underlying Work route through a Document", async () => {
+  for (const width of [1440, 800]) {
+    const { window, document } = await bootRouteProof(width);
+    await openRouteWork(window);
+    const areaRow = document.querySelector(`[data-work-cursor="area:${AREA}"]`);
+    const showMap = areaRow.querySelector(`[data-open-area-map="${AREA}"]`);
+    areaRow.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    showMap.focus();
+    showMap.click();
+    await settle(window, 6);
+    assert.equal(document.querySelector("#work-lens-layer").hidden, true);
+    assert.equal(document.querySelector("#map-tab").getAttribute("aria-current"), "page");
+
+    await activateNamedControl(window, assertContextBrainAction(document), /Open Otto \/ Tangent Brain/);
+    assert.match(document.querySelector("#back-button").textContent, /^Map ⌘⇧↵$/);
+    click(document, "#go-to-button");
+    await settle(window, 5);
+    let areaResult = [...document.querySelectorAll("[data-go-to-row]")].find((row) => row.querySelector(".search-result-kind")?.textContent.trim() === "Area" && /Tangent/i.test(row.textContent));
+    assert.ok(areaResult, "Go To includes the retained Map Area from Brain");
+    areaResult.click();
+    await settle(window, 5);
+    assert.match(document.querySelector("#back-button").textContent, /^Brain esc$/i, "Go To Area from Brain keeps Brain as the immediate return");
+    await activateNamedControl(window, document.querySelector("#back-button"), /^Brain/);
+    assert.match(document.querySelector("#back-button").textContent, /^Map ⌘⇧↵$/, "returning to Brain keeps its prior Map stage");
+    await activateNamedControl(window, document.querySelector("#back-button"), /^Map/);
+    assert.equal(document.querySelector("#map-tab").getAttribute("aria-current"), "page", "Brain Back returns to the immediate Map stage");
+    assert.match(document.querySelector("#back-button").textContent, /^Work esc$/i);
+
+    click(document, "#go-to-button");
+    await settle(window, 5);
+    areaResult = [...document.querySelectorAll("[data-go-to-row]")].find((row) => row.querySelector(".search-result-kind")?.textContent.trim() === "Area" && /Tangent/i.test(row.textContent));
+    assert.ok(areaResult, "Go To includes the nested Map Area");
+    areaResult.click();
+    await settle(window, 5);
+    assert.match(document.querySelector("#back-button").textContent, /^Work esc$/i, "Go To Area keeps the Map's underlying Work return");
+
+    const { block } = await openRouteDocument(window);
+    await activateNamedControl(window, document.querySelector("[data-close-document-peek]"), /Close/);
+    assert.equal(document.activeElement, block, "Document Close restores its Map block without erasing Map history");
+    await activateNamedControl(window, document.querySelector("#back-button"), /^Work/);
+    assert.equal(document.querySelector("#work-lens-layer").hidden, false, "the next Back restores the original Work lens");
+    assert.equal(document.activeElement, showMap, `the ${width}px route restores the exact Work Map action`);
+    window.close();
+  }
+});
+
+test("an active Document keeps its own Map and Brain targets after inspecting another Area Brain", async () => {
+  const other = "neara/designwarden";
+  const source = fixture();
+  const otherArea = { path: other, name: "designwarden", goals: [], documents: [] };
+  source.vault.areas.push(otherArea);
+  source.vault.map.push({ path: other, name: "designwarden", goals: [] });
+  source.brains.push({ area: other, status: "inactive", live: false, session: "neara-designwarden--brain", generation: 1, state: "stopped", forJulian: [], requests: [] });
+  const { window, document } = await bootWorkTable(source, {
+    startSurface: "map", documentRecord: servedDocument(), terminalStandin: true, mapDocumentRef: DOCUMENT.file, width: 800,
+  });
+  /** Retargets the current Brain through the real complete-vault finder. */
+  const chooseOtherBrain = async () => {
+    click(document, "#go-to-button");
+    await settle(window, 5);
+    const otherBrain = [...document.querySelectorAll("[data-go-to-row]")].find((row) => /Brain/i.test(row.textContent) && /Designwarden/i.test(row.textContent));
+    assert.ok(otherBrain, "Go To includes the other named Area Brain");
+    otherBrain.click();
+    await settle(window, 6);
+  };
+
+  await openRouteWork(window);
+  await openProofBrain(window);
+  await chooseOtherBrain();
+  assert.match(document.querySelector("#back-button").textContent, /^Work ⌘⇧↵$/, "Brain retargeting preserves its original Work return");
+  await activateNamedControl(window, document.querySelector("#back-button"), /^Work/);
+  assert.equal(document.querySelector("#work-lens-layer").hidden, false);
+
+  await openProofDocument(window);
+  await openProofBrain(window);
+  await chooseOtherBrain();
+  await activateNamedControl(window, document.querySelector("#back-button"), /^Document/);
+  assert.equal(document.querySelector("#document-peek-layer").hidden, false, "Document Brain retargeting preserves the retained Document");
+  assert.equal(document.querySelector("#work-lens-layer").hidden, false, "Document Brain retargeting preserves its original Work return");
+
+  await chooseOtherBrain();
+  assert.match(document.querySelector("#document-peek-layer [data-map-brain-pane] > header strong").textContent, /Neara \/ Designwarden Brain/);
+
+  await activateNamedControl(window, document.querySelector('[data-document-discussion-surface="document"]'), /^Document$/);
+  assert.equal(assertContextBrainAction(document).dataset.brainArea, AREA, "Document focus resolves its own contextual Brain");
+  await activateNamedControl(window, document.querySelector("[data-show-document-on-map]"), /Show Map-first proof on Otto \/ Tangent Map/);
+  assert.equal(document.querySelector("#context-brain-button").dataset.brainArea, AREA, "Show on Map follows the visible Document label, not the inspected Brain");
+  await activateNamedControl(window, document.querySelector("#back-button"), /^Document/);
+  assert.match(document.querySelector('[data-document-discussion-surface="brain"]').textContent, /Designwarden Brain/, "the retained discussion still remembers the inspected Brain");
+  window.close();
+});
+
 test("a live or stopped Work Brain has the same retained surface route by pointer and keyboard", async () => {
   for (const width of [1440, 800]) {
     for (const lifecycle of ["live", "stopped"]) for (const activation of ["pointer", "keyboard"]) {
@@ -692,7 +843,7 @@ test("a live or stopped Work Brain has the same retained surface route by pointe
         }];
       }
       const { window, document, posts } = await bootWorkTable(source, {
-        startSurface: "map", documentRecord: servedDocument(), terminalStandin: true, width,
+        startSurface: "map", documentRecord: servedDocument(), terminalStandin: true, width, launchOptions: fixtureLaunchOptions(),
       });
       click(document, "#work-tab");
       await settle(window, 5);
@@ -711,14 +862,31 @@ test("a live or stopped Work Brain has the same retained surface route by pointe
         ? document.querySelector("[data-map-brain-pane] .map-brain-start")
         : document.querySelector("[data-map-brain-pane] [data-terminal-standin]"), `${lifecycle} ${activation} opens its Brain surface`);
       assert.equal(document.querySelector("#work-lens-layer").hidden, true, `${lifecycle} ${activation} leaves the same retained Work surface`);
-      assert.match(document.querySelector("[data-map-brain-pane] > header strong")?.textContent ?? "", /Otto \/ Tangent Brain/);
-      if (lifecycle === "stopped") assert.ok(brainSurface, `${activation} opens the stopped Brain composer surface`);
+      assertBrainMetadataHeader(document, { session: lifecycle === "live" ? "otto-tangent--brain" : "" });
+      if (lifecycle === "stopped") {
+        assert.ok(brainSurface, `${activation} opens the stopped Brain composer surface`);
+        const retainedStart = await waitForProof(window, () => brainSurface.querySelector("[data-launch-start]"), "the stopped Brain exposes a start action");
+        assert.equal(retainedStart.disabled, false, "the stopped Brain start action is enabled");
+        click(document, "#work-tab");
+        await settle(window, 5);
+        assert.equal(document.querySelector("[data-launch-popover]"), null, "Work does not duplicate the inline stopped-Brain chooser");
+        click(document, "[data-close-work-lens]");
+        await settle(window, 5);
+        assert.equal(brainSurface.querySelector("[data-launch-start]"), retainedStart, "Work return keeps the exact stopped-Brain action node");
+      }
       else assert.equal(brainSurface.closest("[data-session]")?.dataset.session, "otto-tangent--brain");
       assert.deepEqual(automaticBrainMutations(posts), [], `${lifecycle} ${activation} starts and sends nothing`);
-      click(document, "[data-leave-area-workspace]");
-      await settle(window, 6);
+      await activateNamedControl(window, document.querySelector("#back-button"), /^Work/);
       assert.equal(document.querySelector("#work-lens-layer").hidden, false);
       assert.equal(document.activeElement?.closest("[data-work-cursor]")?.dataset.workCursor, `area:${AREA}`);
+      if (lifecycle === "stopped") {
+        brainControl.click();
+        const reopened = await waitForProof(window, () => document.querySelector("[data-map-brain-pane] .map-brain-start"), "the stopped Brain reopens after exact Work return");
+        reopened.querySelector("[data-launch-start]").click();
+        await settle(window, 5);
+        assert.equal(posts.filter(({ path }) => path === "/api/brains/start").length, 1, "the retained stopped-Brain Start action still dispatches its exact operation");
+        assert.equal(posts.find(({ path }) => path === "/api/brains/start").body.area, AREA);
+      }
       window.close();
     }
   }
@@ -733,8 +901,7 @@ test("journey 10: every route keeps a named keyboard path and one accessible act
         const map = focusRouteMap(document);
         await openRouteBrain(window);
         assert.equal(document.querySelector("#screen").hasAttribute("inert"), false);
-        press(window, "Enter", { metaKey: true, shiftKey: true });
-        await settle(window, 6);
+        await activateNamedControl(window, document.querySelector("#back-button"), /^Map/);
         assertRouteMap(document, map);
         assert.equal(document.activeElement, map);
       },
@@ -773,14 +940,16 @@ test("journey 10: every route keeps a named keyboard path and one accessible act
         const pane = await openRouteBrain(window);
         const terminal = pane.querySelector("[data-terminal-standin]");
         terminal.value = "retained Brain draft";
-        const showMap = pane.querySelector("[data-toggle-workspace-map]");
-        await activateNamedControl(window, showMap, /Show Otto \/ Tangent on Map/);
-        assert.match(document.querySelector("#back-button").textContent, /Brain/, "Show on Map names Brain as the return target");
+        await activateNamedControl(window, document.querySelector("#map-tab"), /^Map$/);
         const mapPane = document.querySelector('[data-split-pane="map"]');
         const brainPane = document.querySelector('[data-split-pane="brain"]');
-        assert.equal(mapPane.classList.contains("focused"), true, `Show on Map focuses the Map pane; active=${document.activeElement?.tagName}:${document.activeElement?.getAttribute?.("data-map-block") ?? document.activeElement?.getAttribute?.("data-terminal-standin") ?? document.activeElement?.textContent?.trim?.().slice(0, 40)}; map=${mapPane.className}; brain=${brainPane.className}`);
+        assert.equal(mapPane.classList.contains("focused"), true, `the global Map route focuses Map; active=${document.activeElement?.tagName}:${document.activeElement?.getAttribute?.("data-map-block") ?? document.activeElement?.getAttribute?.("data-terminal-standin") ?? document.activeElement?.textContent?.trim?.().slice(0, 40)}; map=${mapPane.className}; brain=${brainPane.className}`);
         assertRouteMap(document, map);
-        await activateNamedControl(window, document.querySelector("#back-button"), /Brain/);
+        if (window.innerWidth <= 900) {
+          assert.equal(brainPane.hidden, true, "compact Map hides the retained Brain pane");
+          assert.equal(brainPane.hasAttribute("inert"), true, "compact Map keeps retained Brain controls inert");
+        } else assert.equal(brainPane.hidden, false, "wide Map keeps its Brain companion visible");
+        await activateNamedControl(window, assertContextBrainAction(document), /Open Otto \/ Tangent Brain/);
         assert.equal(document.querySelector("[data-map-brain-pane] [data-terminal-standin]"), terminal);
         assert.equal(terminal.value, "retained Brain draft");
         assert.equal(document.activeElement, terminal);
@@ -798,6 +967,11 @@ test("journey 10: every route keeps a named keyboard path and one accessible act
         const reader = document.querySelector("#document-peek-layer .document-peek-surface");
         assert.equal(reader.getAttribute("aria-label"), DOCUMENT.title);
         assert.equal(document.querySelector("#screen").hasAttribute("inert"), true);
+        const showMap = reader.querySelector("[data-show-document-on-map]");
+        await activateNamedControl(window, showMap, /Show Map-first proof on Otto \/ Tangent Map/);
+        assert.equal(document.querySelector("#map-tab").getAttribute("aria-current"), "page");
+        await activateNamedControl(window, document.querySelector("#back-button"), /^Document/);
+        assert.equal(document.querySelector("#document-peek-layer .document-peek-surface"), reader, "Map Back restores the exact Brain-owned Document");
         document.querySelector("[data-close-document-peek]").click();
         await settle(window, 5);
         assert.equal(document.querySelector("[data-map-brain-pane] [data-terminal-standin]"), terminal);
@@ -835,9 +1009,10 @@ test("journey 10: every route keeps a named keyboard path and one accessible act
         press(window, "Enter", { metaKey: true, shiftKey: true });
         await settle(window, 6);
         assert.equal(document.querySelector("[data-brain-subject] span").textContent, DOCUMENT.title);
-        assert.match(document.querySelector("[data-map-brain-pane] > header strong")?.textContent ?? "", /Otto \/ Tangent Brain/);
-        assert.equal(document.querySelectorAll('#document-peek-layer [role="dialog"][aria-modal="true"]').length, 1, "the combined discussion exposes one modal surface");
-        assert.equal(reader.getAttribute("role"), "region", "the retained reader is a named region inside the discussion modal");
+        assertBrainMetadataHeader(document);
+        assert.equal(document.querySelectorAll('#document-peek-layer [aria-modal="true"]').length, 0, "the discussion shares keyboard access with visible global routes");
+        assert.equal(document.querySelector(".document-discussion-workspace").getAttribute("role"), "region");
+        assert.equal(reader.getAttribute("role"), "region", "the retained reader stays a named region inside the discussion");
         assert.equal(reader.hasAttribute("aria-modal"), false);
         assert.deepEqual(automaticBrainMutations(posts), []);
         if (window.innerWidth <= 900) {
@@ -846,15 +1021,13 @@ test("journey 10: every route keeps a named keyboard path and one accessible act
           const close = reader.querySelector("[data-close-document-peek]");
           close.focus();
           const tab = press(window, "Tab");
-          assert.equal(tab.defaultPrevented, true, "Tab wraps before a hidden Brain control");
-          assert.equal(document.activeElement, documentSwitch, "the compact discussion wraps to its first visible switcher");
+          assert.equal(tab.defaultPrevented, false, "the nonmodal Document does not trap Tab away from global routes");
           await activateNamedControl(window, document.querySelector('[data-document-discussion-surface="brain"]'), /Brain/);
         }
-        press(window, "Enter", { metaKey: true, shiftKey: true });
-        await settle(window, 6);
+        await activateNamedControl(window, document.querySelector("#back-button"), /^Document/);
         assert.equal(document.querySelector("#document-peek-layer .document-peek-surface"), reader);
-        assert.equal(reader.getAttribute("role"), "dialog");
-        assert.equal(reader.getAttribute("aria-modal"), "true");
+        assert.equal(reader.getAttribute("role"), "region");
+        assert.equal(reader.hasAttribute("aria-modal"), false);
         assert.equal(scroll.scrollTop, 29);
         assert.equal(document.activeElement, reader);
       },
@@ -917,8 +1090,7 @@ test("journey 10: every route keeps a named keyboard path and one accessible act
         assert.ok(terminal);
         assert.equal(document.querySelector("#work-lens-layer").hidden, true);
         assert.equal(document.activeElement, terminal);
-        press(window, "Enter", { metaKey: true, shiftKey: true });
-        await settle(window, 6);
+        await activateNamedControl(window, document.querySelector("#back-button"), /^Work/);
         assert.equal(document.querySelector("#work-lens-layer").hidden, false);
         assert.equal(document.activeElement, control);
       },
@@ -947,7 +1119,7 @@ test("journey 10: every route keeps a named keyboard path and one accessible act
         const map = focusRouteMap(document);
         await chooseGoToWithKeyboard(window, { query: "area tangent", kind: "Area", id: "Tangent" });
         assertRouteMap(document, map);
-        assert.match(document.querySelector("#context-brain-button").getAttribute("aria-label"), /Otto \/ Tangent Brain/);
+        assertContextBrainAction(document);
       },
     },
     {
@@ -969,10 +1141,9 @@ test("journey 10: every route keeps a named keyboard path and one accessible act
       async run({ window, document }) {
         const map = focusRouteMap(document);
         await chooseGoToWithKeyboard(window, { query: "brain tangent", kind: "Brain", id: "Tangent" });
-        assert.match(document.querySelector("[data-map-brain-pane] > header strong")?.textContent ?? "", /Otto \/ Tangent Brain/);
+        assertBrainMetadataHeader(document);
         assert.equal(document.activeElement?.hasAttribute("data-terminal-standin"), true);
-        press(window, "Enter", { metaKey: true, shiftKey: true });
-        await settle(window, 6);
+        await activateNamedControl(window, document.querySelector("#back-button"), /^Map/);
         assertRouteMap(document, map);
       },
     },

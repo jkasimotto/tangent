@@ -91,7 +91,9 @@ summary:focus-visible {
 .bar-button[hidden] { display: none; }
 .quiet-bar-button { color: var(--quiet); font-weight: 600; white-space: nowrap; }
 .quiet-bar-button:hover, .quiet-bar-button.has-attention { color: var(--text); }
-.context-brain-button { max-width: min(220px, 28vw); overflow: hidden; color: var(--blue); text-overflow: ellipsis; white-space: nowrap; }
+.context-brain-button { display: inline-flex; max-width: min(280px, 32vw); min-width: 0; align-items: center; color: var(--blue); white-space: nowrap; }
+.context-brain-button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.context-brain-button kbd { flex: none; margin-left: 8px; color: var(--quiet); font-family: inherit; font-size: 12px; font-weight: 500; }
 .awake-button { font-size: 15px; padding: 6px 8px; opacity: .35; transition: opacity .15s; }
 .awake-button:hover { opacity: .7; }
 .awake-button.active { opacity: 1; }
@@ -1318,6 +1320,10 @@ details.more-work .area-work-list { margin-top: 18px; }
 .terminal-host { position: absolute; inset: 14px 18px 18px; overflow: hidden; }
 .session-layer-terminal { position: relative; inset: auto; box-sizing: border-box; width: 100%; height: 100%; padding: 14px 18px 18px; }
 .terminal-host .xterm { height: 100%; }
+.terminal-transport-status { position: absolute; z-index: 5; right: 12px; bottom: 10px; max-width: calc(100% - 24px); padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: rgba(13, 15, 18, .94); color: var(--quiet); font-size: 11px; line-height: 1.35; pointer-events: none; }
+.terminal-transport-status[hidden] { display: none; }
+.terminal-transport-status[data-state="restored"] { color: var(--green); }
+.terminal-transport-status[data-state="ownership-error"], .terminal-transport-status[data-state="ended"] { color: var(--red); }
 
 /* Next step */
 
@@ -1462,11 +1468,10 @@ details.more-work .area-work-list { margin-top: 18px; }
 
 /* Modal and toast */
 
-/* The quick Document layer: Go to reads a Document above the screen or the
-   session Julian is on, and Escape reveals that exact surface again
-   (design-quick-returnable-document-search). It sits above the session layer
+/* The quick Document layer shares the content row, so global Map, Work, and
+   Back routes stay visible. It remains above retained content and sessions,
    and below the modal layer, so the visual order matches the key order. */
-.document-peek-layer { position: fixed; inset: 0; z-index: 90; display: grid; padding: 34px; background: rgba(3, 5, 8, .66); backdrop-filter: blur(3px); place-items: stretch; }
+.document-peek-layer { position: relative; z-index: 90; display: grid; min-width: 0; min-height: 0; overflow: hidden; grid-column: 1; grid-row: 2; padding: 34px; background: rgba(3, 5, 8, .66); backdrop-filter: blur(3px); place-items: stretch; }
 .document-peek-layer[hidden] { display: none; }
 .document-peek-surface { display: grid; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--bg); box-shadow: 0 28px 80px rgba(0, 0, 0, .6); grid-template-rows: 52px minmax(0, 1fr); }
 .document-peek-surface:focus { outline: none; }
@@ -1812,7 +1817,7 @@ body.work-search-open .screen { padding-bottom: 48px; }
 
 @media (max-width: 1599px) {
   .bar-context:has(.map-focus-controls) { justify-content: flex-start; }
-  .bar-context [data-map-brain], .bar-context [data-starred-only], .bar-context [data-active-only] { display: none; }
+  .bar-context [data-starred-only], .bar-context [data-active-only] { display: none; }
 }
 .area-board-loading, .area-board-draft-choice { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 320px; color: var(--muted); }
 .area-board-draft-choice button { border: 1px solid var(--line-strong); border-radius: 7px; padding: 7px 10px; background: var(--surface-raised); color: var(--text); }
@@ -1926,8 +1931,8 @@ body.work-search-open .screen { padding-bottom: 48px; }
   .bar-actions .bar-button { padding: 6px 8px; }
   .bar-actions .find-button { justify-self: auto; }
   .bar-actions .status-pill { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .context-brain-button { max-width: min(220px, 34vw); }
-  #prompts-tab, #awake-button, #find-button { display: none; }
+  .context-brain-button { max-width: min(280px, 48vw); }
+  #awake-button, #find-button { display: none; }
 
   .document-peek-layer { padding: 18px; }
   .document-peek-surface { grid-template-rows: auto minmax(0, 1fr); }

@@ -45,6 +45,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   let navigation = null;
   let navigationQuery = null;
   let navigationGeneration = 0;
+  let shellStatusRequest = null;
 
   /** Shows a completed mutation in Work without replacing the retained Map home. */
   function revealWorkMutation(file = "") {
@@ -59,18 +60,28 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   }
   let navigationRequest = null;
 
+  /** Loads bounded shell chrome facts once without reading Work or Agent sources. */
+  async function loadShellStatus({ force = false, reportError = true } = {}) {
+    if (state.shellStatusLoaded && !force) return true;
+    shellStatusRequest ??= api("/api/shell/status").then((status) => {
+      Object.assign(state, status, { updateAvailable: Boolean(status.sourceChanged), rebuilding: ["building", "restarting", "reconnecting"].includes(status.rebuild?.phase), shellStatusLoaded: true });
+      return true;
+    });
+    try { return await shellStatusRequest; }
+    catch (error) {
+      if (reportError) showToast(`Shell status is unavailable: ${error.message}`);
+      return false;
+    } finally { shellStatusRequest = null; }
+  }
+
   /** Opens, closes, or toggles the shell menu. */
   async function toggleShellMenu(open = shellMenu.hidden) {
     if (!open) {
       shellMenu.hidden = true;
+      if (backButton.getAttribute("aria-haspopup") === "menu") backButton.setAttribute("aria-expanded", "false");
       return;
     }
-    if (!state.shellStatusLoaded) {
-      try {
-        const status = await api("/api/shell/status");
-        Object.assign(state, status, { updateAvailable: Boolean(status.sourceChanged), rebuilding: ["building", "restarting", "reconnecting"].includes(status.rebuild?.phase), shellStatusLoaded: true });
-      } catch (error) { showToast(`Shell status is unavailable: ${error.message}`); }
-    }
+    if (!state.shellStatusLoaded) await loadShellStatus();
     const awakeItem = shellMenu.querySelector("#menu-awake");
     if (awakeItem) awakeItem.textContent = state.caffeinate ? "Let Mac sleep normally" : "Keep Mac awake";
     updateStatusPill();
@@ -78,6 +89,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     shellMenu.style.top = `${Math.round(rect.bottom + 6)}px`;
     shellMenu.style.left = `${Math.round(rect.left)}px`;
     shellMenu.hidden = false;
+    backButton.setAttribute("aria-expanded", "true");
   }
 
   // ---- Go to ----
@@ -255,9 +267,9 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     closeGoTo();
     if (row.kind === "area") {
       if (state.workLens) return openAreaMap(row.area, origin);
-      if (state.documentPeek) showMapFromDocument();
+      if (state.documentPeek && !state.documentPeek.suspended) showMapFromDocument();
       else if (brainWasFocused || origin?.closest?.(".area-workspace-brain-pane")) return showMapFromBrain(row.area);
-      else showMapHome();
+      else if (state.view !== "area-workspace") showMapHome();
       return drillAreaMap(row.area);
     }
     if (row.kind === "goal") {
@@ -945,5 +957,5 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Toggles the server-owned macOS sleep assertion. */
 
-  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, openAgentById, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, openGoalAgent, openReaderAgent, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
+  return { loadShellStatus, toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, openAgentById, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, openGoalAgent, openReaderAgent, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
 }

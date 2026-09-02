@@ -634,6 +634,7 @@ export function AreaMapWorld({ host, bridge, options }) {
 
   /** Runs one visible Map recovery choice and announces its truthful outcome. */
   async function recoverMap(action) {
+    const origin = document.activeElement;
     try {
       const result = await controller[action]();
       const next = controller.snapshot().save.state;
@@ -646,6 +647,10 @@ export function AreaMapWorld({ host, bridge, options }) {
     } catch (error) {
       announce(`Map not saved. ${String(error?.message ?? error)}`);
       return null;
+    } finally {
+      requestAnimationFrame(() => {
+        if (!origin?.isConnected) host.querySelector(".excalidraw")?.focus?.({ preventScroll: true });
+      });
     }
   }
 

@@ -291,7 +291,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
   /** Focuses the element the layer opened from, or the surface that replaced it. */
   function restorePeekFocus(peek) {
     const origin = peek.returnFocus;
-    if (origin && origin !== document.body && origin.isConnected) {
+    if (origin && origin !== document.body && origin.isConnected && !origin.closest?.("[inert], [hidden]")) {
       try { origin.focus({ preventScroll: true }); return; } catch {}
     }
     if (peek.returnFocusKey) {

@@ -13,23 +13,48 @@ function terminalWorld() {
   const previous = new Map(keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const frames = new Map();
   const cancelledFrames = [];
+  const timeouts = new Map();
   const sockets = [];
   const terminals = [];
   const observers = [];
   const fitState = { measurement: null, calls: 0, probes: 0 };
   let nextFrame = 1;
+  let nextTimeout = 1;
+
+  /** Creates the DOM surface used by the terminal-local status. */
+  function elementDouble(tagName) {
+    const attributes = new Map();
+    return {
+      tagName: tagName.toUpperCase(), className: "", hidden: false, textContent: "", parentNode: null,
+      /** Test helper for setAttribute. */
+      setAttribute(name, value) { attributes.set(name, String(value)); },
+      /** Test helper for getAttribute. */
+      getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
+      /** Test helper for removeAttribute. */
+      removeAttribute(name) { attributes.delete(name); },
+      /** Test helper for remove. */
+      remove() {
+        this.parentNode?.elements.delete(this);
+        this.parentNode = null;
+      },
+    };
+  }
 
   class TerminalDouble {
     constructor(options) {
       this.options = options;
       this.cols = 80;
       this.rows = 24;
+      this.focusCalls = 0;
+      this.writes = [];
+      this.disposed = false;
       this.loadAddon = (addon) => addon.activate?.(this);
       this.open = (host) => {
-        this.element = {};
-        host.elements.add(this.element);
+        this.element = elementDouble("div");
+        this.element.className = "xterm";
+        host.append(this.element);
       };
-      this.focus = () => {};
+      this.focus = () => { this.focusCalls += 1; };
       this.onData = () => {};
       this.onSelectionChange = () => ({
         /** Test helper for dispose. */
@@ -38,8 +63,11 @@ function terminalWorld() {
       this.getSelection = () => "";
       this.getSelectionPosition = () => null;
       this.attachCustomKeyEventHandler = () => {};
-      this.write = () => {};
-      this.dispose = () => {};
+      this.write = (data, callback) => {
+        this.writes.push(data);
+        callback?.();
+      };
+      this.dispose = () => { this.disposed = true; };
       terminals.push(this);
     }
   }
@@ -85,6 +113,13 @@ function terminalWorld() {
       this.readyState = WebSocketDouble.OPEN;
       this.onopen?.();
     }
+    /** Test helper for message. */
+    message(data) { this.onmessage?.({ data }); }
+    /** Test helper for a server-side close. */
+    closeFromServer(code, reason = "") {
+      this.readyState = 3;
+      this.onclose?.({ code, reason });
+    }
   }
 
   const windowDouble = {
@@ -104,9 +139,14 @@ function terminalWorld() {
       frames.delete(id);
     },
     /** Test helper for setTimeout. */
-    setTimeout() { return 1; },
+    setTimeout(callback, delay) {
+      const id = nextTimeout;
+      nextTimeout += 1;
+      timeouts.set(id, { callback, delay });
+      return id;
+    },
     /** Test helper for clearTimeout. */
-    clearTimeout() {},
+    clearTimeout(id) { timeouts.delete(id); },
   };
   const values = {
     window: windowDouble,
@@ -124,6 +164,8 @@ function terminalWorld() {
   }
 
   const ownerDocument = {
+    /** Test helper for createElement. */
+    createElement: elementDouble,
     /** Test helper for addEventListener. */
     addEventListener() {},
     /** Test helper for removeEventListener. */
@@ -132,14 +174,23 @@ function terminalWorld() {
     elements: new Set(), ownerDocument,
     /** Test helper for addEventListener. */
     addEventListener() {},
-      /** Test helper for removeEventListener. */
-      removeEventListener() {},
+    /** Test helper for removeEventListener. */
+    removeEventListener() {},
+    /** Test helper for append. */
+    append(element) {
+      element.parentNode = this;
+      this.elements.add(element);
+    },
     /** Test helper for contains. */
     contains(element) { return this.elements.has(element); },
   };
 
   return {
-    cancelledFrames, fitState, frames, host, observers, sockets, terminals,
+    cancelledFrames, fitState, frames, host, observers, sockets, terminals, timeouts,
+    /** Finds the terminal-local transport status. */
+    status() {
+      return [...host.elements].find((element) => element.getAttribute?.("data-terminal-transport-status") !== null) ?? null;
+    },
     /** Test helper for runFrame. */
     runFrame() {
       const entry = frames.entries().next().value;
@@ -148,6 +199,19 @@ function terminalWorld() {
       frames.delete(id);
       callback();
       return id;
+    },
+    /** Runs the first pending timeout with this exact delay. */
+    runTimeout(delay) {
+      const entry = [...timeouts.entries()].find(([, timer]) => timer.delay === delay);
+      assert.ok(entry, `one ${delay}ms timeout is pending`);
+      const [id, timer] = entry;
+      timeouts.delete(id);
+      timer.callback();
+      return id;
+    },
+    /** Counts pending timeouts with this exact delay. */
+    timeoutCount(delay) {
+      return [...timeouts.values()].filter((timer) => timer.delay === delay).length;
     },
     /** Test helper for restore. */
     restore() {
@@ -159,12 +223,19 @@ function terminalWorld() {
   };
 }
 
+/** Mounts one measured terminal and returns its stable UI and transport. */
+function mountMeasuredTerminal(world, options = {}) {
+  world.fitState.measurement = { cols: 176, rows: 54 };
+  const controller = createTerminalController({ state: {}, ...options });
+  controller.mountTerminal(world.host, "brain one");
+  world.runFrame();
+  return { controller, socket: world.sockets[0], status: world.status(), terminal: world.terminals[0] };
+}
+
 test("terminal attachment waits for measured cells and reports each later size once", { concurrency: false }, () => {
   const world = terminalWorld();
   try {
-    const controller = createTerminalController({ state: {},
-      /** Test helper for showToast. */
-      showToast() {} });
+    const controller = createTerminalController({ state: {} });
     controller.mountTerminal(world.host, "brain one");
 
     assert.equal(world.terminals[0].options.convertEol, undefined, "PTY output keeps its original newline behavior");
@@ -208,6 +279,130 @@ test("terminal attachment waits for measured cells and reports each later size o
   } finally {
     world.restore();
   }
+});
+
+test("a longer terminal outage waits for replacement data and preserves the xterm and focus", { concurrency: false }, () => {
+  const world = terminalWorld();
+  const toasts = [];
+  try {
+    const { controller, socket, status, terminal } = mountMeasuredTerminal(world, {
+      /** A legacy caller argument must never receive terminal recovery feedback. */
+      showToast(message) { toasts.push(message); },
+    });
+    assert.ok(status);
+    assert.equal(status.hidden, true);
+    assert.equal(status.getAttribute("role"), "status");
+    assert.equal(status.getAttribute("aria-live"), "polite");
+    assert.equal(status.getAttribute("aria-atomic"), "true");
+    assert.equal(status.getAttribute("tabindex"), null, "the local status cannot take focus");
+    socket.open();
+    socket.message("last visible frame");
+    assert.deepEqual(terminal.writes, ["last visible frame"]);
+    assert.equal(terminal.focusCalls, 1);
+
+    socket.closeFromServer(1006, "gateway restarted");
+    assert.equal(status.hidden, true, "the delayed status keeps a short interruption quiet");
+    assert.equal(world.timeoutCount(250), 1, "the first retry keeps the existing backoff");
+    assert.equal(world.timeoutCount(700), 1, "outage feedback is delayed");
+    assert.deepEqual(terminal.writes, ["last visible frame"], "the last terminal frame remains untouched");
+    assert.equal(terminal.disposed, false);
+
+    world.runTimeout(250);
+    world.runFrame();
+    const replacement = world.sockets[1];
+    replacement.open();
+    assert.equal(status.hidden, true, "socket open alone does not claim recovery");
+    world.runTimeout(700);
+    assert.equal(status.hidden, false);
+    assert.equal(status.textContent, "Terminal display disconnected · reconnecting");
+    assert.equal(status.getAttribute("data-state"), "reconnecting");
+    assert.equal(terminal.focusCalls, 1, "status changes do not move terminal focus");
+
+    replacement.message("replacement data");
+    assert.equal(world.terminals.length, 1, "recovery reuses the exact xterm instance");
+    assert.deepEqual(terminal.writes, ["last visible frame", "replacement data"]);
+    assert.equal(status.textContent, "Terminal display restored");
+    assert.equal(status.getAttribute("data-state"), "restored");
+    assert.equal(terminal.focusCalls, 1);
+    assert.deepEqual(toasts, [], "terminal recovery never uses global toast feedback");
+
+    world.runTimeout(1_200);
+    assert.equal(status.hidden, true);
+    assert.equal(status.textContent, "");
+    assert.equal(status.getAttribute("data-state"), null);
+    controller.disposeTerminal();
+    assert.equal(world.host.contains(status), false, "disposal removes the local status with its terminal");
+  } finally {
+    world.restore();
+  }
+});
+
+test("a short terminal reconnect stays silent", { concurrency: false }, () => {
+  const world = terminalWorld();
+  const toasts = [];
+  try {
+    const { socket, status, terminal } = mountMeasuredTerminal(world, {
+      /** Records any forbidden global recovery feedback. */
+      showToast(message) { toasts.push(message); },
+    });
+    socket.open();
+    socket.message("existing frame");
+    socket.closeFromServer(1006);
+    world.runTimeout(250);
+    world.runFrame();
+    world.sockets[1].open();
+    world.sockets[1].message("quick replacement");
+
+    assert.equal(status.hidden, true);
+    assert.equal(status.textContent, "");
+    assert.equal(status.getAttribute("data-state"), null);
+    assert.equal(world.timeoutCount(700), 0, "replacement data cancels delayed outage feedback");
+    assert.equal(world.timeoutCount(1_200), 0, "a hidden outage does not produce a restored message");
+    assert.equal(world.terminals[0], terminal);
+    assert.equal(terminal.focusCalls, 1);
+    assert.deepEqual(toasts, []);
+  } finally {
+    world.restore();
+  }
+});
+
+test("terminal ownership and ended-session closes stay local and never retry", { concurrency: false }, async (context) => {
+  for (const expected of [
+    { code: 4403, state: "ownership-error", text: "Terminal display unavailable · open in another Agent Shell" },
+    { code: 4404, state: "ended", text: "Terminal session ended" },
+  ]) {
+    await context.test(String(expected.code), () => {
+      const world = terminalWorld();
+      try {
+        const { socket, status, terminal } = mountMeasuredTerminal(world);
+        socket.open();
+        socket.message("retained frame");
+        socket.closeFromServer(expected.code);
+
+        assert.equal(status.hidden, false);
+        assert.equal(status.textContent, expected.text);
+        assert.equal(status.getAttribute("data-state"), expected.state);
+        assert.equal(world.timeoutCount(250), 0, "a final transport code does not schedule a retry");
+        assert.equal(world.timeoutCount(700), 0, "a final transport code does not schedule reconnect feedback");
+        assert.equal(world.frames.size, 0);
+        assert.equal(world.sockets.length, 1);
+        assert.deepEqual(terminal.writes, ["retained frame"]);
+        assert.equal(terminal.disposed, false);
+        assert.equal(terminal.focusCalls, 1);
+
+        world.runTimeout(2_000);
+        assert.equal(status.textContent, expected.text, "the local error remains visible");
+        assert.equal(world.sockets.length, 1);
+      } finally {
+        world.restore();
+      }
+    });
+  }
+});
+
+test("terminal recovery has no global toast dependency", async () => {
+  const source = await readFile(path.join(here, "public", "terminal-controller.js"), "utf8");
+  assert.doesNotMatch(source, /\bshowToast\b/);
 });
 
 test("window resize calls the controller fit callback directly", async () => {

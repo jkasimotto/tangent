@@ -1747,6 +1747,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
    */
   function handleDocumentPeekClick(event) {
     const target = event.target;
+    reconcileDocumentDiscussionOwner(target);
     const copy = target.closest?.("[data-document-copy='quick']");
     if (copy) {
       const payload = copyOperations.quick.cached?.button === copy ? copyOperations.quick.cached.payload : prepareReaderCopy(true);
@@ -1795,6 +1796,23 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (syncPointerComment(target, true)) return;
   }
 
+  /** Keeps wide Document/Brain chrome aligned with the surface in use. */
+  function reconcileDocumentDiscussionOwner(target) {
+    if (!state.documentDiscussion) return;
+    const surface = target.closest?.("[data-document-discussion-context]")
+      ? "document"
+      : target.closest?.("[data-document-discussion-brain]")
+        ? "brain"
+        : "";
+    if (surface && state.documentDiscussion.active !== surface) {
+      switchDocumentDiscussion(surface, { focus: false });
+    }
+  }
+
+  documentPeekLayer.addEventListener("focusin", (event) => {
+    reconcileDocumentDiscussionOwner(event.target);
+  });
+
   document.addEventListener("click", async (event) => {
     const target = event.target;
     if (target.closest?.("#map-tab")) return showMapHome();
@@ -1803,22 +1821,20 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest?.("#work-tab")) return openWorkLens({ mode: "all" });
     if (target.closest?.("#for-you-button")) return openWorkLens({ mode: "for-you" });
     if (target.closest?.("#problems-button")) return openWorkLens({ mode: "problems" });
-    if (target.closest?.("#context-brain-button")) return toggleMapBrain();
+    const contextBrain = target.closest?.("#context-brain-button");
+    if (contextBrain) return toggleMapBrain(contextBrain.dataset.brainArea);
     if (target.closest?.("[data-discuss-current-document]")) return void discussFullDocument(target.closest("[data-discuss-current-document]"));
     if (target.closest?.("[data-close-work-lens]")) return closeWorkLens();
     if (target.closest?.("[data-retry-work]")) return refresh({ trigger: "work-retry" });
     if (target.closest?.("[data-retry-go-to]")) {
       return renderGoToList();
     }
-    if (target.closest?.("[data-map-brain]")) return toggleMapBrain();
-    if (target.closest?.("[data-close-map-brain]")) return closeMapBrain();
-    if (target.closest?.("[data-toggle-workspace-map]")) return;
     if (target.closest?.("[data-map-column]")) {
       const interactive = target.closest?.("button, input, select, textarea, a, dialog, [role='dialog'], [contenteditable]:not([contenteditable='false'])");
       focusMapCompanion("map", { moveDomFocus: !interactive });
     }
     else {
-      const brainPane = target.closest?.("[data-map-brain-pane]");
+      const brainPane = target.closest?.("[data-area-workspace] [data-map-brain-pane]");
       if (brainPane && !brainPane.hidden) focusMapCompanion("brain");
     }
     if (state.documentPeek && documentPeekLayer.contains(target)) return handleDocumentPeekClick(event);
@@ -2716,7 +2732,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   backButton.addEventListener("click", async () => {
     if (closeNearestOpenDetails()) return;
     if (state.view === "areas" && areaProcessesReturnPoint) return leaveCurrentSurface();
-    if (["work", "areas", "prompts"].includes(state.view)) return toggleShellMenu();
+    if (["work", "areas", "prompts"].includes(state.view) || state.view === "area-workspace" && !backButton.classList.contains("has-back")) return toggleShellMenu();
     return leaveCurrentSurface();
   });
 
@@ -2881,7 +2897,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   /**
-   * Keeps Tab inside one open layer. The surfaces below a dialog are marked
+   * Keeps Tab inside one modal layer. The surfaces below a dialog are marked
    * inert, but the trap must not depend on that: focus must never move behind
    * the visible top layer (design-quick-returnable-document-search 5.1).
    */
@@ -2912,8 +2928,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     });
   }
 
-  // Tab stays inside the quick Document layer while it is the top surface.
-  trapTabInside(documentPeekLayer, 'button:not([disabled]), a[href], [tabindex="-1"].document-peek-surface', () => Boolean(state.documentPeek && !state.documentPeek.suspended) && !state.goTo);
+  // A quick Document shares the application row with visible global routes.
+  // It is a nonmodal region, so native Tab order can reach both the Document
+  // and those global controls.
 
   // The finder is the top layer whenever it is open, including above a quick
   // Document. Tab and Shift-Tab stay on its own controls, so no focus reaches
@@ -2937,7 +2954,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       documentPeek: documentOpen && !workOnTop && !sessionOnTop,
       session: sessionOnTop,
       focusPicker: Boolean(state.areaFocusPicker),
-      transient: !shellMenu.hidden || Boolean(state.launchTarget) || Boolean(state.whatHappened) || Boolean(state.commentComposer),
+      transient: !shellMenu.hidden || Boolean(document.querySelector("[data-launch-popover]")) || Boolean(state.whatHappened) || Boolean(state.commentComposer),
       textEntry: Boolean(target.closest?.("input, textarea, select, [contenteditable='true']")),
       view: workOnTop || !documentOpen && workVisible() ? "work" : state.view,
     });
@@ -2977,22 +2994,26 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   function handleGlobalShortcut(event) {
     if (shortcutMatches(event, KEYMAP.goTo)) {
       event.preventDefault();
+      event.stopPropagation();
       openGoTo();
       return true;
     }
     if (shortcutMatches(event, KEYMAP.session)) {
       event.preventDefault();
+      event.stopPropagation();
       if (state.sessionPeek) closeSessionLayer();
       else if (workVisible()) enterCursorSession();
-      else if (state.documentDiscussion?.active === "brain") returnFromBrain();
+      else if (state.documentPeek && !state.documentPeek.suspended && state.documentDiscussion?.active === "brain") returnFromBrain();
       else if (state.documentPeek && !state.documentPeek.suspended) discussDocumentWithBrain(state.documentPeek.document?.area || state.documentPeek.area);
-      else if (state.view === "area-workspace") toggleMapBrain();
+      else if (state.view === "area-workspace" && contextBrainButton?.getAttribute("aria-pressed") === "true") returnFromBrain();
+      else if (state.view === "area-workspace") toggleMapBrain(contextBrainButton?.dataset.brainArea);
       else if (state.view === "document") void discussFullDocument();
       else showToast("Choose an Area before opening its Brain.");
       return true;
     }
     if (shortcutMatches(event, KEYMAP.findWork)) {
       event.preventDefault();
+      event.stopPropagation();
       if (state.sessionPeek) closeSessionLayer();
       showWork();
       searchBar.open();
@@ -3030,7 +3051,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   /** Closes the nearest native disclosure before Back leaves its parent screen. */
   function closeNearestOpenDetails(target = document.activeElement) {
     const local = target?.closest?.("details[open]");
-    const root = state.documentPeek ? documentPeekLayer : screen;
+    const root = state.documentPeek && !state.documentPeek.suspended ? documentPeekLayer : screen;
     const fallback = [...root.querySelectorAll(transientDetails)].at(-1);
     const details = local && root.contains(local) ? local : fallback;
     if (!details) return false;

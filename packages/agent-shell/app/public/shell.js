@@ -2283,9 +2283,13 @@ function areaMapPane(area) {
     onEntityVerb: areaMapEntityVerb,
     onBack: leaveAreaWorkspace,
     /** Keeps workspace chrome aligned with Map-local drill state. */
-    onNavigation(navigation) { mapLocatedArea = navigation.area; updateAreaMapChrome(); },
-    /** Keeps workspace chrome aligned with Map-local view tools. */
-    onViewState(viewState) { mapViewState = { ...mapViewState, ...viewState }; updateAreaMapChrome(); },
+    onNavigation(navigation) { mapLocatedArea = navigation.area; updateHeader(); },
+    /** Keeps workspace chrome aligned with the restored Map location and tools. */
+    onViewState(viewState) {
+      mapViewState = { ...mapViewState, ...viewState };
+      if (viewState.locatedArea) mapLocatedArea = viewState.locatedArea;
+      updateHeader();
+    },
     /** Makes the current Map controller available to existing shell actions. */
     onController(controller) { activeAreaBoard = controller; },
   });

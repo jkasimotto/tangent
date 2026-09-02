@@ -106,11 +106,12 @@
 
 .tangent-map-empty-hint { position: absolute; z-index: 2; top: 50%; left: 50%; margin: 0; color: var(--tangent-muted); font: 18px Excalifont, Virgil, sans-serif; text-align: center; transform: translate(-50%, -50%); pointer-events: none; }
 
-/* Narrow windows: the Tangent buttons shrink to glyphs so Excalidraw's toolbar keeps its room. */
+/* Narrow windows keep Block named because it is a primary Map action. The
+   secondary Outline and Keys actions can shrink to glyphs to leave room for
+   Excalidraw's toolbar. */
 @media (max-width: 960px) {
   .tangent-map-top-right { top: 76px; right: 60px; }
-  .tangent-map-toolbar-extra button .tangent-map-label, .tangent-map-top-right > button .tangent-map-label, .tangent-map-top-right > button kbd, .tangent-map-toolbar-extra kbd { display: none; }
-  .tangent-map-toolbar-extra button > span[aria-hidden] { margin-right: 0; }
+  .tangent-map-top-right > button .tangent-map-label, .tangent-map-top-right > button kbd, .tangent-map-toolbar-extra kbd { display: none; }
   .tangent-map-glyph { display: inline; }
   .tangent-map-top-right > button, .tangent-map-toolbar-extra button { padding: 0 10px; }
   .tangent-map-inbox { left: 12px; width: calc(100% - 24px); transform: none; }

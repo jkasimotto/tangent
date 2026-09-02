@@ -303,6 +303,15 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
     assert.equal(await page.locator("#map-tab").getAttribute("aria-current"), "page", "Map is the first announced surface before Work is opened");
+    assert.match(await page.locator("#bar-context").textContent(), /otto \/ tangentMap/i, "the wide header names the active Area and Map surface");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain/, "the wide header exposes the responsible named Brain");
+    assert.equal(await page.locator(".tangent-map-toolbar-extra .tangent-map-label").textContent(), "Block", "the wide Map names its primary creation action");
+    const wideForYou = page.locator("#for-you-button");
+    assert.match(await wideForYou.textContent(), /^For you \d+$/, "direct attention is a visible named route");
+    await wideForYou.click();
+    assert.equal(await page.locator("#work-lens-title").textContent(), "For you", "the visible attention route opens filtered Work");
+    await page.locator("[data-close-work-lens]").click();
+    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
     await page.locator("#work-tab").click();
     await page.locator("#work-lens-layer").waitFor();
     const row = page.locator('[data-work-cursor="area:otto/tangent"]');
@@ -649,6 +658,29 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
 
     await page.locator("#map-tab").click();
     assert.equal(await page.locator("[data-map-column]").isVisible(), true, "the global Map route exposes the retained Map after the return proof");
+    assert.equal(await page.locator("#map-tab").getAttribute("aria-current"), "page", "the compact header announces Map as the active surface");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain/, "the compact header keeps the active Area visible in its named Brain route");
+    await page.locator("#map-tab").focus();
+    for (const expected of [
+      "#work-tab",
+      '[data-map-breadcrumb="otto"]',
+      '[data-map-breadcrumb="otto/tangent"]',
+      "[data-map-find]",
+      "[data-map-only]",
+      "#for-you-button",
+      "#problems-button",
+      "#context-brain-button",
+      "#go-to-button",
+    ]) {
+      await page.keyboard.press("Tab");
+      const focused = await page.locator(expected).evaluate((control) => document.activeElement === control);
+      assert.equal(focused, true, `compact header focus reaches ${expected} in visible order`);
+    }
+    const compactBlockAction = page.getByRole("button", { name: /^Block/ });
+    await compactBlockAction.waitFor();
+    assert.equal(await compactBlockAction.locator(".tangent-map-label").isVisible(), true, "the primary Block action keeps its visible name at 800px");
+    const compactBlockBox = await compactBlockAction.boundingBox();
+    assert.ok(compactBlockBox && compactBlockBox.x >= 0 && compactBlockBox.x + compactBlockBox.width <= 800, `the named Block action stays inside the 800px viewport: ${JSON.stringify(compactBlockBox)}`);
 
     // At 800px, B places the complete-vault Document directly. A real save
     // rejection then survives Document, Brain, and Work before Retry succeeds.

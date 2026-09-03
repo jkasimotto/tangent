@@ -7,7 +7,9 @@
 // dragged. The rebuilt Map renders pills through the kit's CanvasLabel with `pointer-events: none`
 // and keeps them real buttons, so the pointer falls through to the canvas while the keyboard still
 // reaches the name. This suite drives real wheel, pointer and key input over one pill and requires
-// all four of those facts at once.
+// every one of those facts at once: the pill is transparent and the canvas is the element under the
+// name, a wheel over the name pans, a Control wheel over the name zooms, a drag from the name moves
+// that Area and not its parent, and the pill still takes focus and answers Enter.
 //
 // Design: docs/design/area-map-rebuild/code.md, "The eleven open defects", item 5.
 
@@ -156,6 +158,20 @@ async function elementUnder(page, point) {
   }, point);
 }
 
+/** Reads one Area's stored rectangle, the durable geometry a drag on that Area writes to the vault. */
+async function storedRect(page, area) {
+  return page.evaluate((target) => {
+    const node = window.editor.controller().world().areas.find((entry) => entry.key === target);
+    const rect = node?.region.storedRect;
+    return rect && { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  }, area);
+}
+
+/** Reads the Areas named by the last published world change, which says what the gesture actually moved. */
+async function lastChangedAreas(page) {
+  return page.evaluate(() => window.worldEvents.at(-1)?.areas ?? null);
+}
+
 /** Clears the Map selection, so a press is judged as a first press on an Area nobody holds. */
 async function clearSelection(page) {
   await page.evaluate(() => window.editor.controller().setSelection([]));
@@ -199,6 +215,7 @@ test("a wheel and a drag over an Area name pill reach the Map, and the pill stil
     // A drag that starts on the name moves the Area the name belongs to, and publishes it.
     await clearSelection(page);
     const beforeDrag = await regionRect(page, "otto/tangent");
+    const parentBeforeDrag = await storedRect(page, "otto");
     const zoom = (await camera(page)).zoom;
     const dragStart = await pillCentre(page, "otto/tangent");
     const dragged = { x: 140, y: 90 };
@@ -225,6 +242,14 @@ test("a wheel and a drag over an Area name pill reach the Map, and the pill stil
     assert.equal(afterDrag.width, beforeDrag.width, "a drag on the name moves the Area rather than resizing it");
     assert.equal(afterDrag.height, beforeDrag.height, "a drag on the name moves the Area rather than resizing it");
 
+    // The named Area moved, and not its parent underneath it. A child sits inside its parent, so the
+    // child's composed rectangle would follow a parent drag just as closely. The stored geometry and
+    // the published change name the Area whose pill the drag started on, and nothing else.
+    const changedAreas = await lastChangedAreas(page);
+    assert.ok(changedAreas?.includes("otto/tangent"), `the published change names the Area the name belongs to: ${JSON.stringify(changedAreas)}`);
+    assert.equal(changedAreas.includes("otto"), false, `the published change does not move the parent Area: ${JSON.stringify(changedAreas)}`);
+    assert.deepEqual(await storedRect(page, "otto"), parentBeforeDrag, "a drag on a child's name leaves the parent Area's stored geometry alone");
+
     // A wheel over the name moves the camera, because the wheel reaches the canvas under the pill.
     const wheelPoint = await pillCentre(page, "otto/tangent");
     assert.ok(wheelPoint.x > 0 && wheelPoint.y > 0, `the Area name pill is inside the viewport before the wheel: ${JSON.stringify(wheelPoint)}`);
@@ -237,6 +262,21 @@ test("a wheel and a drag over an Area name pill reach the Map, and the pill stil
       return Math.abs(state.scrollY - before.scrollY) > 1 || Math.abs(state.scrollX - before.scrollX) > 1 || Math.abs(level - before.zoom) > 0.001;
     }, beforeWheel, { timeout: 10_000 });
     assert.notDeepEqual(await camera(page), beforeWheel, "a wheel over the Area name pans or zooms the Map");
+    await settled(page);
+
+    // A Control wheel over the name zooms, which is the other half of the defect wording.
+    const zoomPoint = await pillCentre(page, "otto/tangent");
+    const viewport = page.viewportSize();
+    assert.ok(zoomPoint.x > 0 && zoomPoint.x < viewport.width && zoomPoint.y > 0 && zoomPoint.y < viewport.height, `the Area name pill is inside the viewport before the zoom: ${JSON.stringify(zoomPoint)}`);
+    const beforeZoom = await camera(page);
+    await page.mouse.move(zoomPoint.x, zoomPoint.y);
+    await page.keyboard.down("Control");
+    await page.mouse.wheel(0, -240);
+    await page.keyboard.up("Control");
+    await page.waitForFunction((before) => {
+      const state = window.editor.appState();
+      return Math.abs((state.zoom?.value ?? state.zoom) - before.zoom) > 0.001;
+    }, beforeZoom, { timeout: 10_000 });
     await settled(page);
 
     // The pill stays a real button: it is in the tab order, it takes focus, and Enter on it acts.

@@ -6,6 +6,16 @@ Brief: `~/.tangent/trees/otto/tangent/records/brief-map-resources-look-like-what
 
 Lenses used: architecture, types, and data. API. Migration and compatibility. Operations. Every lens applies, because the change adds a vault file format, a server route, a persisted observation field, and a render-time projection.
 
+## Revision, 2026-09-03: icons may be image files
+
+Superseded by `feat(agent-shell): let Map icons be images, not only drawings`. See the revision section in `product.md` for the decision and the dark-theme reasoning.
+
+What changed in this design:
+- The accepted icon extensions now include `.png`, `.svg`, `.webp`, `.jpg` and `.jpeg`. An icon record carries `kind`, either `drawing` as before or `image` with `mimeType`, `dataURL`, `width`, `height` and a content hash.
+- Intrinsic size is read from the file header, so no image dependency was added: PNG from IHDR, JPEG from the SOFn marker, WebP from the VP8, VP8L or VP8X chunk, and SVG from `width` and `height` or the `viewBox`.
+- `createFigureElements` branches on `icon.kind`. An image icon yields one locked ephemeral Excalidraw `image` element carrying the same `customData` as a drawing's elements, so every consumer that already drops or ignores an ephemeral element handles it. The browser registers the matching `files` entries before the projection reaches the canvas.
+- The rejection of `image` elements *inside* an Excalidraw icon drawing stands, and for the original reason: such an element needs a `files` entry the drawing does not carry. `embeddable` and `iframe` stay rejected.
+
 ## Decision summary
 
 - **Decision:** The server owns the definition and the icons. One module, `packages/agent-shell/app/map-kinds.mjs`, reads `~/.tangent/trees/map-kinds.md` and `~/.tangent/trees/map-icons/` on every request and returns one catalog: normalized kinds, normalized icons, and problems. The browser never parses an Excalidraw file.
@@ -34,7 +44,7 @@ Observable success, in code terms:
 - A definition edit, an icon file edit, or a new icon file shows on the next cadence tick or Map load without a server restart.
 - A definition error yields cards and exactly one notice per problem in the Map status area.
 
-Non-goals: image icons, a `run` verb, a per-Area definition, a change to placement or Area rules, a change to the resource catalog's closed target union.
+Non-goals at the time of writing: image icons (since superseded, see the revision above), a `run` verb, a per-Area definition, a change to placement or Area rules, a change to the resource catalog's closed target union.
 
 ## Current system
 

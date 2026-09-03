@@ -23,6 +23,9 @@ export type WorldRevision = Brand<number, "WorldRevision">;
 /** The opaque id of a Resource, as the wire registry guards it. */
 export type ResourceId = Brand<string, "ResourceId">;
 
+/** The id of one resource mutation attempt, minted in the browser and reused on retry so the server can replay its receipt. */
+export type OperationId = Brand<string, "OperationId">;
+
 /** The eight handles an Area region can be resized from, named by compass direction as the kernel names them. */
 export type ResizeHandle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
 
@@ -57,6 +60,11 @@ export function worldRevision(value: number): WorldRevision {
 /** Tags a raw string as a Resource id. */
 export function resourceId(value: string): ResourceId {
   return value as ResourceId;
+}
+
+/** Tags a raw string as a resource mutation operation id. */
+export function operationId(value: string): OperationId {
+  return value as OperationId;
 }
 
 /** True when a string names one of the eight resize handles. */

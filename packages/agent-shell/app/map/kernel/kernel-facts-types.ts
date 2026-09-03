@@ -31,12 +31,48 @@ export type ProjectionError = {
 /** The state of a cached observation of one target. */
 export type ObservationState = "current" | "checking" | "not-checked" | "last-known" | "unavailable";
 
-/** One cached look at a target, never a refresh. */
-export type ResourceObservation = {
+/** One cached look at a target, never a refresh. `V` is what the look found: a local checkout or a provider lifecycle. */
+export type ResourceObservation<V = unknown> = {
   state: ObservationState;
-  value: unknown;
+  value: V | null;
   checkedAt: string | null;
   error?: ProjectionError;
+};
+
+/** What a local look at a path found: whether it is a worktree, which checkout it holds, and which repository owns it. */
+export type LocalObservationValue = {
+  state: "available" | "missing" | "not-a-worktree" | string;
+  checkout?: { kind: string; head?: string; branchRef?: string } | null;
+  repositoryPath?: string | null;
+  dirty?: boolean;
+};
+
+/** What a provider reported about a link: its state in words, its treatment, and when the provider last changed it. */
+export type ProviderLifecycleValue = {
+  stateLabel: string;
+  treatment?: string;
+  providerUpdatedAt?: string;
+};
+
+/** The provider record of a link Resource. A generic link has no lifecycle. */
+export type ResourceLink = {
+  kind: string;
+  lifecycle?: ResourceObservation<ProviderLifecycleValue> | null;
+  [field: string]: unknown;
+};
+
+/** One identity warning the catalog records on a Resource: another record may point at the same place. */
+export type ResourceWarning = {
+  kind: "path-alias" | "cross-kind-target" | string;
+  other?: { id?: ResourceId; owner?: ShardOwner } | null;
+};
+
+/** Where a Resource came from when it was imported from an Area note's legacy binding. */
+export type ResourceOrigin = {
+  kind: "legacy-area-binding" | string;
+  field?: string;
+  evidenceHash?: string;
+  declaredBranch?: string | null;
 };
 
 /** How one Resource shows on the Map: placed, hidden, or never placed. */
@@ -48,10 +84,10 @@ export type ResourceEntity = {
   label: string;
   target: ResourceTarget | null;
   representation: ResourceRepresentation | { state: "current"; value: ResourceRepresentation } | { state: "unavailable"; error?: ProjectionError };
-  origin?: unknown;
-  warnings?: string[];
-  local?: ResourceObservation | null;
-  link?: { kind: string; [field: string]: unknown } | null;
+  origin?: ResourceOrigin | null;
+  warnings?: ResourceWarning[];
+  local?: ResourceObservation<LocalObservationValue> | null;
+  link?: ResourceLink | null;
   reason?: "removed" | "missing-record";
   lastKnown?: { label: string; target: ResourceTarget | null } | null;
 };
@@ -68,8 +104,8 @@ export type ResourceResolution = {
   error?: ProjectionError;
 };
 
-/** How one row relates to the Area it is viewed from: its own, inherited from an ancestor, or removed. */
-export type ResourceRelation = { kind: string; from?: ShardOwner };
+/** How one row relates to the Area it is viewed from: its own, inherited from an ancestor, or removed. An inherited row names the ancestor. */
+export type ResourceRelation = { kind: "direct" | "inherited" | string; from?: ShardOwner; sourceArea?: ShardOwner };
 
 /** Whether the Resource is the one the Area note launches from. */
 export type LaunchMatch = { state: "current"; value: boolean } | { state: "unavailable"; error: ProjectionError };
@@ -83,26 +119,45 @@ export type ResourcePanelRow = {
   entity: ResourceEntity;
 };
 
+/** The evidence a Suggestion or a legacy candidate carries, which a mutation sends back unchanged so the server can check it did not move. */
+export type SuggestionEvidence = {
+  target?: ResourceTarget;
+  evidence?: unknown;
+  evidenceHash?: string;
+  targetFingerprint?: string;
+};
+
 /** One legacy declaration the Area note still carries, reviewed for the Add-back flow. */
-export type LegacyReviewRow = {
-  state: "candidate" | "invalid";
+export type LegacyReviewRow = SuggestionEvidence & {
+  state: "candidate" | "invalid" | string;
   owner: ShardOwner;
   field: string;
   message?: string;
-  [field: string]: unknown;
+  proposedLabel?: string;
+  declaredBranch?: string | null;
 };
 
 /** A Resource the note's knowledge suggests but the catalog does not hold. */
-export type ResourceSuggestion = { owner: ShardOwner; [field: string]: unknown };
+export type ResourceSuggestion = SuggestionEvidence & {
+  owner: ShardOwner;
+  kind?: string;
+  proposedLabel?: string;
+  provenanceLabel?: string;
+};
+
+/** The revision of one Area's catalog, which a mutation names so the server refuses a write over a catalog that changed. */
+export type ResourceCatalogRevision = { owner: ShardOwner; revision: string };
 
 /** The complete Resources panel contract the server serves for one Area. */
 export type ResourcePanelProjection = {
-  state: "current" | "unavailable";
+  state: "current" | "partial" | "unavailable";
+  viewedFrom?: AreaKey;
   rows: ResourcePanelRow[];
   legacyReview: LegacyReviewRow[];
   suggestions: ResourceSuggestion[];
-  catalogs?: unknown;
-  problems?: { key: string; value: { kind: string; error?: ProjectionError } }[];
+  catalogs?: ResourceCatalogRevision[];
+  counts?: unknown;
+  problems?: { key?: string; code?: string; message?: string; value?: { kind: string; error?: ProjectionError } }[];
   error?: ProjectionError;
 };
 

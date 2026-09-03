@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { RESIZE_HANDLES, areaKey, isResizeHandle, resourceId, runtimeId, shardOwner, sourceId, worldRevision } from "./ids.ts";
+import { RESIZE_HANDLES, areaKey, isResizeHandle, operationId, resourceId, runtimeId, shardOwner, sourceId, worldRevision } from "./ids.ts";
 import type { AreaKey, RuntimeId, SourceId } from "./ids.ts";
 
 test("every id constructor returns the value it was given", () => {
@@ -10,6 +10,7 @@ test("every id constructor returns the value it was given", () => {
   assert.equal(shardOwner("@root"), "@root");
   assert.equal(worldRevision(3), 3);
   assert.equal(resourceId("r-1"), "r-1");
+  assert.equal(operationId("op-1"), "op-1");
 });
 
 test("ids of different kinds do not mix", () => {

@@ -1656,6 +1656,9 @@ body.work-search-open .screen { padding-bottom: 48px; }
 .toast.has-action { display: flex; align-items: center; gap: 14px; pointer-events: auto; }
 .toast-action { padding: 4px 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: transparent; color: var(--blue); font-size: 12px; font-weight: 680; cursor: pointer; }
 .toast-action:hover { background: var(--surface-raised); }
+/* The Map owns the bottom-right corner: its save status lives there, and a failed save puts Retry, Reload saved, and Keep mine in the same island. The toast steps above that corner whenever a Map is mounted, rather than painting over the buttons the person needs. */
+body:has(.tangent-map-save) .toast { bottom: 68px; }
+body:has(.tangent-map-kinds) .toast { bottom: 116px; }
 
 @media (max-width: 1100px) {
   .app-bar { grid-template-columns: auto 1fr auto; }

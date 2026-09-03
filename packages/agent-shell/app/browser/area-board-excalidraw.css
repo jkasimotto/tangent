@@ -2,6 +2,10 @@
    variables so the controls match its islands in both themes. */
 .TangentAreaMap {
   position: relative; width: 100%; height: 100%; min-height: 420px; overflow: hidden; background: var(--tangent-canvas);
+  /* The retained Resources panel takes the right --tangent-map-panel-width of the Map. Every Map surface anchored to the right edge or centred on the canvas subtracts --tangent-map-panel-inset, so the panel is described once and no surface can be forgotten under it. The inset is 0px until the panel is retained beside the canvas. */
+  --tangent-map-panel-width: min(680px, 72%); --tangent-map-panel-inset: 0px;
+  /* Where the Tangent control row sits, and where the surfaces that hang under it start. Both move one line down together whenever the row cannot sit beside the centred tool bar Excalidraw draws. */
+  --tangent-map-row-top: 16px; --tangent-map-hang-top: 62px;
   /* Excalidraw's light theme values; the editor scopes its own variables to .excalidraw, so they are repeated here for the Tangent controls beside it. */
   --tangent-canvas: #ffffff; --tangent-island: #ffffff; --tangent-border: #f1f0ff; --tangent-text: #1b1b1f; --tangent-muted: #7a7a7a; --tangent-hover: #f1f0ff; --tangent-accent: #6965db; --tangent-input: #ffffff; --tangent-overlay: rgba(255, 255, 255, .7);
   --tangent-shadow: 0 0 .93px rgba(0, 0, 0, .17), 0 0 3.1px rgba(0, 0, 0, .08), 0 7px 14px rgba(0, 0, 0, .05);
@@ -17,7 +21,7 @@
 .tangent-map-toolbar-extra button > span[aria-hidden] { margin-right: 6px; }
 .tangent-map-glyph { display: none; font-size: 15px; }
 
-.tangent-map-top-right { position: absolute; z-index: 4; top: 16px; right: 24px; display: flex; align-items: center; gap: 8px; font-family: Assistant, system-ui, sans-serif; }
+.tangent-map-top-right { position: absolute; z-index: 4; top: var(--tangent-map-row-top); right: calc(var(--tangent-map-panel-inset) + 24px); display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; row-gap: 6px; font-family: Assistant, system-ui, sans-serif; }
 .tangent-map-top-right button, .tangent-map-verbs button, .tangent-map-save button, .tangent-map-outline-close, .tangent-map-help button {
   min-height: 36px; padding: 0 11px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); white-space: nowrap; cursor: pointer; font: inherit; font-size: 13px; line-height: 1;
 }
@@ -30,14 +34,14 @@
 .tangent-map-verbs button { min-height: 30px; box-shadow: none; border: 0; }
 
 /* Bottom right, left of Excalidraw's help button, which stays where users expect it. */
-.tangent-map-save { position: absolute; z-index: 4; right: 62px; bottom: 16px; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 11px; border-radius: 8px; background: var(--tangent-island); color: var(--tangent-muted); box-shadow: var(--tangent-shadow); font-size: 12px; }
+.tangent-map-save { position: absolute; z-index: 4; right: calc(var(--tangent-map-panel-inset) + 62px); bottom: 16px; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 11px; border-radius: 8px; background: var(--tangent-island); color: var(--tangent-muted); box-shadow: var(--tangent-shadow); font-size: 12px; }
 .tangent-map-save.dirty { color: var(--tangent-text); }
 .tangent-map-save.conflict { color: #e8a317; }
 .tangent-map-save.blocked { color: #e03131; }
 .tangent-map-save button { min-height: 28px; }
 /* Definition problems sit in the same status corner, above Saved, so one look
    covers both. It renders only when the definition or an icon has a problem. */
-.tangent-map-kinds { position: absolute; z-index: 4; right: 62px; bottom: 60px; display: flex; max-width: min(420px, calc(100% - 90px)); flex-direction: column; gap: 2px; padding: 6px 11px; border-radius: 8px; background: var(--tangent-island); color: #e8a317; box-shadow: var(--tangent-shadow); font-size: 12px; }
+.tangent-map-kinds { position: absolute; z-index: 4; right: calc(var(--tangent-map-panel-inset) + 62px); bottom: 60px; display: flex; max-width: min(420px, calc(100% - var(--tangent-map-panel-inset) - 90px)); flex-direction: column; gap: 2px; padding: 6px 11px; border-radius: 8px; background: var(--tangent-island); color: #e8a317; box-shadow: var(--tangent-shadow); font-size: 12px; }
 .TangentAreaMap:has(.excalidraw--mobile) .tangent-map-kinds { right: 12px; bottom: 110px; }
 .tangent-map-ancestry { position: absolute; z-index: 3; inset: 0; pointer-events: none; overflow: hidden; }
 .tangent-map-ancestry button { position: absolute; padding: 2px 6px; border: 0; border-radius: 4px; background: color-mix(in srgb, var(--tangent-island) 82%, transparent); color: var(--tangent-text); font: 14px Excalifont, Virgil, sans-serif; white-space: nowrap; pointer-events: auto; }
@@ -47,11 +51,24 @@
 .tangent-map-ancestry button strong { font-weight: 600; }
 .tangent-map-ancestry button span { margin-left: 6px; color: var(--tangent-muted); font-size: 11px; }
 .tangent-map-location { position: absolute; z-index: 55; left: 50%; bottom: 62px; box-sizing: border-box; max-width: calc(100% - 32px); padding: 6px 9px; border-radius: 6px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font-size: 12px; pointer-events: none; transform: translateX(-50%); }
-/* The wide Resources panel keeps the right min(680px, 72%). Toasts and the placement bar centre in the Map that stays visible beside it. */
-.TangentAreaMap.resources-panel-open .tangent-map-location, .TangentAreaMap.resources-panel-open .tangent-map-resource-placement { left: calc((100% - min(680px, 72%)) / 2); max-width: calc(100% - min(680px, 72%) - 24px); }
+/* The wide Resources panel is retained beside the canvas, so it takes its width out of the Map that every other surface may use. */
+.TangentAreaMap.resources-panel-open { --tangent-map-panel-inset: var(--tangent-map-panel-width); }
+/* Bottom-centred and top-centred surfaces centre in the Map that stays visible beside the panel. */
+.TangentAreaMap.resources-panel-open .tangent-map-location, .TangentAreaMap.resources-panel-open .tangent-map-resource-placement, .TangentAreaMap.resources-panel-open .tangent-map-draft-choice, .TangentAreaMap.resources-panel-open .tangent-map-find { left: calc((100% - var(--tangent-map-panel-inset)) / 2); }
+.TangentAreaMap.resources-panel-open .tangent-map-location, .TangentAreaMap.resources-panel-open .tangent-map-resource-placement { max-width: calc(100% - var(--tangent-map-panel-inset) - 24px); }
+/* Excalidraw centres its 510px tool bar in the Map, and the Tangent row is anchored 24px from the right edge, so the row reaches the tool bar as soon as half the Map is narrower than the row plus 279px. Where that happens the row takes the second line instead of painting over a tool, and the surfaces that hang under it follow. The row is 312px on its own and about 503px with the selected-Block verbs, which is where the two widths below come from. The retained Resources panel leaves a strip that is never wide enough for both, so it always moves the row down. */
+@media (max-width: 1199px) { .TangentAreaMap { --tangent-map-row-top: 76px; --tangent-map-hang-top: 122px; } }
+@media (max-width: 1579px) { .TangentAreaMap:has(.tangent-map-verbs) { --tangent-map-row-top: 76px; --tangent-map-hang-top: 122px; } }
+.TangentAreaMap.resources-panel-open { --tangent-map-row-top: 76px; --tangent-map-hang-top: 122px; }
+/* Last resort in the narrowest wide-panel widths: the row wraps rather than running off the left edge of the strip. */
+.TangentAreaMap.resources-panel-open .tangent-map-top-right { max-width: calc(100% - var(--tangent-map-panel-inset) - 36px); }
+/* Excalidraw anchors its own help button to the right of this footer, and the Tangent save status is placed to the left of that button, so the footer moves with the panel and the pair stays together. The left half of the footer holds the zoom and undo islands and does not move. */
+.TangentAreaMap.resources-panel-open .layer-ui__wrapper__footer { right: var(--tangent-map-panel-inset); }
+/* Excalidraw centres its tool bar inside this container, so narrowing the container re-centres the tools in the visible strip. Under 1240px that strip is narrower than the tool bar itself, so the tools are left where Excalidraw put them. */
+@media (min-width: 1240px) { .TangentAreaMap.resources-panel-open .FixedSideContainer_side_top { right: calc(var(--tangent-map-panel-inset) + 16px); } }
 .tangent-map-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-.tangent-map-find { position: absolute; z-index: 17; top: 64px; left: 50%; box-sizing: border-box; width: min(760px, calc(100% - 24px)); padding: 8px; border: 1px solid var(--tangent-border); border-radius: 10px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: 0 14px 48px rgba(0, 0, 0, .5); font: 13px Assistant, system-ui, sans-serif; transform: translateX(-50%); }
+.tangent-map-find { position: absolute; z-index: 17; top: calc(var(--tangent-map-hang-top) + 2px); left: 50%; box-sizing: border-box; width: min(760px, calc(100% - var(--tangent-map-panel-inset) - 24px)); padding: 8px; border: 1px solid var(--tangent-border); border-radius: 10px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: 0 14px 48px rgba(0, 0, 0, .5); font: 13px Assistant, system-ui, sans-serif; transform: translateX(-50%); }
 .tangent-map-find-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; gap: 6px; align-items: center; }
 .tangent-map-find input { box-sizing: border-box; min-width: 0; height: 38px; padding: 8px 10px; border: 1px solid var(--tangent-border); border-radius: 7px; background: var(--tangent-input); color: var(--tangent-text); font: inherit; }
 .tangent-map-find input:focus { outline: 2px solid var(--tangent-accent); outline-offset: -1px; }
@@ -68,9 +85,9 @@
 .tangent-map-find > p { margin: 7px 3px 0; color: var(--tangent-muted); font-size: 11px; text-align: right; }
 .tangent-map-world-outline-button { position: absolute; z-index: 4; top: 12px; right: 12px; min-height: 36px; padding: 0 11px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); cursor: pointer; }
 .tangent-map-world-outline-button:focus-visible { outline: 2px solid var(--tangent-accent); outline-offset: 1px; }
-.tangent-map-draft-choice { position: absolute; z-index: 19; left: 50%; bottom: 64px; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid #e8a317; border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); transform: translateX(-50%); }
+.tangent-map-draft-choice { position: absolute; z-index: 19; left: 50%; bottom: 64px; box-sizing: border-box; display: flex; max-width: calc(100% - var(--tangent-map-panel-inset) - 24px); align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid #e8a317; border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); transform: translateX(-50%); }
 .tangent-map-draft-choice button { min-height: 30px; border: 1px solid var(--tangent-border); border-radius: 6px; background: var(--tangent-island); color: var(--tangent-text); cursor: pointer; }
-.tangent-map-debug { position: absolute; z-index: 30; right: 12px; bottom: 62px; box-sizing: border-box; width: min(780px, calc(100% - 24px)); max-height: 42%; padding: 10px; overflow: auto; border: 1px solid #e8a317; border-radius: 8px; background: color-mix(in srgb, var(--tangent-island) 96%, transparent); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font: 11px ui-monospace, SFMono-Regular, monospace; }
+.tangent-map-debug { position: absolute; z-index: 30; right: calc(var(--tangent-map-panel-inset) + 12px); bottom: 62px; box-sizing: border-box; width: min(780px, calc(100% - var(--tangent-map-panel-inset) - 24px)); max-height: 42%; padding: 10px; overflow: auto; border: 1px solid #e8a317; border-radius: 8px; background: color-mix(in srgb, var(--tangent-island) 96%, transparent); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font: 11px ui-monospace, SFMono-Regular, monospace; }
 .tangent-map-debug h2, .tangent-map-debug p { margin: 0 0 7px; font-size: inherit; }
 .tangent-map-debug table { width: 100%; border-collapse: collapse; }
 .tangent-map-debug th, .tangent-map-debug td { padding: 3px 5px; border-top: 1px solid var(--tangent-border); text-align: left; white-space: nowrap; }
@@ -83,7 +100,7 @@
 .tangent-map-inbox button:hover { background: var(--tangent-hover); }
 .tangent-map-inbox button small { color: var(--tangent-accent); font-size: 11px; }
 
-.tangent-map-dialog-backdrop { position: absolute; z-index: 20; top: 64px; right: 12px; width: min(560px, calc(100% - 24px)); max-height: calc(100% - 88px); pointer-events: none; }
+.tangent-map-dialog-backdrop { position: absolute; z-index: 20; top: calc(var(--tangent-map-hang-top) + 2px); right: calc(var(--tangent-map-panel-inset) + 12px); width: min(560px, calc(100% - var(--tangent-map-panel-inset) - 24px)); max-height: calc(100% - var(--tangent-map-hang-top) - 26px); pointer-events: none; }
 .tangent-map-dialog-backdrop.dock-left { right: auto; left: 12px; }
 .tangent-map-picker, .tangent-map-help { box-sizing: border-box; width: min(560px, calc(100% - 32px)); max-height: calc(100% - 96px); padding: 18px; overflow: auto; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: 0 12px 50px rgba(0, 0, 0, .45); font: 14px Assistant, system-ui, sans-serif; line-height: 1.5; }
 .tangent-map-picker, .tangent-map-help { width: 100%; max-height: calc(100vh - 160px); pointer-events: auto; }
@@ -101,7 +118,7 @@
 .tangent-map-picker li small { color: var(--tangent-accent); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
 .tangent-map-picker li em { color: var(--tangent-muted); font-size: 12px; font-style: normal; }
 
-.tangent-map-outline.visible { position: absolute; z-index: 18; top: 62px; right: 12px; display: flex; flex-direction: column; box-sizing: border-box; width: min(360px, calc(100% - 24px)); max-height: calc(100% - 90px); padding: 8px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font-size: 13px; }
+.tangent-map-outline.visible { position: absolute; z-index: 18; top: var(--tangent-map-hang-top); right: calc(var(--tangent-map-panel-inset) + 12px); display: flex; flex-direction: column; box-sizing: border-box; width: min(360px, calc(100% - var(--tangent-map-panel-inset) - 24px)); max-height: calc(100% - var(--tangent-map-hang-top) - 28px); padding: 8px; border: 1px solid var(--tangent-border); border-radius: 8px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font-size: 13px; }
 .tangent-map-outline header { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px 9px; }
 .tangent-map-outline header strong { font-weight: 600; }
 .tangent-map-outline-close { min-height: 28px; padding: 0 8px; box-shadow: none; }
@@ -118,7 +135,7 @@
 /* Resources is a retained side panel at wide widths and a modal Map sheet at narrow widths. */
 .tangent-map-resources-backdrop, .tangent-map-resource-recovery { position: absolute; z-index: 50; inset: 0; display: flex; justify-content: flex-end; color: var(--tangent-text); font: 14px Assistant, system-ui, sans-serif; }
 .tangent-map-resources-backdrop { background: transparent; pointer-events: none; }
-.tangent-map-resources { box-sizing: border-box; width: min(680px, 72%); height: 100%; padding: 18px; overflow: auto; border-left: 1px solid var(--tangent-border); background: var(--tangent-island); box-shadow: -18px 0 50px rgba(0, 0, 0, .35); pointer-events: auto; }
+.tangent-map-resources { box-sizing: border-box; width: var(--tangent-map-panel-width); height: 100%; padding: 18px; overflow: auto; border-left: 1px solid var(--tangent-border); background: var(--tangent-island); box-shadow: -18px 0 50px rgba(0, 0, 0, .35); pointer-events: auto; }
 .tangent-map-resources-backdrop.placement-active .tangent-map-resources { pointer-events: none; }
 .tangent-map-resources > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .tangent-map-resources > header p { margin: 0 0 2px; color: var(--tangent-muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }

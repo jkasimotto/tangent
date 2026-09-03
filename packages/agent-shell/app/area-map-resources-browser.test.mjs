@@ -28,6 +28,21 @@ async function seriousAccessibilityViolations(page, within = null) {
   }, within);
 }
 
+/** Waits for the frame after React commits, so a geometry assertion never reads the layout of the state before it. */
+async function settled(page) {
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+/** Reports where one Map dialog sits against the retained Resources panel: whether it starts inside the Map, whether it ends before the panel starts, and whether its own centre answers for it. A dialog that fails any of the three is one a person cannot see or read. */
+async function dialogAgainstPanel(page, selector) {
+  return page.evaluate((value) => {
+    const box = document.querySelector(value).getBoundingClientRect();
+    const panel = document.querySelector(".tangent-map-resources").getBoundingClientRect();
+    const middle = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return { onScreen: box.left >= 0, clearOfPanel: box.right <= panel.left, underPanel: Boolean(middle?.closest(".tangent-map-resources")) };
+  }, selector);
+}
+
 const fixture = String.raw`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Map resources fixture</title><link rel="stylesheet" href="/agent-shell-map.css"><style>html,body,#app,#screen,.split-workspace,[data-split-pane="map"],#map{width:100%;height:100%;margin:0;overflow:hidden}.split-workspace,[data-split-pane="map"]{position:relative}#global-controls,#pre-inert,#brain-pane,#splitter{position:absolute;left:-9999px}</style></head><body><div id="app"><header id="global-controls"><button>Global route</button></header><aside id="pre-inert" inert>Already inert</aside><main id="screen"><div class="split-workspace"><section id="brain-pane" data-split-pane="brain"><button>Brain control</button></section><div id="splitter" role="separator"></div><section data-split-pane="map"><div id="map"></div></section></div></main></div><script type="module">
 import { mountAreaBoardEditor } from "/agent-shell-map.js";
 import core from "/area-board-core.js";
@@ -844,6 +859,52 @@ test("a figure changes its icon with the state, fades when it is gone, and keeps
     const rows = await outline.getByRole("treeitem", { name: /^Worktree: / }).count();
     assert.ok(rows >= 1, "every figure keeps an Outline row");
     assert.deepEqual(await seriousAccessibilityViolations(page, ".tangent-map-outline"), [], "the Outline of a Map of figures has no serious accessibility violation");
+  } finally {
+    await browser?.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+// The wide Resources panel is retained beside the canvas rather than over it, so
+// the canvas keeps every Map key while it is open. A dialog those keys raise has
+// to appear in the Map that stays visible, not behind the opaque panel.
+test("the Block picker and the Keys dialog open in the Map that stays visible beside the wide Resources panel", { skip: !enabled, timeout: 45_000 }, async () => {
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    if (url.pathname === "/fixture") { response.writeHead(200, { "content-type": "text/html" }); response.end(fixture); return; }
+    await serveStaticAsset(url, response, here);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  let browser = null;
+  try {
+    browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath(), headless: true });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 760 }, reducedMotion: "reduce", colorScheme: "dark" });
+    await page.goto("http://127.0.0.1:" + server.address().port + "/fixture", { waitUntil: "networkidle" });
+    await page.locator(".excalidraw canvas.interactive").waitFor();
+    await page.getByRole("button", { name: "Resources", exact: true }).click();
+    await page.getByRole("region", { name: "Map resources · Tangent" }).waitFor();
+    await page.locator(".TangentAreaMap.resources-panel-open").waitFor();
+
+    // The pointer on the left half of the canvas is the dock-right branch, which
+    // is the branch that used to put the dialog behind the panel.
+    await page.mouse.move(200, 400);
+    await page.locator("#map").dispatchEvent("keydown", { key: "b" });
+    await page.getByRole("dialog", { name: "Place a Tangent block" }).waitFor();
+    await settled(page);
+    assert.equal(await page.locator(".tangent-map-dialog-backdrop.dock-right").count(), 1, "a pointer on the left of the canvas still docks the picker right");
+    assert.deepEqual(await dialogAgainstPanel(page, ".tangent-map-picker"), { onScreen: true, clearOfPanel: true, underPanel: false }, "B beside the wide panel opens the picker in the Map that stays visible");
+
+    // Escape closes the panel before the dialog, so the picker is closed on the
+    // second press and the panel is reopened for the Keys dialog.
+    await page.locator("#map").dispatchEvent("keydown", { key: "Escape" });
+    await page.locator("#map").dispatchEvent("keydown", { key: "Escape" });
+    await page.getByRole("dialog", { name: "Place a Tangent block" }).waitFor({ state: "detached" });
+    await page.getByRole("button", { name: "Resources", exact: true }).click();
+    await page.locator(".TangentAreaMap.resources-panel-open").waitFor();
+    await page.locator("#map").dispatchEvent("keydown", { key: "?" });
+    await page.getByRole("dialog", { name: "Map keys" }).waitFor();
+    await settled(page);
+    assert.deepEqual(await dialogAgainstPanel(page, ".tangent-map-help"), { onScreen: true, clearOfPanel: true, underPanel: false }, "the Keys dialog carries no dock class and still opens beside the panel");
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

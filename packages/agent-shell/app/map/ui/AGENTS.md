@@ -1,0 +1,31 @@
+# Agent Notes
+
+Purpose: the Map's kit. This directory is the only owner of CSS, `position: absolute` and `fixed`, `z-index`, raw interactive elements (`<button>`, `<input>`, `<select>`, `<textarea>`), element `onKeyDown`, `role="dialog"`, `aria-modal`, a backdrop, `autoFocus` and `.focus(`. Feature code under `surfaces/`, `canvas/` and `MapRoot.tsx` composes these parts and never writes any of that itself; the lints under `scripts/lint/` refuse the commit otherwise. Design: `docs/design/area-map-rebuild/code.md`, sections "Surfaces", "Keyboard" and "Layout tokens".
+
+Files:
+
+- `tokens.css` holds every colour, type face, size and shadow, as `--tangent-*` custom properties on the Map root, light and dark. No other file names a raw colour or font.
+- `layers.css` is the z-index scale, one `--tangent-layer-*` name per layer: `panel`, `hang`, `dialog`, `transient`, `toast`, in the order the surface registry uses them. `z-index` is defined here only and used elsewhere only as `var(--tangent-layer-*)`.
+- `map.css` is every other rule, composed from the tokens and the `--tangent-map-*` layout properties `MapRoot.tsx` emits from `layout/layout-tokens.ts`. Right-anchored and centred surfaces subtract `--tangent-map-panel-inset` here, once, so nothing lands behind the Resources panel. The class contract the controls below rely on: `.tangent-map-top-right` (the toolbar row), `.tangent-map-glyph` and `.tangent-map-label` (swapped between the wide and the narrow toolbar), `.tangent-map-canvas-label` (`position: absolute; pointer-events: none`), `.find-match-current` on a pill, `.tangent-map-listbox-group` (a heading between option runs), `[role="option"]` inside a `[role="listbox"]`.
+- `Surface.tsx` renders one registered surface from `surfaces/surface-registry.ts`: its layer, its role, the backdrop when it is modal, focus on open to the declared target, and focus restore to the opener on close. It is the only component that renders `role="dialog"` or `aria-modal` or calls `.focus()` for a surface. Feature surfaces render inside it and receive `close` and `backStep` as props.
+- `Dialog.tsx` is a modal surface's body: a heading, a cause, and buttons that each carry a `label` from `copy.ts` and an `action`. It has no button without an action.
+- `Panel.tsx` is a non-modal surface's body, the hang at the top right: Find, the Outline.
+- `Sheet.tsx` is the Resources side sheet: a panel on a wide Map, modal on a narrow one.
+- `Toolbar.tsx` is the top-right row, `div.tangent-map-top-right`. Features put `Button`s in it.
+- `Button.tsx` is every clickable control. `type` defaults to `"button"`. `glyph` renders `span.tangent-map-glyph` (aria-hidden), `label` renders `span.tangent-map-label`, `kbd` renders a `<kbd>` hint, `children` follows the label for the rare button whose content is not one word, `data` expands to `data-*` attributes for the browser suites, and `onActivate` receives the click event so an opener can be remembered. Native attributes such as `title`, `disabled`, `aria-expanded`, `aria-keyshortcuts` and `className` pass through.
+- `TextField.tsx`, `TextArea.tsx` and `Select.tsx` are the labelled fields; `Labelled.tsx` gives them one label shape (`<label>text<control/></label>`). Each takes `label` for a visible label or `ariaLabel` for a bare control, `value` and `onChange(value)`. `TextArea` takes `selectOnFocus` for a read-only exact target that copies in one keystroke, and is read only whenever `onChange` is absent. `Select` takes `options` as `{ value, label }` pairs. `TextField` also takes `ariaControls` and `ariaActiveDescendant` for Find.
+- `Checkbox.tsx` is a box followed by its `label` text inside one `<label>`, with `checked` and `onChange(checked)`.
+- `Listbox.tsx` is `ul[role="listbox"]` over data options `{ id, domId?, accessibleName?, group?, content }`, each rendered as `li > button[role="option"]`. `selectedId` names the selected option; it carries `aria-selected="true"` and is the one tab stop, else the first option is. ArrowUp, ArrowDown, Home and End move focus between options and report the focused option through `onSelect`. Click, Enter and Space report the option and the modifiers through `onActivate`. `listbox-roving.ts` holds the arithmetic (`tabStop`, `rovingTarget`, clamped at the ends, no wrap) and has a node test.
+- `CanvasLabel.tsx` is an Area name pill: `button.tangent-map-canvas-label[data-area-map-label]` with the name in `<strong>` and the state notes as children, positioned at a screen `Point` the feature computes from the camera, keyboard focusable, and transparent to the pointer through `map.css`. Enter on it runs `onActivate`; the pointer never reaches it.
+- `key-bindings.ts` is how a feature handles keys on a field without writing `onKeyDown`: it passes `keys`, a table from `BindableKey` (Enter, Tab, the arrows, Home, End) to a handler that receives the modifiers. A bound key is consumed; an unbound key bubbles to `input/keyboard-dispatch.ts`. Escape is not bindable on purpose, so it always reaches the dispatcher and pops the top surface.
+
+How to use the kit:
+
+- Put sentences in `copy.ts` and pass them as `label`, `ariaLabel` or `accessibleName`. The kit renders words, it does not own them.
+- Never pass `onKeyDown`, `style` or `onClick` to a kit part from a feature; the props do not exist and the lints refuse the attribute names.
+- A numeric value that reaches the kit is branded (`ScreenPx` inside a `Point<"screen">`, `Index`, `Count`); the kit never spells `number` either.
+- Tests are `*.test.ts` beside the `.ts` modules and run with `node --test packages/agent-shell/app/map/ui/*.test.ts`. Components are `.tsx` and are covered by the browser suites, not by node tests.
+
+Read next:
+- `../AGENTS.md`
+- `docs/design/area-map-rebuild/code.md`

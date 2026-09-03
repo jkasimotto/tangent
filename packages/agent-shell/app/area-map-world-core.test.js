@@ -105,6 +105,31 @@ test("an expanded ancestor reflows its lower-priority sibling", () => {
   assert.equal(preview.regions.get("root/a/child").storedRect.y, 230);
 });
 
+test("a growing ancestor slides its sibling along one axis instead of flipping to another", () => {
+  const tree = ["otto", "otto/alpha", "otto/beta", "other"];
+  const regions = provisionalRegions(tree, new Map([
+    ["@root>otto", { x: 200, y: 200, width: 900, height: 500 }],
+    ["otto>otto/alpha", { x: 40, y: 20, width: 340, height: 260 }],
+    ["otto>otto/beta", { x: 460, y: 20, width: 340, height: 260 }],
+    ["@root>other", { x: 1300, y: 200, width: 400, height: 500 }],
+  ]));
+  const baseline = { areas: tree, regions, blockHulls: new Map(), inkHulls: new Map() };
+  const step = 20;
+  let previous = computeWorldGeometry(baseline).get("other").constraint;
+  // Walk the dragged child past the frame where "above otto" becomes a shorter hop than "right of
+  // otto". The sibling must keep sliding right by no more than the drag moved, and never jump.
+  for (let distance = step; distance <= 1600; distance += step) {
+    const solved = solveAreaMapGesture(baseline, { selectedAreas: ["otto/alpha"], handle: null, desiredWorldDelta: { x: distance, y: 0 } });
+    const current = solved.geometry.get("other").constraint;
+    const where = `at ${distance}px: ${JSON.stringify(previous)} -> ${JSON.stringify(current)}`;
+    assert.equal(current.y, previous.y, `the untouched sibling stays on its own row ${where}`);
+    assert.ok(current.x >= previous.x, `the untouched sibling never reverses ${where}`);
+    assert.ok(current.x - previous.x <= step, `the untouched sibling never overtakes the drag ${where}`);
+    previous = current;
+  }
+  assert.ok(previous.x > 1300, `the sibling ended to the right of where it started: ${JSON.stringify(previous)}`);
+});
+
 test("authored blocks expand containment while free ink expands only the drawn outline", () => {
   const scene = { elements: [
     { id: "block", x: 500, y: 300, width: 200, height: 100, customData: { tangent: { kind: "goal", ref: "goal-x" } } },

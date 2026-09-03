@@ -363,17 +363,19 @@ function arrangeChildren(owner, children, regions, geometry, inkHulls) {
   };
   for (const area of ordered) {
     const current = geometry.get(area); const region = regions.get(area);
+    const walls = occupied.filter((entry) => !permitsOverlap(regions, area, entry.area));
     const collision = nearby(current.constraint).some((entry) => !permitsOverlap(regions, area, entry.area)
       && !separated(current.constraint, entry.constraint, CONTENT_MARGIN));
-    const blockerRects = collision
-      ? occupied.filter((entry) => !permitsOverlap(regions, area, entry.area)).map((entry) => entry.constraint)
-      : [];
-    const resolvedConstraint = collision ? nearestFreeRectangle(current.constraint, blockerRects, { gap: CONTENT_MARGIN }) : current.constraint;
+    const blocking = collision ? walls.filter((entry) => !separated(current.constraint, entry.constraint, CONTENT_MARGIN)) : [];
+    const prefer = authoredSide(current.stored, blocking.map((entry) => entry.stored));
+    const resolvedConstraint = collision
+      ? nearestFreeRectangle(current.constraint, walls.map((entry) => entry.constraint), { gap: CONTENT_MARGIN, prefer })
+      : current.constraint;
     const dx = resolvedConstraint.x - current.constraint.x; const dy = resolvedConstraint.y - current.constraint.y;
     const resolvedStored = rect({ ...current.resolvedStored, x: current.resolvedStored.x + dx, y: current.resolvedStored.y + dy });
     const resolved = computeAreaGeometry(region, current.required, inkHulls.get(area), resolvedStored, current.branchPriority, current.drawnRequired);
     geometry.set(area, resolved);
-    const entry = { area, constraint: resolved.constraint };
+    const entry = { area, constraint: resolved.constraint, stored: resolved.stored };
     occupied.push(entry); index(entry);
   }
   return owner;
@@ -439,6 +441,38 @@ function separated(a, b, gap = 0) {
   return a.x + a.width + gap <= b.x || b.x + b.width + gap <= a.x
     || a.y + a.height + gap <= b.y || b.y + b.height + gap <= a.y;
 }
+/**
+ * The four cardinal sides one rectangle can be pushed to, in the order
+ * `nearestFreeRectangle` builds its candidates in.
+ */
+const SIDE = Object.freeze({ left: 0, right: 1, above: 2, below: 3 });
+
+/** Returns the side of a blocker one authored rectangle already sits clear of, or null when they share both axes. */
+function authoredSideOfPair(moving, blocker) {
+  if (moving.x + moving.width <= blocker.x) return SIDE.left;
+  if (moving.x >= blocker.x + blocker.width) return SIDE.right;
+  if (moving.y + moving.height <= blocker.y) return SIDE.above;
+  if (moving.y >= blocker.y + blocker.height) return SIDE.below;
+  return null;
+}
+
+/**
+ * Returns the one side every blocker agrees this Area was authored on, or null when they disagree.
+ *
+ * Authored rectangles do not change while a gesture runs, so this side is the same on every preview
+ * frame and again after release. Preferring it keeps a reflowed Area sliding along one axis as a
+ * blocker grows, instead of teleporting when a shorter hop appears on the other axis.
+ */
+function authoredSide(moving, blockers) {
+  let agreed = null;
+  for (const blocker of blockers) {
+    const side = finiteRect(blocker) ? authoredSideOfPair(moving, blocker) : null;
+    if (side === null || (agreed !== null && agreed !== side)) return null;
+    agreed = side;
+  }
+  return agreed;
+}
+
 /** Reports complete rectangle containment. */
 function contains(parent, child) { return child.x >= parent.x && child.y >= parent.y && child.x + child.width <= parent.x + parent.width && child.y + child.height <= parent.y + parent.height; }
 
@@ -447,8 +481,10 @@ function contains(parent, child) { return child.x >= parent.x && child.y >= pare
  *
  * The preferred size never changes. Candidates stay on the preferred row or
  * column and sit immediately left, right, above, or below one occupied box.
+ * `prefer` names a side to rank ahead of distance, which is how a caller keeps
+ * one placement continuous while a blocker grows.
  */
-export function nearestFreeRectangle(preferred, occupied = [], { gap = 0 } = {}) {
+export function nearestFreeRectangle(preferred, occupied = [], { gap = 0, prefer = null } = {}) {
   const origin = rect(preferred);
   const spacing = Math.max(0, Number(gap) || 0);
   const walls = [...occupied]
@@ -471,18 +507,16 @@ export function nearestFreeRectangle(preferred, occupied = [], { gap = 0 } = {})
     const dx = value.x - origin.x; const dy = value.y - origin.y;
     candidates.push({ value, direction, distance: dx * dx + dy * dy, travel: Math.abs(dx) + Math.abs(dy) });
   };
-  for (const wall of walls) {
-    add({ x: wall.x - spacing - origin.width }, 0);
-    add({ x: wall.x + wall.width + spacing }, 1);
-    add({ y: wall.y - spacing - origin.height }, 2);
-    add({ y: wall.y + wall.height + spacing }, 3);
+  for (const wall of [...walls, unionRects(walls)]) {
+    add({ x: wall.x - spacing - origin.width }, SIDE.left);
+    add({ x: wall.x + wall.width + spacing }, SIDE.right);
+    add({ y: wall.y - spacing - origin.height }, SIDE.above);
+    add({ y: wall.y + wall.height + spacing }, SIDE.below);
   }
-  const hull = unionRects(walls);
-  add({ x: hull.x - spacing - origin.width }, 0);
-  add({ x: hull.x + hull.width + spacing }, 1);
-  add({ y: hull.y - spacing - origin.height }, 2);
-  add({ y: hull.y + hull.height + spacing }, 3);
-  candidates.sort((left, right) => left.distance - right.distance || left.travel - right.travel
+  /** Ranks a candidate on the preferred side ahead of every other side. */
+  const unpreferred = (candidate) => (candidate.direction === prefer ? 0 : 1);
+  candidates.sort((left, right) => unpreferred(left) - unpreferred(right)
+    || left.distance - right.distance || left.travel - right.travel
     || left.direction - right.direction || left.value.x - right.value.x || left.value.y - right.value.y);
   return candidates[0].value;
 }

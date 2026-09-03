@@ -18,7 +18,7 @@ One framework-neutral kernel resolves geometry for the complete Area tree. Its l
 
 Each direct-child region remains compatible authored source in its parent shard. Optional `area-placement.v1` metadata records stable branch priority and exact user-created overlap pairs.
 
-The kernel computes content requirements from the leaves upward. It arranges colliding branches by the smallest valid two-dimensional translation, then projects world transforms from the root downward.
+The kernel computes content requirements from the leaves upward. It arranges colliding branches by the smallest valid two-dimensional translation on the side the authored rectangles already put the branch on, then projects world transforms from the root downward. Authored rectangles do not move while a gesture runs, so the side does not change between preview frames and a reflowed sibling slides instead of jumping to another axis.
 
 Automatic placement checks existing Area regions and authored content. Placement, content growth, and region resize reflow sibling branches. They do not create new sibling overlap.
 

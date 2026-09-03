@@ -11,12 +11,13 @@
 // hop than "right of the parent". The untouched Area then teleports in a direction the drag never
 // went, by far more than the drag moved.
 //
-// This suite drives real Chromium pointer input through three fast drags in three directions,
+// This suite drives real Chromium pointer input through four fast drags in three directions,
 // samples every Area's composed region rectangle and Excalidraw's own region element on every move
-// frame, and requires three facts of every frame: an Area the drag does not need to move keeps a
-// pixel-identical rectangle; an Area the reflow does move never travels further in one frame than
-// the dragged Area did and never reverses direction between frames; and the dragged Area's composed
-// rectangle and its Excalidraw element agree, so the region never flickers between two places.
+// frame, and requires three facts of every frame: an Area that nothing swept into keeps a
+// pixel-identical rectangle, where the sweep counts the dragged Area and the ancestors that grow to
+// hold it; an Area the reflow does move never travels further in one frame than the dragged Area
+// did and never reverses direction between frames; and the dragged Area's composed rectangle and
+// its Excalidraw element agree, so the region never flickers between two places.
 //
 // Design: docs/design/area-map-rebuild/code.md. Layout kernel: docs/decisions/ADR-0052.
 
@@ -260,21 +261,30 @@ async function fastDrag(page, { area, steps }) {
 }
 
 /**
+ * Every box the drag swept through between two frames: the dragged Area's own, and one for each of
+ * its ancestors and descendants. An ancestor grows to hold the Area being dragged out of it, and
+ * that growth is a real push, so a stranger the growth reached was not moved by nothing.
+ */
+function sweptPathsOf(before, after, dragged) {
+  return AREAS.filter((key) => relatedTo(dragged, key)).map((key) => sweptPath(before[key], after[key]));
+}
+
+/**
  * Names every frame where an Area the drag never grabbed moved although the drag did not push into
  * it: it is not the dragged Area, not an ancestor and not a descendant of it, and its rectangle at
- * the frame before lies clear of the path the dragged Area swept through in that frame.
+ * the frame before lies clear of every box the drag swept through in that frame.
  */
 function strangersMovedIn(run) {
   const found = [];
   for (let index = 1; index < run.frames.length; index += 1) {
     const before = run.frames[index - 1].composed;
     const after = run.frames[index].composed;
-    const path = sweptPath(before[run.area], after[run.area]);
+    const paths = sweptPathsOf(before, after, run.area);
     for (const key of AREAS) {
       if (relatedTo(run.area, key)) continue;
       const moved = displacement(before[key], after[key]);
-      if (travelOf(moved) === 0 || overlaps(path, before[key])) continue;
-      found.push({ frame: index, area: key, moved, before: before[key], after: after[key], path });
+      if (travelOf(moved) === 0 || paths.some((path) => overlaps(path, before[key]))) continue;
+      found.push({ frame: index, area: key, moved, before: before[key], after: after[key], paths });
     }
   }
   return found;

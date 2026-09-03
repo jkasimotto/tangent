@@ -13,6 +13,10 @@ const FIGURE_INSET = 14;
 const FIGURE_MARGIN = 12;
 /** The gap between the icon square and the caption. */
 const CAPTION_GAP = 10;
+/** The smallest icon square worth drawing, while the Block leaves room for it. */
+const FIGURE_ICON_MIN = 24;
+/** The narrowest caption the icon gives width up for, while the Block leaves room for it. */
+const CAPTION_MIN_WIDTH = 40;
 /** The most icon elements one drawing may hold before Tangent warns. */
 export const ICON_ELEMENT_WARNING = 200;
 /** The most icon elements one drawing may hold at all. */
@@ -80,19 +84,57 @@ export function isMapKindVerb(target, verb) {
   return (MAP_KIND_VERBS[target] ?? []).includes(verb);
 }
 
+/**
+ * Returns the rectangle inside one Block that a figure may paint into. A Block
+ * is resized by hand, so it can end up narrower than two insets or shorter than
+ * two margins; both give way with the Block instead of pushing the interior out
+ * past its edges. Every part of a figure is placed from this rectangle, which
+ * is what keeps an icon and its caption inside the Block at every size.
+ */
+function figureInterior(block) {
+  const width = Math.max(0, Number(block?.width ?? 0));
+  const height = Math.max(0, Number(block?.height ?? 0));
+  const inset = Math.min(FIGURE_INSET, width / 2);
+  const margin = Math.min(FIGURE_MARGIN, height / 2);
+  return {
+    x: Number(block?.x ?? 0) + inset,
+    y: Number(block?.y ?? 0) + margin,
+    width: width - inset * 2,
+    height: height - margin * 2,
+  };
+}
+
+/**
+ * Returns how one Block's interior width is shared between the icon square, the
+ * gap, and the caption. The icon is as tall as the interior allows, but its
+ * width is bounded too: it first gives up the width a readable caption needs,
+ * and below that it gives up the width the Block does not have. A Block too
+ * narrow to hold both keeps the icon and lets the caption run out of width,
+ * because at that size the icon still says which resource the Block is and text
+ * that narrow says nothing.
+ */
+function figureLayout(block) {
+  const interior = figureInterior(block);
+  const gap = Math.min(CAPTION_GAP, interior.width);
+  const shared = interior.width - gap;
+  const wanted = Math.max(FIGURE_ICON_MIN, Math.min(interior.height, shared - CAPTION_MIN_WIDTH));
+  const iconBox = Math.min(wanted, interior.height, shared);
+  return { interior, gap, iconBox, captionWidth: shared - iconBox };
+}
+
 /** Returns the side of the square the icon fills inside one Block. */
 export function figureIconBox(block) {
-  return Math.max(24, Number(block?.height ?? 0) - FIGURE_MARGIN * 2);
+  return figureLayout(block).iconBox;
 }
 
 /** Returns the caption geometry that puts the bound text beside the icon. */
 export function figureCaptionGeometry(block) {
-  const iconBox = figureIconBox(block);
+  const { interior, gap, iconBox, captionWidth } = figureLayout(block);
   return {
-    x: Number(block.x) + FIGURE_INSET + iconBox + CAPTION_GAP,
-    y: Number(block.y) + FIGURE_MARGIN,
-    width: Math.max(40, Number(block.width) - iconBox - FIGURE_INSET * 2 - CAPTION_GAP),
-    height: Math.max(24, Number(block.height) - FIGURE_MARGIN * 2),
+    x: interior.x + iconBox + gap,
+    y: interior.y,
+    width: captionWidth,
+    height: interior.height,
     textAlign: "left",
     verticalAlign: "middle",
   };
@@ -203,7 +245,7 @@ function figureIconCustomData({ block, iconName, owner, sourceId, index }) {
  * same square a drawing fills, so an image icon and a drawn icon sit alike.
  */
 function createImageFigureElement({ block, icon, iconName, opacity, owner, sourceId }) {
-  const iconBox = figureIconBox(block);
+  const { interior, iconBox } = figureLayout(block);
   const width = Math.max(1, Number(icon.width));
   const height = Math.max(1, Number(icon.height));
   const scale = Math.min(iconBox / width, iconBox / height);
@@ -212,8 +254,8 @@ function createImageFigureElement({ block, icon, iconName, opacity, owner, sourc
   return [{
     id: `${block.id}-tangent-icon-0`,
     type: "image",
-    x: Number(block.x) + FIGURE_INSET + (iconBox - drawnWidth) / 2,
-    y: Number(block.y) + (Number(block.height) - drawnHeight) / 2,
+    x: interior.x + (iconBox - drawnWidth) / 2,
+    y: interior.y + (interior.height - drawnHeight) / 2,
     width: drawnWidth,
     height: drawnHeight,
     angle: 0,
@@ -273,10 +315,10 @@ export function createFigureElements({ block, icon, iconName, opacity = 100, own
   }
   const elements = icon?.elements ?? [];
   if (!elements.length) return [];
-  const iconBox = figureIconBox(block);
+  const { interior, iconBox } = figureLayout(block);
   const scale = Math.min(iconBox / Math.max(1, Number(icon.width)), iconBox / Math.max(1, Number(icon.height)));
-  const originX = Number(block.x) + FIGURE_INSET + (iconBox - Number(icon.width) * scale) / 2;
-  const originY = Number(block.y) + (Number(block.height) - Number(icon.height) * scale) / 2;
+  const originX = interior.x + (iconBox - Number(icon.width) * scale) / 2;
+  const originY = interior.y + (interior.height - Number(icon.height) * scale) / 2;
   const ids = new Map(elements.map((element, index) => [element.id, `${block.id}-tangent-icon-${index}`]));
   /** Keeps a binding only when it points at another element of the same icon. */
   const bound = (id) => (id && ids.has(id) ? ids.get(id) : null);

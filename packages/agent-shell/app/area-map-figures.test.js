@@ -202,3 +202,67 @@ test("the accepted image types are the ones Julian can drop into map-icons", () 
   assert.equal(MAP_ICON_IMAGE_TYPES[".jpg"], MAP_ICON_IMAGE_TYPES[".jpeg"]);
   assert.equal(MAP_ICON_IMAGE_TYPES[".svg"], "image/svg+xml");
 });
+
+// A Block is resized by hand, so a figure has to hold at every aspect ratio the
+// corner handle can produce, not only at the size the Map lays a Block out at.
+const FIGURE_BLOCK_SIZES = [
+  { width: 280, height: 132 },
+  { width: 40, height: 400 },
+  { width: 400, height: 30 },
+  { width: 60, height: 220 },
+  { width: 90, height: 46 },
+  { width: 132, height: 132 },
+  { width: 24, height: 20 },
+  { width: 6, height: 500 },
+  { width: 0, height: 0 },
+  { width: 1200, height: 900 },
+  { width: 2000, height: 40 },
+];
+
+/** The icons a figure has to hold for: a drawing and an image, each wide, tall, and square. */
+function figureIconCases() {
+  return [
+    { what: "a wide drawing", icon: icon([{ id: "a", type: "rectangle", x: 0, y: 0, width: 100, height: 40 }, { id: "b", type: "line", x: 20, y: 10, width: 60, height: 20, points: [[0, 0], [60, 20]] }]) },
+    { what: "a tall drawing", icon: icon([{ id: "a", type: "rectangle", x: 0, y: 0, width: 40, height: 120 }]) },
+    { what: "a square drawing", icon: icon([{ id: "a", type: "rectangle", x: 0, y: 0, width: 60, height: 60 }, { id: "b", type: "text", x: 6, y: 6, width: 30, height: 12, fontSize: 12, text: "x" }]) },
+    { what: "a wide image", icon: imageIcon({ width: 200, height: 100 }) },
+    { what: "a tall image", icon: imageIcon({ width: 100, height: 400 }) },
+    { what: "a square image", icon: imageIcon({ width: 64, height: 64 }) },
+  ];
+}
+
+/** Fails unless one rectangle lies inside the Block, which is where every part of a figure belongs. */
+function assertInsideBlock(target, rect, what) {
+  const slack = 1e-9;
+  const where = `${what} in a ${target.width} by ${target.height} Block`;
+  assert.ok(rect.width >= -slack && rect.height >= -slack, `${where} has a negative size`);
+  assert.ok(rect.x >= target.x - slack, `${where} starts left of the Block`);
+  assert.ok(rect.y >= target.y - slack, `${where} starts above the Block`);
+  assert.ok(rect.x + rect.width <= target.x + target.width + slack, `${where} runs past the right edge`);
+  assert.ok(rect.y + rect.height <= target.y + target.height + slack, `${where} runs past the bottom edge`);
+}
+
+test("a figure stays inside its Block at every size a handle drag can make", () => {
+  for (const size of FIGURE_BLOCK_SIZES) {
+    const target = { ...block, ...size };
+    assertInsideBlock(target, figureCaptionGeometry(target), "the caption");
+    for (const { what, icon: drawing } of figureIconCases()) {
+      const elements = createFigureElements({ block: target, icon: drawing, iconName: "worktree" });
+      assert.ok(elements.length, `${what} draws nothing`);
+      for (const element of elements) assertInsideBlock(target, element, `${what}, element ${element.id}`);
+    }
+  }
+});
+
+test("a Block too narrow for both keeps the icon and starves the caption", () => {
+  // The icon is the only part that still says which resource this is once the
+  // Block is a sliver, so the caption gives its width up first and the icon
+  // gives width up only to the Block itself.
+  const narrow = { ...block, width: 60, height: 400 };
+  assert.equal(figureIconBox(narrow), 22, "the icon takes the interior width the gap leaves");
+  assert.equal(figureCaptionGeometry(narrow).width, 0);
+  assert.equal(figureIconBox({ ...block, width: 90, height: 400 }), 24, "above that the icon holds its smallest square");
+  assert.equal(figureCaptionGeometry({ ...block, width: 90, height: 400 }).width, 28);
+  assert.equal(figureIconBox({ ...block, width: 400, height: 40 }), 16, "a short Block still fills its height");
+  assert.equal(figureIconBox(block), 108, "an ordinary Block is unchanged");
+});

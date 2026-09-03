@@ -3,7 +3,9 @@
 // stayed on screen over the canvas until something else was said. This suite
 // drives the rebuilt Map with a real press and a real Enter, watches the toast
 // appear, and then waits without touching the page. The toast has to go on its
-// own once its time to live has passed.
+// own once its time to live has passed, it has to carry a time to live per
+// message rather than one shared timer, and no element anywhere in the Map may
+// still show the sentence afterwards.
 
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -27,6 +29,12 @@ const ANNOUNCE_TTL = LAYOUT.announceTtl;
 const ANNOUNCE_TICK = LAYOUT.announceTick;
 /** How long the test waits past the time to live before it calls the toast stuck. */
 const CLEAR_GRACE = ANNOUNCE_TICK * 6;
+// The announce clock is one timer for the whole store: it advances every announcement by a whole
+// tick at a time. A message raised between two ticks therefore loses up to one tick of its time to
+// live, so the earliest honest clear is a tick short of the full time. Anything sooner than this is
+// the Map dropping a message a person had not finished reading.
+/** The soonest a message may leave the screen after it was raised. */
+const EARLIEST_CLEAR = ANNOUNCE_TTL - ANNOUNCE_TICK;
 /** The sentence the Map shows after the selected Area is fitted. */
 const IN_VIEW = "delivery in view";
 
@@ -163,6 +171,32 @@ async function spokenText(page) {
   return page.evaluate(() => document.querySelector(".tangent-map-live")?.textContent ?? null);
 }
 
+/**
+ * Returns the class of every element anywhere in the Map that shows the given sentence and nothing
+ * else. The defect is a message a person keeps seeing, not one class name that stays in the tree, so
+ * a leftover notice under any other name has to fail this test too.
+ */
+async function sentenceShownIn(page, sentence) {
+  return page.evaluate((text) => {
+    const shown = [];
+    for (const element of document.querySelectorAll(".TangentAreaMap *")) {
+      if (element.children.length > 0) continue;
+      if ((element.textContent ?? "").trim() !== text) continue;
+      const box = element.getBoundingClientRect();
+      if (box.width === 0 || box.height === 0) continue;
+      const style = window.getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+      shown.push(element.getAttribute("class") ?? element.tagName.toLowerCase());
+    }
+    return [...new Set(shown)].sort();
+  }, sentence);
+}
+
+/** Returns the rectangle the toast covers on screen, or null when no toast is laid out. */
+async function toastBox(page) {
+  return page.locator(".tangent-map-location").boundingBox();
+}
+
 /** Converts one Excalidraw scene point to browser viewport coordinates. */
 async function viewportPoint(page, scenePoint) {
   const box = await page.locator(".excalidraw canvas.interactive").boundingBox();
@@ -216,6 +250,7 @@ test("the map toast clears itself after its time to live instead of staying on t
     await page.goto(`http://127.0.0.1:${server.address().port}/fixture`, { waitUntil: "networkidle" });
     await waitForMap(page);
     assert.equal(await toastText(page), null, "a Map that has said nothing shows no toast");
+    assert.deepEqual(await sentenceShownIn(page, IN_VIEW), [], "a Map that has said nothing shows the sentence nowhere");
 
     // A real press inside the Area selects it, and a real Enter on the selected
     // Area fits it, which is one of the moments the Map speaks.
@@ -224,17 +259,29 @@ test("the map toast clears itself after its time to live instead of staying on t
     await page.keyboard.press("Enter");
     await page.waitForFunction((text) => document.querySelector(".tangent-map-location")?.textContent === text, IN_VIEW);
     assert.equal(await spokenText(page), IN_VIEW, "the Map also speaks what it shows");
+    const box = await toastBox(page);
+    assert.ok(box && box.width > 0 && box.height > 0, "the toast covers real space on the canvas, so clearing it takes something visible away");
 
     // The toast is a message a person has to be able to read, so it stays for
     // most of its time to live before anything drops it.
     await page.waitForTimeout(ANNOUNCE_TTL / 2);
     assert.equal(await toastText(page), IN_VIEW, "the toast stays on screen long enough to read");
 
+    // Saying the same thing again while the first message is still up gives the
+    // Map a second announcement with its own time to live. Each message has to
+    // be timed on its own, so the toast has to outlive the first one running
+    // out. A Map that wipes every message on one shared timer fails here.
+    const secondRaisedAt = Date.now();
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(ANNOUNCE_TTL - (Date.now() - raisedAt) + ANNOUNCE_TICK * 2);
+    assert.equal(await toastText(page), IN_VIEW, "the older message running out does not take the newer message with it");
+
     // Nothing below touches the page. The toast has to clear on its own.
     await page.waitForFunction(() => document.querySelector(".tangent-map-location") === null, undefined, { timeout: ANNOUNCE_TTL + CLEAR_GRACE, polling: ANNOUNCE_TICK });
-    const clearedAfter = Date.now() - raisedAt;
-    assert.ok(clearedAfter >= ANNOUNCE_TTL, `the toast is not dropped before its time to live: cleared after ${clearedAfter}ms of ${ANNOUNCE_TTL}ms`);
+    const clearedAfter = Date.now() - secondRaisedAt;
+    assert.ok(clearedAfter >= EARLIEST_CLEAR, `the toast is not dropped before its time to live: cleared ${clearedAfter}ms after the newer message, and ${EARLIEST_CLEAR}ms is the soonest honest clear`);
     assert.equal(await spokenText(page), null, "the live region empties with the toast, so nothing is re-read");
+    assert.deepEqual(await sentenceShownIn(page, IN_VIEW), [], "no element anywhere in the Map still shows the sentence once the toast has gone");
 
     // The Map is still working after the toast went: the same gesture says the
     // same sentence again, which proves the clear removed a message and not the
@@ -242,6 +289,7 @@ test("the map toast clears itself after its time to live instead of staying on t
     await page.keyboard.press("Enter");
     await page.waitForFunction((text) => document.querySelector(".tangent-map-location")?.textContent === text, IN_VIEW);
     await page.waitForFunction(() => document.querySelector(".tangent-map-location") === null, undefined, { timeout: ANNOUNCE_TTL + CLEAR_GRACE, polling: ANNOUNCE_TICK });
+    assert.deepEqual(await sentenceShownIn(page, IN_VIEW), [], "the second message leaves nothing behind either");
 
     assert.deepEqual(pageErrors, [], "the Map raised no page error while the toast came and went");
   } finally {

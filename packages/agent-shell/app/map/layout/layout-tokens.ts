@@ -12,8 +12,8 @@
 //
 // Design: docs/design/area-map-rebuild/code.md, "Layout tokens".
 
-import { count, milliseconds, scenePx, screenPx, sourcePx, zoom } from "../units/units.ts";
-import type { Count, Milliseconds, ScenePx, ScreenPx, SourcePx, Zoom } from "../units/units.ts";
+import { count, milliseconds, percent, scenePx, screenPx, sourcePx, zoom } from "../units/units.ts";
+import type { Count, Milliseconds, Percent, ScenePx, ScreenPx, SourcePx, Zoom } from "../units/units.ts";
 
 /** Screen-pixel anchors: where the Tangent surfaces sit on the Map and how wide they may grow. */
 const SCREEN_TOKENS = {
@@ -107,6 +107,12 @@ const ZOOM_TOKENS = {
   grabZoomFloor: zoom(0.1),
 } as const satisfies Record<string, Zoom>;
 
+/** Shares out of one hundred: the opacities the Map draws its own disposable elements at. */
+const PERCENT_TOKENS = {
+  /** The placement preview Block is drawn translucent so it reads as not yet placed. */
+  placementPreviewOpacity: percent(70),
+} as const satisfies Record<string, Percent>;
+
 /** Durations: the windows and cadences the Map keeps time with. */
 const TIME_TOKENS = {
   /** A paste lands at the last placement point for this long after a copy. */
@@ -116,6 +122,8 @@ const TIME_TOKENS = {
   resourceCadenceFloor: milliseconds(25),
   /** One beat of the pulse around the current Find match. */
   findPulse: milliseconds(900),
+  /** How long a projection that replaced the elements fences Excalidraw's echoing change callbacks. */
+  projectionFenceWindow: milliseconds(100),
 } as const satisfies Record<string, Milliseconds>;
 
 /** Cardinalities: how many rows a list shows and how many times a wait retries. */
@@ -127,6 +135,10 @@ const COUNT_TOKENS = {
   findWindowTall: count(8),
   /** How many animation frames the mount waits for Excalidraw's canvas before giving up. */
   mountAttempts: count(120),
+  /** How many expected projections the fence remembers before the oldest is forgotten. */
+  projectionTokenCap: count(32),
+  /** How many pixels long the long edge of a vector icon is rasterized at, so it stays sharp as the Map zooms. */
+  iconRasterLongEdge: count(512),
 } as const satisfies Record<string, Count>;
 
 /** Every layout number of the Map, named once. The panel width is a CSS expression because it is a share of the Map, not a length. */
@@ -138,6 +150,7 @@ export const LAYOUT = {
   ...SCENE_TOKENS,
   ...SOURCE_TOKENS,
   ...ZOOM_TOKENS,
+  ...PERCENT_TOKENS,
   ...TIME_TOKENS,
   ...COUNT_TOKENS,
 } as const;
@@ -152,7 +165,7 @@ export type LayoutToken = keyof Layout;
 export type LayoutCssVariable = `--tangent-map-${string}`;
 
 /** Pairs every token of one group with the CSS unit suffix the group is written with. */
-function unitEntries(tokens: Record<string, ScreenPx | ScenePx | SourcePx | Zoom | Milliseconds | Count>, unit: string): [string, string][] {
+function unitEntries(tokens: Record<string, ScreenPx | ScenePx | SourcePx | Zoom | Percent | Milliseconds | Count>, unit: string): [string, string][] {
   return Object.keys(tokens).map((token): [string, string] => [token, unit]);
 }
 
@@ -162,6 +175,7 @@ const CSS_UNIT_BY_TOKEN: ReadonlyMap<string, string> = new Map([
   ...unitEntries(SCENE_TOKENS, "px"),
   ...unitEntries(SOURCE_TOKENS, "px"),
   ...unitEntries(ZOOM_TOKENS, ""),
+  ...unitEntries(PERCENT_TOKENS, "%"),
   ...unitEntries(TIME_TOKENS, "ms"),
   ...unitEntries(COUNT_TOKENS, ""),
 ]);

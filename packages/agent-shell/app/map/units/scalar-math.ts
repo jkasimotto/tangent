@@ -27,6 +27,11 @@ export function scale<T extends number>(value: T, factor: Ratio): T {
   return (value * factor) as T;
 }
 
+/** Halves a branded scalar and keeps the brand: half a Block's width is still a pixel of that frame. */
+export function half<T extends number>(value: T): T {
+  return (value / 2) as T;
+}
+
 /** Clamps `value` into `[min, max]` and keeps the brand: an Index stays an Index, a Ratio a Ratio. */
 export function clamp<T extends number>(value: T, min: T, max: T): T {
   return Math.min(Math.max(value, min), max) as T;
@@ -111,6 +116,16 @@ export function toSceneLength(length: ScreenPx, zoom: Zoom): ScenePx {
 /** Converts a scene point into the canvas-relative screen point the camera shows it at. The inverse of `toScene`. */
 export function toScreen(scenePoint: Point<"scene">, camera: Camera): Point<"screen"> {
   return rebrandPoint((scenePoint.x + camera.scrollX) * camera.zoom, (scenePoint.y + camera.scrollY) * camera.zoom);
+}
+
+/**
+ * Carries a scene point into one owner's shard. The composition draws every shard at an offset in
+ * the scene, so a scene point minus that owner's offset is the same place in the shard's own source
+ * frame. This is the one place that subtraction is written; it is how a Block placed at a scene
+ * point lands in the shard the vault stores.
+ */
+export function toSource(scenePoint: Point<"scene">, ownerOffset: Point<"scene">): Point<"source"> {
+  return rebrandPoint(scenePoint.x - ownerOffset.x, scenePoint.y - ownerOffset.y);
 }
 
 /** Re-brands computed coordinates as a point of the caller's frame. The one cast behind every point result here. */

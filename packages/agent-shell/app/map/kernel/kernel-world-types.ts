@@ -329,6 +329,12 @@ export type PointerCommand =
   | { kind: "resize"; handle: ResizeHandle }
   | { kind: "ignore"; handle: string | null };
 
+/** The presentation a Block is drawn with when it should not look like a settled one, such as the placement preview. */
+export type BlockStyle = {
+  opacity?: ExcalidrawElement["opacity"];
+  strokeStyle?: ExcalidrawElement["strokeStyle"];
+};
+
 /** A Block the picker or a paste chose to place. */
 export type BlockChoice = {
   kind: TangentEntityKind;
@@ -337,6 +343,7 @@ export type BlockChoice = {
   status?: string;
   area?: AreaKey;
   directChild?: boolean;
+  style?: BlockStyle;
 };
 
 /** The scene after a Block was added and the root element it added, or null when nothing was placed. */
@@ -349,6 +356,18 @@ export type AreaMapLayout = {
   readonly minimumWidth: PixelOf<"source">;
   readonly minimumHeight: PixelOf<"source">;
   readonly placementSchema: "area-placement.v1";
+};
+
+/** One published runtime count as the shell writes it: a count, a list whose length is the count, or a record carrying one. */
+export type RuntimeFactCount = Count | readonly unknown[] | { count?: RuntimeFactCount } | null;
+
+/** The runtime facts the shell publishes on an Area document: who is working, what waits for Julian, the problems, and whether the facts are fresh. */
+export type AreaRuntimeFacts = {
+  working?: RuntimeFactCount;
+  forYou?: RuntimeFactCount;
+  problems?: RuntimeFactCount;
+  ready?: boolean;
+  stale?: boolean;
 };
 
 /** One record of the vault index the Map paints facts from and the picker chooses from. */
@@ -365,4 +384,5 @@ export type VaultDocument = {
   sessionState?: string;
   stale?: boolean;
   olderThanNotes?: boolean;
+  runtime?: AreaRuntimeFacts | null;
 };

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { delta, point, rect } from "./frames.ts";
 import type { Camera, Point, Rect } from "./frames.ts";
 import {
-  add, clamp, deltaBetween, distance, inflate, midpoint, rectCenter, rectContains, rectsOverlap, scale, subtract, toScene, toSceneLength, toScreen, translate, union,
+  add, clamp, deltaBetween, distance, half, inflate, midpoint, rectCenter, rectContains, rectsOverlap, scale, subtract, toScene, toSceneLength, toScreen, toSource, translate, union,
 } from "./scalar-math.ts";
 import { index, ratio, scenePx, screenPx, zoom } from "./units.ts";
 import type { Index, ScenePx } from "./units.ts";
@@ -25,6 +25,12 @@ test("scalar arithmetic keeps the brand", () => {
   assert.equal(next, 5);
   // @ts-expect-error two different brands cannot be added.
   add(scenePx(1), screenPx(1));
+});
+
+test("half keeps the brand", () => {
+  const halved: ScenePx = half(scenePx(7));
+  assert.equal(halved, 3.5);
+  assert.equal(half(index(0)), 0);
 });
 
 test("clamp bounds a value and keeps the brand", () => {
@@ -89,6 +95,14 @@ test("toScene matches the old eventScenePoint formula and toScreen inverts it", 
   assert.deepEqual(toScene(point("screen", screenPx(7), screenPx(8)), identity), { x: 7, y: 8 });
   // @ts-expect-error a scene point cannot be converted to scene again.
   toScene(scene, camera);
+});
+
+test("toSource subtracts the owner's composition offset from a scene point", () => {
+  const offset = point("scene", scenePx(100), scenePx(-20));
+  const source = toSource(point("scene", scenePx(130), scenePx(5)), offset);
+  assert.deepEqual(source, { x: 30, y: 25 });
+  // @ts-expect-error a source point is already in its shard's frame.
+  toSource(source, offset);
 });
 
 test("toSceneLength divides a screen length by the zoom and brands it scene", () => {

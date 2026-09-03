@@ -5,10 +5,10 @@ Purpose: the brand owners of the Map. These are the only files under `app/map/` 
 Files:
 
 - `brand.ts` is `Brand<T, Name>`, a `T` with a compile-time `__brand`. Brands do not nest: two disjoint `__brand` literals reduce the type to `never`, so every brand is declared directly on its base type.
-- `units.ts` holds the scalars and their constructors: `ScreenPx` / `screenPx()`, `ScenePx` / `scenePx()`, `SourcePx` / `sourcePx()`, `Zoom` / `zoom()`, `Milliseconds` / `milliseconds()`, `Count` / `count()`, `Index` / `index()`, `Ratio` / `ratio()`. `Zoom` is a ratio by meaning and its own brand by type, because a zoom must not pass for a proportion.
+- `units.ts` holds the scalars and their constructors: `ScreenPx` / `screenPx()`, `ScenePx` / `scenePx()`, `SourcePx` / `sourcePx()`, `Zoom` / `zoom()`, `Milliseconds` / `milliseconds()`, `Count` / `count()`, `Index` / `index()`, `Ratio` / `ratio()`, `Percent` / `percent()`. `Zoom` is a ratio by meaning and its own brand by type, because a zoom must not pass for a proportion. `Percent` is a share out of one hundred, the way Excalidraw measures opacity, and is its own brand for the same reason.
 - `frames.ts` holds the three frames and the shapes branded by them. `screen` is CSS pixels relative to the canvas, `scene` is Excalidraw's composed world, `source` is shard-local. `Point<F>`, `Delta<F>`, `Size<F>` and `Rect<F>` are built by `point()`, `delta()`, `size()` and `rect()`, each taking the frame name first because a frame cannot be inferred from a pixel brand. `Camera` is the scroll offset in scene pixels and the zoom.
 - `ids.ts` holds `AreaKey`, `RuntimeId`, `SourceId`, `ShardOwner`, `WorldRevision`, `ResourceId` with their constructors, and the `ResizeHandle` union with `RESIZE_HANDLES` and `isResizeHandle()`.
-- `scalar-math.ts` does the arithmetic and re-brands the result: `add`, `subtract`, `scale`, `clamp`, `midpoint`, `distance`, `translate`, `deltaBetween`, `rectCenter`, `rectContains`, `rectsOverlap`, `inflate`, `union`, and the two frame crossings `toScene` and `toScreen`. Those two are the only place the camera conversion is written.
+- `scalar-math.ts` does the arithmetic and re-brands the result: `add`, `subtract`, `scale`, `half`, `clamp`, `midpoint`, `distance`, `translate`, `deltaBetween`, `rectCenter`, `rectContains`, `rectsOverlap`, `inflate`, `union`, and the two frame crossings `toScene` and `toScreen`. Those two are the only place the camera conversion is written.
 
 How to use them:
 

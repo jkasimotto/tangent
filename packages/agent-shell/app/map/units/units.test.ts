@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { count, index, milliseconds, ratio, scenePx, screenPx, sourcePx, zoom } from "./units.ts";
+import { count, index, milliseconds, percent, ratio, scenePx, screenPx, sourcePx, zoom } from "./units.ts";
 import type { Ratio, ScenePx, ScreenPx, Zoom } from "./units.ts";
 
 test("every constructor returns the number it was given", () => {
@@ -12,6 +12,15 @@ test("every constructor returns the number it was given", () => {
   assert.equal(count(7), 7);
   assert.equal(index(0), 0);
   assert.equal(ratio(0.5), 0.5);
+  assert.equal(percent(70), 70);
+});
+
+test("a percent is not a ratio", () => {
+  /** Accepts only a proportion. */
+  const takesRatio = (value: Ratio): Ratio => value;
+  // @ts-expect-error a share out of one hundred is not a fraction of one.
+  takesRatio(percent(70));
+  assert.equal(takesRatio(ratio(0.7)), 0.7);
 });
 
 test("a branded scalar satisfies a number slot without a cast", () => {

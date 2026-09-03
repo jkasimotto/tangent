@@ -37,6 +37,9 @@ export type Index = Brand<number, "Index">;
 /** A normalized fraction, conventionally in [0, 1]: an interpolation parameter or a proportion. */
 export type Ratio = Brand<number, "Ratio">;
 
+/** A share out of one hundred, the way Excalidraw measures an element's opacity. Its own brand so it never passes for a `Ratio`. */
+export type Percent = Brand<number, "Percent">;
+
 /** Tags a raw number as a screen pixel. */
 export function screenPx(value: number): ScreenPx {
   return value as ScreenPx;
@@ -75,4 +78,9 @@ export function index(value: number): Index {
 /** Tags a raw number as a normalized fraction. */
 export function ratio(value: number): Ratio {
   return value as Ratio;
+}
+
+/** Tags a raw number as a share out of one hundred. */
+export function percent(value: number): Percent {
+  return value as Percent;
 }

@@ -26,10 +26,18 @@ export interface SurfaceProps {
   readonly frameClassName?: string | undefined;
   /** Overrides the registry's modality, for a panel that becomes a sheet at narrow widths. */
   readonly modal?: boolean | undefined;
+  /** The role of a non-modal surface when `region` is not the right one: Find is a `search`, the placement bar a `status`. A modal surface is always a dialog. */
+  readonly role?: "search" | "status" | undefined;
   readonly label?: string | undefined;
   readonly labelledBy?: string | undefined;
   /** The element focus returns to on close. Defaults to the element focused when the surface opened. */
   readonly opener?: HTMLElement | null | undefined;
+  /**
+   * A selector for the control focus lands on when the registry says `first-control` and the first
+   * focusable element is not the right one, such as the Outline's first tree item behind its Close
+   * button. Falls back to the first focusable element when nothing matches.
+   */
+  readonly initialFocus?: string | undefined;
   /** Kit-only inline style, such as the panel width token. */
   readonly style?: CSSProperties | undefined;
   readonly onClose: () => void;
@@ -61,13 +69,13 @@ export function Surface(props: SurfaceProps): ReactNode {
       const section = sectionRef.current;
       if (section === null) return undefined;
       const opener = openerRef.current ?? activeHtmlElement();
-      const frame = requestAnimationFrame(() => moveFocusIn(section, declaration.focusOnOpen));
+      const frame = requestAnimationFrame(() => moveFocusIn(section, declaration.focusOnOpen, props.initialFocus));
       return () => {
         cancelAnimationFrame(frame);
         if (declaration.restoreFocus) restoreFocusTo(opener);
       };
     },
-    [props.id, declaration]
+    [props.id, declaration, props.initialFocus]
   );
 
   /** Keeps Tab inside a modal surface. Escape is the keyboard dispatcher's, through the stack. */
@@ -80,7 +88,7 @@ export function Surface(props: SurfaceProps): ReactNode {
     <section
       ref={sectionRef}
       className={props.className}
-      role={modal ? "dialog" : "region"}
+      role={modal ? "dialog" : props.role ?? "region"}
       aria-modal={modal ? "true" : undefined}
       aria-label={props.label}
       aria-labelledby={props.labelledBy}
@@ -109,10 +117,16 @@ function focusableInside(section: HTMLElement): HTMLElement[] {
 }
 
 /** Puts focus where the registry row says, falling back to the surface itself. */
-function moveFocusIn(section: HTMLElement, target: SurfaceFocusOnOpen): void {
+function moveFocusIn(section: HTMLElement, target: SurfaceFocusOnOpen, initialFocus: string | undefined): void {
   if (target === "none") return;
-  const chosen = target === "heading" ? headingOf(section) : focusableInside(section)[0];
+  const chosen = target === "heading" ? headingOf(section) : firstControlOf(section, initialFocus);
   (chosen ?? section).focus({ preventScroll: true });
+}
+
+/** The control a `first-control` surface opens on: the preferred selector's match, else the first focusable element. */
+function firstControlOf(section: HTMLElement, initialFocus: string | undefined): HTMLElement | null {
+  const preferred = initialFocus === undefined ? null : section.querySelector<HTMLElement>(initialFocus);
+  return preferred ?? focusableInside(section)[0] ?? null;
 }
 
 /** The surface's first heading, made focusable so a screen reader lands on the title. */

@@ -19,6 +19,8 @@ Wire shapes and drafts:
 - `resources-wire.ts` holds the mutation envelope and every answer shape of `/api/areas/map-resources/*`, plus `readResourceFailure()`, `suggestionReference()`, `resourceMutationOwners()` and `catalogFencesFor()`. Nothing here is state.
 - `resources-draft.ts` is the Add, Edit and Suggestion draft as data: how one opens from a row or a Suggestion, which catalog revisions fence it, and the mutation it becomes once its target is inspected.
 - `resource-rows.ts` is every pure helper over one row: its entity, its resolution, its Map state, its words, its group, its order and its filter match. The panel, the details view and the Outline read rows only through here.
+- `resources-views.ts` is what every view is given, `ResourcePanelPorts`, and the pure reads the views share: the rows a filter keeps, the sentence an empty inventory shows, the breadcrumb, the control a Show or a cancelled placement returns focus to. A view decision that can be wrong is tested here rather than only in a browser.
+- `resource-actions.ts` is the commands the views call that the reads and the two mutation modules do not own: running one Block action and opening the recovery a refused copy or open needs, moving the panel to another Area, and the openings and closings of its views.
 
 Effects and commands:
 
@@ -34,6 +36,10 @@ Catalog commands, from `resources-mutations.ts`: `applyResourceMutation`, `retry
 
 Scene commands, from `resources-scene-mutations.ts`: `applySceneResourceMutation`, `associateGenericLink`, `requestAddBack`, `confirmAddBack`, `retrySceneResourceMutation`, `undoResourceChange`, `hideResourceOnMap`, `sourceResourceBlock`, `representationForRow`.
 
+View commands, from `resource-actions.ts`: `runResourceAction`, `retryResourceAction`, `copyBlockedLink`, `closeResourceRecovery`, `closeSceneRecovery`, `closeMutationRecovery`, `viewResourceArea`, `retryResourceLoad`, `reloadResourcesForDraft`, `refreshRowFacts`, `refreshAllRowFacts`, `showResourceDetails`, `closeResourceDetails`, `holdResourceDraft`, `discardResourceDraft`, `filterResources`, `toggleLegacyCandidate`, `RESOURCE_DRAFT_EDITS`.
+
+What the views are given and the pure reads they share, from `resources-views.ts`: the `ResourcePanelPorts` type, `rowFactsFor`, `panelControlFlags`, `matchingResourceRows`, `resourceBreadcrumb`, `resourceControlValue`, `resourceFocusSelector`, `inventoryMessage`, `rowForLocator`, `panelFrameClass`.
+
 Show, Place and Restore on Map are not here. They open a view layer over the canvas and belong to `../placement/`.
 
 ## The views
@@ -46,6 +52,10 @@ The views are thin `.tsx` files that compose `../../ui/` and read the state thro
 - `ResourceEditor.tsx` is `.tangent-map-resource-editor`: the `Kind` select, the `Label (optional)` field, the missing-path confirmation and `Save`. It is the surface `resourceEditor`, also `back-step`.
 - `Discovery.tsx` is the `region` named `Worktree discovery results` with the heading `Discovery sources`, and `Suggestions.tsx` renders `.tangent-map-resource-review`, one Suggestion per `li` with one `code` on one line.
 - `ResourceRecovery.tsx` renders the three dialogs through `../../ui/Dialog.tsx`: the blocked copy or open (`resourceRecovery`), the Add-back confirmation and the failed transaction (`sceneRecovery`). Both are modal surfaces; `../surface-stack.ts` decides what Escape closes, so no view handles a key.
+- `MutationRecovery.tsx` is the strip a refused catalog mutation leaves in the panel: the words from `copyForFailure`, never a code, and one button per way out.
+- `TransactionStatus.tsx` is `.tangent-map-resource-transaction`, the passive `status` shown while a catalog and a Map source save together.
+
+`ResourcesPanel.tsx` renders the panel and everything inside it. The three surfaces that must sit over the canvas rather than inside the panel are rendered by `MapRoot.tsx` beside it: `ResourceActionRecoveryDialog`, `SceneRecoveryDialog` and `TransactionStatus`.
 
 ## Tests
 

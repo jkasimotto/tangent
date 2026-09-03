@@ -110,6 +110,14 @@ export type ResourceDiscovery = {
   readonly projection?: ResourcePanelProjection | null;
 };
 
+/** One imported target the server offers as the owner of a legacy Branch, when more than one could own it. */
+export type LegacyBranchChoice = {
+  readonly owner: ShardOwner;
+  readonly targetFingerprint?: string;
+  readonly field: string;
+  readonly label: string;
+};
+
 /** The evidence a refused mutation hands back so the panel can recover without guessing. */
 export type RecoveryEvidence = {
   readonly code?: string;
@@ -117,6 +125,8 @@ export type RecoveryEvidence = {
   readonly inspection?: InspectedTarget;
   readonly existing?: ResourceLocator;
   readonly owner?: ShardOwner;
+  /** The owners a `legacy-branch-choice-required` refusal offers, one button each. */
+  readonly choices?: readonly LegacyBranchChoice[];
 };
 
 /** The payload the api client attaches to a refused request. */

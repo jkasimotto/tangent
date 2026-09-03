@@ -16,6 +16,8 @@ export interface PanelProps {
   readonly label?: string | undefined;
   readonly labelledBy?: string | undefined;
   readonly opener?: HTMLElement | null | undefined;
+  /** A selector for the control focus lands on instead of the declared target, when it matches. */
+  readonly initialFocus?: string | undefined;
   readonly onClose: () => void;
   readonly onBackStep: () => void;
   readonly children: SurfaceChildren;
@@ -35,6 +37,7 @@ export function SidePanel(props: PanelProps & { readonly modal: boolean }): Reac
       label={props.label}
       labelledBy={props.labelledBy}
       opener={props.opener}
+      initialFocus={props.initialFocus}
       style={PANEL_WIDTH_STYLE}
       onClose={props.onClose}
       onBackStep={props.onBackStep}

@@ -101,7 +101,7 @@ export function retryResourceMutationRecovery(effects: ResourceEffects): Promise
 }
 
 /** Applies one explicit legacy Branch owner choice as a new reviewed intent. */
-export function chooseLegacyBranch(effects: ResourceEffects, choice: { readonly owner: ShardOwner; readonly targetFingerprint: string | undefined }): boolean {
+export function chooseLegacyBranch(effects: ResourceEffects, choice: { readonly owner: ShardOwner; readonly targetFingerprint?: string | undefined }): boolean {
   const retained = effects.getState().mutationRecovery;
   if (retained?.mutation?.kind !== "import-legacy") return false;
   const selections = retained.mutation.selections.map((selection) => ({

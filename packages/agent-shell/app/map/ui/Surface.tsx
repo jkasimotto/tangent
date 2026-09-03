@@ -116,17 +116,21 @@ function focusableInside(section: HTMLElement): HTMLElement[] {
     .filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
 }
 
-/** Puts focus where the registry row says, falling back to the surface itself. */
+/**
+ * Puts focus where the surface asked, then where the registry row says, falling back to the
+ * surface itself. An `initialFocus` selector that matches wins over the declared target, which is
+ * how the Resources panel returns focus to the row control a Show or a cancelled placement left.
+ */
 function moveFocusIn(section: HTMLElement, target: SurfaceFocusOnOpen, initialFocus: string | undefined): void {
   if (target === "none") return;
-  const chosen = target === "heading" ? headingOf(section) : firstControlOf(section, initialFocus);
-  (chosen ?? section).focus({ preventScroll: true });
+  const preferred = preferredControlOf(section, initialFocus);
+  const declared = target === "heading" ? headingOf(section) : focusableInside(section)[0] ?? null;
+  (preferred ?? declared ?? section).focus({ preventScroll: true });
 }
 
-/** The control a `first-control` surface opens on: the preferred selector's match, else the first focusable element. */
-function firstControlOf(section: HTMLElement, initialFocus: string | undefined): HTMLElement | null {
-  const preferred = initialFocus === undefined ? null : section.querySelector<HTMLElement>(initialFocus);
-  return preferred ?? focusableInside(section)[0] ?? null;
+/** The element the surface named through `initialFocus`, when it named one and it is inside. */
+function preferredControlOf(section: HTMLElement, initialFocus: string | undefined): HTMLElement | null {
+  return initialFocus === undefined ? null : section.querySelector<HTMLElement>(initialFocus);
 }
 
 /** The surface's first heading, made focusable so a screen reader lands on the title. */

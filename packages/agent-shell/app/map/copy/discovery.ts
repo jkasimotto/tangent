@@ -40,4 +40,5 @@ export const SUGGESTIONS = {
 export const LEGACY_REVIEW = {
   title: "Legacy resources to review",
   import: "Import",
+  select: "Select for import",
 } as const;

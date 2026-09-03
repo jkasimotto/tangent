@@ -3,10 +3,12 @@
 // placed there whatever the camera had done since, so a Block created with B after a pan landed
 // in the Area the mouse had hovered before the pan, off screen and often invisible.
 //
-// This suite drives that exact sequence through real input: the mouse hovers one Area, the camera
-// pans through the controller without the mouse moving, and B places a Block. It asserts the two
-// things a person sees: the Block is inside the visible viewport, and it belongs to the Area under
-// the viewport centre rather than the Area the mouse last hovered.
+// This suite drives that exact sequence through real input: the mouse hovers one Area, the picker
+// it opens there proves the hover is what a placement uses, the camera pans and zooms through the
+// controller without the mouse moving, and then B and a paste each place a Block. It asserts what
+// a person sees at each step: the picker heading names the Area on screen, and each new Block is
+// inside the visible viewport and belongs to the Area under the viewport centre rather than the
+// Area the mouse last hovered.
 
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -23,6 +25,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const HOVERED_AREA = "otto/near";
 const CENTRED_AREA = "otto/far";
 const PLACED_REF = "https://example.com/placed-after-the-pan";
+const PASTED_REF = "https://example.com/pasted-after-the-pan";
 
 // Two sibling Areas far apart on one root, so fitting the far one puts the near one off screen.
 const fixture = String.raw`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Placement in viewport fixture</title><link rel="stylesheet" href="/agent-shell-map.css"><style>html,body,#map{width:100%;height:100%;margin:0;overflow:hidden}</style></head><body><div id="map"></div><script type="module">
@@ -107,6 +110,34 @@ async function settled(page) {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 
+/**
+ * The heading of the open Block picker, folded to lower case. It is the sentence a person reads
+ * before placing, and it names the Area the placement will land in. Read as text rather than as an
+ * accessible name so a CSS text transform cannot change what the assertion compares.
+ */
+async function pickerHeading(picker) {
+  return ((await picker.getByRole("heading").textContent()) ?? "").trim().toLowerCase();
+}
+
+/** Pastes one line of text onto the focused canvas, the way a person pastes a reference. */
+async function pasteText(page, text) {
+  await page.locator(".excalidraw canvas.interactive").focus();
+  await page.evaluate((pasted) => {
+    const transfer = new DataTransfer();
+    transfer.setData("text/plain", pasted);
+    document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }));
+  }, text);
+}
+
+/** Opens the Block picker with B over the focused canvas and waits for its dialog. */
+async function openPicker(page) {
+  await page.locator(".excalidraw canvas.interactive").focus();
+  await page.keyboard.press("b");
+  const picker = page.getByRole("dialog", { name: "Place a Tangent block" });
+  await picker.waitFor();
+  return picker;
+}
+
 /** Converts one scene rectangle into the browser viewport rectangle a person actually looks at. */
 function screenRect(rect, frame) {
   const { box, camera } = frame;
@@ -141,7 +172,7 @@ function viewportCentreScene(frame) {
   return { x: box.width / 2 / camera.zoom - camera.scrollX, y: box.height / 2 / camera.zoom - camera.scrollY };
 }
 
-test("a Block placed with B after the camera pans lands in the Area on screen, not in the Area the mouse last hovered", { skip: !enabled, timeout: 90_000 }, async () => {
+test("a Block placed with B or pasted after the camera pans lands in the Area on screen, not in the Area the mouse last hovered", { skip: !enabled, timeout: 90_000 }, async () => {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
     if (url.pathname === "/fixture") { response.writeHead(200, { "content-type": "text/html" }); response.end(fixture); return; }
@@ -169,20 +200,29 @@ test("a Block placed with B after the camera pans lands in the Area on screen, n
     await page.mouse.move(hoverScreen.left, hoverScreen.top);
     await settled(page);
 
-    // The camera pans through the controller. The mouse is never moved again.
+    // The hover really is recorded and really does decide where a placement lands. Without this
+    // step the test would still pass if the Map never recorded the pointer at all, because every
+    // placement would fall back to the viewport centre and the defect could return unnoticed.
+    const hoveredPicker = await openPicker(page);
+    assert.equal(await pickerHeading(hoveredPicker), "place in near", "before the pan the picker names the Area under the mouse, so the pointer point is what a placement uses");
+    await page.keyboard.press("Escape");
+    await hoveredPicker.waitFor({ state: "detached" });
+    await settled(page);
+
+    // The camera pans and zooms through the controller. The mouse is never moved again.
     await page.evaluate((area) => window.editor.fitArea(area), CENTRED_AREA);
     await settled(page);
     await settled(page);
     const after = await page.evaluate(() => window.frame());
     const centreScene = viewportCentreScene(after);
+    assert.notEqual(after.camera.scrollX, before.camera.scrollX, `the camera panned: ${JSON.stringify({ before: before.camera, after: after.camera })}`);
+    assert.notEqual(after.camera.zoom, before.camera.zoom, `the camera zoomed as well, which is the second half of the audit's sequence: ${JSON.stringify({ before: before.camera, after: after.camera })}`);
     assert.ok(offScreen(screenRect(nearRect, after), after), `the hovered Area is wholly off screen after the pan: ${JSON.stringify({ nearRect, after })}`);
     assert.ok(contains(farRect, centreScene), `the viewport centre is inside the far Area after the pan: ${JSON.stringify({ farRect, centreScene })}`);
 
     // B places a Block without the mouse moving.
-    await page.locator(".excalidraw canvas.interactive").focus();
-    await page.keyboard.press("b");
-    const picker = page.getByRole("dialog", { name: "Place a Tangent block" });
-    await picker.waitFor();
+    const picker = await openPicker(page);
+    assert.equal(await pickerHeading(picker), "place in far", "after the pan the picker names the Area on screen, not the Area the mouse last hovered");
     await picker.getByRole("textbox").fill(PLACED_REF);
     await page.keyboard.press("Enter");
     await page.waitForFunction((ref) => window.blockOwner(ref) !== null && window.blockRect(ref) !== null, PLACED_REF, { timeout: 10_000 });
@@ -195,6 +235,23 @@ test("a Block placed with B after the camera pans lands in the Area on screen, n
     assert.ok(placedRect, "the placed Block is in the composed scene");
     assert.equal(owner, CENTRED_AREA, `the Block belongs to the Area under the viewport centre, not to the Area the mouse last hovered: ${JSON.stringify({ owner, placedRect })}`);
     assert.ok(insideViewport(screenRect(placedRect, placedFrame), placedFrame), `the placed Block is wholly inside the visible viewport: ${JSON.stringify({ placedRect, placedFrame, screen: screenRect(placedRect, placedFrame) })}`);
+
+    // Paste is the other half of the audit's sentence, and it reaches placement through the canvas
+    // rather than through the picker. Escape leaves the label editor the placement opened, so the
+    // paste goes to the canvas and not into a text field. The mouse is still where it was.
+    await page.keyboard.press("Escape");
+    await settled(page);
+    await pasteText(page, PASTED_REF);
+    await page.waitForFunction((ref) => window.blockOwner(ref) !== null && window.blockRect(ref) !== null, PASTED_REF, { timeout: 10_000 });
+    await settled(page);
+    await settled(page);
+
+    const pastedOwner = await page.evaluate((ref) => window.blockOwner(ref), PASTED_REF);
+    const pastedFrame = await page.evaluate(() => window.frame());
+    const pastedRect = await page.evaluate((ref) => window.blockRect(ref), PASTED_REF);
+    assert.ok(pastedRect, "the pasted Block is in the composed scene");
+    assert.equal(pastedOwner, CENTRED_AREA, `the pasted Block belongs to the Area under the viewport centre, not to the Area the mouse last hovered: ${JSON.stringify({ pastedOwner, pastedRect })}`);
+    assert.ok(insideViewport(screenRect(pastedRect, pastedFrame), pastedFrame), `the pasted Block is wholly inside the visible viewport: ${JSON.stringify({ pastedRect, pastedFrame, screen: screenRect(pastedRect, pastedFrame) })}`);
   } finally {
     if (browser) await browser.close();
     await new Promise((resolve) => server.close(resolve));

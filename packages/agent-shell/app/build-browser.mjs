@@ -9,7 +9,7 @@ const output = path.join(here, "..", "dist", "browser");
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await build({
-  entryPoints: { "agent-shell-map": path.join(here, "browser", "area-board-excalidraw.jsx") },
+  entryPoints: { "agent-shell-map": path.join(here, "map", "index.tsx") },
   outdir: output,
   bundle: true,
   splitting: true,

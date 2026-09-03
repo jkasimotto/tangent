@@ -664,6 +664,56 @@ test("a stale startup draft cannot reappear after newer work saves", async () =>
   controller.destroy();
 });
 
+test("a successful save keeps an unanswered recovery offer", async () => {
+  let stored = null;
+  const draftStore = {
+    /** Returns the recovery record banked by the earlier session. */
+    async load(worldId) { return stored?.worldId === worldId ? structuredClone(stored) : null; },
+    /** Banks the failed command for the next session. */
+    async save(record) { stored = structuredClone(record); },
+    /** Clears recovery, which this test asserts never happens on its own. */
+    async remove() { stored = null; },
+    /** Closes the in-memory recovery store. */
+    close() {},
+  };
+  const first = createAreaMapWorldController({
+    world: fixtureWorld(), storage: memoryStorage(), draftStore,
+    /** Refuses the first session's only command so it is banked for recovery. */
+    persistWorld: async () => ({ status: 400, error: "a safe world revision is required" }),
+  });
+  const failing = first.world(); failing.areas[1].region.storedRect.y += 21;
+  first.commitWorld(failing, { changedAreas: ["neara/delivery"] }, "pointer");
+  await first.flush();
+  assert.equal(stored?.pending.length, 1, "the refused command is banked");
+  first.destroy();
+
+  const events = [];
+  const second = createAreaMapWorldController({
+    world: fixtureWorld(), storage: memoryStorage(), draftStore,
+    /** Captures draft lifecycle telemetry from the recovered session. */
+    onEvent: (event) => events.push(event),
+    /** Accepts everything the recovered session authors. */
+    persistWorld: async () => ({ status: 200, hashes: { neara: "newer" }, worldRevision: "world-newer" }),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(second.snapshot().draft && !second.snapshot().draft.restored, "the recovered session offers the banked draft");
+
+  const changed = second.world(); changed.areas[1].region.storedRect.x += 22;
+  second.commitWorld(changed, { changedAreas: ["neara/delivery"] }, "pointer");
+  await second.flush();
+
+  assert.ok(second.snapshot().draft, "a later save cannot answer the offer for the person");
+  assert.equal(stored?.pending.length, 1, "the banked record survives the later save");
+  assert.equal(second.snapshot().save.state, "saved", "the later save still reports itself saved");
+  assert.equal(events.filter((event) => event.name === "area_map_draft" && event.phase === "cleared").length, 0, "no clear is recorded without an explicit choice");
+
+  second.discardDraft();
+  await second.flush();
+  assert.equal(second.snapshot().draft, null, "an explicit discard still clears the offer");
+  assert.equal(stored, null, "an explicit discard still removes the durable record");
+  second.destroy();
+});
+
 test("draft save and clear stay ordered through immediate map teardown", async () => {
   let finishDraftWrite;
   const events = [];

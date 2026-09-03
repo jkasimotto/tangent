@@ -1,0 +1,77 @@
+# Pricing
+
+This Document is the machine-wide price table. Tangent ships a seeded table
+with the same rates, and this Document overrides it: a provider and model
+written here replaces the seeded rate, and a model the seed does not know is
+added by writing it here. Edits apply on the next reading. No restart.
+
+Every number is United States dollars for one million tokens. Write `null` for
+a whole model when the rate is unknown; a missing model is unknown too.
+Neither means zero, and neither is ever guessed at.
+
+`cacheWrite` is the five-minute cache-write rate and `cacheWrite1h` is the
+one-hour rate. `input` means the tokens charged at the full input rate, with
+cache excluded.
+
+`fastMode` is optional and holds the `input` and `output` rates that apply when
+Claude Code ran the request in fast mode. Only those two change; the cache
+rates stay. A model that has one must keep it here, because this Document
+replaces the seeded rate for that model outright rather than merging with it.
+
+These are API list prices. Under a subscription they measure the work a
+conversation did, not money that left an account.
+
+The `openai` entry is present and empty on purpose. Codex ships no price data
+at all, so codex work reports tokens and no dollars until real numbers are
+written here. Write them and the top-bar figure stops excluding codex.
+
+Install this file at `~/.tangent/trees/pricing.md`.
+
+```tangent.pricing.v1
+{
+  "version": 1,
+  "currency": "USD",
+  "providers": {
+    "anthropic": {
+      "note": "Claude Code 2.1.258 baked price catalog, verified against recorded cost-state totals.",
+      "models": {
+        "claude-opus-5": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5, "fastMode": { "input": 10, "output": 50 } },
+        "claude-opus-4-8": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5 },
+        "claude-opus-4-7": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5, "fastMode": { "input": 30, "output": 150 } },
+        "claude-opus-4-6": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5, "fastMode": { "input": 30, "output": 150 } },
+        "claude-opus-4-5": { "input": 5, "output": 25, "cacheWrite": 6.25, "cacheWrite1h": 10, "cacheRead": 0.5 },
+        "claude-opus-4-1": { "input": 15, "output": 75, "cacheWrite": 18.75, "cacheWrite1h": 30, "cacheRead": 1.5 },
+        "claude-opus-4-0": { "input": 15, "output": 75, "cacheWrite": 18.75, "cacheWrite1h": 30, "cacheRead": 1.5 },
+        "claude-fable-5-1": { "input": 10, "output": 50, "cacheWrite": 12.5, "cacheWrite1h": 20, "cacheRead": 0.25 },
+        "claude-fable-5": { "input": 10, "output": 50, "cacheWrite": 12.5, "cacheWrite1h": 20, "cacheRead": 1 },
+        "claude-sonnet-5": { "input": 2, "output": 10, "cacheWrite": 2.5, "cacheWrite1h": 4, "cacheRead": 0.2 },
+        "claude-sonnet-4": { "input": 3, "output": 15, "cacheWrite": 3.75, "cacheWrite1h": 6, "cacheRead": 0.3 },
+        "claude-sonnet-3": { "input": 3, "output": 15, "cacheWrite": 3.75, "cacheWrite1h": 6, "cacheRead": 0.3 },
+        "claude-haiku-4-5": { "input": 1, "output": 5, "cacheWrite": 1.25, "cacheWrite1h": 2, "cacheRead": 0.1 }
+      }
+    },
+    "resetdata-glm": {
+      "note": "Julian's ResetData account rates, given 2026-09-02. The endpoint publishes no separate cache-write price, so a write bills at the input rate.",
+      "models": {
+        "zai/glm-5.2": { "input": 1.58, "output": 4.96, "cacheWrite": 1.58, "cacheWrite1h": 1.58, "cacheRead": 0.16 }
+      }
+    },
+    "zai-openai": {
+      "note": "No rates supplied. Write them here to price GLM-5.2 Direct.",
+      "models": {}
+    },
+    "zai-anthropic": {
+      "note": "No rates supplied. Write them here to price the Claude-shaped GLM endpoint.",
+      "models": {}
+    },
+    "openai": {
+      "note": "Codex publishes no rates and Codex CLI ships none. Write the real numbers here to make codex spend a dollar figure instead of a token count.",
+      "models": {}
+    },
+    "litellm": {
+      "note": "The gateway account codex-gw reaches. Its rates are the gateway's, not OpenAI's.",
+      "models": {}
+    }
+  }
+}
+```

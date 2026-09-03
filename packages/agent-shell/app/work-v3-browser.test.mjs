@@ -30,8 +30,11 @@ function snapshot() {
 test("browser boot reads only v3 Work and paints every bounded row kind", async () => {
   const fixture = { vault: { areas: [], documents: [] }, sessions: [], brains: [], pipelines: [] };
   const { document, gets } = await bootWorkTable(fixture, { workProjection: snapshot(), workFilter: "all" });
-  assert.deepEqual(gets.map((value) => new URL(value).pathname), ["/api/work"]);
-  assert.deepEqual([...document.querySelectorAll(".work-table thead th")].map((cell) => cell.textContent.trim()), ["Goal", "Agent", "Status", "Controls"]);
+  // Work is read from one v3 route and nothing else. The two cost routes,
+  // the top bar's total and each worker's own figure, ride their own clock,
+  // so a moving dollar never repaints the desk.
+  assert.deepEqual(gets.map((value) => new URL(value).pathname).sort(), ["/api/cost", "/api/cost/workers", "/api/work"]);
+  assert.deepEqual([...document.querySelectorAll(".work-table thead th")].map((cell) => cell.textContent.trim()), ["Goal", "Agent", "Status", "Cost", "Controls"]);
   assert.equal(document.querySelector("[data-goal-anchor='otto/tangent/goal-parent.md'] .desk-state").textContent, "Working");
   assert.equal(document.querySelector("[data-subgoal-of='otto/tangent/goal-parent.md']") !== null, true);
   assert.equal(document.querySelector("[data-process-file='otto/tangent/process-check.md']"), null, "a future definition is not Work");

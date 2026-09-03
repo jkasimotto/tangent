@@ -155,13 +155,13 @@ test("Root appears first and its brain starts in the existing vault root", async
   const record = await readBrain(brains, ROOT_AREA);
   assert.equal(record.generations.at(-1).cwd, trees);
   assert.equal(record.planFile, "plan-root.md");
-  assert.deepEqual(record.generations.at(-1).resolvedLaunch.ref, { harness: "brain", model: null, effort: null });
+  assert.deepEqual(record.generations.at(-1).resolvedLaunch.ref, { harness: "brain", model: null, effort: null, provider: null });
 
   await post(base, "/api/brains/stop", { area: ROOT_AREA, expectedAttemptId: started.session, operationId: "root-resume-test" });
   const resumed = await post(base, "/api/brains/start", { area: ROOT_AREA, resume: true });
   assert.ok(resumed.session, JSON.stringify(resumed));
   openedSessions.push(resumed.session);
-  assert.deepEqual((await readBrain(brains, ROOT_AREA)).generations.at(-1).resolvedLaunch.ref, { harness: "brain", model: null, effort: null }, "Root reuses its first explicit launch because it has no Area note default");
+  assert.deepEqual((await readBrain(brains, ROOT_AREA)).generations.at(-1).resolvedLaunch.ref, { harness: "brain", model: null, effort: null, provider: null }, "Root reuses its first explicit launch because it has no Area note default");
   const addressed = await post(base, "/api/agents/send", { to: ROOT_AREA, text: "A message addressed to Root." });
   assert.equal(addressed.target, "area");
   assert.equal(addressed.to, ROOT_AREA, "the special Root identity is a normal Area inbox target");

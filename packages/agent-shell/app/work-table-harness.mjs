@@ -34,7 +34,7 @@ export async function settle(window, turns = 3) {
  * Renders the Work screen for one fixture and returns its window. `posts`
  * collects every mutation the page sends, so an action proof needs no server.
  */
-export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [], areaFocusOnly = false, workProjection = null, launchOptions = null, harnessRegistry = null, goalDetail = null, jobDetail = null, documentRecord = null, areaCanvas = null, postHandler = null } = {}) {
+export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [], areaFocusOnly = false, workProjection = null, launchOptions = null, harnessRegistry = null, goalDetail = null, jobDetail = null, documentRecord = null, areaCanvas = null, workerCost = null, postHandler = null } = {}) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -86,6 +86,8 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
     if (pathname === "/api/sessions") {
       return jsonResponse({ boot: "boot-1", caffeinate: false, pipelines: fixture.pipelines, sessions: fixture.sessions, brains: fixture.brains });
     }
+    if (pathname === "/api/cost") return jsonResponse({ status: "ready", days: 1, amount: 0, display: "$0", complete: true, conversations: 0, byHarness: [], byModel: [], work: [], excluded: [], computedAt: "2026-09-03T06:00:00.000Z" });
+    if (pathname === "/api/cost/workers") return jsonResponse({ status: "ready", computedAt: "2026-09-03T06:00:00.000Z", work: workerCost?.work ?? {}, sessions: workerCost?.sessions ?? {} });
     if (pathname === "/api/operations") return jsonResponse(fixture.programs ?? { operations: [], processes: [], problems: [], areas: [], liveCount: 0 });
     if (pathname === "/api/launch/options" && launchOptions) {
       return jsonResponse(typeof launchOptions === "function" ? launchOptions(requestUrl) : launchOptions);

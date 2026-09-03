@@ -4,6 +4,9 @@ import test from "node:test";
 import {
   fencedBlock,
   harnessModels,
+  launchProvider,
+  launchRef,
+  parseLaunch,
   inheritedBrainLaunch,
   inheritedLaunch,
   launchLabel,
@@ -352,4 +355,90 @@ test("saving a registry replaces a v1 block with a v2 block and keeps the fields
   const reread = parseHarnessRegistry(written);
   assert.equal(reread.harnesses.find((harness) => harness.id === "codex").resume, "codex resume {id}");
   assert.equal(parseHarnessRegistry(upsertHarnessRegistry(written, registry)).harnesses.length, 3);
+});
+
+// The provider axis: the account that served a model, beside harness, model
+// and effort (docs/design/cost-attribution/decision.md).
+
+const PROVIDER_REGISTRY = {
+  version: 2,
+  modelSets: {
+    claude: [{ id: "opus-5", label: "Opus 5", args: "--model opus" }],
+    pi: [
+      { id: "glm-direct", label: "GLM direct", args: "--provider zai-openai --model glm-5.2", provider: "zai-openai" },
+      { id: "glm-reset", label: "GLM ResetData", args: "--provider resetdata-glm --model zai/glm-5.2" },
+    ],
+  },
+  effortSets: {},
+  harnesses: [
+    { id: "claude-otto", command: "claude", modelSet: "claude", provider: "anthropic" },
+    { id: "pi-code", command: "pi", modelSet: "pi", provider: "zai-openai" },
+    { id: "opencode", command: "opencode" },
+    { id: "claude-gw", command: "claude-gw", modelSet: "claude" },
+  ],
+};
+
+test("a declared provider resolves beside the harness, model and effort", () => {
+  const resolved = resolveLaunch(PROVIDER_REGISTRY, { harness: "claude-otto", model: "opus-5" });
+  assert.equal(resolved.provider, "anthropic");
+  assert.equal(resolved.harness, "claude-otto");
+});
+
+test("a model option's provider wins over its harness's, because one harness reaches several", () => {
+  assert.equal(resolveLaunch(PROVIDER_REGISTRY, { harness: "pi-code", model: "glm-direct" }).provider, "zai-openai");
+  // The second option declares none, so the provider it names in its own
+  // arguments is read rather than the harness's.
+  assert.equal(resolveLaunch(PROVIDER_REGISTRY, { harness: "pi-code", model: "glm-reset" }).provider, "resetdata-glm");
+});
+
+test("a harness that declares no provider is inferred from its family, or left unknown", () => {
+  const registry = { ...PROVIDER_REGISTRY, harnesses: PROVIDER_REGISTRY.harnesses.map((entry) => ({ ...entry, provider: undefined })) };
+  assert.equal(resolveLaunch(registry, { harness: "claude-otto", model: "opus-5" }).provider, "anthropic");
+  // A harness nothing can infer stays null. An unknown provider prices
+  // nothing and says so, which beats a guess.
+  assert.equal(resolveLaunch(registry, { harness: "opencode" }).provider, null);
+});
+
+test("a gateway harness is never read as the vendor's own account", () => {
+  // claude-gw runs a managed account, not Julian's Anthropic one, so pricing
+  // it at the vendor's direct rate would be the confident wrong answer this
+  // axis exists to prevent. It must declare its provider, and until it does
+  // its work is reported unpriced.
+  const registry = { ...PROVIDER_REGISTRY, harnesses: PROVIDER_REGISTRY.harnesses.map((entry) => ({ ...entry, provider: undefined })) };
+  assert.equal(resolveLaunch(registry, { harness: "claude-gw", model: "opus-5" }).provider, null);
+  // A declaration on the gateway is still honoured.
+  const declared = { ...registry, harnesses: registry.harnesses.map((entry) => entry.id === "claude-gw" ? { ...entry, provider: "litellm" } : entry) };
+  assert.equal(resolveLaunch(declared, { harness: "claude-gw", model: "opus-5" }).provider, "litellm");
+});
+
+test("the launch reference stays three parts, whatever the provider is", () => {
+  const resolved = resolveLaunch(PROVIDER_REGISTRY, { harness: "claude-otto", model: "opus-5" });
+  const ref = launchRef({ ...resolved, provider: "anthropic" });
+  assert.equal(ref, "claude-otto/opus-5");
+  assert.equal(ref.split("/").length <= 3, true);
+  // parseLaunch is what stores and reads that string, and it caps at three.
+  assert.deepEqual(parseLaunch("claude-otto/opus-5/high"), { harness: "claude-otto", model: "opus-5", effort: "high" });
+  assert.equal(parseLaunch("claude-otto/opus-5/high/anthropic"), null);
+});
+
+test("one stored launch reference resolves its provider against a registry", () => {
+  assert.equal(launchProvider(PROVIDER_REGISTRY, { harness: "pi-code", model: "glm-reset" }), "resetdata-glm");
+  assert.equal(launchProvider(PROVIDER_REGISTRY, { harness: "not-a-harness" }), null);
+});
+
+test("the registry rejects a provider that is not a usable name", () => {
+  /** Wraps one registry in the fenced block the Document carries. */
+  const note = (registry) => `\`\`\`tangent.harnesses.v2\n${JSON.stringify(registry)}\n\`\`\``;
+  const badHarness = { ...PROVIDER_REGISTRY, harnesses: [{ id: "a", command: "a", provider: 7 }] };
+  assert.match(parseHarnessRegistry(note(badHarness)).error, /provider must be a non-empty string/);
+  assert.match(validateHarnessRegistry(badHarness), /provider must be a non-empty string/);
+  const badModel = { version: 2, modelSets: { s: [{ id: "m", provider: "  " }] }, effortSets: {}, harnesses: [{ id: "a", command: "a", modelSet: "s" }] };
+  assert.match(parseHarnessRegistry(note(badModel)).error, /provider must be a non-empty string/);
+  assert.match(validateHarnessRegistry(badModel), /provider must be a non-empty string/);
+});
+
+test("an existing registry with no providers anywhere still parses without a version bump", () => {
+  const parsed = parseHarnessRegistry(REGISTRY_NOTE);
+  assert.equal(parsed.error, undefined);
+  assert.equal(parsed.harnesses.length > 0, true);
 });

@@ -527,7 +527,20 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-col-work { width: auto; min-width: 280px; }
 .work-col-agent { width: 260px; }
 .work-col-status { width: 216px; }
+.work-col-cost { width: 76px; }
 .work-col-controls { width: 56px; }
+/* What a worker cost. One dim figure that the eye can skip and the hover
+   explains: a plain dollar when nothing is missing, a tilde when the figure
+   is a floor, and a token count when the model has no rate, because a guessed
+   dollar would be worse than no dollar. */
+.worker-cost { color: #93a0ad; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: help; }
+.worker-cost-floor { color: #b8a677; }
+.worker-cost-tokens { color: #8b7fa8; }
+.worker-cost-none { color: #4d5661; cursor: default; }
+.work-cell-cost { overflow: hidden; padding-right: 4px; text-align: right; white-space: nowrap; }
+.work-table thead th.work-head-cost { text-align: right; }
+.work-group-cost { margin-right: 4px; }
+.session-cost { flex: none; padding: 3px 7px; }
 
 .work-group-row > .work-group-head { box-sizing: border-box; height: 28px; padding: 0 10px; border-bottom: 1px solid #2b3037; background: #14171b; font-weight: 400; line-height: 1.1; text-align: left; }
 .work-group-head { display: table-cell; }
@@ -684,6 +697,7 @@ button.work-agent-ref:hover, button.work-agent-ref:focus-visible { color: #fff; 
      the text in Chrome's accessibility tree. */
   .work-col-work { width: auto; min-width: 0; }
   .work-col-status { width: 0; }
+  .work-col-cost { width: 60px; }
   .work-col-controls { width: 56px; }
   .work-head-status, .work-cell-status { visibility: hidden; padding: 0; overflow: hidden; white-space: nowrap; }
   .work-row > * { height: auto; padding: 6px 8px; }
@@ -1654,6 +1668,26 @@ body.work-search-open .screen { padding-bottom: 48px; }
 /* Reveal highlight */
 .desk-goal.flash { animation: desk-goal-flash 1.5s ease-out; }
 @keyframes desk-goal-flash { 0% { background: #2a3547; } 100% { background: transparent; } }
+
+/* Estimated cost in the top bar (docs/design/cost-attribution/decision.md).
+   One dim figure that costs a glance. Resting on it, or reaching it with the
+   keyboard, opens the breakdown. There is nothing to press and no state to
+   get wrong, so this is :hover and :focus-within and not a popover. */
+.cost-readout { position: relative; align-self: center; }
+.cost-readout[hidden] { display: none; }
+.cost-amount { display: block; padding: 4px 6px; border-radius: 7px; color: var(--quiet); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: default; }
+.cost-amount:hover, .cost-amount:focus-visible { color: var(--text); background: var(--surface-raised); outline: none; }
+.cost-readout.cost-incomplete > .cost-amount { color: var(--amber); opacity: .8; }
+.cost-breakdown { position: absolute; top: calc(100% + 8px); right: 0; z-index: 70; display: none; width: min(360px, calc(100vw - 48px)); max-height: 70vh; overflow-y: auto; padding: 14px 18px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--bg); box-shadow: 0 18px 48px rgba(0, 0, 0, .55); }
+.cost-readout:hover > .cost-breakdown, .cost-readout:focus-within > .cost-breakdown { display: block; }
+.cost-breakdown h3 { margin: 0 0 10px; font-size: 13px; font-weight: 700; }
+.cost-breakdown h4 { margin: 12px 0 5px; color: var(--quiet); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.cost-breakdown-row { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 3px 0; font-size: 12px; }
+.cost-breakdown-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cost-breakdown-row > b { color: var(--quiet); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; }
+.cost-breakdown-excluded > span { color: var(--amber); white-space: normal; }
+.cost-breakdown-excluded em { display: block; color: var(--quiet); font-size: 11px; font-style: normal; }
+.cost-breakdown-note { margin: 12px 0 0; color: var(--quiet); font-size: 11px; line-height: 1.45; }
 
 /* Agent Shell menu and connection pill */
 .status-pill { align-self: center; padding: 4px 11px; border: 1px solid #665735; border-radius: 999px; color: var(--amber); font-size: 11px; letter-spacing: .02em; white-space: nowrap; }

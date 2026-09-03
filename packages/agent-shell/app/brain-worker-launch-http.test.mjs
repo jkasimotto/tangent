@@ -164,7 +164,7 @@ test("a brain lends its own harness to every worker it starts", async (context) 
   });
   assert.equal(brain.status, 200, JSON.stringify(brain.body));
   openedSessions.push(brain.body.session);
-  assert.deepEqual(brain.body.brain.resolvedLaunch.ref, { harness: "claude-otto", model: "fable-5", effort: null });
+  assert.deepEqual(brain.body.brain.resolvedLaunch.ref, { harness: "claude-otto", model: "fable-5", effort: null, provider: "anthropic" });
 
   const brainOwnedCreate = await post("/api/goals/create", {
     area: "otto/proof",
@@ -282,7 +282,7 @@ test("a brain lends its own harness to every worker it starts", async (context) 
   assert.equal(reattachedBrain.status, 200, JSON.stringify(reattachedBrain.body));
   assert.equal(reattachedBrain.body.reattached, true);
   assert.equal(reattachedBrain.body.session, overriddenBrain.body.session);
-  assert.deepEqual(reattachedBrain.body.brain.resolvedLaunch.ref, { harness: "claude", model: "opus-5", effort: null });
+  assert.deepEqual(reattachedBrain.body.brain.resolvedLaunch.ref, { harness: "claude", model: "opus-5", effort: null, provider: "anthropic" });
 
   // An explicit resume can make its own one-attempt choice. Earlier
   // generations retain their complete launch snapshots.
@@ -296,7 +296,7 @@ test("a brain lends its own harness to every worker it starts", async (context) 
   assert.equal(resumedBrain.status, 200, JSON.stringify(resumedBrain.body));
   openedSessions.push(resumedBrain.body.session);
   assert.equal(resumedBrain.body.generation, 2);
-  assert.deepEqual(resumedBrain.body.brain.resolvedLaunch.ref, { harness: "claude", model: "fable-5", effort: null });
+  assert.deepEqual(resumedBrain.body.brain.resolvedLaunch.ref, { harness: "claude", model: "fable-5", effort: null, provider: "anthropic" });
   const storedBrain = JSON.parse(await readFile(path.join(root, "brains", "otto", "overridebrain", "brain.json"), "utf8"));
   assert.deepEqual(storedBrain.generations.map((entry) => [entry.resolvedLaunch.mode, entry.resolvedLaunch.ref]), [
     ["override", { harness: "claude", model: "opus-5", effort: null }],

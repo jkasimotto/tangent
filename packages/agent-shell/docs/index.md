@@ -16,6 +16,8 @@ Any replacement harness can recover the current assignment from the tmux session
 
 Agent Shell centers each Area on one logical brain with an active or inactive lifecycle. Exact Area identity selects records and inboxes, not command permission. Area messages enter the durable inbox before live delivery.
 
+The top bar shows an estimated cost for the day, read from its own `GET /api/cost` rather than from the Work snapshot, so a moving dollar never forces a repaint. It prices every conversation of every Job, brain and repair in the window, including subagents, counting a resumed conversation once. What it leaves out travels with it: an unpriced model or an unreachable attempt is named on the same surface (ADR-0057).
+
 Work shows all open Goals from one bounded `agent-shell-work.v3` snapshot. The gateway serves its last complete revision during controller or source failure. An explicit keyboard context owns each key. Terminal sessions keep native tmux input, except the visible leave shortcut. Work and Document actions expose matching keyboard and pointer paths. See ADR-0038 and ADR-0056.
 
 Each Area can have one `.excalidraw` source shard. One browser world shows the complete Area hierarchy and keeps every structural region interactive. A shared layout kernel expands ancestors and reflows affected sibling branches. Vault notes remain authoritative for Tangent block facts. One gesture commits all affected shards together. See ADR-0049, ADR-0051, and ADR-0052.

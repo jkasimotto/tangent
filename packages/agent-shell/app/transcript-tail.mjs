@@ -1,6 +1,5 @@
 import { open, readFile, stat } from "node:fs/promises";
-import path from "node:path";
-import { expandHome, findCodexRollouts } from "./harness-conversation.mjs";
+import { resolveTranscript } from "./harness-transcripts.mjs";
 
 const TAIL_BYTES = 64 * 1024;
 
@@ -31,23 +30,21 @@ export function parseTranscriptTail(provider, text) {
   return null;
 }
 
-/** Resolves and reads the transcript for one recorded harness conversation. */
+/**
+ * Resolves and reads the transcript for one recorded harness conversation.
+ *
+ * The layouts live in `harness-transcripts.mjs`, which is also what the cost
+ * path reads, so liveness and cost can no longer disagree about where a
+ * harness writes. They used to: this function looked for a pi transcript at
+ * `<transcripts>/<id>.jsonl`, which is not where pi writes, so liveness was
+ * silently off for every pi attempt ever recorded.
+ */
 export async function observeTranscript({ harness, conversation, cwd, startedAt } = {}) {
-  if (!harness?.transcripts || !conversation?.id) return null;
-  const provider = String(conversation.provider ?? harness.id ?? "");
-  let transcriptPath = null;
-  if (provider.startsWith("claude")) {
-    transcriptPath = path.join(expandHome(harness.transcripts), claudeProjectKey(cwd), `${conversation.id}.jsonl`);
-  } else if (provider.startsWith("codex")) {
-    const found = await findCodexRollouts({ transcripts: harness.transcripts, cwd, startedAt });
-    transcriptPath = found.find((item) => item.id === conversation.id)?.transcriptPath ?? null;
-  } else if (provider === "pi" || provider === "pi-code") {
-    transcriptPath = path.join(expandHome(harness.transcripts), `${conversation.id}.jsonl`);
-  }
-  if (!transcriptPath) return null;
+  const resolved = await resolveTranscript({ harness, conversation, cwd, startedAt });
+  if (!resolved) return null;
   try {
-    const parsed = parseTranscriptTail(provider, await readTranscriptTail(transcriptPath));
-    return parsed ? { ...parsed, path: transcriptPath, provider } : null;
+    const parsed = parseTranscriptTail(resolved.harness, await readTranscriptTail(resolved.path));
+    return parsed ? { ...parsed, path: resolved.path, provider: resolved.harness } : null;
   } catch {
     return null;
   }
@@ -55,31 +52,17 @@ export async function observeTranscript({ harness, conversation, cwd, startedAt 
 
 /** Reads the complete first native user message for an exact prompt receipt. */
 export async function firstUserMessageReceipt({ harness, conversation, cwd, startedAt, expectedSha256, expectedBytes } = {}) {
-  const resolved = await transcriptFile({ harness, conversation, cwd, startedAt });
+  const resolved = await resolveTranscript({ harness, conversation, cwd, startedAt });
   if (!resolved) return { ok: false, reason: "unsupported-or-missing-transcript" };
   let text;
   try { text = await readFile(resolved.path, "utf8"); }
   catch { return { ok: false, reason: "transcript-unavailable" }; }
   const rows = text.split("\n").filter(Boolean).flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
-  const message = firstUserMessage(resolved.provider, rows);
+  const message = firstUserMessage(resolved.harness, rows);
   if (message == null) return { ok: false, reason: "first-user-message-unavailable" };
   const bytes = Buffer.byteLength(message);
   const sha256 = (await import("node:crypto")).createHash("sha256").update(message).digest("hex");
-  return { ok: sha256 === expectedSha256 && bytes === expectedBytes, sha256, bytes, expectedSha256, expectedBytes, provider: resolved.provider, path: resolved.path, reason: sha256 === expectedSha256 && bytes === expectedBytes ? null : "prompt-mismatch" };
-}
-
-/** Resolves the native transcript path for one harness conversation. */
-async function transcriptFile({ harness, conversation, cwd, startedAt }) {
-  if (!harness?.transcripts || !conversation?.id) return null;
-  const provider = String(conversation.provider ?? harness.id ?? "");
-  if (provider.startsWith("claude")) return { provider, path: path.join(expandHome(harness.transcripts), claudeProjectKey(cwd), `${conversation.id}.jsonl`) };
-  if (provider.startsWith("codex")) {
-    const found = await findCodexRollouts({ transcripts: harness.transcripts, cwd, startedAt });
-    const match = found.find((item) => item.id === conversation.id);
-    return match?.transcriptPath ? { provider, path: match.transcriptPath } : null;
-  }
-  if (provider === "pi" || provider === "pi-code") return { provider, path: path.join(expandHome(harness.transcripts), `${conversation.id}.jsonl`) };
-  return null;
+  return { ok: sha256 === expectedSha256 && bytes === expectedBytes, sha256, bytes, expectedSha256, expectedBytes, provider: resolved.harness, path: resolved.path, reason: sha256 === expectedSha256 && bytes === expectedBytes ? null : "prompt-mismatch" };
 }
 
 /** Extracts the complete first native user message from transcript rows. */
@@ -93,11 +76,6 @@ function firstUserMessage(provider, rows) {
     if (Array.isArray(content)) return content.map((item) => typeof item === "string" ? item : item?.text ?? item?.input_text ?? "").join("");
   }
   return null;
-}
-
-/** Encodes a cwd the same way Claude names its projects folder. */
-function claudeProjectKey(cwd) {
-  return String(cwd ?? "").replace(/[/.]/g, "-");
 }
 
 /** Reads the newest supported Claude transcript event. */

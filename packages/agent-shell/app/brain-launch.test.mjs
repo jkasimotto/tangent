@@ -19,7 +19,8 @@ test("brain attempts resolve either the current Area default or one requested ch
 
   const declared = await resolveBrainAttemptLaunch({ area: "otto/tangent", expectedLaunch: "codex/luna/low", launchCatalog });
   assert.deepEqual(declared, {
-    ref: { harness: "codex", model: "luna", effort: "low" },
+    // The stub catalog resolves no provider, so the axis records null.
+    ref: { harness: "codex", model: "luna", effort: "low", provider: null },
     label: "Codex · Luna · Low",
     command: "codex --model luna --effort low",
     sourceArea: "otto",
@@ -29,7 +30,7 @@ test("brain attempts resolve either the current Area default or one requested ch
   const choice = { harness: "claude", model: "opus" };
   const overridden = await resolveBrainAttemptLaunch({ area: "otto/tangent", choice, expectedLaunch: "claude/opus", launchCatalog });
   assert.deepEqual(overridden, {
-    ref: { harness: "claude", model: "opus", effort: null },
+    ref: { harness: "claude", model: "opus", effort: null, provider: null },
     label: "Claude · Opus",
     command: "claude --model opus",
     sourceArea: null,
@@ -56,7 +57,9 @@ test("expectedLaunch is checked against the resolved override reference", async 
   });
   assert.equal(result.status, 409);
   assert.equal(result.code, "launch-changed");
-  assert.deepEqual(result.launch.ref, { harness: "codex", model: "sol", effort: "high" });
+  // The stub catalog resolves no provider, so the axis records null rather
+  // than a guess from the harness id.
+  assert.deepEqual(result.launch.ref, { harness: "codex", model: "sol", effort: "high", provider: null });
   assert.match(result.error, /codex\/sol\/high/);
 });
 

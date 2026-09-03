@@ -27,7 +27,9 @@ export async function resolveBrainAttemptLaunch({ area, choice = null, expectedL
   const accepted = launchCatalog.allowed ? await launchCatalog.allowed(area, selected) : selected;
   if (accepted.error) return { status: 403, ...accepted };
   const resolvedLaunch = {
-    ref: { harness: accepted.harness, model: accepted.model ?? null, effort: accepted.effort ?? null },
+    // Provider is stamped here, at launch time, so a later edit to the
+    // registry cannot rewrite what this generation actually ran on.
+    ref: { harness: accepted.harness, model: accepted.model ?? null, effort: accepted.effort ?? null, provider: accepted.provider ?? null },
     label: accepted.label || accepted.command,
     command: accepted.command,
     sourceArea: overridden ? null : selected.source ?? null,

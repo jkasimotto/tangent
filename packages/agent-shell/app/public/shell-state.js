@@ -22,6 +22,8 @@ export function createShellState(storage = globalThis.localStorage, href = globa
   const state = {
     work: null,
     workTransport: null,
+    cost: null,
+    workerCost: null,
     vault: null,
     programs: { operations: [], processes: [], problems: [], areas: [], liveCount: 0 },
     sessions: [],

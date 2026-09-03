@@ -31,7 +31,7 @@ export function startCanvasTextEdit(host: HTMLElement, camera: Camera, view: Can
   const at = toScreen(rectCenter(label), camera);
   const clientX = (view.offsetLeft || box.left) + at.x;
   const clientY = (view.offsetTop || box.top) + at.y;
-  canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, clientX, clientY, button: 0, detail: 2, view: host.ownerDocument.defaultView }));
+  canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, clientX, clientY, button: 0, detail: LAYOUT.doubleClickDetail, view: host.ownerDocument.defaultView }));
   focusEditorWhenOpen(host, LAYOUT.textEditFocusFrames);
   return true;
 }

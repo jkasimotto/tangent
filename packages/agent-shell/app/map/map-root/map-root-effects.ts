@@ -10,9 +10,12 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { asSceneElements, selectedIds } from "../canvas/projection.ts";
 import type { Projection } from "../canvas/projection.ts";
 import type { IconFileRegistry } from "../canvas/icon-files.ts";
+import { MAP_THEME, prepareFigureIconImages } from "../canvas/icon-files.ts";
+import { requestResource } from "../surfaces/resources/resources-effects.ts";
+import type { ResourceEffects } from "../surfaces/resources/resources-effects.ts";
 import { PointerSession } from "../input/pointer-session.ts";
 import { areaMapProjectionUpdate, authoredFingerprint } from "../kernel/kernel-boundary.ts";
-import type { AreaMapController, SceneElement, Snapshot } from "../kernel/kernel-types.ts";
+import type { AreaMapController, MapKindsCatalog, SceneElement, Snapshot } from "../kernel/kernel-types.ts";
 import { LAYOUT } from "../layout/layout-tokens.ts";
 import type { AnnounceAction } from "../surfaces/announce/announce-store.ts";
 import type { SurfaceId } from "../surfaces/surface-registry.ts";
@@ -125,6 +128,24 @@ export function installInertGuard(host: HTMLElement, modal: boolean): Uninstall 
   return () => {
     for (const guard of targets) if (!guard.was) guard.element.removeAttribute("inert");
   };
+}
+
+/** The route the Map kinds definition is read from. */
+const MAP_KINDS_PATH = "/api/areas/map-kinds";
+
+/**
+ * Re-reads the Map kinds definition Julian owns and installs it in the controller. The catalog says
+ * which icon each kind draws, so its image icons are prepared for the theme before it is installed,
+ * and a read that fails leaves the catalog the Map already has.
+ */
+export function readMapKinds(effects: ResourceEffects, controller: AreaMapController): Uninstall {
+  let cancelled = false;
+  void requestResource(effects, MAP_KINDS_PATH)
+    .then((catalog) => prepareFigureIconImages(catalog as MapKindsCatalog | null, MAP_THEME))
+    .then((catalog) => {
+      if (!cancelled) controller.setMapKinds(catalog);
+    }, () => undefined);
+  return () => { cancelled = true; };
 }
 
 /** Which surfaces the stores say are open, by registry id. */

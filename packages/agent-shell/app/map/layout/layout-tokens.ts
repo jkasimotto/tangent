@@ -137,6 +137,8 @@ const COUNT_TOKENS = {
   /** How many Find rows a short Map shows, and how many a tall one shows. */
   findWindow: count(4),
   findWindowTall: count(8),
+  /** The `detail` a synthetic double click carries, which is how Excalidraw tells one apart from a click. */
+  doubleClickDetail: count(2),
   /** How many animation frames the Map waits for Excalidraw's text editor before giving up on focusing it. */
   textEditFocusFrames: count(20),
   /** How many animation frames the mount waits for Excalidraw's canvas before giving up. */

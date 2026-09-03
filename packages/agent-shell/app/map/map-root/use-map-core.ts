@@ -96,7 +96,7 @@ function idleHandlers(): CanvasHandlers {
   const ignore = (): undefined => undefined;
   /** Lets Excalidraw paste as it always does until the root wires the picker's claim. */
   const paste = (): boolean => true;
-  return { setApi: ignore, onPointerDown: ignore, onPointerUp: ignore, onPointerMove: ignore, onCamera: ignore, onPaste: paste, onChange: ignore };
+  return { setApi: ignore, onPressModifiers: ignore, onPointerDown: ignore, onPointerUp: ignore, onPointerMove: ignore, onCamera: ignore, onPaste: paste, onChange: ignore };
 }
 
 /** The publish before the root has wired one, which happens only on the very first render. */

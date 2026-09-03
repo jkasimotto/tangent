@@ -19,7 +19,7 @@ import { installResourceCadence, refreshOpenPanel, resolveSceneResources } from 
 import { hasModalSurface } from "../surfaces/surface-stack.ts";
 import type { AreaKey } from "../units/ids.ts";
 import { placementPreviewElements, placementProjectionKey } from "../surfaces/placement/placement-effects.ts";
-import { installAnnounceClock, installInertGuard, pushProjection, reconcileSurfaces, settleMount, subscribeSnapshots } from "./map-root-effects.ts";
+import { installAnnounceClock, installInertGuard, pushProjection, readMapKinds, reconcileSurfaces, settleMount, subscribeSnapshots } from "./map-root-effects.ts";
 import type { OpenSurfaces } from "./map-root-effects.ts";
 import { rowForLocator } from "../surfaces/resources/resources-views.ts";
 import type { SurfaceId } from "../surfaces/surface-registry.ts";
@@ -96,15 +96,16 @@ function useCanvasEffects(input: EffectsInput): void {
 
 /** The effects the surfaces own: the announce clock, the narrow watch and the resource cadence. */
 function useSurfaceEffects(input: EffectsInput): void {
-  const { stores, wiring, snapshot } = input;
+  const { core, stores, wiring, snapshot } = input;
   const narrowQuery = `(max-width: ${LAYOUT.narrowBreakpoint}px)`;
 
   useEffect(
-    /** Lowers the mount flag once Excalidraw has settled the scene it mounted with, and takes the keys. */
+    /** Settles the mount: lower the mount flag, take the keys, and fit the Area the Map opened on. */
     () => {
       if (input.api === null) return;
       settleMount(input.core.session, input.api);
       focusMapCanvas(input.core.host);
+      openOnLocatedArea(input);
     },
     [input.api, input.core.session],
   );
@@ -126,6 +127,12 @@ function useSurfaceEffects(input: EffectsInput): void {
       return () => query.removeEventListener("change", apply);
     },
     [narrowQuery, stores.dispatchResources],
+  );
+
+  useEffect(
+    /** Re-reads the Map kinds definition on the shared cadence and installs it. */
+    () => readMapKinds(wiring.effects, core.controller),
+    [wiring.effects, stores.resources.cadence],
   );
 
   useEffect(
@@ -209,6 +216,19 @@ function useSurfaceSync(input: EffectsInput): void {
     /** Opens or closes each store-owned surface on the stack. */
     () => reconcileSurfaces(input.stores.stack, open, input.stores.dispatchStack),
   );
+}
+
+/**
+ * Fits the Area the Map opened on, unless the controller restored a private view. The fit also
+ * starts the deferred shard loads around that Area, which is why it runs even when the camera is
+ * already where it should be.
+ */
+function openOnLocatedArea(input: EffectsInput): void {
+  const snapshot = input.core.controller.snapshot();
+  if (snapshot.viewRestored) return;
+  const element = input.core.controller.fitArea(snapshot.locatedArea, { push: false, select: false });
+  if (element === null) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => input.wiring.reads.scrollTo([element], false)));
 }
 
 /** The Block that is the whole live selection, or null. */

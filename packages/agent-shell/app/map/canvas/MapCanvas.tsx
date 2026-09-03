@@ -12,7 +12,7 @@
 
 import { Excalidraw } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI, ExcalidrawInitialDataState, ExcalidrawProps, UIOptions } from "@excalidraw/excalidraw/types";
-import { memo } from "react";
+import { memo, useEffect } from "react";
 import type { ReactNode } from "react";
 import { AREA_LABELS } from "../copy.ts";
 import { point } from "../units/frames.ts";
@@ -26,6 +26,8 @@ export type PointerButton = "down" | "up";
 /** The callbacks the root hands the canvas. Excalidraw's own signatures where the raw state is the contract, branded values elsewhere. */
 export type CanvasHandlers = {
   readonly setApi: (api: ExcalidrawImperativeAPI) => void;
+  /** The modifiers of the press Excalidraw is about to read; its own pointer state carries no Shift. */
+  readonly onPressModifiers: (modifiers: { readonly shift: boolean }) => void;
   readonly onPointerDown: NonNullable<ExcalidrawProps["onPointerDown"]>;
   readonly onPointerUp: NonNullable<ExcalidrawProps["onPointerUp"]>;
   readonly onPointerMove: (pointer: Point<"scene">, button: PointerButton) => void;
@@ -53,6 +55,20 @@ const EXCALIDRAW_UI_OPTIONS: Partial<UIOptions> = Object.freeze({
 export const MapCanvas = memo(
   /** Renders the Excalidraw element. */
   function MapCanvas({ initialData, handlers }: MapCanvasProps): ReactNode {
+    useEffect(
+      /**
+       * Records the modifiers of every press before Excalidraw reads it. Excalidraw's own
+       * `PointerDownState` carries Cmd and Ctrl but never Shift, and Shift is how a person adds to
+       * a selection, so the press event itself is the only place that knows.
+       */
+      () => {
+        /** Reports the modifiers of one press. */
+        const record = (event: PointerEvent): void => handlers.current.onPressModifiers({ shift: event.shiftKey });
+        document.addEventListener("pointerdown", record, true);
+        return () => document.removeEventListener("pointerdown", record, true);
+      },
+      [handlers],
+    );
     return (
       <Excalidraw
         initialData={initialData}

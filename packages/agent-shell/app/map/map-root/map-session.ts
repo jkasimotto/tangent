@@ -33,6 +33,8 @@ export type MapSession = {
   api: ExcalidrawImperativeAPI | null;
   /** True while Space is held, which makes the next press a pan. */
   spaceHeld: boolean;
+  /** True when the press Excalidraw is reading was made with Shift held, which makes it additive. */
+  shiftPress: boolean;
   /** The last scene point the pointer was at, which is where B and paste land. */
   lastPointer: Point<"scene"> | null;
   /** The selection the Map believes is stable, as opposed to what a live drag is showing. */
@@ -74,6 +76,7 @@ export function createMapSession(): MapSession {
   return {
     api: null,
     spaceHeld: false,
+    shiftPress: false,
     lastPointer: null,
     stableSelection: new Set<RuntimeId>(),
     programmaticSelection: null,

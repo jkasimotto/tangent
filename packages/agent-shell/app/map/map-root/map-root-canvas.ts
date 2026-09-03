@@ -63,7 +63,7 @@ function pressContextOf(deps: CanvasDeps, tool: { type: string }, state: PressSt
   const at = originPoint(state);
   return {
     point: at,
-    modifiers: { shift: state.shiftKey === true, cmdOrCtrl: state.withCmdOrCtrl === true },
+    modifiers: { shift: state.shiftKey === true || deps.session.shiftPress, cmdOrCtrl: state.withCmdOrCtrl === true },
     spaceHeld: deps.session.spaceHeld,
     tool: tool.type as PressContext["tool"],
     placementOpen: deps.placementOpen(),
@@ -201,6 +201,8 @@ function handleChange(deps: CanvasDeps, elements: readonly ExcalidrawElement[], 
 export function createCanvasHandlers(deps: CanvasDeps, setApi: (api: ExcalidrawImperativeAPI) => void): CanvasHandlers {
   return {
     setApi,
+    /** Records the modifiers of the press Excalidraw is about to read. */
+    onPressModifiers: (modifiers) => { deps.session.shiftPress = modifiers.shift; },
     /** Opens one press through the pointer authority. */
     onPointerDown: (tool, state) => beginPress(deps, tool, state as PressState),
     /** Ends the open gesture when the pointer is released. */

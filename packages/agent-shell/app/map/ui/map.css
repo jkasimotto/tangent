@@ -55,6 +55,14 @@
 @keyframes tangent-map-find-pulse { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tangent-accent) 55%, transparent); } to { box-shadow: 0 0 0 8px transparent; } }
 .tangent-map-ancestry button strong { font-weight: 600; }
 .tangent-map-ancestry button span { margin-left: 6px; color: var(--tangent-muted); font-size: var(--tangent-type-fine); }
+/* The name pill is transparent to the pointer, so a wheel or a drag over the name reaches the canvas; the keyboard still reaches it. */
+.tangent-map-ancestry .tangent-map-canvas-label { pointer-events: none; }
+/* The runtime facts under a pill: one row of small rounded notes, and the buttons among them open Work, so the row takes the pointer. */
+.tangent-map-canvas-facts { position: absolute; display: flex; align-items: center; gap: var(--tangent-map-runtime-facts-gap); white-space: nowrap; pointer-events: auto; }
+.tangent-map-canvas-facts button, .tangent-map-canvas-facts span { position: static; margin: 0; padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--tangent-muted) 65%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--tangent-island) 92%, transparent); color: var(--tangent-text); font: var(--tangent-type-fine) var(--tangent-font-ui); pointer-events: auto; }
+.tangent-map-canvas-facts button { cursor: pointer; }
+.tangent-map-canvas-facts button:focus-visible { outline: 2px solid var(--tangent-accent); outline-offset: 1px; }
+.tangent-map-canvas-facts .stale { border-style: dashed; background: var(--tangent-island); color: var(--tangent-muted); }
 .tangent-map-location { position: absolute; z-index: var(--tangent-layer-toast); left: 50%; bottom: var(--tangent-map-hang-bottom); box-sizing: border-box; max-width: calc(100% - var(--tangent-map-centred-margin)); padding: 6px 9px; border-radius: 6px; background: var(--tangent-island); color: var(--tangent-text); box-shadow: var(--tangent-shadow); font-size: var(--tangent-type-small); pointer-events: none; transform: translateX(-50%); }
 /* The wide Resources panel is retained beside the canvas, so it takes its width out of the Map that every other surface may use. */
 .TangentAreaMap.resources-panel-open { --tangent-current-panel-inset: var(--tangent-map-panel-width); }

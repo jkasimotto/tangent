@@ -614,6 +614,17 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return true;
   }
 
+  /**
+   * True when the chooser floats over the screen, so a click beside it means
+   * "close". The Brain pane owns its chooser as pane content instead, and
+   * there is nothing to dismiss there: closing it drops the launch target, so
+   * the pane's next reconcile re-seeds the draft and discards the harness and
+   * model Julian had already picked.
+   */
+  function launchChooserIsDismissible() {
+    return !(state.launchTarget === BRAIN_LAUNCH_TARGET && document.querySelector("[data-map-brain-pane] [data-launch-picker]"));
+  }
+
   /** Restores the brain chooser under a nested defaults editor. */
   function restoreLaunchParentSurface() {
     const parent = launchParentSurface;
@@ -1934,7 +1945,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (state.launchTarget) syncLaunchDraft();
     if (!shellMenu.hidden && !target.closest?.("#shell-menu") && !backButton.contains(target)) toggleShellMenu(false);
     // A click outside the agent chooser closes it; the clicked control still runs.
-    if (state.launchTarget && !target.closest?.("[data-launch-popover]") && !target.closest?.("[data-launch-for]") && !target.closest?.("[data-default-agents-area]")) {
+    if (state.launchTarget && launchChooserIsDismissible() && !target.closest?.("[data-launch-popover]") && !target.closest?.("[data-launch-for]") && !target.closest?.("[data-default-agents-area]")) {
       stopLaunchFocusRequest();
       launchReturnPoint = null;
       launchParentSurface = null;

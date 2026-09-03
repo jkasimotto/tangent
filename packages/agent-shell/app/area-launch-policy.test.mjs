@@ -53,6 +53,17 @@ test("child policies intersect with ancestors and cannot widen them", async () =
   assert.equal((await catalog.allowed("otto/tangent", { harness: "claude-otto", model: "opus" })).code, "launch-not-allowed");
 });
 
+test("a refusal names the Area that declared the policy, not the Area it was started in", async () => {
+  const catalog = await fixture({ otto: note(["codex-otto/sol", "claude-otto/opus"]) });
+  const refused = await catalog.allowed("otto/tangent", { harness: "claude-gw", model: "opus" });
+  assert.equal(refused.declaredBy, "otto", "the inherited contract that refused it is the file worth editing");
+  assert.equal(refused.error, "launch claude-gw/opus is not allowed by the otto policy: codex-otto/sol, claude-otto/opus");
+  assert.deepEqual(refused.allowed, ["codex-otto/sol", "claude-otto/opus"]);
+  const nearest = await fixture({ otto: note(["codex-otto", "claude-otto"]), "otto/tangent": note(["codex-otto/sol"]) });
+  const narrowed = await nearest.allowed("otto/tangent", { harness: "claude-otto", model: "opus" });
+  assert.equal(narrowed.declaredBy, "otto/tangent", "the nearest contract that refuses it wins over the ancestor that allows it");
+});
+
 test("stale exact memory falls back to the nearest valid ancestor memory", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-launch-memory-"));
   await writeFile(path.join(root, "harnesses.md"), `\`\`\`tangent.harnesses.v2\n${JSON.stringify(registry)}\n\`\`\``);

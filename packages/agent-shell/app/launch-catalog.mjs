@@ -35,7 +35,19 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     const resolved = resolveLaunch(await registry(), canonical);
     if (resolved.error) return resolved;
     if (launchAllowedByPolicy(policy, resolved)) return { ...resolved, policy };
-    return { error: `launch ${launchRef(ref)} is not allowed in ${area}`, code: "launch-not-allowed", launch: launchRef(ref), area, allowed: policy.allow.map(launchRef) };
+    // A policy is inherited, so the Area that refuses a launch is often an
+    // ancestor of the Area it was started in. Name the Area whose contract
+    // rejected it, or the reader edits the wrong harnesses.md.
+    const refusal = (policy.restrictions ?? []).find((entry) => !entry.allow.some((pattern) => launchMatches(pattern, resolved)));
+    const allow = (refusal?.allow ?? policy.allow ?? []).map(launchRef);
+    return {
+      error: `launch ${launchRef(ref)} is not allowed by the ${refusal?.area ?? area} policy: ${allow.join(", ") || "none"}`,
+      code: "launch-not-allowed",
+      launch: launchRef(ref),
+      area,
+      declaredBy: refusal?.area ?? area,
+      allowed: allow,
+    };
   }
 
   /** Finds the nearest registered and allowed remembered launch. */

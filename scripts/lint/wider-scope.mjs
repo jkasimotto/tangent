@@ -1,12 +1,14 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { listStagedRepoPaths, parseLintArgs, toRepoPath } from "./lint-scope.mjs";
 
 // The wider scope of the Map lint kit: every production file under packages/agent-shell/app,
 // public/ included, where offenders at introduction live in a GRANDFATHERED_FILES ratchet. The
 // lints that cover it (no-long-param-list, no-junk-drawer-modules) and the Map-only directory lint
-// (require-module-agents) share their file selection, argument parsing and report shape here so
-// each script holds only its rule.
+// (require-module-agents) share their file selection and report shape here so each script holds
+// only its rule. Argument parsing, path conversion and the staged listing come from lint-scope.mjs.
+
+export { parseLintArgs, toRepoPath, listStagedRepoPaths as listStagedFiles };
 
 /** Extensions of files the AST lints parse. */
 export const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
@@ -19,29 +21,6 @@ export const MAP_SCOPE = ["packages/agent-shell/app/map"];
 
 /** Directory names that never hold production source. */
 const EXCLUDED_DIRECTORIES = new Set(["dist", "node_modules", "test-fixtures"]);
-
-/** Parses the lint kit's shared command line: --staged, --root <dir>, and explicit paths. */
-export function parseLintArgs(argv) {
-  const parsed = { root: process.cwd(), staged: false, paths: [] };
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--staged") {
-      parsed.staged = true;
-    } else if (arg === "--root") {
-      parsed.root = path.resolve(argv[index + 1] ?? ".");
-      index += 1;
-    } else {
-      parsed.paths.push(arg);
-    }
-  }
-  return parsed;
-}
-
-/** Converts an absolute or root-relative path to the repo-relative, slash-separated form used in reports. */
-export function toRepoPath(root, filePath) {
-  const absolute = path.isAbsolute(filePath) ? filePath : path.join(root, filePath);
-  return path.relative(root, absolute).split(path.sep).join("/");
-}
 
 /** Returns whether a repo path names a test file, by the ".test." marker in its basename. */
 export function isTestFile(repoPath) {
@@ -97,25 +76,13 @@ export function listScopeFiles(root, scopeDirectories) {
   );
 }
 
-/** Lists staged, still existing files as repo paths, the way the pre-commit hook sees them. */
-export function listStagedFiles(root) {
-  const output = execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"], {
-    cwd: root,
-    encoding: "utf8"
-  });
-  return output
-    .split("\0")
-    .filter(Boolean)
-    .filter((repoPath) => existsSync(path.join(root, repoPath)));
-}
-
 /** Resolves the production files a lint run covers from its parsed arguments and scope. */
 export function resolveLintFiles(args, scopeDirectories) {
   let candidates;
   if (args.paths.length > 0) {
     candidates = args.paths.map((filePath) => toRepoPath(args.root, filePath));
   } else if (args.staged) {
-    candidates = listStagedFiles(args.root);
+    candidates = listStagedRepoPaths(args.root);
   } else {
     candidates = listScopeFiles(args.root, scopeDirectories);
   }

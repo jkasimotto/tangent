@@ -72,7 +72,7 @@ test("rejects an unnamed literal with its path, line and text", () => {
   assert.match(result.stderr, new RegExp(`^${MAP}/input/nudge\\.ts:3  const step = 16;$`, "m"));
   assert.match(result.stderr, new RegExp(`^${MAP}/input/nudge\\.ts:4  `, "m"));
   assert.match(result.stderr, new RegExp(`^${MAP}/input/nudge\\.ts:5  `, "m"));
-  assert.match(result.stderr, /failed with 3 unnamed number\(s\)/);
+  assert.match(result.stderr, /failed with 3 hit\(s\)/);
 });
 
 test("rejects a literal in a JSX attribute but not a string attribute or tabIndex -1", () => {
@@ -86,7 +86,7 @@ test("rejects a literal in a JSX attribute but not a string attribute or tabInde
   const result = runLint(root, [fixture]);
   assert.equal(result.status, 1);
   assert.match(result.stderr, new RegExp(`^${MAP}/surfaces/find/FindPanel\\.tsx:2  `, "m"));
-  assert.match(result.stderr, /failed with 1 unnamed number\(s\)/);
+  assert.match(result.stderr, /failed with 1 hit\(s\)/);
 });
 
 test("exempts the unit owners, layout-tokens.ts and test files", () => {
@@ -113,5 +113,5 @@ test("lints the whole strict scope when no paths are given", () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, new RegExp(`^${MAP}/input/nudge\\.ts:1  `, "m"));
   assert.doesNotMatch(result.stderr, /old\.jsx/);
-  assert.match(result.stderr, /failed with 1 unnamed number\(s\)/);
+  assert.match(result.stderr, /failed with 1 hit\(s\)/);
 });

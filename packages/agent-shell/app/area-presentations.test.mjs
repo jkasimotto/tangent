@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { dismissAreaDocument, markAreaDocumentOpened, presentAreaDocuments, projectAreaPresentations, pruneMissingAreaPresentations, readAreaPresentations, removeAreaPresentations, withdrawAreaDocument } from "./area-presentations.mjs";
 
+/** Builds one Document row for the test. */
 const doc = (file, hash) => ({ file, hash, title: path.basename(file, ".md") });
 
 test("Area Document lifecycle preserves opening and fences dismissal by content", async () => {

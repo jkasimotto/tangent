@@ -220,6 +220,7 @@ export function trail(areaId) {
 export function relationGraph(rootId) {
   const nodes = [];
   const edges = [];
+  /** Collects the outcomes of an Area and its descendants. */
   const walk = (id) => {
     const panel = PANELS[id];
     if (panel) for (const o of panel.outcomes) nodes.push({ id: o.id, areaId: id, area: AREAS[id].name, outcome: o.outcome, signal: o.signal });

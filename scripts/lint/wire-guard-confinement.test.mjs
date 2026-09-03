@@ -74,7 +74,7 @@ const c = /^[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$/;
   const file = writeFixture(root, "packages/agent-shell/app/fresh-route.mjs", source);
   const result = runLint(root, [file]);
   assert.equal(result.status, 1);
-  assert.match(result.output, /3 violation\(s\)/);
+  assert.match(result.output, /3 hit\(s\)/);
 });
 
 test("single-key guards, rewrites, unanchored strips and box-drawing rules are not guards", () => {

@@ -29,8 +29,9 @@ export function parseLintArgs(argv) {
   return parsed;
 }
 
-/** Converts an absolute path to the forward-slash repository-relative form used in diagnostics. */
-export function toRepoPath(root, absolutePath) {
+/** Converts an absolute or root-relative path to the forward-slash repository-relative form used in diagnostics. */
+export function toRepoPath(root, filePath) {
+  const absolutePath = isAbsolute(filePath) ? filePath : join(root, filePath);
   return relative(root, absolutePath).split(sep).join("/");
 }
 
@@ -60,17 +61,20 @@ function walkScopeDirectory(root, directory) {
   return files;
 }
 
-/** Lists the staged strict-scope files, the set the pre-commit hook lints. */
-function listStagedFiles(root) {
+/** Lists every staged file that still exists on disk, as repo paths, the way the pre-commit hook sees them. */
+export function listStagedRepoPaths(root) {
   const output = execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"], {
     cwd: root,
     encoding: "utf8"
   });
-  return output
-    .split("\0")
-    .filter((repoPath) => repoPath.length > 0 && isStrictScopeFile(repoPath))
-    .map((repoPath) => ({ absolutePath: join(root, repoPath), repoPath }))
-    .filter((file) => existsSync(file.absolutePath));
+  return output.split("\0").filter((repoPath) => repoPath.length > 0 && existsSync(join(root, repoPath)));
+}
+
+/** Lists the staged strict-scope files, the set the pre-commit hook lints. */
+function listStagedFiles(root) {
+  return listStagedRepoPaths(root)
+    .filter(isStrictScopeFile)
+    .map((repoPath) => ({ absolutePath: join(root, repoPath), repoPath }));
 }
 
 /** Resolves explicit command-line paths against the root; they are linted as given. */
@@ -115,6 +119,19 @@ export function collectHits(sourceFile, file, matcher) {
   /** Visits one node, records it when the matcher accepts it, then descends. */
   const visit = (node) => {
     if (matcher(node)) hits.push(hitFor(sourceFile, file, node));
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return hits;
+}
+
+/** Walks every node and collects a hit, carrying the reason as its text, wherever the rule names one. */
+export function collectReasonHits(sourceFile, file, reasonFor) {
+  const hits = [];
+  /** Visits one node, records the reason the rule gives for it, then descends. */
+  const visit = (node) => {
+    const reason = reasonFor(node);
+    if (reason !== null) hits.push({ ...hitFor(sourceFile, file, node), text: reason });
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);

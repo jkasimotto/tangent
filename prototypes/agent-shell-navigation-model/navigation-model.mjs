@@ -280,6 +280,7 @@ export function applyVerb(state, verbId, choice = null) {
 /** Go To rows: every object in the tree, live sessions ranked first. */
 export function goToRows(tree, query = "") {
   const rows = [];
+  /** Flattens the tree into rows, depth first. */
   const walk = (nodes, path) => {
     for (const node of nodes) {
       rows.push({ id: node.id, kind: node.kind, title: node.title, path: [...path, node.title].join(" / "), session: node.session ?? null });
@@ -296,6 +297,7 @@ export function goToRows(tree, query = "") {
 /** Expand every ancestor so a Go To target is visible before the cursor lands on it. */
 export function revealPath(state, id) {
   const expanded = new Set(state.expanded);
+  /** Finds the target and expands every ancestor on its trail. */
   const walk = (nodes, trail) => {
     for (const node of nodes) {
       if (node.id === id) {

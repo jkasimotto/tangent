@@ -1,12 +1,15 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { listStagedRepoPaths, parseLintArgs, toRepoPath } from "../lint-scope.mjs";
 
 // Shared file selection for the size lints, function-size and module-size.
 // Both check every production source module of the Agent Shell app and of
 // the lint kit, honour the same flags, and print the same report shape. The
 // strict scope, the Map and the lint kit, is never grandfathered; the wider
 // scope, the rest of the app, keeps a GRANDFATHERED_FILES ratchet per lint.
+// Argument parsing, path conversion and the staged listing come from lint-scope.mjs.
+
+export { parseLintArgs };
 
 /** Extensions of the source files the size lints measure. */
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs"]);
@@ -19,30 +22,6 @@ const WIDER_SCOPE_DIRECTORIES = ["packages/agent-shell/app", "scripts/lint"];
 
 /** Directory names that never hold production source. */
 const EXCLUDED_DIRECTORIES = new Set(["dist", "node_modules", "test-fixtures"]);
-
-/** Parses the flags every kit lint accepts: --staged, --root <dir>, and explicit paths. */
-export function parseLintArgs(argv) {
-  const parsed = { root: process.cwd(), staged: false, paths: [] };
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--staged") {
-      parsed.staged = true;
-    } else if (arg === "--root") {
-      if (argv[index + 1] === undefined) throw new Error("--root needs a directory");
-      parsed.root = path.resolve(argv[index + 1]);
-      index += 1;
-    } else {
-      parsed.paths.push(arg);
-    }
-  }
-  return parsed;
-}
-
-/** Converts an absolute or root-relative path to the repo-relative, forward-slash form used in reports. */
-function toRepoPath(root, filePath) {
-  const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(root, filePath);
-  return path.relative(root, absolutePath).split(path.sep).join("/");
-}
 
 /** Returns whether a repo path lies under one of the given repo-relative directories. */
 function isUnder(repoPath, directories) {
@@ -85,15 +64,6 @@ function listWiderScope(root) {
   });
 }
 
-/** Lists the staged files that still exist on disk, as repo paths, the way the pre-commit hook sees them. */
-function listStaged(root) {
-  const output = execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"], {
-    cwd: root,
-    encoding: "utf8"
-  });
-  return output.split("\0").filter(Boolean).filter((repoPath) => existsSync(path.join(root, repoPath)));
-}
-
 /**
  * Selects the production source modules one lint run checks, sorted and
  * without duplicates. Explicit paths win, then --staged, then the whole
@@ -105,7 +75,7 @@ export function selectProductionSources(parsed) {
   if (parsed.paths.length > 0) {
     candidates = parsed.paths.map((given) => toRepoPath(parsed.root, given));
   } else if (parsed.staged) {
-    candidates = listStaged(parsed.root);
+    candidates = listStagedRepoPaths(parsed.root);
   } else {
     candidates = listWiderScope(parsed.root);
   }

@@ -85,7 +85,7 @@ export function reduce(state: { readonly n: number }) {
   for (const line of [3, 4, 5, 6, 7, 8]) {
     assert.match(result.output, new RegExp(`announce-store\\.ts:${line}  `), `line ${line} in ${result.output}`);
   }
-  assert.match(result.output, /7 violation\(s\)/);
+  assert.match(result.output, /7 hit\(s\)/);
 });
 
 test("a file outside the strict scope or not named *-store.ts is ignored", () => {
@@ -94,5 +94,5 @@ test("a file outside the strict scope or not named *-store.ts is ignored", () =>
   const elsewhere = writeFixture(root, "packages/agent-shell/app/legacy-store.ts", IMPURE_STORE);
   const result = runLint(root, [effects, elsewhere]);
   assert.equal(result.status, 0, result.output);
-  assert.match(result.output, /0 store module\(s\) checked/);
+  assert.match(result.output, /0 file\(s\) checked/);
 });

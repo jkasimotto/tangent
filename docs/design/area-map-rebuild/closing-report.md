@@ -94,3 +94,14 @@ None. Every production module under `app/map/` is at or under 388 lines against 
 ## The short answer
 
 The four causes are gone. No component owns the Map, one pure function answers what a press means with Excalidraw subordinate to it, every minted value is proved against its own guard, and every layout number in code is named once. Of the eleven bullets the audit left open, five are proved fixed with tests that survive a refutation attempt, and the toast is proved as half of the bullet it shares with the failure codes. Three are half fixed, with red tests committed as honest markers. Two, the dead-end recovery buttons and the failure codes as headlines, have the structure and the words but no browser proof. One, the rubber band inside an Area, waits on Julian. The work that remains is three small fixes with tests already written for them: inset the camera fit and the placement preview by the retained panel, fold on the Space keyup only when no drag ran, and let ArrowDown reach the picker's list.
+
+## Addendum, after commit 6eaaf820
+
+The three defects this report listed as red on the current bundle were fixed in code after it was written, and their proofs now pass against the rebuilt Map without a change to the tests.
+
+- **Defect 1, the panel inset on the canvas.** The runtime's visible viewport is inset by the retained panel width, named once in `layout/layout-tokens.ts` as `panelMaxWidth` and `panelWidthShare` and computed by `retainedPanelWidth`. The placement point therefore lands in the open strip, and a camera fit is re-aimed at that strip through `canvas/strip-camera.ts`, a pure helper with its own test. Both `fitArea` and `revealOwner` reach `scrollTo`, so the named action and the placement path are fixed together.
+- **Defect 2, the Space fold.** `input/keyboard-dispatch.ts` holds the fold a Space keydown routes and runs it on the keyup, and drops it when the session saw a pointer drag while Space was held. A plain Space press still folds once. The dispatcher's unit tests cover both.
+- **Defect 7, the picker keyboard.** ArrowDown in the picker's query moves focus onto the first result through `focusListboxOption` in `ui/Listbox.tsx`, the kit's one focus call for it, and the listbox's roving keys reach the rest. The picker keeps DOM focus on the option, which the proof asserts; Find keeps its own idiom.
+- **Surface focus timing.** `ui/Surface.tsx` now focuses the first control in a layout effect, before the surface is painted, the way the old component's `autoFocus` did. A key typed the instant a dialog appears lands in its field. The world suite's picker test had raced that frame.
+
+After these commits: `area-map-world-browser` 24 pass, the four Resources and nested tests pass, `map-first-main-surface` 15 pass, all nine `area-map-defect-*` proofs pass, 400 unit tests pass under Node, and the 24-check lint pool passes with no clone.

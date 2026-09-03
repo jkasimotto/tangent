@@ -347,3 +347,16 @@ The rebuild runs as a workflow in phases. Agents in one phase own disjoint files
 4. **Prove.** One agent per defect writes the regression test, proves it fails against the old bundle and passes against the new one. An independent verifier tries to refute each proof.
 5. **Real geometry.** One agent boots a copy of Julian's vault and records the evidence.
 6. **Close.** Update `packages/agent-shell/docs/architecture.md`, `ARCHITECTURE.md`, the module guides, and record ADR-0059 for the Map's lint bar. A completeness critic lists what was not done.
+
+## As built
+
+The rebuild landed on `map-rebuild` with these departures from the tree drawn above, none of which reopens a cause the audit found:
+
+- `MapRoot.tsx` stayed under 200 lines by moving its composition into `map-root/`: the session state that replaced the old refs, the publish pipeline in three files, the canvas callbacks, the key commands, the pure view derivation, the effect installers, the runtime reads, and the surface environments. Every file there is under 400 lines and `map-root/AGENTS.md` maps them.
+- Copy lives in fourteen files under `copy/`, one per surface, re-exported through `copy.ts`.
+- `canvas/strip-camera.ts` re-aims a camera fit at the strip the retained Resources panel leaves, and `layout/layout-tokens.ts` names the panel width as numbers as well as the CSS expression, so the canvas and the stylesheet agree on the inset.
+- `mount-options.ts` holds the host's mount contract, and `layout/branch-priority.ts` and `surfaces/kinds/` were added.
+- The Space fold runs on the key's release and is dropped by a drag, so the documented Space-drag pans; the picker's query binds ArrowDown into its listbox; a surface focuses its first control before it is painted.
+- The no-unnamed-number lint reaches the strict scope only, as the kernel is kept in JavaScript. The exception the table names for `public/area-map-world-core.js` is therefore moot until the kernel is converted.
+
+Evidence: `closing-report.md`, `real-vault.md` and the three screenshots beside it, and the nine `area-map-defect-*-browser.test.mjs` proofs under `packages/agent-shell/app/`.

@@ -1,0 +1,19 @@
+/* The z-index scale of the Map: one name per layer, lowest first. This is the only file that may
+   hold a z-index value (layer-confinement lint); everywhere else stacks with var(--tangent-layer-*).
+   The names are the layers of surfaces/surface-registry.ts. Two surfaces on the same layer never
+   overlap because the kit anchors them to different edges, so the scale only orders the layers.
+   The values keep the old Map's order: the empty hint just above the canvas, then Area labels,
+   then the control row and save status, then the surfaces that hang under the row (Find, Outline,
+   the draft choice), then the placement bar, the retained Resources panel, the location readout,
+   the modal dialogs with their backdrop above the panel, and the transaction toast on top. */
+.TangentAreaMap {
+  --tangent-layer-canvas: 2;
+  --tangent-layer-labels: 3;
+  --tangent-layer-controls: 4;
+  --tangent-layer-hang: 18;
+  --tangent-layer-transient: 45;
+  --tangent-layer-panel: 50;
+  --tangent-layer-toast: 55;
+  --tangent-layer-dialog: 60;
+  --tangent-layer-transaction: 70;
+}

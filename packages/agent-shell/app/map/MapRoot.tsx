@@ -15,7 +15,8 @@ import { LAYOUT, layoutCssVariables } from "./layout/layout-tokens.ts";
 import { leaseController } from "./map-root/map-root-controller.ts";
 import type { ControllerLease } from "./map-root/map-root-controller.ts";
 import { buildMapView, mergedDocuments } from "./map-root/map-root-view.ts";
-import { changeFold, fitArea, selectedBlock } from "./map-root/map-root-commands.ts";
+import { areaOfBlock, changeFold, fitArea, selectedBlock } from "./map-root/map-root-commands.ts";
+import { selectedVisibleArea } from "./input/hit-test.ts";
 import { MapSurfaces } from "./map-root/MapSurfaces.tsx";
 import { MapToolbar } from "./map-root/MapToolbar.tsx";
 import { useMapCore } from "./map-root/use-map-core.ts";
@@ -83,6 +84,10 @@ type MapBodyProps = {
 function MapBody({ core, stores, wiring, snapshot, view, options, controller }: MapBodyProps): React.ReactNode {
   const block = selectedBlock(wiring.commands);
   const blockFacts = block === null ? null : view.resolveBlock(block);
+  // The Resources button and Details open the selected Area's panel: the selected region, else the
+  // selected Block's Area, else the located Area. A nested Area selected by its region is the one
+  // the person means, not the Area the Map happens to be centred on.
+  const resourcesArea = selectedVisibleArea(wiring.reads.scene, snapshot.selection) ?? (block === null ? snapshot.locatedArea : areaOfBlock(wiring.commands, block) || snapshot.locatedArea);
   const panelOpen = stores.resources.open && !stores.resources.narrow;
   const rootClass = `TangentAreaMap theme--dark${panelOpen ? " resources-panel-open" : ""}`;
   return (
@@ -105,12 +110,12 @@ function MapBody({ core, stores, wiring, snapshot, view, options, controller }: 
         outlineOpen={stores.stack.includes("outline")}
         writesAvailable={wiring.surfaces.writesAvailable()}
         onPlaceBlock={() => wiring.commands.openPicker()}
-        onOpenResources={(opener) => wiring.openResources(snapshot.locatedArea, opener)}
+        onOpenResources={(opener) => wiring.openResources(resourcesArea, opener)}
         onToggleOutline={() => wiring.commands.toggleOutline()}
         onOpenHelp={() => wiring.openSurface("help", mapCanvasElement(core.host))}
         onRunAction={(facts, action, opener) => wiring.reads.runAction(facts, action, opener)}
         onAddToArea={(facts) => { associateGenericLink(wiring.surfaces.resourceEffects, facts); }}
-        onShowDetails={(_facts, opener) => wiring.openResources(snapshot.locatedArea, opener)}
+        onShowDetails={(_facts, opener) => wiring.openResources(resourcesArea, opener)}
         onHideBlock={() => { if (block !== null) wiring.reads.hideBlock(block); }}
       />
       <SaveStatus status={snapshot.save.state} draft={snapshot.draft} onRecover={(action) => void recoverMap(controller, action, wiring.reads.announce)} />
@@ -135,7 +140,7 @@ function MapBody({ core, stores, wiring, snapshot, view, options, controller }: 
         onSelectBlock={(row) => controller.setSelection([row.id])}
         onRunBlock={(row, element) => runPrimary(wiring, row.facts, element)}
         onPlaceBlock={() => wiring.commands.openPicker()}
-        onOpenResources={(opener) => wiring.openResources(snapshot.locatedArea, opener)}
+        onOpenResources={(opener) => wiring.openResources(resourcesArea, opener)}
         onCommitPlacement={() => wiring.commands.commitPlacement()}
         onCancelPlacement={() => wiring.escape()}
         onRestoreDraft={() => controller.restoreDraft()}

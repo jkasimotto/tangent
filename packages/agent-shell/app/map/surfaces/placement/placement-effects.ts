@@ -21,7 +21,7 @@ import type { AreaKey, SourceId } from "../../units/ids.ts";
 import { rectCenter } from "../../units/scalar-math.ts";
 import { count, scenePx, sourcePx } from "../../units/units.ts";
 import { boundedPlacementPoint, resourceLayerKey, returnTarget } from "./placement-store.ts";
-import type { ArrowKey, LayerOpener, Locate, Placement, PlacementAction, PlacementBounds, PlacementState, ReturnTarget } from "./placement-store.ts";
+import type { ArrowKey, LayerOpener, Locate, PendingPlacement, Placement, PlacementAction, PlacementBounds, PlacementState, ReturnTarget } from "./placement-store.ts";
 import { areaLeaf, captureViewLayer, ownerArea, restoreViewLayer, revealOwner } from "./placement-view-layer.ts";
 import type { LayerPorts } from "./placement-view-layer.ts";
 
@@ -179,10 +179,22 @@ function awaitOwnerLoad(ports: PlacementPorts, request: PlaceRequest, node: Area
     ports.announce(RESOURCE_ANNOUNCEMENTS.placementUnavailable);
     return false;
   }
-  ports.dispatch({ kind: "await-load", pending: { owner: node.key, entity: request.entity, element: request.element } });
-  void ports.controller.materialize(node.key);
+  const pending: PendingPlacement = { owner: node.key, entity: request.entity, element: request.element };
+  ports.dispatch({ kind: "await-load", pending });
+  // The load itself resumes the placement. A promise settles exactly once, so the placement begins
+  // once; an effect that watched the world for the load would run on every snapshot instead.
+  void ports.controller.materialize(node.key)
+    .then(() => resumeAfterLoad(ports, pending), () => resumeAfterLoad(ports, pending));
   ports.announce(RESOURCE_ANNOUNCEMENTS.loadingThenPlacing(areaLeaf(node.key), request.entity.label));
   return true;
+}
+
+/** Begins the placement a load was awaited for when the Map loaded, or says that it did not. */
+function resumeAfterLoad(ports: PlacementPorts, pending: PendingPlacement): void {
+  ports.dispatch({ kind: "load-settled" });
+  const node = ports.controller.world().areas.find((entry) => entry.key === pending.owner);
+  if (node?.shard.scene) placeResourceOnMap(ports, { entity: pending.entity, representation: "never-placed", element: pending.element, awaited: true });
+  else ports.announce(RESOURCE_ANNOUNCEMENTS.loadFailedNoPlacement(areaLeaf(pending.owner)));
 }
 
 /** The one entry for a row's placement button: Show for a placed resource, Restore for a hidden one, a preview placement otherwise. */
@@ -209,9 +221,7 @@ export function resumePendingPlacement(ports: PlacementPorts, state: PlacementSt
   if (!pending) return;
   const node = ports.controller.world().areas.find((entry) => entry.key === pending.owner);
   if (node && (node.shard.state === "deferred" || node.shard.state === "loading")) return;
-  ports.dispatch({ kind: "load-settled" });
-  if (node?.shard.scene) placeResourceOnMap(ports, { entity: pending.entity, representation: "never-placed", element: pending.element, awaited: true });
-  else ports.announce(RESOURCE_ANNOUNCEMENTS.loadFailedNoPlacement(areaLeaf(pending.owner)));
+  resumeAfterLoad(ports, pending);
 }
 
 /** Shows a placed resource's Block as one reversible layer: reveal its Area, select it, scroll to it, and close the panel and picker. */

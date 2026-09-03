@@ -80,6 +80,7 @@ export function MapToolbar(props: MapToolbarProps): ReactNode {
           title={TOOLBAR.placeBlockTitle}
           aria-keyshortcuts={TOOLBAR.placeBlockShortcuts}
           glyph={TOOLBAR.placeBlockGlyph}
+          glyphVisibility="always"
           label={TOOLBAR.placeBlockLabel}
           kbd={TOOLBAR.placeBlockKey}
           onActivate={props.onPlaceBlock}

@@ -18,7 +18,7 @@ import { PointerSession, gestureBaselineOf, resolveClaimedId } from "../input/po
 import { composeAreaMapWorld, detachCrossOwnerTextBindings, restoreFigurePresentation } from "../kernel/kernel-boundary.ts";
 import type { AreaMapController, ComposedOrigin, Composition, GestureBaseline, SceneElement, Snapshot, World } from "../kernel/kernel-types.ts";
 import { point } from "../units/frames.ts";
-import type { Point } from "../units/frames.ts";
+import type { Point, Rect } from "../units/frames.ts";
 import { areaKey } from "../units/ids.ts";
 import type { AreaKey, RuntimeId, ShardOwner, SourceId } from "../units/ids.ts";
 import { add } from "../units/scalar-math.ts";
@@ -59,6 +59,40 @@ function baselineOf(deps: PublishDeps): PublishBaseline {
   const next = pointerWorld === null ? structuredClone(world) : deps.controller.world();
   const solver = deps.pointer.gestureBaseline() ?? gestureBaselineOf(world);
   return { world, composition, next, solver, pointerOpen: pointerWorld !== null };
+}
+
+/**
+ * The shards of the authored elements a gesture grabbed. A Block the person dragged is saved with
+ * its command even when its Area moved under it by the same amount and its shard-local rectangle
+ * came out unchanged, so undo and redo of that command restore the Block and its Area together.
+ * An Area region is not an authored element; its parent shard is written by the Area change.
+ */
+function ownersOfMovedElements(moved: ReadonlySet<RuntimeId>, origins: ReadonlyMap<RuntimeId, ComposedOrigin>, allowed: ReadonlySet<ShardOwner> | null): ShardOwner[] {
+  const owners: ShardOwner[] = [];
+  for (const id of moved) {
+    const origin = origins.get(id);
+    if (origin === undefined || origin.regionKey) continue;
+    if (allowed !== null && !allowed.has(origin.owner)) continue;
+    owners.push(origin.owner);
+  }
+  return owners;
+}
+
+/**
+ * The Areas among `candidates` whose stored rectangle differs between the world being written and
+ * the baseline: the ones the gesture actually moved or resized. A press that never moved leaves
+ * every rectangle equal, so it changes nothing.
+ */
+function movedRegionAreas(next: World, baseline: World, candidates: ReadonlySet<AreaKey>): AreaKey[] {
+  const before = new Map(baseline.areas.map((node) => [node.key, node.region.storedRect]));
+  return next.areas
+    .filter((node) => candidates.has(node.key) && !sameRect(node.region.storedRect, before.get(node.key)))
+    .map((node) => node.key);
+}
+
+/** True when two stored rectangles have the same position and size. */
+function sameRect(left: Rect<"source">, right: Rect<"source"> | undefined): boolean {
+  return right !== undefined && left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height;
 }
 
 /** Warns once per command when Excalidraw tried to delete an Area outline the tree owns. */
@@ -221,7 +255,12 @@ export function publishToWorld(deps: PublishDeps, elements: readonly SceneElemen
     void deps.controller.materialize(areaKey(owner));
     deps.announce(CANVAS_ANNOUNCEMENTS.loading(areaKey(owner).split("/").at(-1) ?? owner));
   });
-  const changedAreas = reprioritizeChangedAreas(baseline.next, baseline.world, baseline.composition, changedOwners, new Set<AreaKey>());
+  for (const owner of ownersOfMovedElements(moved, origins, baseline.pointerOpen ? candidates : null)) changedOwners.add(owner);
+  // The Areas the open pointer gesture moved keep the rectangle the solver previewed. Without this
+  // seed, an Area whose Block hull changed during its own drag is re-anchored to where it started.
+  const directlyMoved = baseline.pointerOpen ? new Set<AreaKey>(deps.pointer.selectedAreas()) : new Set<AreaKey>();
+  const changedAreas = reprioritizeChangedAreas(baseline.next, baseline.world, baseline.composition, changedOwners, directlyMoved);
+  for (const area of movedRegionAreas(baseline.next, baseline.world, directlyMoved)) changedAreas.add(area);
   if (changedAreas.size === 0 && changedOwners.size === 0) {
     publishNoChange(deps, baseline);
     return;

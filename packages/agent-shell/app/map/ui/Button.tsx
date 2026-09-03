@@ -20,6 +20,11 @@ export type ButtonProps = NativeButtonProps & {
   readonly label?: string;
   /** A one-character icon, hidden from assistive technology, in a span with the class tangent-map-glyph. */
   readonly glyph?: string;
+  /**
+   * When the glyph shows. `narrow` (the default) shows it only on a narrow Map, where the label is
+   * hidden. `always` keeps it beside the label on a wide Map too, as the Block button does.
+   */
+  readonly glyphVisibility?: "narrow" | "always";
   /** The key that does the same thing from the canvas, rendered as a <kbd> hint. */
   readonly kbd?: string;
   /** Extra content after the label, for the rare button whose content is not one word. */
@@ -38,11 +43,11 @@ function dataAttributes(data: Readonly<Record<string, string>> | undefined): Rec
 }
 
 /** A button with an optional glyph, label and key hint. Type is "button" unless told otherwise. */
-export function Button({ type, label, glyph, kbd, children, data, onActivate, ...native }: ButtonProps): ReactNode {
+export function Button({ type, label, glyph, glyphVisibility, kbd, children, data, onActivate, ...native }: ButtonProps): ReactNode {
   return (
     <button type={type ?? "button"} {...native} {...dataAttributes(data)} onClick={onActivate}>
       {glyph !== undefined && (
-        <span aria-hidden="true" className="tangent-map-glyph">
+        <span aria-hidden="true" className={glyphVisibility === "always" ? undefined : "tangent-map-glyph"}>
           {glyph}
         </span>
       )}

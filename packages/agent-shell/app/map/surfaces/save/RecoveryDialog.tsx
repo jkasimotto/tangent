@@ -30,7 +30,7 @@ export function RecoveryDialog(props: RecoveryDialogProps): ReactNode {
   ];
   return (
     <Dialog
-      id="sceneRecovery"
+      id="mapRecovery"
       className={CLASS_NAME}
       heading={offer.heading}
       cause={<p role="alert">{offer.cause.headline} {offer.cause.nextStep}</p>}

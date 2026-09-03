@@ -13,11 +13,16 @@ function rows(): Array<[SurfaceId, SurfaceDeclaration]> {
   return SURFACE_IDS.map((id) => [id, surfaceDeclaration(id)]);
 }
 
-test("the registry holds exactly the surfaces of the design", () => {
+test("the registry holds exactly the surfaces of the design, and the Map's own draft offer", () => {
   assert.deepEqual(SURFACE_IDS, [
-    "resources", "resourceDetails", "resourceEditor", "resourceRecovery", "sceneRecovery",
+    "resources", "resourceDetails", "resourceEditor", "resourceRecovery", "sceneRecovery", "mapRecovery",
     "placement", "picker", "find", "outline", "help", "transaction"
   ]);
+});
+
+test("the Map's draft offer and the Resources scene recovery are two surfaces, not one", () => {
+  assert.notEqual(surfaceDeclaration("mapRecovery"), undefined);
+  assert.equal(SURFACE_IDS.filter((id) => id === "sceneRecovery" || id === "mapRecovery").length, 2);
 });
 
 test("every declaration uses only the closed vocabularies", () => {
@@ -32,7 +37,7 @@ test("every declaration uses only the closed vocabularies", () => {
 
 test("every modal surface sits on the dialog layer, where the stack keeps one open at a time", () => {
   const modalLayers = rows().filter(([, declaration]) => declaration.modality === "modal").map(([, declaration]) => declaration.layer);
-  assert.deepEqual(modalLayers, ["dialog", "dialog", "dialog", "dialog"]);
+  assert.deepEqual(modalLayers, ["dialog", "dialog", "dialog", "dialog", "dialog"]);
 });
 
 test("a modal surface always restores focus and a transient surface never takes it", () => {

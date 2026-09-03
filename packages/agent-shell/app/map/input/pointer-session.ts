@@ -219,6 +219,16 @@ export class PointerSession {
     return this.areas;
   }
 
+  /** The world as it stood at the press, which every solve and every publish measures against. Null between gestures. */
+  baselineWorld(): World | null {
+    return this.baseline;
+  }
+
+  /** The solver inputs taken at the press, so a publish solves from the same baseline the previews did. Null between gestures. */
+  gestureBaseline(): GestureBaseline | null {
+    return this.solverBaseline;
+  }
+
   /**
    * The composition of the baseline world, composed on the first ask and kept for the gesture. It
    * is the scene as it stood at the press, which is what a consumer measures a drag against while

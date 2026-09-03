@@ -8,7 +8,7 @@ Files:
 - `SaveStatus.tsx` renders that answer as the `div.tangent-map-save.{status}` island, `role="status"` named "Map save status", with `Retry`, `Reload saved` and `Keep mine` as kit buttons reporting a `SaveAction` through `onRecover`.
 - `recovery-model.ts` is the words of recovery: `draftOffer(draft)` (heading with the draft's time, cause from `copyForFailure`, the Restore and Discard labels), `recoveryOutcome(action, result, nextState)` and `recoveryFailure(error)` for what is said after a choice.
 - `save-effects.ts` is the one effect: `recoverMap(controller, action, announce)` runs `retry`, `reload` or `keepMine` on the controller and announces the outcome. It never rejects.
-- `RecoveryDialog.tsx` renders the draft offer through `ui/Dialog.tsx` as the registry's `sceneRecovery` surface, class `tangent-map-draft-choice`, with `onRestore` and `onDiscard` for the controller's `restoreDraft` and `discardDraft`.
+- `RecoveryDialog.tsx` renders the draft offer through `ui/Dialog.tsx` as the registry's `mapRecovery` surface, class `tangent-map-draft-choice`, with `onRestore` and `onDiscard` for the controller's `restoreDraft` and `discardDraft`.
 
 Tests are `*.test.ts` beside each module: `node --test packages/agent-shell/app/map/surfaces/save/*.test.ts`.
 

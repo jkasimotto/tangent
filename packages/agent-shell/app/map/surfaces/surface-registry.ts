@@ -35,13 +35,20 @@ export interface SurfaceDeclaration {
   readonly restoreFocus: boolean;
 }
 
-/** The registry. This is the table in the design, section "Surfaces", and nothing more. */
+/**
+ * The registry. This is the table in the design, section "Surfaces", with one row added during
+ * integration: `mapRecovery` is the Map's own draft offer, which `sceneRecovery` had been sharing
+ * an id with. The Resources surface owns `sceneRecovery` (its "Map resource was not saved" dialog),
+ * and two components on one id would evict each other, because opening a modal drops another modal
+ * on the same layer.
+ */
 export const SURFACES = {
   resources: { layer: "panel", modality: "panel", escape: "close", focusOnOpen: "heading", restoreFocus: true },
   resourceDetails: { layer: "panel", modality: "panel", escape: "back-step", focusOnOpen: "heading", restoreFocus: true },
   resourceEditor: { layer: "panel", modality: "panel", escape: "back-step", focusOnOpen: "first-control", restoreFocus: true },
   resourceRecovery: { layer: "dialog", modality: "modal", escape: "close", focusOnOpen: "first-control", restoreFocus: true },
   sceneRecovery: { layer: "dialog", modality: "modal", escape: "close", focusOnOpen: "first-control", restoreFocus: true },
+  mapRecovery: { layer: "dialog", modality: "modal", escape: "close", focusOnOpen: "first-control", restoreFocus: true },
   placement: { layer: "transient", modality: "transient", escape: "close", focusOnOpen: "none", restoreFocus: false },
   picker: { layer: "dialog", modality: "modal", escape: "close", focusOnOpen: "first-control", restoreFocus: true },
   find: { layer: "hang", modality: "panel", escape: "close", focusOnOpen: "first-control", restoreFocus: true },

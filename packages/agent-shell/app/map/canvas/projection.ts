@@ -18,6 +18,7 @@ import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/t
 import { authoredFingerprint } from "../kernel/kernel-boundary.ts";
 import type { AuthoredFingerprint, SceneElement } from "../kernel/kernel-types.ts";
 import { LAYOUT } from "../layout/layout-tokens.ts";
+import type { Camera } from "../units/frames.ts";
 import { runtimeId } from "../units/ids.ts";
 import type { RuntimeId } from "../units/ids.ts";
 import { subtract } from "../units/scalar-math.ts";
@@ -47,6 +48,8 @@ export type ProjectionRequest = {
   readonly elements?: readonly SceneElement[];
   readonly selection?: Iterable<RuntimeId>;
   readonly clearEditingText?: boolean;
+  /** Where the camera must be put back to, which is how a view layer returns exactly. */
+  readonly camera?: Camera;
 };
 
 /** How the fence waits: a microtask for a deferred push, a timeout for the fence window. */
@@ -130,11 +133,18 @@ export function selectionAppState(ids: Iterable<RuntimeId>): SelectionAppState {
   return { selectedElementIds: selectionRecord([...ids]) };
 }
 
-/** Pushes one request into Excalidraw. Three shapes, one per appState slice, so each call carries exact keys. */
+/** The appState fields one camera push carries, in the shape Excalidraw reads them. */
+function cameraAppState(camera: Camera): Pick<AppState, "scrollX" | "scrollY" | "zoom"> {
+  return { scrollX: camera.scrollX, scrollY: camera.scrollY, zoom: { value: camera.zoom } as unknown as AppState["zoom"] };
+}
+
+/** Pushes one request into Excalidraw. Four shapes, one per appState slice, so each call carries exact keys. */
 function applyRequest(api: ProjectionApi, request: ProjectionRequest, selection: readonly RuntimeId[]): void {
   const elements = request.elements === undefined ? {} : { elements: asExcalidrawElements(request.elements) };
   const captureUpdate = "NEVER" as const;
-  if (request.clearEditingText) {
+  if (request.camera !== undefined) {
+    api.updateScene({ ...elements, appState: { ...cameraAppState(request.camera), ...selectionAppState(selection) }, captureUpdate });
+  } else if (request.clearEditingText) {
     api.updateScene({ ...elements, appState: { ...selectionAppState(selection), editingTextElement: null }, captureUpdate });
   } else if (request.selection !== undefined) {
     api.updateScene({ ...elements, appState: selectionAppState(selection), captureUpdate });

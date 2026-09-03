@@ -120,6 +120,10 @@ const TIME_TOKENS = {
   /** How often resource facts are refreshed, and the shortest cadence a configuration may ask for. */
   resourceCadence: milliseconds(30_000),
   resourceCadenceFloor: milliseconds(25),
+  /** How long a spoken announcement and its visible toast stay before the store drops them. */
+  announceTtl: milliseconds(9_000),
+  /** How often the announce timer advances the store's clock. */
+  announceTick: milliseconds(500),
   /** One beat of the pulse around the current Find match. */
   findPulse: milliseconds(900),
   /** How long a projection that replaced the elements fences Excalidraw's echoing change callbacks. */

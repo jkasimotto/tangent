@@ -10,7 +10,7 @@
 // union frame.
 
 import type { Camera, Delta, Frame, PixelOf, Point, Rect } from "./frames.ts";
-import type { Ratio } from "./units.ts";
+import type { Ratio, ScenePx, ScreenPx, Zoom } from "./units.ts";
 
 /** Adds two like-branded scalars and keeps the brand. */
 export function add<T extends number>(left: T, right: T): T {
@@ -97,6 +97,15 @@ export function union<F extends Frame>(left: Rect<F>, right: NoInfer<Rect<F>>): 
  */
 export function toScene(screenPoint: Point<"screen">, camera: Camera): Point<"scene"> {
   return rebrandPoint(screenPoint.x / camera.zoom - camera.scrollX, screenPoint.y / camera.zoom - camera.scrollY);
+}
+
+/**
+ * Converts a screen length into the scene length it covers at a zoom. A grab padding is authored
+ * in screen pixels so it feels the same at every zoom; dividing by the zoom is how it reaches the
+ * scene, and this is the one place that division is written.
+ */
+export function toSceneLength(length: ScreenPx, zoom: Zoom): ScenePx {
+  return (length / zoom) as ScenePx;
 }
 
 /** Converts a scene point into the canvas-relative screen point the camera shows it at. The inverse of `toScene`. */

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { delta, point, rect } from "./frames.ts";
 import type { Camera, Point, Rect } from "./frames.ts";
 import {
-  add, clamp, deltaBetween, distance, inflate, midpoint, rectCenter, rectContains, rectsOverlap, scale, subtract, toScene, toScreen, translate, union,
+  add, clamp, deltaBetween, distance, inflate, midpoint, rectCenter, rectContains, rectsOverlap, scale, subtract, toScene, toSceneLength, toScreen, translate, union,
 } from "./scalar-math.ts";
 import { index, ratio, scenePx, screenPx, zoom } from "./units.ts";
 import type { Index, ScenePx } from "./units.ts";
@@ -89,4 +89,12 @@ test("toScene matches the old eventScenePoint formula and toScreen inverts it", 
   assert.deepEqual(toScene(point("screen", screenPx(7), screenPx(8)), identity), { x: 7, y: 8 });
   // @ts-expect-error a scene point cannot be converted to scene again.
   toScene(scene, camera);
+});
+
+test("toSceneLength divides a screen length by the zoom and brands it scene", () => {
+  const padding: ScenePx = toSceneLength(screenPx(10), zoom(2));
+  assert.equal(padding, 5);
+  assert.equal(toSceneLength(screenPx(10), zoom(0.5)), 20);
+  // @ts-expect-error a scene length is not a screen length.
+  toSceneLength(scenePx(10), zoom(1));
 });

@@ -53,6 +53,7 @@ test("the table holds the numbers the design names", () => {
   assert.equal(LAYOUT.controlInset, 24);
   assert.equal(LAYOUT.saveInset, 62);
   assert.equal(LAYOUT.grabPadding, 10);
+  assert.equal(LAYOUT.grabZoomFloor, 0.1);
   assert.equal(LAYOUT.nudge, 1);
   assert.equal(LAYOUT.nudgeFast, 10);
   assert.equal(LAYOUT.placementStep, 16);

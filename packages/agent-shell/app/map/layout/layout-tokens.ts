@@ -12,8 +12,8 @@
 //
 // Design: docs/design/area-map-rebuild/code.md, "Layout tokens".
 
-import { count, milliseconds, scenePx, screenPx, sourcePx } from "../units/units.ts";
-import type { Count, Milliseconds, ScenePx, ScreenPx, SourcePx } from "../units/units.ts";
+import { count, milliseconds, scenePx, screenPx, sourcePx, zoom } from "../units/units.ts";
+import type { Count, Milliseconds, ScenePx, ScreenPx, SourcePx, Zoom } from "../units/units.ts";
 
 /** Screen-pixel anchors: where the Tangent surfaces sit on the Map and how wide they may grow. */
 const SCREEN_TOKENS = {
@@ -101,6 +101,12 @@ const SOURCE_TOKENS = {
   blockHeight: sourcePx(132),
 } as const satisfies Record<string, SourcePx>;
 
+/** Zoom factors: the camera magnifications a screen distance is divided by. */
+const ZOOM_TOKENS = {
+  /** The least zoom the grab padding is divided by, so a tiny zoom cannot grow it without bound. */
+  grabZoomFloor: zoom(0.1),
+} as const satisfies Record<string, Zoom>;
+
 /** Durations: the windows and cadences the Map keeps time with. */
 const TIME_TOKENS = {
   /** A paste lands at the last placement point for this long after a copy. */
@@ -131,6 +137,7 @@ export const LAYOUT = {
   ...SCREEN_TOKENS,
   ...SCENE_TOKENS,
   ...SOURCE_TOKENS,
+  ...ZOOM_TOKENS,
   ...TIME_TOKENS,
   ...COUNT_TOKENS,
 } as const;
@@ -145,15 +152,16 @@ export type LayoutToken = keyof Layout;
 export type LayoutCssVariable = `--tangent-map-${string}`;
 
 /** Pairs every token of one group with the CSS unit suffix the group is written with. */
-function unitEntries(tokens: Record<string, ScreenPx | ScenePx | SourcePx | Milliseconds | Count>, unit: string): [string, string][] {
+function unitEntries(tokens: Record<string, ScreenPx | ScenePx | SourcePx | Zoom | Milliseconds | Count>, unit: string): [string, string][] {
   return Object.keys(tokens).map((token): [string, string] => [token, unit]);
 }
 
-/** The CSS unit suffix of each token. Counts are unitless and string tokens are already CSS. */
+/** The CSS unit suffix of each token. Counts and zooms are unitless and string tokens are already CSS. */
 const CSS_UNIT_BY_TOKEN: ReadonlyMap<string, string> = new Map([
   ...unitEntries(SCREEN_TOKENS, "px"),
   ...unitEntries(SCENE_TOKENS, "px"),
   ...unitEntries(SOURCE_TOKENS, "px"),
+  ...unitEntries(ZOOM_TOKENS, ""),
   ...unitEntries(TIME_TOKENS, "ms"),
   ...unitEntries(COUNT_TOKENS, ""),
 ]);

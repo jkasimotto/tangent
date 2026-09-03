@@ -141,6 +141,8 @@ const COUNT_TOKENS = {
   doubleClickDetail: count(2),
   /** How many animation frames the Map waits for Excalidraw's text editor before giving up on focusing it. */
   textEditFocusFrames: count(20),
+  /** How many animation frames a surface keeps trying to focus a control that is still disabled or inert after a layer closes. */
+  focusRetryFrames: count(120),
   /** How many animation frames the mount waits for Excalidraw's canvas before giving up. */
   mountAttempts: count(120),
   /** How many expected projections the fence remembers before the oldest is forgotten. */

@@ -8,6 +8,9 @@ import { useEffect, useRef } from "react";
 import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 import { surfaceDeclaration } from "../surfaces/surface-registry.ts";
 import type { SurfaceFocusOnOpen, SurfaceId } from "../surfaces/surface-registry.ts";
+import type { Count } from "../units/units.ts";
+import { count } from "../units/units.ts";
+import { LAYOUT } from "../layout/layout-tokens.ts";
 
 /** The two things a surface can ask of the stack, handed to its children. */
 export interface SurfaceControls {
@@ -38,6 +41,11 @@ export interface SurfaceProps {
    * button. Falls back to the first focusable element when nothing matches.
    */
   readonly initialFocus?: string | undefined;
+  /**
+   * A serial the owner raises each time it asks for focus. The same `initialFocus` asked for twice,
+   * as when a cancelled placement returns to the control it started from, is applied again.
+   */
+  readonly focusSerial?: Count | undefined;
   /** Kit-only inline style, such as the panel width token. */
   readonly style?: CSSProperties | undefined;
   readonly onClose: () => void;
@@ -69,13 +77,13 @@ export function Surface(props: SurfaceProps): ReactNode {
       const section = sectionRef.current;
       if (section === null) return undefined;
       const opener = openerRef.current ?? activeHtmlElement();
-      const frame = requestAnimationFrame(() => moveFocusIn(section, declaration.focusOnOpen, props.initialFocus));
+      const attempt = scheduleFocusIn(section, declaration.focusOnOpen, props.initialFocus);
       return () => {
-        cancelAnimationFrame(frame);
+        attempt.cancel();
         if (declaration.restoreFocus) restoreFocusTo(opener);
       };
     },
-    [props.id, declaration, props.initialFocus]
+    [props.id, declaration, props.initialFocus, props.focusSerial]
   );
 
   /** Keeps Tab inside a modal surface. Escape is the keyboard dispatcher's, through the stack. */
@@ -126,6 +134,44 @@ function moveFocusIn(section: HTMLElement, target: SurfaceFocusOnOpen, initialFo
   const preferred = preferredControlOf(section, initialFocus);
   const declared = target === "heading" ? headingOf(section) : focusableInside(section)[0] ?? null;
   (preferred ?? declared ?? section).focus({ preventScroll: true });
+}
+
+/** A scheduled focus move that can be cancelled when the surface closes or asks again. */
+type FocusAttempt = { readonly cancel: () => void };
+
+/** True when a control can take focus now: connected, enabled, and not under an inert ancestor. */
+function canTakeFocus(element: HTMLElement): boolean {
+  return element.isConnected && !(element as HTMLButtonElement).disabled && element.closest("[inert]") === null;
+}
+
+/**
+ * Moves focus in on the next frame. When the surface named a control that exists but cannot take
+ * focus yet, because the layer that just closed still holds it disabled or inert for a render, the
+ * move is retried each frame within `LAYOUT.focusRetryFrames`, then falls back to the declared target.
+ * This is how a cancelled placement returns focus to the Place control it started from.
+ */
+function scheduleFocusIn(section: HTMLElement, target: SurfaceFocusOnOpen, initialFocus: string | undefined): FocusAttempt {
+  let handle: ReturnType<typeof requestAnimationFrame> | null = null;
+  let attempts = count(0);
+  /** One frame's attempt: focus the named control when it is ready, retry while it is not, else fall back. */
+  const attempt = (): void => {
+    handle = null;
+    const preferred = preferredControlOf(section, initialFocus);
+    const ready = preferred === null || canTakeFocus(preferred);
+    if (!ready && attempts < LAYOUT.focusRetryFrames) {
+      attempts = count(attempts + 1);
+      handle = requestAnimationFrame(attempt);
+      return;
+    }
+    moveFocusIn(section, target, ready ? initialFocus : undefined);
+  };
+  handle = requestAnimationFrame(attempt);
+  /** Drops the pending frame so a closed or re-asked surface never moves focus late. */
+  const cancel = (): void => {
+    if (handle !== null) cancelAnimationFrame(handle);
+    handle = null;
+  };
+  return { cancel };
 }
 
 /** The element the surface named through `initialFocus`, when it named one and it is inside. */

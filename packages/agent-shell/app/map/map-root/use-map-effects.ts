@@ -5,7 +5,7 @@
 // are each one `useEffect` here, so `MapRoot.tsx` stays the composition and this file stays the
 // lifecycle. Nothing here renders.
 
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { selectedIds } from "../canvas/projection.ts";
 import { installKeyboardDispatch } from "../input/keyboard-dispatch.ts";
@@ -173,10 +173,11 @@ function useSurfaceEffects(input: EffectsInput): void {
 function useHostEffects(input: EffectsInput): void {
   const { core, stores, wiring, snapshot } = input;
 
-  useEffect(
+  useLayoutEffect(
     /**
      * Makes the shell and the canvas inert while a modal Map surface owns the screen. The Resources
      * panel is declared a panel, but at narrow widths it is shown as a sheet, and a sheet is modal.
+     * A layout effect, so the inert attributes change in the same paint as the dialog that needs them.
      */
     () => installInertGuard(core.host, hasModalSurface(stores.stack) || (stores.stack.includes("resources") && stores.resources.narrow)),
     [core.host, stores.stack, stores.resources.narrow],
@@ -229,10 +230,14 @@ function openSurfacesOf(input: EffectsInput): OpenSurfaces {
   ]);
 }
 
-/** Keeps the surface stack in step with the stores that own each surface's own state. */
+/**
+ * Keeps the surface stack in step with the stores that own each surface's own state. A layout
+ * effect, so the stack catches up before the browser paints: a dialog that left the DOM with its
+ * store is off the stack, and the inert guard that keys on the stack lifts, in the same paint.
+ */
 function useSurfaceSync(input: EffectsInput): void {
   const open = openSurfacesOf(input);
-  useEffect(
+  useLayoutEffect(
     /** Opens or closes each store-owned surface on the stack. */
     () => reconcileSurfaces(input.stores.stack, open, input.stores.dispatchStack),
   );

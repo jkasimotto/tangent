@@ -80,7 +80,12 @@ test("set-filter, set-narrow, cadence-tick and request-focus each write one fiel
     { type: "request-focus", focus: { control: "show", key: "otto/tangent/worktree-main" } });
   assert.deepEqual([state.filter, state.narrow, state.cadence], ["check", true, 2]);
   assert.deepEqual(state.pendingFocus, { control: "show", key: "otto/tangent/worktree-main" });
-  assert.equal(resourcesReducer(state, { type: "request-focus", focus: null }).pendingFocus, null);
+  assert.equal(state.focusSerial, 1);
+  const repeated = resourcesReducer(state, { type: "request-focus", focus: { control: "show", key: "otto/tangent/worktree-main" } });
+  assert.equal(repeated.focusSerial, 2, "asking for the same control again is a new request, so a cancelled placement returns focus to where it started");
+  const cleared = resourcesReducer(repeated, { type: "request-focus", focus: null });
+  assert.equal(cleared.pendingFocus, null);
+  assert.equal(cleared.focusSerial, 2);
 });
 
 test("load-started loads the first read and refreshes every later one, and load-failed keeps last known rows", () => {

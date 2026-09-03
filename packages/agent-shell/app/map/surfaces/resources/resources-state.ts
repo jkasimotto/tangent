@@ -120,6 +120,11 @@ export type ResourcesState = {
   /** True when the Map is narrower than the breakpoint and the panel shows as a modal sheet. */
   readonly narrow: boolean;
   readonly pendingFocus: ResourceFocusRequest | null;
+  /**
+   * Counts focus requests. A cancelled placement asks for the same control the placement started
+   * from, so the request alone does not change; the serial does, and the surface re-applies focus.
+   */
+  readonly focusSerial: Count;
 };
 
 /** The transport before any read. */
@@ -148,6 +153,7 @@ export const INITIAL_RESOURCES_STATE: ResourcesState = Object.freeze({
   cadence: count(0),
   narrow: false,
   pendingFocus: null,
+  focusSerial: count(0),
 });
 
 /** True when the panel holds a current projection over current transport and is not busy: a write or a placement may start. */

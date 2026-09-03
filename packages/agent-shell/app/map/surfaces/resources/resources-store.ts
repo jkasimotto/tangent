@@ -181,7 +181,7 @@ export function resourcesReducer(state: ResourcesState, action: ResourcesAction)
     case "set-details": return { ...state, details: action.locator };
     case "set-narrow": return { ...state, narrow: action.narrow };
     case "cadence-tick": return { ...state, cadence: count(state.cadence + 1) };
-    case "request-focus": return { ...state, pendingFocus: action.focus };
+    case "request-focus": return { ...state, pendingFocus: action.focus, focusSerial: action.focus === null ? state.focusSerial : count(state.focusSerial + 1) };
     case "load-started": return loadStarted(state);
     case "load-failed": return loadFailed(state, action.message);
     case "install-projection": return installProjection(state, action.projection, action.area);

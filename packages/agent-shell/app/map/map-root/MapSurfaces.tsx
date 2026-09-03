@@ -79,8 +79,8 @@ export function MapSurfaces(props: MapSurfacesProps): ReactNode {
         <PlacementBar placement={placing} areaName={props.areaName(placing.area)} onPlace={props.onCommitPlacement} onCancel={props.onCancelPlacement} />
       )}
       <ResourcesPanel state={props.resources.state} ports={props.resources.ports} />
-      <ResourceActionRecoveryDialog state={props.resources.state} ports={props.resources.ports} />
-      <SceneRecoveryDialog state={props.resources.state} ports={props.resources.ports} />
+      {isSurfaceOpen(props.stack, "resourceRecovery") && <ResourceActionRecoveryDialog state={props.resources.state} ports={props.resources.ports} />}
+      {isSurfaceOpen(props.stack, "sceneRecovery") && <SceneRecoveryDialog state={props.resources.state} ports={props.resources.ports} />}
       <TransactionStatus state={props.resources.state} />
       {props.draft !== null && !props.draft.restored && (
         <RecoveryDialog

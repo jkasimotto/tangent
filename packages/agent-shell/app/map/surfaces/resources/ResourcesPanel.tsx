@@ -191,6 +191,7 @@ export function ResourcesPanel(props: ResourcesPanelProps): ReactNode {
       frameClassName={panelFrameClass(state.narrow, ports.placementActive)}
       labelledBy={TITLE_ID}
       initialFocus={resourceFocusSelector(state.pendingFocus)}
+      focusSerial={state.focusSerial}
       onClose={ports.close}
       onBackStep={ports.close}
     >

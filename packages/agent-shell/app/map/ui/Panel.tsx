@@ -6,6 +6,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { Surface } from "./Surface.tsx";
 import type { SurfaceChildren } from "./Surface.tsx";
 import type { SurfaceId } from "../surfaces/surface-registry.ts";
+import type { Count } from "../units/units.ts";
 
 export interface PanelProps {
   readonly id: SurfaceId;
@@ -18,6 +19,8 @@ export interface PanelProps {
   readonly opener?: HTMLElement | null | undefined;
   /** A selector for the control focus lands on instead of the declared target, when it matches. */
   readonly initialFocus?: string | undefined;
+  /** A serial that changes when focus is asked for again, even for the same control. */
+  readonly focusSerial?: Count | undefined;
   readonly onClose: () => void;
   readonly onBackStep: () => void;
   readonly children: SurfaceChildren;
@@ -38,6 +41,7 @@ export function SidePanel(props: PanelProps & { readonly modal: boolean }): Reac
       labelledBy={props.labelledBy}
       opener={props.opener}
       initialFocus={props.initialFocus}
+      focusSerial={props.focusSerial}
       style={PANEL_WIDTH_STYLE}
       onClose={props.onClose}
       onBackStep={props.onBackStep}

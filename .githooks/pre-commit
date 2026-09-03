@@ -2,4 +2,4 @@
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-node "$SCRIPT_DIR/scripts/lint-function-docstrings.mjs" --staged
+node "$SCRIPT_DIR/scripts/lint/run-pool.mjs" --staged

@@ -1,0 +1,7 @@
+{
+  "path": ["packages/agent-shell/app"],
+  "ignore": ["**/*.test.*", "**/node_modules/**", "**/dist/**", "**/test-fixtures/**"],
+  "minTokens": 45,
+  "reporters": ["console"],
+  "gitignore": true
+}

@@ -94,13 +94,24 @@ window.regionRect = (area) => {
   const element = window.editor.controller().snapshot().composition.scene.elements.find((candidate) => candidate.customData?.tangent?.role === "area-region" && candidate.customData.tangent.area === area);
   return element && { id: element.id, x: element.x, y: element.y, width: element.width, height: element.height };
 };
+/** The elements Excalidraw paints now. It fails loudly rather than reporting an empty canvas, so a
+ * missing bridge can never make a "nothing is painted" assertion true by accident. */
+const painted = () => {
+  const elements = window.editor.rendered?.();
+  if (!elements) throw new Error("the Map bridge reported no rendered elements");
+  return elements.filter((element) => !element.isDeleted);
+};
 /** True while the named element is painted on the canvas Excalidraw holds. */
-window.paintedOnCanvas = (id) => (window.editor.rendered?.() ?? []).some((element) => element.id === id && !element.isDeleted);
+window.paintedOnCanvas = (id) => painted().some((element) => element.id === id);
 /** Lists everything but the Area outlines that is painted over one scene point, which is what a person sees there. */
-window.paintedOver = (point) => (window.editor.rendered?.() ?? [])
-  .filter((element) => !element.isDeleted && element.customData?.tangent?.role !== "area-region"
+window.paintedOver = (point) => painted()
+  .filter((element) => element.customData?.tangent?.role !== "area-region"
     && point.x >= element.x && point.y >= element.y && point.x <= element.x + element.width && point.y <= element.y + element.height)
   .map((element) => element.id);
+/** Reports the controller selection, which names what the last press claimed. */
+window.selection = () => [...window.editor.controller().snapshot().selection];
+/** True while the Map counts one element as hidden rather than removed. */
+window.isHidden = (id) => window.editor.controller().snapshot().hiddenIds.has(id);
 </script></body></html>`;
 
 /** Waits for the frame after React commits, so a geometry read never reports the state before it. */
@@ -155,8 +166,19 @@ test("a press where the Map hid a Block drags the Area under it", { skip: !enabl
     assert.ok(block, "the composed world must still record the hidden Block");
     assert.equal(block.deleted, false, "the Map hides a Block without deleting it from the world");
     assert.equal(await page.evaluate((id) => window.paintedOnCanvas(id), block.id), false, "the hidden Block must not be painted");
+    assert.equal(await page.evaluate((id) => window.isHidden(id), block.id), true, "the Map must count the Block as hidden rather than removed");
     const centre = { x: block.x + block.width / 2, y: block.y + block.height / 2 };
     assert.deepEqual(await page.evaluate((point) => window.paintedOver(point), centre), [], "the Map must paint nothing where the hidden Block was");
+
+    // The same point with the Block shown. A person would see the Block under the press, so the
+    // press point really is on top of it and the hide is the only difference between the two cases.
+    await page.evaluate(() => window.editor.controller().setFocus({ only: false, activeOnly: false, areas: [] }));
+    await settled(page);
+    const shown = await page.evaluate((point) => window.paintedOver(point), centre);
+    assert.ok(shown.includes(block.id), `showing the Block must paint it over the press point: ${JSON.stringify({ centre, shown, block })}`);
+    await page.evaluate(() => window.editor.controller().setFocus({ only: false, activeOnly: true, areas: [] }));
+    await settled(page);
+    assert.deepEqual(await page.evaluate((point) => window.paintedOver(point), centre), [], "hiding the Block again must clear the press point");
 
     // A person sees empty Area where the Block was. Press exactly there and drag.
     const before = await page.evaluate(() => window.regionRect("otto/tangent"));
@@ -187,6 +209,9 @@ test("a press where the Map hid a Block drags the Area under it", { skip: !enabl
       moved.x > DRAG.x / 2 && moved.y > DRAG.y / 2,
       `the Area under the hidden Block must follow the drag: ${JSON.stringify({ before, after, moved, DRAG })}`,
     );
+    const claimed = await page.evaluate(() => window.selection());
+    assert.ok(!claimed.includes(block.id), `the hidden Block must not claim the press: ${JSON.stringify({ claimed, block })}`);
+    assert.ok(claimed.includes(before.id), `the press must claim the Area under the hidden Block: ${JSON.stringify({ claimed, region: before.id })}`);
     assert.equal(after.width, before.width, "dragging an Area must not resize it");
     assert.equal(after.height, before.height, "dragging an Area must not resize it");
     assert.ok(

@@ -115,6 +115,9 @@ test("placeBlock lands a Goal in the spot's shard, selects it and starts editing
   assert.equal(state().target, null);
   assert.equal(controller.undo(), true, "the placement is one command in the Map's history");
   assert.deepEqual(blocksOf(controller, OTTO), []);
+  assert.equal(controller.redo(), true);
+  assert.deepEqual(blocksOf(controller, OTTO), ["block-new"]);
+  assert.deepEqual([...controller.snapshot().selection], [placedId], "redo restores the placed Block as the selection, so X can hide it");
 });
 
 test("placementSpotOf lands on the pointer when it is on screen and names the visible Area under it", () => {

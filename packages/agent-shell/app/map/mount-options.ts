@@ -13,6 +13,7 @@ import type {
 } from "./kernel/kernel-types.ts";
 import type { ResourceApi } from "./surfaces/resources/resources-effects.ts";
 import type { AreaKey, ShardOwner } from "./units/ids.ts";
+import type { Milliseconds } from "./units/units.ts";
 
 /** What the shell's header is told each time the Map's own view changes. */
 export type ViewStateNotice = {
@@ -57,6 +58,8 @@ export type WorldMountOptions = {
   readonly onEntityAction?: (action: MapEntityAction, entity: MapEntityFacts) => void;
   readonly onViewState?: (notice: ViewStateNotice) => void;
   readonly onEditorError?: (error: unknown) => void;
+  /** How often resource facts are re-read. The host omits it for the default; a test fixture shortens it. */
+  readonly resourceCadenceMs?: Milliseconds;
 };
 
 /** The options the host passes for the format-2 rollback editor. */

@@ -35,6 +35,8 @@ export type MapSession = {
   spaceHeld: boolean;
   /** True when the press Excalidraw is reading was made with Shift held, which makes it additive. */
   shiftPress: boolean;
+  /** True while the Map is dispatching the double click that opens a placed Block's label, so it does not read its own event. */
+  openingLabel: boolean;
   /** The last scene point the pointer was at, which is where B and paste land. */
   lastPointer: Point<"scene"> | null;
   /** The selection the Map believes is stable, as opposed to what a live drag is showing. */
@@ -77,6 +79,7 @@ export function createMapSession(): MapSession {
     api: null,
     spaceHeld: false,
     shiftPress: false,
+    openingLabel: false,
     lastPointer: null,
     stableSelection: new Set<RuntimeId>(),
     programmaticSelection: null,

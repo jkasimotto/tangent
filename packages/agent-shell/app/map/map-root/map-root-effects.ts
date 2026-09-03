@@ -14,6 +14,12 @@ import { MAP_THEME, prepareFigureIconImages } from "../canvas/icon-files.ts";
 import { requestResource } from "../surfaces/resources/resources-effects.ts";
 import type { ResourceEffects } from "../surfaces/resources/resources-effects.ts";
 import { PointerSession } from "../input/pointer-session.ts";
+import { elementRect } from "../input/hit-test.ts";
+import type { AppState } from "@excalidraw/excalidraw/types";
+import { point } from "../units/frames.ts";
+import type { Camera, Point } from "../units/frames.ts";
+import { rectContains, toScene } from "../units/scalar-math.ts";
+import { scenePx, screenPx, zoom as zoomOf } from "../units/units.ts";
 import { areaMapProjectionUpdate, authoredFingerprint } from "../kernel/kernel-boundary.ts";
 import type { AreaMapController, MapKindsCatalog, SceneElement, Snapshot } from "../kernel/kernel-types.ts";
 import { LAYOUT } from "../layout/layout-tokens.ts";
@@ -128,6 +134,49 @@ export function installInertGuard(host: HTMLElement, modal: boolean): Uninstall 
   return () => {
     for (const guard of targets) if (!guard.was) guard.element.removeAttribute("inert");
   };
+}
+
+/** What the double-click listener needs to answer one double click. */
+export type DoubleClickDeps = {
+  readonly session: MapSession;
+  readonly controller: AreaMapController;
+  /** The Block that is the whole live selection, or null. */
+  readonly selectedBlock: () => SceneElement | null;
+  /** Runs one Block's primary action from the row or the canvas. */
+  readonly openBlock: (block: SceneElement, opener: HTMLElement) => void;
+};
+
+/** The canvas Excalidraw draws on, which is where a double click lands. */
+const INTERACTIVE_CANVAS = ".excalidraw canvas.interactive";
+
+/** The scene point one mouse event landed on, from Excalidraw's own view offsets. */
+function eventScenePoint(event: MouseEvent, canvas: Element, appState: AppState): Point<"scene"> {
+  const box = canvas.getBoundingClientRect();
+  const left = appState.offsetLeft || box.left;
+  const top = appState.offsetTop || box.top;
+  const camera: Camera = { scrollX: scenePx(appState.scrollX), scrollY: scenePx(appState.scrollY), zoom: zoomOf(appState.zoom.value) };
+  return toScene(point("screen", screenPx(event.clientX - left), screenPx(event.clientY - top)), camera);
+}
+
+/**
+ * Opens the one selected Block when a double click lands on it. Every other double click is left to
+ * Excalidraw, which is how a double click on empty canvas still starts text. The Map ignores the
+ * double click it dispatches itself to open a placed Block's label.
+ */
+export function installBlockDoubleClick(host: HTMLElement, deps: DoubleClickDeps): Uninstall {
+  /** Claims one double click for the selected Block, or leaves it to Excalidraw. */
+  const onDoubleClick = (event: MouseEvent): void => {
+    const block = deps.selectedBlock();
+    const canvas = event.target instanceof Element ? event.target.closest(INTERACTIVE_CANVAS) : null;
+    const appState = deps.session.api?.getAppState();
+    if (deps.session.openingLabel || block === null || canvas === null || appState === undefined) return;
+    if (!rectContains(elementRect(block), eventScenePoint(event, canvas, appState), scenePx(0))) return;
+    event.preventDefault();
+    event.stopPropagation();
+    deps.openBlock(block, canvas as HTMLElement);
+  };
+  host.addEventListener("dblclick", onDoubleClick, true);
+  return () => host.removeEventListener("dblclick", onDoubleClick, true);
 }
 
 /** The route the Map kinds definition is read from. */

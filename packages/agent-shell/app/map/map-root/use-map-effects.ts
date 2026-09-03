@@ -7,6 +7,7 @@
 
 import { useEffect } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { selectedIds } from "../canvas/projection.ts";
 import { installKeyboardDispatch } from "../input/keyboard-dispatch.ts";
 import { fitArea } from "./map-root-commands.ts";
 import { focusMapCanvas } from "../ui/canvas-focus.ts";
@@ -17,13 +18,14 @@ import { LAYOUT } from "../layout/layout-tokens.ts";
 import type { AreaBoardBridge } from "../mount-options.ts";
 import { installResourceCadence, refreshOpenPanel, resolveSceneResources } from "../surfaces/resources/resources-effects.ts";
 import { hasModalSurface } from "../surfaces/surface-stack.ts";
-import type { AreaKey } from "../units/ids.ts";
+import type { AreaKey, RuntimeId } from "../units/ids.ts";
 import { placementPreviewElements, placementProjectionKey } from "../surfaces/placement/placement-effects.ts";
-import { installAnnounceClock, installInertGuard, pushProjection, readMapKinds, reconcileSurfaces, settleMount, subscribeSnapshots } from "./map-root-effects.ts";
+import { installAnnounceClock, installBlockDoubleClick, installInertGuard, pushProjection, readMapKinds, reconcileSurfaces, settleMount, subscribeSnapshots } from "./map-root-effects.ts";
 import type { OpenSurfaces } from "./map-root-effects.ts";
 import { rowForLocator } from "../surfaces/resources/resources-views.ts";
 import type { SurfaceId } from "../surfaces/surface-registry.ts";
 import type { MapCore } from "./use-map-core.ts";
+import type { MapSession } from "./map-session.ts";
 import type { MapStores } from "./use-map-stores.ts";
 import type { MapWiring } from "./use-map-wiring.ts";
 
@@ -65,8 +67,8 @@ function useCanvasEffects(input: EffectsInput): void {
         surfaces: stores.stack,
         editingText: Boolean(core.session.api?.getAppState().editingTextElement),
         selectedArea: selectedVisibleArea(wiring.reads.scene, core.controller.snapshot().selection),
-        hasSelectedBlock: selectedBlockOf(core.controller.snapshot()) !== null,
-        hasSelection: core.controller.snapshot().selection.size > 0,
+        hasSelectedBlock: selectedBlockOf(core.controller.snapshot(), core.session) !== null,
+        hasSelection: liveSelectionIds(core).length > 0,
         findActive: stores.find.query.trim().length > 0,
       }),
       /** The open surface an event target sits inside, or null for the canvas. */
@@ -113,6 +115,19 @@ function useSurfaceEffects(input: EffectsInput): void {
   );
 
   useEffect(
+    /** Opens the selected Block when a double click lands on it, and leaves every other one to Excalidraw. */
+    () => installBlockDoubleClick(input.core.host, {
+      session: input.core.session,
+      controller: input.core.controller,
+      /** The Block that is the whole live selection now. */
+      selectedBlock: () => selectedBlockOf(input.core.controller.snapshot(), input.core.session),
+      /** Runs the Block's primary action from the canvas. */
+      openBlock: (block, opener) => runPrimaryAction(input, block, opener),
+    }),
+    [input.core, input.wiring],
+  );
+
+  useEffect(
     /** Advances the announce store's clock so every announcement clears. */
     () => installAnnounceClock(stores.dispatchAnnounce),
     [stores.dispatchAnnounce],
@@ -139,8 +154,8 @@ function useSurfaceEffects(input: EffectsInput): void {
 
   useEffect(
     /** Re-reads resource facts on the workspace cadence, and the open panel with them. */
-    () => installResourceCadence(wiring.effects, null),
-    [wiring.effects],
+    () => installResourceCadence(wiring.effects, core.options.resourceCadenceMs ?? null),
+    [wiring.effects, core.options.resourceCadenceMs],
   );
 
   useEffect(
@@ -159,9 +174,12 @@ function useHostEffects(input: EffectsInput): void {
   const { core, stores, wiring, snapshot } = input;
 
   useEffect(
-    /** Makes the shell and the canvas inert while a modal Map surface owns the screen. */
-    () => installInertGuard(core.host, hasModalSurface(stores.stack)),
-    [core.host, stores.stack],
+    /**
+     * Makes the shell and the canvas inert while a modal Map surface owns the screen. The Resources
+     * panel is declared a panel, but at narrow widths it is shown as a sheet, and a sheet is modal.
+     */
+    () => installInertGuard(core.host, hasModalSurface(stores.stack) || (stores.stack.includes("resources") && stores.resources.narrow)),
+    [core.host, stores.stack, stores.resources.narrow],
   );
 
   useEffect(
@@ -233,9 +251,25 @@ function openOnLocatedArea(input: EffectsInput): void {
   requestAnimationFrame(() => requestAnimationFrame(() => input.wiring.reads.scrollTo([element], false)));
 }
 
+/** Runs one Block's primary action, when it has one. */
+function runPrimaryAction(input: EffectsInput, block: SceneElement, opener: HTMLElement): void {
+  const facts = input.wiring.reads.view.resolveBlock(block);
+  const action = facts?.primaryAction;
+  if (facts === null || facts === undefined || action === null || action === undefined) return;
+  input.wiring.reads.runAction(facts, action, opener);
+}
+
+/** The ids Excalidraw holds selected, or the controller's selection before Excalidraw has mounted. */
+function liveSelectionIds(core: MapCore): readonly RuntimeId[] {
+  const appState = core.session.api?.getAppState();
+  return appState === undefined ? [...core.controller.snapshot().selection] : selectedIds(appState);
+}
+
 /** The Block that is the whole live selection, or null. */
-function selectedBlockOf(snapshot: Snapshot): SceneElement | null {
-  return selectedMapEntityElement(snapshot.composition.scene.elements, snapshot.selection);
+function selectedBlockOf(snapshot: Snapshot, session: MapSession): SceneElement | null {
+  const appState = session.api?.getAppState();
+  const ids = appState === undefined ? snapshot.selection : selectedIds(appState);
+  return selectedMapEntityElement(snapshot.composition.scene.elements, ids);
 }
 
 /** The open surface an event target sits inside, from the class the surface renders. */

@@ -159,8 +159,13 @@ async function placeIntoShard(env: PickerEnvironment, entry: PickerEntry, area: 
   const before = env.controller.composition();
   const beforeHull = shardHulls(scene).blocks;
   const placedWorld = worldWithShardScene(env.controller.world(), area, placed.scene);
-  env.controller.commitWorld(reanchorAfterPlacement(placedWorld, before, area, beforeHull), { changedAreas: [area], changedOwners: [owner] }, "place");
+  // The selection is set while the placement command is still open. The controller records the
+  // selection when the gesture ends, and that record is what redo restores, so a selection set
+  // after the command closed would be lost on undo then redo.
+  env.controller.beginGesture("place");
+  env.controller.preview(reanchorAfterPlacement(placedWorld, before, area, beforeHull), { changedAreas: [area], changedOwners: [owner] });
   env.controller.setSelection([runtimeId(owner, id)]);
+  env.controller.endGesture("place");
   const label = labelIdOf(placed.root);
   if (!keepOpen && entry.kind !== "resource" && label !== null) env.editLabel?.(runtimeId(owner, label));
   env.dispatch({ kind: "placed", keepOpen });

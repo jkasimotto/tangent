@@ -29,6 +29,7 @@ import { LiveRegion } from "./surfaces/announce/LiveRegion.tsx";
 import { KindsNotice } from "./surfaces/kinds/KindsNotice.tsx";
 import { SaveStatus } from "./surfaces/save/SaveStatus.tsx";
 import { recoverMap } from "./surfaces/save/save-effects.ts";
+import { associateGenericLink } from "./surfaces/resources/resources-scene-mutations.ts";
 import type { MapEntityFacts } from "./kernel/kernel-types.ts";
 import type { AreaKey } from "./units/ids.ts";
 
@@ -108,7 +109,7 @@ function MapBody({ core, stores, wiring, snapshot, view, options, controller }: 
         onToggleOutline={() => wiring.commands.toggleOutline()}
         onOpenHelp={() => wiring.openSurface("help", mapCanvasElement(core.host))}
         onRunAction={(facts, action, opener) => wiring.reads.runAction(facts, action, opener)}
-        onAddToArea={(facts, opener) => runPrimary(wiring, facts, opener)}
+        onAddToArea={(facts) => { associateGenericLink(wiring.surfaces.resourceEffects, facts); }}
         onShowDetails={(_facts, opener) => wiring.openResources(snapshot.locatedArea, opener)}
         onHideBlock={() => { if (block !== null) wiring.reads.hideBlock(block); }}
       />

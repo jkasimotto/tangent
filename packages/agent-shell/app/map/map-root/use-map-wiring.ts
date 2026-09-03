@@ -9,12 +9,13 @@
 import { useRef } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { CANVAS_ANNOUNCEMENTS } from "../copy.ts";
-import { finishBufferedTextEdit, browserSettle } from "../canvas/text-edit.ts";
+import { browserSettle } from "../canvas/text-edit.ts";
 import type { CanvasHandlers } from "../canvas/MapCanvas.tsx";
 import { asSceneElements } from "../canvas/projection.ts";
 import { createResourceEffects, loadResources } from "../surfaces/resources/resources-effects.ts";
 import type { ResourceEffects } from "../surfaces/resources/resources-effects.ts";
 import { closeResourceDetails, closeResourceRecovery, closeSceneRecovery, holdResourceDraft, viewResourceArea } from "../surfaces/resources/resource-actions.ts";
+import { resourceWritesAvailable } from "../surfaces/resources/resources-state.ts";
 import { hideResourceOnMap } from "../surfaces/resources/resources-scene-mutations.ts";
 import { resolutionForRow, resourceEntityForRow, resourceRowFacts } from "../surfaces/resources/resource-rows.ts";
 import { representationForRow } from "../surfaces/resources/resources-scene-mutations.ts";
@@ -42,9 +43,12 @@ import type { CanvasDeps } from "./map-root-canvas.ts";
 import { runKeyCommand } from "./map-root-commands.ts";
 import type { CommandDeps } from "./map-root-commands.ts";
 import { buildCommandDeps, buildEscape } from "./map-root-wiring-commands.ts";
+import { publishToWorld } from "./map-publish.ts";
+import type { PublishDeps } from "./map-publish.ts";
+import { selectionAppState } from "../canvas/projection.ts";
 import { elementRect } from "../input/hit-test.ts";
 import { startCanvasTextEdit } from "../ui/canvas-text-edit.ts";
-import { mapCanvasElement } from "../ui/canvas-focus.ts";
+import { focusMapCanvas, mapCanvasElement } from "../ui/canvas-focus.ts";
 
 /** Everything one render of the Map root is wired with. */
 export type MapWiring = {
@@ -73,6 +77,7 @@ export type WiringInput = {
 /** Builds every dependency record one render of the Map root needs. */
 export function useMapWiring(input: WiringInput): MapWiring {
   const { core, stores, snapshot, view } = input;
+  const hideRef = useRef<(block: SceneElement) => void>(ignoreBlock);
   /** Opens one surface and remembers the control focus returns to. */
   const openSurface = (id: SurfaceId, opener: HTMLElement | null = null): void => {
     core.session.openers.set(id, opener);
@@ -94,12 +99,17 @@ export function useMapWiring(input: WiringInput): MapWiring {
     },
     /** Runs a shell navigation the browser cannot do itself. */
     runShellAction: (facts, action, opener) => runShellAction(input, action, facts, opener),
+    /** Hides one Block through the Map's own command path, once the publish is wired below. */
+    hideBlock: (block) => hideRef.current(block),
   });
   const nonPointer = buildNonPointer(core);
   const publishDeps = buildPublishDeps(core, reads, nonPointer);
+  hideRef.current = (block) => hideBlock(publishDeps, core, block);
   core.publishRef.current = buildPointerPublish(publishDeps);
+  const latest = useRef<WiringInput>(input);
+  latest.current = input;
   const effectsRef = useRef<ResourceEffects | null>(null);
-  if (effectsRef.current === null) effectsRef.current = buildResourceEffects(input, reads);
+  if (effectsRef.current === null) effectsRef.current = buildResourceEffects(input, reads, latest);
   const effects = effectsRef.current;
   const surfaces = buildSurfaceInput(input, reads, effects, openSurface, closeSurface);
   const commands = buildCommandDeps(input, reads, publishDeps, surfaces, openSurface, closeSurface);
@@ -154,19 +164,18 @@ function buildNonPointer(core: MapCore): { begin: (kind: string) => void; settle
 }
 
 /** Builds the Resources effects context, which holds the panel's in-flight fences for the Map's life. */
-function buildResourceEffects(input: WiringInput, reads: RuntimeReads): ResourceEffects {
+function buildResourceEffects(input: WiringInput, reads: RuntimeReads, latest: { readonly current: WiringInput }): ResourceEffects {
   const { core, stores } = input;
   return createResourceEffects({
     api: core.options.api ?? null,
     dispatch: stores.dispatchResources,
-    /** The panel state as it is now, read at call time so an effect never sees a stale copy. */
-    getState: () => stores.resources,
+    /** The panel state as it is now. The effects live for the Map's life, so this must read the newest render. */
+    getState: () => latest.current.stores.resources,
     controller: core.controller,
     announce: reads.announce,
     /** Mints the id one mutation is retried under. */
     mintOperationId: () => operationId(crypto.randomUUID()),
-    /** The workspace rollout flag for resource writes. */
-    writesEnabled: () => Boolean(core.options.api),
+    writesEnabled: resourceWritesEnabled,
     scheduler: {
       /** Runs the callback on an interval and returns the stopper. */
       every: (callback, interval) => {
@@ -214,22 +223,36 @@ function buildSurfaceInput(input: WiringInput, reads: RuntimeReads, effects: Res
     loadResources: (area: AreaKey) => { void loadResources(effects, area); },
     /** Ends an open Show on Map layer. */
     releaseShowOnMap: () => { if (stores.placement.locating !== null) returnFromShow(buildPlacementPorts(surfaceInput), stores.placement); },
-    /** True when the catalog and transport allow a Map representation change. */
-    writesAvailable: () => Boolean(core.options.api),
+    /** True when the host offers resource writes and the panel's transport allows them now. */
+    writesAvailable: () => resourceWritesEnabled() && resourceWritesAvailable(stores.resources, true),
     /** True while the Resources surface is the narrow modal sheet. */
     narrowResources: () => stores.resources.narrow,
     /** What is open now, with the control that asked. */
     opener: (element: HTMLElement | null) => ({ element, resources: stores.resources.open ? { area: stores.resources.area, details: stores.resources.details } : null, picker: stores.picker.target !== null }),
-    /** Closes the surfaces a layer replaces. */
+    /** Closes the surfaces a layer replaces, in their own stores as well as on the stack. */
     closeSurfaces: (which) => {
-      if (which.picker) closeSurface("picker");
-      if (which.resources) closeSurface("resources");
+      if (which.picker) {
+        stores.dispatchPicker({ kind: "close" });
+        closeSurface("picker");
+      }
+      if (which.resources) {
+        stores.dispatchResources({ type: "close" });
+        closeSurface("resources");
+        browserSettle(() => focusMapCanvas(core.host));
+      }
     },
-    /** Reopens what a layer replaced. */
+    /** Reopens what a layer replaced and asks the panel to return focus to the control that started it. */
     returnTo: (target) => {
+      if (target.kind === "canvas") {
+        focusMapCanvas(core.host);
+        return;
+      }
       if (target.kind !== "resources" || target.area === null) return;
       stores.dispatchResources({ type: "open", area: target.area });
+      stores.dispatchResources({ type: "set-details", locator: target.details });
+      stores.dispatchResources({ type: "request-focus", focus: { control: target.control.attribute === "resource-show" ? "show" : "place", key: target.control.key } });
       openSurface("resources");
+      void loadResources(effects, target.area);
     },
     resourceEffects: effects,
     resourcePorts: ports,
@@ -303,6 +326,36 @@ function editPlacedLabel(core: MapCore, labelId: RuntimeId): void {
     const appState = core.session.api?.getAppState();
     if (label === undefined || appState === undefined) return;
     core.projection.project({ elements: snapshot.scene.elements, selection: [labelId] }, "placed-block-selection");
-    requestAnimationFrame(() => startCanvasTextEdit(core.host, snapshot.camera, appState, elementRect(label)));
+    requestAnimationFrame(() => {
+      core.session.openingLabel = true;
+      startCanvasTextEdit(core.host, snapshot.camera, appState, elementRect(label));
+      core.session.openingLabel = false;
+    });
   }));
+}
+
+/** The independent resource-write rollout: closed only when the workspace turns it off. */
+function resourceWritesEnabled(): boolean {
+  return (globalThis as { TANGENT_FEATURES?: { areaMapResourceWrites?: boolean } }).TANGENT_FEATURES?.areaMapResourceWrites !== false;
+}
+
+/** The hide before the publish is wired, which is only during the very first render. */
+function ignoreBlock(_block: SceneElement): void {
+  // The wiring replaces this on its first render, before any key can reach it.
+}
+
+/**
+ * Hides one Block and its bound label. The hide is a publish of the composed scene with those two
+ * elements marked deleted, so it takes the same path as every other change: the shard keeps the
+ * record, the Area re-anchors if its hull changed, and one history word can undo it.
+ */
+function hideBlock(publish: PublishDeps, core: MapCore, block: SceneElement): void {
+  const scene = structuredClone(core.controller.snapshot().composition.scene);
+  const hidden = new Set([block.id, ...(block.boundElements ?? []).filter((binding) => binding.type === "text").map((binding) => binding.id)]);
+  for (const element of scene.elements) if (hidden.has(element.id)) element.isDeleted = true;
+  core.session.actionKind = "hide";
+  publishToWorld(publish, scene.elements, selectionAppState([]));
+  core.controller.setSelection([]);
+  core.session.programmaticSelection = null;
+  core.projection.defer({ elements: core.controller.snapshot().scene.elements, selection: [] }, "projection");
 }

@@ -12,7 +12,7 @@ import type { TextEditBuffer } from "../canvas/text-edit.ts";
 import { deepestVisibleArea, visibleSceneFromSnapshot } from "../input/hit-test.ts";
 import type { VisibleScene } from "../input/hit-test.ts";
 import { PointerSession } from "../input/pointer-session.ts";
-import { runMapEntityAction, setBlockHidden } from "../kernel/kernel-boundary.ts";
+import { runMapEntityAction } from "../kernel/kernel-boundary.ts";
 import type { AreaMapController, MapEntityAction, MapEntityFacts, SceneElement, Snapshot } from "../kernel/kernel-types.ts";
 import { LAYOUT } from "../layout/layout-tokens.ts";
 import type { WorldMountOptions } from "../mount-options.ts";
@@ -20,7 +20,8 @@ import type { AnnounceAction } from "../surfaces/announce/announce-store.ts";
 import type { SurfaceId } from "../surfaces/surface-registry.ts";
 import { point, size } from "../units/frames.ts";
 import type { Camera, Point, Size } from "../units/frames.ts";
-import { areaKey, shardOwner } from "../units/ids.ts";
+
+import { shardOwner } from "../units/ids.ts";
 import type { AreaKey, ShardOwner } from "../units/ids.ts";
 import { scenePx, screenPx, zoom as zoomOf } from "../units/units.ts";
 import type { MapSession } from "./map-session.ts";
@@ -85,6 +86,8 @@ export type ReadsInput = {
   readonly openActionRecovery: (facts: MapEntityFacts, action: MapEntityAction, message: string) => void;
   /** Runs a shell navigation the browser cannot do itself. */
   readonly runShellAction: (facts: MapEntityFacts, action: MapEntityAction, opener: HTMLElement | null) => boolean;
+  /** Hides one Block through the Map's own command path, which is a publish of the composed scene. */
+  readonly hideBlock: (block: SceneElement) => void;
 };
 
 /** The Block actions the browser itself performs; everything else is the shell's. */
@@ -137,21 +140,6 @@ export function buildReads(input: ReadsInput): RuntimeReads {
       input.openActionRecovery(facts, action, refusalMessage(facts, action));
     });
   };
-  /** Hides one Block and its bound label through the shared world command path. */
-  const hideBlock = (block: SceneElement): void => {
-    const owner = block.customData?.tangentWorld?.owner;
-    const source = block.customData?.tangentWorld?.sourceId;
-    const node = owner === undefined ? undefined : core.controller.world().areas.find((entry) => entry.key === areaKey(owner));
-    if (node?.shard.scene === undefined || node.shard.scene === null || source === undefined) return;
-    const world = core.controller.world();
-    const next = {
-      ...world,
-      areas: world.areas.map((entry) => entry.key === node.key ? { ...entry, shard: { ...entry.shard, scene: setBlockHidden(entry.shard.scene as never, source, true) } } : entry),
-    };
-    core.controller.commitWorld(next, { changedOwners: [shardOwner(node.key)] }, "hide");
-    core.controller.setSelection([]);
-    core.session.programmaticSelection = null;
-  };
   return {
     snapshot,
     view: input.view,
@@ -166,7 +154,7 @@ export function buildReads(input: ReadsInput): RuntimeReads {
     /** True when the person asked for reduced motion. */
     reducedMotion: () => globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches,
     runAction,
-    hideBlock,
+    hideBlock: input.hideBlock,
     openSurface: input.openSurface,
     closeSurface: input.closeSurface,
   };

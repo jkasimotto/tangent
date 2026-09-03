@@ -7,6 +7,7 @@
 import { CANVAS_ANNOUNCEMENTS } from "../copy.ts";
 import type { TextEditBuffer } from "../canvas/text-edit.ts";
 import type { Projection } from "../canvas/projection.ts";
+import { selectedIds } from "../canvas/projection.ts";
 import { visibleSceneFromSnapshot } from "../input/hit-test.ts";
 import type { KeyCommand } from "../input/key-routes.ts";
 import { nudgeSelection } from "../input/nudge.ts";
@@ -55,10 +56,23 @@ function leafOf(area: AreaKey): string {
   return area.split("/").at(-1) ?? area;
 }
 
-/** The Block that is the whole live selection, or null. */
+/** The Block that is the whole selection the controller holds, or null. What the toolbar shows verbs for. */
 export function selectedBlock(deps: CommandDeps): SceneElement | null {
   const snapshot = deps.controller.snapshot();
   return selectedMapEntityElement(snapshot.composition.scene.elements, snapshot.selection);
+}
+
+/**
+ * The Block a key acts on: the whole selection Excalidraw holds. A command that changed the world,
+ * such as an undo, may not have published its selection back to the controller yet, and the key is
+ * about what the person can see selected. The controller's selection stands in before Excalidraw
+ * has mounted.
+ */
+export function liveSelectedBlock(deps: CommandDeps): SceneElement | null {
+  const snapshot = deps.controller.snapshot();
+  const appState = deps.session.api?.getAppState();
+  const ids = appState === undefined ? snapshot.selection : selectedIds(appState);
+  return selectedMapEntityElement(snapshot.composition.scene.elements, ids);
 }
 
 /** Fits one Area and announces that it is in view. */
@@ -86,7 +100,7 @@ export function changeFold(deps: CommandDeps, area: AreaKey): void {
 
 /** Runs the primary or the read action of the selected Block. */
 function openSelectedBlock(deps: CommandDeps, verb: "open" | "read"): void {
-  const block = selectedBlock(deps);
+  const block = liveSelectedBlock(deps);
   const facts = block === null ? null : deps.resolveBlock(block);
   const action = verb === "read" ? facts?.readAction : facts?.primaryAction;
   if (facts === null || facts === undefined || action === null || action === undefined) return;
@@ -130,7 +144,7 @@ export function runKeyCommand(deps: CommandDeps, command: KeyCommand): void {
     case "refuse-area-delete": deps.announce(CANVAS_ANNOUNCEMENTS.outlinesFromTree); return;
     case "open-selected-block": openSelectedBlock(deps, command.verb); return;
     case "hide-selected-block": {
-      const block = selectedBlock(deps);
+      const block = liveSelectedBlock(deps);
       if (block !== null) deps.hideBlock(block);
       return;
     }

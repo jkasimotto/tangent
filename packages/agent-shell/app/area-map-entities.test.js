@@ -199,3 +199,97 @@ test("blocked and failed navigation return the same typed recovery and close a c
   assert.equal(closed, 1);
   assert.deepEqual(await runMapEntityAction({ kind: "open-document", file: "otto/a.md", subpath: null, mode: "open" }), { kind: "unavailable" });
 });
+
+/** The Map kinds catalog Tangent writes as its starter, as the resolver sees it. */
+const starterKinds = {
+  revision: "starter",
+  kinds: [
+    { id: "worktree", label: "Worktree", target: "path", icon: "worktree", icons: [{ when: "missing", icon: "worktree-missing" }, { when: "dirty", icon: "worktree-dirty" }], click: "copy-path", problems: [] },
+    { id: "repository", label: "Repository", target: "path", icon: "repository", icons: [], click: "copy-path", problems: [] },
+    { id: "github-pr", label: "GitHub PR", target: "url", icon: "pull-request", icons: [], click: "open", problems: [] },
+    { id: "commit", label: "Commit", target: "vault", icon: "commit", icons: [], click: null, problems: [] },
+    { id: "document", label: "Document", target: "vault", icon: null, icons: [], click: "open-goal", problems: [] },
+  ],
+  icons: {},
+  problems: [],
+};
+
+/** Builds one GitHub PR resolution with a scripted lifecycle. */
+function reviewResolution(lifecycle) {
+  return current({
+    label: "Map entities review",
+    target: { kind: "link", url: "https://github.com/otto/tangent/pull/42" },
+    local: null,
+    link: { kind: "github-pr", owner: "otto", repository: "tangent", number: 42, lifecycle },
+  });
+}
+
+test("every reported facet becomes one closed state word an icon can key on", () => {
+  /** Resolves one worktree Block with a scripted local observation. */
+  const states = (local) => resolveMapEntity({ source, tangent, resource: current({ local }) }).states;
+  assert.deepEqual(states({ state: "current", value: { state: "available", checkout: { kind: "branch", head: "a", branchRef: "refs/heads/main" }, dirty: true }, checkedAt: "2026-09-02T00:00:00Z" }), ["available", "branch", "dirty"]);
+  assert.deepEqual(states({ state: "current", value: { state: "available", checkout: { kind: "detached", head: "a" }, dirty: false }, checkedAt: "2026-09-02T00:00:00Z" }), ["available", "detached", "clean"]);
+  assert.deepEqual(states({ state: "current", value: { state: "available", checkout: { kind: "bare", head: null } }, checkedAt: "2026-09-02T00:00:00Z" }), ["available", "bare"]);
+  assert.deepEqual(states({ state: "current", value: { state: "missing" }, checkedAt: "2026-09-02T00:00:00Z" }), ["missing"]);
+  assert.deepEqual(states({ state: "last-known", value: { state: "available", checkout: { kind: "branch", head: "a", branchRef: "refs/heads/main" } }, checkedAt: "2026-09-02T00:00:00Z" }), ["last-known", "available", "branch"]);
+  assert.deepEqual(states({ state: "unavailable", value: null, checkedAt: null }), ["unavailable"]);
+  assert.deepEqual(states({ state: "not-checked", value: null, checkedAt: null }), []);
+
+  const merged = resolveMapEntity({ source, tangent, resource: reviewResolution({ state: "current", value: { stateLabel: "Merged", treatment: "success", providerUpdatedAt: "2026-09-02T00:00:00Z" } }) });
+  assert.deepEqual(merged.states, ["success", "Merged"], "the provider's own word is a state Julian may name");
+  assert.equal(merged.kindId, "github-pr");
+  const closed = resolveMapEntity({ source, tangent, resource: reviewResolution({ state: "last-known", value: { stateLabel: "Closed", treatment: "muted", providerUpdatedAt: "2026-09-02T00:00:00Z" } }) });
+  assert.deepEqual(closed.states, ["last-known", "muted", "Closed"]);
+});
+
+test("an uncommitted change reads on the Block, and a clean checkout stays quiet", () => {
+  /** Resolves the display words for one dirty value. */
+  const words = (dirty) => resolveMapEntity({ source, tangent, resource: current({ local: { state: "current", value: { state: "available", checkout: { kind: "branch", head: "a", branchRef: "refs/heads/main" }, dirty }, checkedAt: "2026-09-02T00:00:00Z" } }) }).display.stateText;
+  assert.deepEqual(words(true), ["Dirty"]);
+  assert.deepEqual(words(false), []);
+  assert.deepEqual(words(undefined), []);
+});
+
+test("the kind id follows the provider, then the target, and a commit resolves as itself", () => {
+  assert.equal(resolveMapEntity({ source, tangent, resource: current() }).kindId, "worktree");
+  assert.equal(resolveMapEntity({ source, tangent, resource: current({ target: { kind: "repository", path: "/Users/julianotto/Projects/tangent" } }) }).kindId, "repository");
+  assert.equal(resolveMapEntity({ source, tangent, resource: current({ target: { kind: "link", url: "https://example.com/x" }, local: null, link: { kind: "generic" } }) }).kindId, "link");
+
+  const commit = resolveMapEntity({ source: { owner, sourceId: "commit-block" }, tangent: { kind: "commit", ref: "vault@077879ba1c2d3e4f" }, documents: [] });
+  assert.equal(commit.kindId, "commit");
+  assert.equal(commit.sourceState, "current", "a placed commit is a real thing, not a gone Document");
+  assert.equal(commit.display.label, "077879ba");
+  assert.equal(commit.display.kindLabel, "Commit");
+  assert.equal(commit.primaryAction, null, "nothing can open a vault commit yet");
+});
+
+test("a definition verb replaces the kind's action only for a current thing", () => {
+  const worktree = resolveMapEntity({ source, tangent, kinds: starterKinds, resource: current() });
+  assert.deepEqual(worktree.primaryAction, { kind: "copy-path", resource: { owner, id }, path: "/Users/julianotto/Projects/otto-tangent-map-entities" });
+  assert.equal(worktree.display.actionLabel, "Copy path");
+
+  const review = resolveMapEntity({ source, tangent, kinds: starterKinds, resource: reviewResolution({ state: "current", value: { stateLabel: "Merged", treatment: "success", providerUpdatedAt: "2026-09-02T00:00:00Z" } }) });
+  assert.equal(review.primaryAction.kind, "open-url");
+  assert.equal(review.display.actionLabel, "Open PR", "the kind's own label survives a verb that names the same action");
+
+  const details = { ...starterKinds, kinds: starterKinds.kinds.map((entry) => (entry.id === "worktree" ? { ...entry, click: "details" } : entry)) };
+  const withDetails = resolveMapEntity({ source, tangent, kinds: details, resource: current() });
+  assert.deepEqual(withDetails.primaryAction, { kind: "details", resource: { owner, id } });
+  assert.equal(withDetails.display.actionLabel, "Details");
+
+  const gone = resolveMapEntity({ source, tangent, kinds: starterKinds, resource: { state: "gone", value: { locator: { owner, id }, reason: "removed", lastKnown: { label: "Removed checkout", target: { kind: "worktree", path: "/Users/julianotto/Projects/removed" } } } } });
+  assert.equal(gone.display.actionLabel, "Copy last known path", "a gone Block keeps the action whose label says it is last known");
+
+  const broken = { ...starterKinds, kinds: starterKinds.kinds.map((entry) => (entry.id === "worktree" ? { ...entry, click: "open", problems: ["a path kind cannot run `open`"] } : entry)) };
+  const unchanged = resolveMapEntity({ source, tangent, kinds: broken, resource: current() });
+  assert.equal(unchanged.primaryAction.kind, "copy-path", "an entry with a problem never changes a Block");
+});
+
+test("a figure and the same card describe themselves identically", () => {
+  const withCatalog = resolveMapEntity({ source, tangent, kinds: starterKinds, resource: current() });
+  const withoutCatalog = resolveMapEntity({ source, tangent, resource: current() });
+  assert.equal(withCatalog.accessibleName, withoutCatalog.accessibleName);
+  assert.equal(withCatalog.searchText, withoutCatalog.searchText);
+  assert.match(withCatalog.accessibleName, /^Worktree: /);
+  assert.match(withCatalog.searchText, /Worktree/);
+});

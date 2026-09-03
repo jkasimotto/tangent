@@ -59,6 +59,23 @@ async function optionalGitText(readGit, cwd, args, signal, allowedCodes) {
   }
 }
 
+/**
+ * Reports whether one checkout has an uncommitted change to a tracked file.
+ * `--no-optional-locks` keeps the check from writing the index, so it never
+ * contends with an agent running Git in the same checkout. Untracked files do
+ * not count: scanning for them costs seconds on a large repository and one
+ * scratch file would leave a checkout dirty for good.
+ */
+async function checkoutIsDirty(readGit, cwd, signal) {
+  try {
+    await readGit(cwd, ["--no-optional-locks", "diff", "--quiet", "HEAD", "--"], { signal });
+    return false;
+  } catch (error) {
+    if (Number(error?.code) === 1) return true;
+    throw error;
+  }
+}
+
 /** Reads one local worktree or repository as bounded Git and filesystem facts. */
 export async function inspectLocalResource(target, { signal, statPath = stat, readGit = gitText } = {}) {
   try {
@@ -76,6 +93,7 @@ export async function inspectLocalResource(target, { signal, statPath = stat, re
       return {
         state: "available",
         checkout: branchRef ? { kind: "branch", head, branchRef } : { kind: "detached", head },
+        dirty: await checkoutIsDirty(readGit, target.path, signal),
         repositoryPath: await readGit(target.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], { signal }).then((folder) => path.dirname(folder)),
       };
     }
@@ -85,7 +103,7 @@ export async function inspectLocalResource(target, { signal, statPath = stat, re
     if (bare === "true") return { state: "available", checkout: { kind: "bare", head: head || null } };
     await readGit(target.path, ["rev-parse", "--show-toplevel"], { signal });
     const branchRef = await optionalGitText(readGit, target.path, ["symbolic-ref", "-q", "HEAD"], signal, new Set([1]));
-    return { state: "available", checkout: branchRef ? { kind: "branch", head, branchRef } : { kind: "detached", head } };
+    return { state: "available", checkout: branchRef ? { kind: "branch", head, branchRef } : { kind: "detached", head }, dirty: await checkoutIsDirty(readGit, target.path, signal) };
   } catch (error) {
     if (["ENOENT", "ENOTDIR"].includes(error?.code)) return { state: "missing" };
     if (["EACCES", "EPERM"].includes(error?.code)) return { state: "access-denied" };

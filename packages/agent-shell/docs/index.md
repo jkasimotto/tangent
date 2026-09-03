@@ -23,7 +23,9 @@ Each Area can have one `.excalidraw` source shard. One browser world shows the c
 
 Each physical Area can also own `map-resources.json`. This catalog supports multiple Worktrees, Repositories, and Links without changing legacy launch bindings.
 Resource Blocks use the shared Tangent Block and world-layout path. A resource Block stores only its catalog-local opaque ID.
-The server derives target, state, provenance, placement, and cached observation facts. A status refresh does not write the Map.
+The server derives target, state, provenance, placement, and cached observation facts. A status refresh does not write the Map. A local check also reports whether a checkout has an uncommitted change to a tracked file.
+
+`map-kinds.md` and `map-icons/` at the vault root decide what each kind of thing looks like on a Map and what one click does with it. Tangent writes both once and never rewrites them. The server reads them per request and serves one catalog with a revision; the Map installs it on its resource cadence, with no restart.
 
 An agent can present a Markdown Document on its Goal. An exact Area brain can also use `tangent area present <area> <file>...` to present an Area Document without a Goal. Work shows each presentation under its owner until Julian dismisses it. The runtime records do not change a Document, Goal queue, or Goal relation.
 

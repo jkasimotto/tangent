@@ -182,6 +182,7 @@ function localValue(value, kind) {
     const projectedCheckout = checkout(value.checkout);
     if (!projectedCheckout || kind === "worktree" && projectedCheckout.kind === "bare") return null;
     result.checkout = projectedCheckout;
+    if (typeof value.dirty === "boolean") result.dirty = value.dirty;
     if (kind === "worktree") {
       const repositoryPath = text(value.repositoryPath, 32_768);
       if (!repositoryPath?.startsWith("/") || STRUCTURAL_CONTROL_CHARACTER.test(repositoryPath)) return null;

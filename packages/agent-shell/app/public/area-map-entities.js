@@ -1,5 +1,10 @@
 const MAP_ENTITY_KINDS = new Set(["goal", "document", "area", "link", "brain", "agent", "person", "request", "commit", "evidence", "resource"]);
 const OPAQUE_RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const VAULT_COMMIT_REF = /^vault@([0-9a-f]{7,40})$/;
+const VERB_LABELS = Object.freeze({
+  "copy-path": "Copy path", open: "Open", "open-document": "Open Document",
+  "open-goal": "Open Goal", "open-brain": "Open Brain", details: "Details",
+});
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
 
 /** Reports whether one value is safe to use as a catalog-local opaque identity. */
@@ -100,6 +105,19 @@ function branchLabel(checkout) {
   return String(checkout.branchRef ?? "").replace(/^refs\/heads\//, "");
 }
 
+/**
+ * Returns the closed state words a local observation value reports: the path
+ * state, then the checkout kind, then the working tree. These words pick an
+ * icon; the visible words come from `localPresentation`.
+ */
+function localStates(value) {
+  if (!value) return [];
+  const checkout = ["branch", "detached", "bare"].includes(value.checkout?.kind) ? [value.checkout.kind] : [];
+  const worktree = value.dirty === true ? ["dirty"] : value.dirty === false ? ["clean"] : [];
+  const state = ["available", "missing", "not-a-worktree", "access-denied"].includes(value.state) ? [value.state] : [];
+  return [...state, ...checkout, ...worktree];
+}
+
 /** Converts a local observation into presentation-only state facts. */
 function localPresentation(observation) {
   /** Returns exceptional target state while leaving Available visually quiet. */
@@ -108,27 +126,32 @@ function localPresentation(observation) {
     "not-a-worktree": "Not a worktree",
     "access-denied": "Access denied",
   })[value?.state] ?? "";
-  if (!observation || observation.state === "not-checked") return { stateText: ["Not checked"], value: null };
+  // An uncommitted change is worth a word; a clean checkout stays quiet, the
+  // way Available does.
+  /** Returns the exceptional target words, including an uncommitted change. */
+  const words = (value) => [targetState(value), value?.dirty === true ? "Dirty" : ""].filter(Boolean);
+  if (!observation || observation.state === "not-checked") return { stateText: ["Not checked"], value: null, states: [] };
   if (observation.state === "checking") {
-    const state = targetState(observation.value);
-    return { stateText: [state, "Checking"].filter(Boolean), value: observation.value ?? null };
+    return { stateText: [...words(observation.value), "Checking"], value: observation.value ?? null, states: ["checking", ...localStates(observation.value)] };
   }
-  if (observation.state === "current") return { stateText: [targetState(observation.value)].filter(Boolean), value: observation.value };
-  if (observation.state === "last-known") return { stateText: [targetState(observation.value), "Last known"].filter(Boolean), value: observation.value };
-  return { stateText: ["Path status unavailable"], value: null };
+  if (observation.state === "current") return { stateText: words(observation.value), value: observation.value, states: localStates(observation.value) };
+  if (observation.state === "last-known") return { stateText: [...words(observation.value), "Last known"], value: observation.value, states: ["last-known", ...localStates(observation.value)] };
+  return { stateText: ["Path status unavailable"], value: null, states: ["unavailable"] };
 }
 
 /** Converts a provider lifecycle observation without parsing its state label. */
 function lifecyclePresentation(observation) {
   const value = observation?.value;
   if (!observation || observation.state === "not-checked" || observation.state === "unavailable") {
-    return { stateText: ["Status unavailable"], treatment: null };
+    return { stateText: ["Status unavailable"], treatment: null, states: observation ? ["unavailable"] : [] };
   }
   const label = typeof value?.stateLabel === "string" ? value.stateLabel : "";
   const treatment = ["success", "neutral", "muted"].includes(value?.treatment) ? value.treatment : null;
-  if (observation.state === "checking") return { stateText: [label, "Checking"].filter(Boolean), treatment };
-  if (observation.state === "last-known") return { stateText: [label, "Last known"].filter(Boolean), treatment };
-  return { stateText: [label || "Status unavailable"], treatment: label ? treatment : null };
+  /** Joins the observation word, the treatment, and the provider's own word. */
+  const states = (observationState) => [observationState, treatment, label].filter(Boolean);
+  if (observation.state === "checking") return { stateText: [label, "Checking"].filter(Boolean), treatment, states: states("checking") };
+  if (observation.state === "last-known") return { stateText: [label, "Last known"].filter(Boolean), treatment, states: states("last-known") };
+  return { stateText: [label || "Status unavailable"], treatment: label ? treatment : null, states: label ? states(null) : [] };
 }
 
 /** Returns the provider-specific Link kind and compact target clue. */
@@ -144,7 +167,7 @@ function linkPresentation(entity) {
     targetClue: facet.revisionId,
     lifecycle: lifecyclePresentation(facet.lifecycle),
   };
-  return { kindLabel: "Link", targetClue: urlHost(entity.target.url), lifecycle: { stateText: [], treatment: null } };
+  return { kindLabel: "Link", targetClue: urlHost(entity.target.url), lifecycle: { stateText: [], treatment: null, states: [] } };
 }
 
 /** Returns all presentation facts while retaining the exact target for actions. */
@@ -157,6 +180,8 @@ function currentResourcePresentation(entity) {
     const kindLabel = entity.target.kind === "worktree" ? "Worktree" : "Repository";
     return {
       kindLabel,
+      kindId: entity.target.kind,
+      states: local.states,
       label: String(entity.label || pathLeaf(path)),
       targetClue: branch || pathLeaf(path),
       target: path,
@@ -177,6 +202,8 @@ function currentResourcePresentation(entity) {
     const action = { kind: "open-url", resource: entity.locator, url, targetLabel };
     return {
       kindLabel: link.kindLabel,
+      kindId: ["github-pr", "phabricator-revision"].includes(entity.link?.kind) ? entity.link.kind : "link",
+      states: link.lifecycle.states ?? [],
       label: String(entity.label || link.targetClue || urlHost(url)),
       targetClue: link.targetClue,
       target: url,
@@ -191,10 +218,13 @@ function currentResourcePresentation(entity) {
 }
 
 /** Returns a deterministic resource fallback when catalog authority is unavailable. */
-function unresolvedResource(source, locator) {
+function unresolvedResource(source, locator, kinds = null) {
   const label = `Resource ${locator.id}`;
   return resolvedEntity({
     source,
+    kinds,
+    kindId: "resource",
+    states: ["unresolved"],
     reference: { kind: "resource", resource: locator },
     kindLabel: "Resource",
     label,
@@ -209,13 +239,62 @@ function unresolvedResource(source, locator) {
   });
 }
 
+/** Returns the entry the Map kinds definition holds for one kind id, if it is usable. */
+function kindEntry(kinds, kindId) {
+  const entry = (kinds?.kinds ?? []).find((candidate) => candidate?.id === kindId) ?? null;
+  return entry && !(entry.problems ?? []).length ? entry : null;
+}
+
+/**
+ * Returns the action one definition verb names. Every verb is an existing Map
+ * action; a verb the resolved target cannot run returns null and the Block
+ * keeps its current action.
+ */
+function actionForVerb(verb, { reference, target, area }) {
+  const resource = reference?.kind === "resource" ? reference.resource : null;
+  if (verb === "copy-path") { const path = safeAbsolutePath(target); return path ? { kind: "copy-path", resource, path } : null; }
+  if (verb === "open") { const url = safeExternalUrl(target); return url ? { kind: "open-url", resource, url, targetLabel: urlHost(url) } : null; }
+  if (verb === "details") return resource ? { kind: "details", resource } : null;
+  if (reference?.kind !== "vault") return null;
+  const file = splitVaultReference(reference.ref);
+  if (verb === "open-document") return { kind: "open-document", file: file.file, subpath: file.subpath, mode: "open" };
+  if (verb === "open-goal") return { kind: "open-goal", file: file.file };
+  if (verb === "open-brain") return area ? { kind: "open-area-brain", area } : null;
+  return null;
+}
+
+/**
+ * Applies the click verb of one definition entry over the kind's own action.
+ * Only a current thing takes the verb: a gone Block keeps its last-known
+ * action, whose label already says so.
+ */
+function withKindEntry(facts, entry, { reference, area, sourceState }) {
+  if (!entry) return facts;
+  const kindLabel = entry.label || facts.kindLabel;
+  if (!entry.click || sourceState !== "current") return { ...facts, kindLabel };
+  const action = actionForVerb(entry.click, { reference, target: facts.target, area });
+  if (!action) return { ...facts, kindLabel };
+  return {
+    ...facts,
+    kindLabel,
+    primaryAction: action,
+    readAction: action.kind === "open-url" ? action : action.kind === "open-document" ? { ...action, mode: "read" } : null,
+    actionLabel: action.kind === facts.primaryAction?.kind ? facts.actionLabel : VERB_LABELS[entry.click],
+  };
+}
+
 /** Builds the shared accessible and Find facts for one resolved entity. */
-function resolvedEntity({ source, reference, kindLabel, label, targetClue, target, stateText, treatment, primaryAction, readAction, actionLabel, sourceState }) {
+function resolvedEntity(input) {
+  const { source, reference, kinds = null, kindId = "", area = null, sourceState } = input;
+  const facts = withKindEntry(input, kindEntry(kinds, kindId), { reference, area, sourceState });
+  const { kindLabel, label, targetClue, target, stateText, treatment, primaryAction, readAction, actionLabel } = facts;
   const states = stateText.length ? stateText : [sourceState === "current" ? "Current" : sourceState];
   const owner = source.owner || "unknown";
   return {
     source,
     reference,
+    kindId,
+    states: [...(input.states ?? [])],
     display: { kindLabel, label, targetClue, stateText: [...stateText], externalTreatment: treatment, actionLabel },
     accessibleName: `${kindLabel}: ${label}. ${states.join(". ")}. Area ${owner}. Target ${target}`,
     searchText: [kindLabel, label, targetClue, target, ...states, owner].filter(Boolean).join(" "),
@@ -233,16 +312,17 @@ function matchingResourceResolution(resolution, locator) {
 }
 
 /** Resolves a Resource Block from authoritative catalog projection facts. */
-function resolveResource({ source, tangent, resolution }) {
+function resolveResource({ source, tangent, resolution, kinds }) {
   const locator = mapEntityLocator(source, tangent);
   if (!locator) return null;
   const matched = matchingResourceResolution(resolution, locator);
-  if (!matched) return unresolvedResource(source, locator);
+  if (!matched) return unresolvedResource(source, locator, kinds);
   if (matched.state === "current") {
     const facts = currentResourcePresentation(matched.value);
-    if (!facts) return unresolvedResource(source, locator);
+    if (!facts) return unresolvedResource(source, locator, kinds);
     return resolvedEntity({
       source,
+      kinds,
       reference: { kind: "resource", resource: locator },
       ...facts,
       sourceState: "current",
@@ -251,7 +331,7 @@ function resolveResource({ source, tangent, resolution }) {
   const lastKnown = matched.value.lastKnown;
   if (!lastKnown?.target) {
     return resolvedEntity({
-      source,
+      source, kinds, kindId: "resource", states: ["gone"],
       reference: { kind: "resource", resource: locator },
       kindLabel: "Resource",
       label: lastKnown?.label || `Resource ${locator.id}`,
@@ -263,19 +343,21 @@ function resolveResource({ source, tangent, resolution }) {
   const label = String(lastKnown.label || (lastKnown.target.kind === "link" ? urlHost(lastKnown.target.url) : pathLeaf(lastKnown.target.path)));
   if (lastKnown.target.kind === "link") {
     const url = safeExternalUrl(lastKnown.target.url);
-    if (!url || !["http:", "https:"].includes(new URL(url).protocol)) return unresolvedResource(source, locator);
+    if (!url || !["http:", "https:"].includes(new URL(url).protocol)) return unresolvedResource(source, locator, kinds);
     const targetLabel = urlHost(url);
     const action = { kind: "open-url", resource: locator, url, targetLabel };
     return resolvedEntity({
-      source, reference: { kind: "resource", resource: locator }, kindLabel: "Link", label,
+      source, kinds, kindId: "link", states: ["gone"],
+      reference: { kind: "resource", resource: locator }, kindLabel: "Link", label,
       targetClue: targetLabel, target: url, stateText: ["gone"], treatment: null,
       primaryAction: action, readAction: action, actionLabel: "Open last known link", sourceState: "gone",
     });
   }
   const path = safeAbsolutePath(lastKnown.target.path);
-  if (!path) return unresolvedResource(source, locator);
+  if (!path) return unresolvedResource(source, locator, kinds);
   return resolvedEntity({
-    source, reference: { kind: "resource", resource: locator },
+    source, kinds, kindId: lastKnown.target.kind, states: ["gone"],
+    reference: { kind: "resource", resource: locator },
     kindLabel: lastKnown.target.kind === "worktree" ? "Worktree" : "Repository", label,
     targetClue: pathLeaf(path), target: path, stateText: ["gone"], treatment: null,
     primaryAction: { kind: "copy-path", resource: locator, path }, readAction: null,
@@ -284,20 +366,39 @@ function resolveResource({ source, tangent, resolution }) {
 }
 
 /** Resolves a generic URL Block while retaining its composed source owner. */
-function resolveLink({ source, tangent }) {
+function resolveLink({ source, tangent, kinds }) {
   const url = safeExternalUrl(tangent.ref);
   if (!url) return null;
   const targetLabel = urlHost(url);
   const action = { kind: "open-url", resource: null, url, targetLabel };
   return resolvedEntity({
-    source, reference: { kind: "link", url }, kindLabel: "Link", label: targetLabel,
+    source, kinds, kindId: "link", states: [],
+    reference: { kind: "link", url }, kindLabel: "Link", label: targetLabel,
     targetClue: targetLabel, target: url, stateText: [], treatment: null,
     primaryAction: action, readAction: action, actionLabel: "Open", sourceState: "current",
   });
 }
 
+/**
+ * Resolves a placed vault commit. Nothing indexes `vault@<sha>`, so the Block
+ * used to resolve as gone and print a stale cached subject. It now reads as
+ * what it is: a current commit, named by its short SHA, with no action until a
+ * commit reader exists.
+ */
+function resolveCommit({ source, tangent, kinds, sha }) {
+  return resolvedEntity({
+    source, kinds, kindId: "commit", states: [],
+    reference: { kind: "vault", entityKind: "commit", ref: tangent.ref },
+    kindLabel: "Commit", label: sha.slice(0, 8), targetClue: "vault", target: tangent.ref,
+    stateText: [], treatment: null, primaryAction: null, readAction: null, actionLabel: null,
+    sourceState: "current",
+  });
+}
+
 /** Resolves one existing vault Block from the trusted navigation projection. */
-function resolveVault({ source, tangent, documents }) {
+function resolveVault({ source, tangent, documents, kinds }) {
+  const commit = tangent.kind === "commit" ? VAULT_COMMIT_REF.exec(tangent.ref) : null;
+  if (commit) return resolveCommit({ source, tangent, kinds, sha: commit[1] });
   const reference = splitVaultReference(tangent.ref);
   if (!reference.file || reference.file.startsWith("/") || CONTROL_CHARACTER.test(reference.file)) return null;
   const record = (documents ?? []).find((item) => item?.file === reference.file);
@@ -318,7 +419,9 @@ function resolveVault({ source, tangent, documents }) {
     actionLabel = "Open Document";
   }
   return resolvedEntity({
-    source, reference: { kind: "vault", entityKind: tangent.kind, ref: tangent.ref },
+    source, kinds, area, kindId: tangent.kind,
+    states: [...(record ? [] : ["gone"]), ...(record?.live || record?.sessionState === "live" ? ["live"] : [])],
+    reference: { kind: "vault", entityKind: tangent.kind, ref: tangent.ref },
     kindLabel: tangent.kind === "goal" ? "Goal" : tangent.kind === "area" ? "Area" : "Document",
     label, targetClue: reference.subpath || reference.file, target: tangent.ref,
     stateText, treatment: null, primaryAction, readAction, actionLabel,
@@ -335,9 +438,10 @@ export function resolveMapEntity(input = {}) {
   const tangent = input.tangent ?? tangentOf(element);
   const source = sourceOf(input, element);
   if (!source || !tangent || !MAP_ENTITY_KINDS.has(tangent.kind)) return null;
-  if (tangent.kind === "resource") return resolveResource({ source, tangent, resolution: input.resource ?? input.resolution ?? null });
-  if (tangent.kind === "link") return resolveLink({ source, tangent });
-  return resolveVault({ source, tangent, documents: input.documents ?? [] });
+  const kinds = input.kinds ?? null;
+  if (tangent.kind === "resource") return resolveResource({ source, tangent, kinds, resolution: input.resource ?? input.resolution ?? null });
+  if (tangent.kind === "link") return resolveLink({ source, tangent, kinds });
+  return resolveVault({ source, tangent, kinds, documents: input.documents ?? [] });
 }
 
 /** Returns the browser-owned effects without importing browser globals in tests. */

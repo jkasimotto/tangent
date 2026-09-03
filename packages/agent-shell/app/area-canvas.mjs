@@ -48,23 +48,16 @@ function safeString(value, name, errors, { required = false, max = 100_000 } = {
   if ((required || value !== undefined && value !== null) && (typeof value !== "string" || required && !value || value.length > max || value.includes("\0"))) errors.push(`${name} must be ${required ? "a non-empty " : "a "}safe string`);
 }
 
-/** Validates the Excalidraw envelope while preserving forward-compatible element fields. */
-export function validateAreaCanvas(scene) {
+/**
+ * Validates one Excalidraw element list on its own, apart from any scene
+ * envelope. The Map kinds catalog reads icon drawings through the same checks
+ * as an Area scene, so one parser owns what an element may contain.
+ */
+export function validateSceneElements(elements) {
   const errors = [];
   const warnings = [];
-  if (!scene || typeof scene !== "object" || Array.isArray(scene)) return { ok: false, errors: ["scene must be an object"], warnings };
-  if (scene.type !== "excalidraw") errors.push("scene.type must be excalidraw");
-  if (!Number.isInteger(scene.version) || scene.version < 1 || scene.version > 100) errors.push("scene.version must be a supported integer");
-  safeString(scene.source, "scene.source", errors, { max: 2_000 });
-  if (scene.tangent !== undefined && (!scene.tangent || typeof scene.tangent !== "object" || Array.isArray(scene.tangent) || !Number.isInteger(scene.tangent.format) || scene.tangent.format < 1)) errors.push("scene.tangent.format must be a positive integer");
-  if (!Array.isArray(scene.elements)) errors.push("scene.elements must be an array");
-  if (!scene.appState || typeof scene.appState !== "object" || Array.isArray(scene.appState)) errors.push("scene.appState must be an object");
-  if (!scene.files || typeof scene.files !== "object" || Array.isArray(scene.files)) errors.push("scene.files must be an object");
-  if (!Array.isArray(scene.elements)) return { ok: false, errors, warnings };
-  if (scene.elements.length > MAX_ELEMENTS) errors.push(`scene must contain at most ${MAX_ELEMENTS} elements`);
-  if (scene.files && typeof scene.files === "object" && Object.keys(scene.files).length > MAX_FILES) errors.push(`scene must contain at most ${MAX_FILES} files`);
   const ids = new Set();
-  for (const [index, element] of scene.elements.entries()) {
+  for (const [index, element] of elements.entries()) {
     const at = `elements[${index}]`;
     if (!element || typeof element !== "object" || Array.isArray(element)) { errors.push(`${at} must be an object`); continue; }
     safeString(element.id, `${at}.id`, errors, { required: true, max: 256 });
@@ -81,12 +74,33 @@ export function validateAreaCanvas(scene) {
     else if (tangent?.kind === "resource" && !isSafeResourceId(tangent.ref)) errors.push(`${at}.customData.tangent resource ref must be a safe opaque ID`);
   }
   const bindings = [];
-  for (const element of scene.elements) {
+  for (const element of elements) {
     for (const binding of [element.startBinding, element.endBinding]) if (binding?.elementId) bindings.push([element.id, binding.elementId]);
     if (element.containerId) bindings.push([element.id, element.containerId]);
     for (const bound of element.boundElements ?? []) if (bound?.id) bindings.push([element.id, bound.id]);
   }
   for (const [from, to] of bindings) if (!ids.has(to)) warnings.push(`${from} binds to missing element ${to}`);
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/** Validates the Excalidraw envelope while preserving forward-compatible element fields. */
+export function validateAreaCanvas(scene) {
+  const errors = [];
+  const warnings = [];
+  if (!scene || typeof scene !== "object" || Array.isArray(scene)) return { ok: false, errors: ["scene must be an object"], warnings };
+  if (scene.type !== "excalidraw") errors.push("scene.type must be excalidraw");
+  if (!Number.isInteger(scene.version) || scene.version < 1 || scene.version > 100) errors.push("scene.version must be a supported integer");
+  safeString(scene.source, "scene.source", errors, { max: 2_000 });
+  if (scene.tangent !== undefined && (!scene.tangent || typeof scene.tangent !== "object" || Array.isArray(scene.tangent) || !Number.isInteger(scene.tangent.format) || scene.tangent.format < 1)) errors.push("scene.tangent.format must be a positive integer");
+  if (!Array.isArray(scene.elements)) errors.push("scene.elements must be an array");
+  if (!scene.appState || typeof scene.appState !== "object" || Array.isArray(scene.appState)) errors.push("scene.appState must be an object");
+  if (!scene.files || typeof scene.files !== "object" || Array.isArray(scene.files)) errors.push("scene.files must be an object");
+  if (!Array.isArray(scene.elements)) return { ok: false, errors, warnings };
+  if (scene.elements.length > MAX_ELEMENTS) errors.push(`scene must contain at most ${MAX_ELEMENTS} elements`);
+  if (scene.files && typeof scene.files === "object" && Object.keys(scene.files).length > MAX_FILES) errors.push(`scene must contain at most ${MAX_FILES} files`);
+  const elements = validateSceneElements(scene.elements);
+  errors.push(...elements.errors);
+  warnings.push(...elements.warnings);
   return { ok: errors.length === 0, errors, warnings };
 }
 

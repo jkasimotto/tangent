@@ -78,6 +78,7 @@ test("local Git inspection distinguishes exact root facts from abort and command
         if (args.includes("HEAD") && args[0] === "rev-parse") return "abcdef";
         if (args.includes("symbolic-ref")) throw Object.assign(new Error("detached"), { code: 1 });
         if (args.includes("--git-common-dir")) return "/repo/.git";
+        if (args.join(" ") === "--no-optional-locks diff --quiet HEAD --") return "";
         throw new Error(`unexpected Git arguments ${args.join(" ")}`);
       },
     },
@@ -85,8 +86,54 @@ test("local Git inspection distinguishes exact root facts from abort and command
   assert.deepEqual(detached, {
     state: "available",
     checkout: { kind: "detached", head: "abcdef" },
+    dirty: false,
     repositoryPath: "/repo",
   });
+});
+
+test("a working tree with an uncommitted tracked change reports dirty, and untracked files never do", async () => {
+  const directory = {
+    /** Reports the fixture path as a directory. */
+    isDirectory: () => true,
+  };
+  const dirtyArguments = [];
+  /** Answers scripted Git facts for a branch checkout with a scripted dirty result. */
+  const readerFor = (diff) => async (_cwd, args) => {
+    if (args.includes("--is-bare-repository")) return diff.bare ? "true" : "false";
+    if (args.includes("--show-toplevel")) return "/repo";
+    if (args.includes("HEAD") && args[0] === "rev-parse") return "abcdef";
+    if (args.includes("symbolic-ref")) return "refs/heads/main";
+    if (args.includes("--git-common-dir")) return "/repo/.git";
+    if (args[0] === "--no-optional-locks") { dirtyArguments.push(args.join(" ")); return diff.run(); }
+    throw new Error(`unexpected Git arguments ${args.join(" ")}`);
+  };
+  /** Builds the injected inspection options for one scripted reader. */
+  const options = (diff) => ({
+    signal: new AbortController().signal,
+    /** Resolves the fixture directory. */
+    statPath: async () => directory,
+    readGit: readerFor(diff),
+  });
+
+  /** Exits 0, which is how Git reports no difference. */
+  const noDifference = () => "";
+  const clean = await inspectLocalResource({ kind: "worktree", path: "/repo" }, options({ run: noDifference }));
+  assert.equal(clean.dirty, false);
+  assert.deepEqual(dirtyArguments, ["--no-optional-locks diff --quiet HEAD --"]);
+
+  const dirty = await inspectLocalResource({ kind: "repository", path: "/repo" }, options({
+    /** Exits 1, which is how Git reports a difference. */
+    run: () => { throw Object.assign(new Error("differences"), { code: 1 }); },
+  }));
+  assert.equal(dirty.dirty, true);
+
+  await assert.rejects(inspectLocalResource({ kind: "worktree", path: "/repo" }, options({
+    /** Exits 128, which is a real Git failure and never a dirty answer. */
+    run: () => { throw Object.assign(new Error("not a repository"), { code: 128 }); },
+  })), (error) => Number(error.code) === 128);
+
+  const bare = await inspectLocalResource({ kind: "repository", path: "/repo" }, options({ bare: true, run: noDifference }));
+  assert.deepEqual(bare, { state: "available", checkout: { kind: "bare", head: "abcdef" } });
 });
 
 test("coalesces reads and keeps a last-known local fact after a bounded error", async () => {

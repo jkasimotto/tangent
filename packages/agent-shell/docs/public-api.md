@@ -46,6 +46,8 @@ Non-Work screens load their own bounded routes. These include `/api/navigation/s
 
 `POST /api/areas/map-resources/representation` gives Brain CLI commands a canonical Place, Hide, or Restore adapter.
 
+`GET /api/areas/map-kinds` returns the Map kinds catalog: the normalized entries of `map-kinds.md`, the drawings in `map-icons/`, one revision hash, and every problem. The route is read-only and never fails on a bad definition.
+
 `GET /api/areas/show` includes an additive `mapResources` field. The existing `resources`, `resolved`, and `workFolder` fields stay unchanged.
 
 `tangent vault commit` writes the vault history directly. `tangent study` starts one local interactive agent directly. No other package command writes vault files or starts a process itself.

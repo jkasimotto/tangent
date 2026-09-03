@@ -17,15 +17,15 @@ const axeSource = await readFile(require.resolve("axe-core"), "utf8");
 const exactWorktree = "/private/tmp/tangent-map-resource-fixture/main-checkout";
 
 /** Returns only axe findings that block the accepted serious/critical proof floor. */
-async function seriousAccessibilityViolations(page) {
+async function seriousAccessibilityViolations(page, within = null) {
   if (!await page.evaluate(() => Boolean(window.axe))) await page.addScriptTag({ content: axeSource });
-  return page.evaluate(async () => {
-    const result = await window.axe.run(document, {
+  return page.evaluate(async (selector) => {
+    const result = await window.axe.run(selector ? document.querySelector(selector) : document, {
       resultTypes: ["violations"],
       rules: { "color-contrast": { enabled: false }, "target-size": { enabled: false } },
     });
     return result.violations.filter((violation) => ["serious", "critical"].includes(violation.impact)).map((violation) => `${violation.impact} ${violation.id}: ${violation.nodes[0]?.html ?? ""}`);
-  });
+  }, within);
 }
 
 const fixture = String.raw`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Map resources fixture</title><link rel="stylesheet" href="/agent-shell-map.css"><style>html,body,#app,#screen,.split-workspace,[data-split-pane="map"],#map{width:100%;height:100%;margin:0;overflow:hidden}.split-workspace,[data-split-pane="map"]{position:relative}#global-controls,#pre-inert,#brain-pane,#splitter{position:absolute;left:-9999px}</style></head><body><div id="app"><header id="global-controls"><button>Global route</button></header><aside id="pre-inert" inert>Already inert</aside><main id="screen"><div class="split-workspace"><section id="brain-pane" data-split-pane="brain"><button>Brain control</button></section><div id="splitter" role="separator"></div><section data-split-pane="map"><div id="map"></div></section></div></main></div><script type="module">
@@ -89,11 +89,13 @@ const projection = {
   ],
 };
 const byKey = new Map([["otto/tangent\u0000worktree-main", main], ["otto/tangent\u0000review-42", review], ["otto/tangent\u0000wrong-kind", wrongKind], ["otto/tangent\u0000gone-old", gone], ["otto\u0000repo-shared", inherited]]);
-window.apiCalls = []; window.copied = []; window.worldChanges = []; window.resourceLabel = ""; window.reviewLifecycle = ""; window.clipboardFails = false; window.loseNextSceneResponse = false; window.failNextCatalogMutation = false; window.failNextPanelRead = false; window.holdNextPanelRead = false; window.holdNextRefresh = false; window.panelOverride = null; window.sceneReceipts = new Map();
+window.mainDirty = false; window.mainMissing = false; window.apiCalls = []; window.copied = []; window.worldChanges = []; window.resourceLabel = ""; window.reviewLifecycle = ""; window.clipboardFails = false; window.loseNextSceneResponse = false; window.failNextCatalogMutation = false; window.failNextPanelRead = false; window.holdNextPanelRead = false; window.holdNextRefresh = false; window.panelOverride = null; window.sceneReceipts = new Map();
 Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (value) => { if (window.clipboardFails) throw new DOMException("Denied", "NotAllowedError"); window.copied.push(value); } } });
 const currentEntity = (entity) => {
   const value = structuredClone(entity);
   if (value?.locator?.id === "worktree-main" && window.resourceLabel) value.label = window.resourceLabel;
+  if (value?.locator?.id === "worktree-main" && window.mainDirty) value.local.value.dirty = true;
+  if (value?.locator?.id === "worktree-main" && window.mainMissing) value.local.value = { state: "missing" };
   if (value?.locator?.id === "review-42" && window.reviewLifecycle) value.link.lifecycle.value.stateLabel = window.reviewLifecycle;
   return value;
 };
@@ -117,6 +119,24 @@ const replaceProjectionEntity = (previousId, entity) => {
   byKey.delete(entity.locator.owner + "\u0000" + previousId);
   byKey.set(entity.locator.owner + "\u0000" + entity.locator.id, entity);
 };
+const mapKindsVariant = new URL(location.href).searchParams.get("mapKinds") ?? "";
+/** Builds one small drawing in the normal form the catalog serves. */
+const iconDrawing = (name, colour) => ({
+  name, width: 100, height: 80, elementCount: 1, warning: null,
+  elements: [{ id: name + "-shape", type: "rectangle", x: 0, y: 0, width: 100, height: 80, angle: 0, opacity: 100, strokeWidth: 2, roughness: 1, strokeColor: colour, backgroundColor: "transparent", fillStyle: "solid", strokeStyle: "solid", seed: 11, versionNonce: 12, groupIds: [], frameId: null, roundness: null, boundElements: null, isDeleted: false, locked: false, link: null, updated: 1, version: 1, index: null }],
+});
+/** Builds the Map kinds catalog this fixture serves for the requested variant. */
+const mapKindsCatalog = () => (mapKindsVariant ? {
+  revision: "kinds-" + mapKindsVariant, source: "vault", problems: [],
+  kinds: [
+    { id: "worktree", label: "Worktree", target: "path", provider: null, builtIn: true, icon: "worktree", icons: [{ when: "missing", icon: "worktree-missing" }, { when: "dirty", icon: "worktree-dirty" }], click: "copy-path", problems: [] },
+    { id: "github-pr", label: "GitHub PR", target: "url", provider: "github-pr", builtIn: true, icon: "pull-request", icons: [{ when: "success", icon: "pull-request-merged" }, { when: "muted", icon: "pull-request-closed" }], click: "open", problems: [] },
+  ],
+  icons: {
+    worktree: iconDrawing("worktree", "#1e1e1e"), "worktree-dirty": iconDrawing("worktree-dirty", "#1e1e1e"), "worktree-missing": iconDrawing("worktree-missing", "#1e1e1e"),
+    "pull-request": iconDrawing("pull-request", "#1e1e1e"), "pull-request-merged": iconDrawing("pull-request-merged", "#9c36b5"), "pull-request-closed": iconDrawing("pull-request-closed", "#868e96"),
+  },
+} : { revision: "no-kinds", source: "vault", kinds: [], icons: {}, problems: [] });
 const resourceApi = async (url, init = {}) => {
   const body = init.body ? JSON.parse(init.body) : null; window.apiCalls.push({ url, body });
   if (url.startsWith("/api/areas/map-resources?")) {
@@ -201,6 +221,7 @@ const resourceApi = async (url, init = {}) => {
     }
     return { status: 200, effect: body.mutation.kind, operationId: body.operationId, projection: currentProjection(), sourceUpdates: [], resource, warnings: [], undo: { state: "unavailable" } };
   }
+  if (url === "/api/areas/map-kinds") return mapKindsCatalog();
   throw new Error("Unexpected fixture resource route: " + url);
 };
 window.editor = mountAreaBoardEditor(document.querySelector("#map"), {
@@ -757,6 +778,72 @@ test("wide Resources stays a non-modal panel and the resource cadence changes fa
     await page.waitForFunction(() => document.activeElement?.dataset.resourcePlace === encodeURIComponent("otto/repo-shared"));
     const afterPlacement = await page.evaluate(() => ({ view: window.captureExactView(), focus: window.editor.controller().snapshot().focus, folded: [...window.editor.controller().snapshot().manualFolded].sort() }));
     assert.deepEqual(afterPlacement, beforePlacement, "cancel restores the wide panel opener and exact placement masks, camera, and selection");
+  } finally {
+    await browser?.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("a figure changes its icon with the state, fades when it is gone, and keeps the keyboard", { skip: !enabled, timeout: 60_000 }, async () => {
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    if (url.pathname === "/fixture") { response.writeHead(200, { "content-type": "text/html" }); response.end(fixture); return; }
+    await serveStaticAsset(url, response, here);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  let browser = null;
+  try {
+    browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath(), headless: true });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 760 }, reducedMotion: "reduce", colorScheme: "dark" });
+    await page.goto(`http://127.0.0.1:${server.address().port}/fixture?mapKinds=starter&resourceCadenceMs=100`, { waitUntil: "networkidle" });
+    await page.locator(".excalidraw canvas.interactive").waitFor();
+
+    /** Returns the icon name drawn for one resource reference. */
+    const iconFor = (ref) => page.evaluate((wanted) => {
+      const rendered = window.editor.controller().snapshot().scene.elements;
+      const block = rendered.find((element) => element.customData?.tangent?.ref === wanted && !element.isDeleted);
+      const icon = rendered.find((element) => element.customData?.tangentWorldEphemeral?.sourceId === block?.id && !element.isDeleted);
+      const label = rendered.find((element) => element.id === block?.boundElements?.find((binding) => binding.type === "text")?.id);
+      return { icon: icon?.customData?.tangentWorldEphemeral?.icon ?? null, opacity: icon?.opacity ?? null, caption: label?.text ?? "", body: block?.strokeColor ?? null };
+    }, ref);
+
+    await page.waitForFunction(() => window.editor.controller().snapshot().scene.elements.some((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon"));
+    assert.equal((await iconFor("worktree-main")).icon, "worktree");
+    assert.equal((await iconFor("review-42")).icon, "pull-request-merged", "a merged review draws the state icon Julian named");
+    const goneFigure = await iconFor("gone-old");
+    assert.equal(goneFigure.icon, "worktree");
+    assert.equal(goneFigure.opacity, 45, "a gone figure fades like a folded Area");
+    assert.ok(goneFigure.caption.includes("gone"), `a gone figure still says so: ${goneFigure.caption}`);
+
+    // A changed state changes the drawing on the next cadence, with no restart.
+    await page.evaluate(() => { window.mainDirty = true; });
+    await page.waitForFunction(() => {
+      const rendered = window.editor.controller().snapshot().scene.elements;
+      return rendered.some((element) => element.customData?.tangentWorldEphemeral?.icon === "worktree-dirty");
+    });
+    const dirty = await iconFor("worktree-main");
+    assert.ok(dirty.caption.includes("Dirty"), `an uncommitted change reads on the caption: ${dirty.caption}`);
+    assert.equal(dirty.body, "transparent", "the figure body stays quiet");
+
+    await page.evaluate(() => { window.mainDirty = false; window.mainMissing = true; });
+    await page.waitForFunction(() => window.editor.controller().snapshot().scene.elements.some((element) => element.customData?.tangentWorldEphemeral?.icon === "worktree-missing"));
+    assert.ok((await iconFor("worktree-main")).caption.includes("Missing"));
+
+    // The canvas keyboard still runs the verb on the figure.
+    await page.evaluate(() => window.selectMain(false));
+    await page.waitForFunction(() => Object.values(window.editor.appState().selectedElementIds).filter(Boolean).length === 1);
+    await page.locator("#map").dispatchEvent("keydown", { key: "Enter" });
+    await page.waitForFunction(() => window.copied.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.copied), [exactWorktree], "Enter on a selected figure copies the exact path");
+
+    // A figure is canvas ink; its accessible surface is the Outline, so axe
+    // reads the Tangent-owned tree rather than Excalidraw's own chrome.
+    await page.locator("#map").dispatchEvent("keydown", { key: "o", metaKey: true, shiftKey: true });
+    const outline = page.getByRole("region", { name: "Area hierarchy" });
+    await outline.waitFor();
+    const rows = await outline.getByRole("treeitem", { name: /^Worktree: / }).count();
+    assert.ok(rows >= 1, "every figure keeps an Outline row");
+    assert.deepEqual(await seriousAccessibilityViolations(page, ".tangent-map-outline"), [], "the Outline of a Map of figures has no serious accessibility violation");
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));

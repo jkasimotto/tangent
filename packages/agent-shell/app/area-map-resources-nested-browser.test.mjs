@@ -108,6 +108,7 @@ const resourceApi = async (url, init = {}) => {
     }
     throw new Error("Unexpected fixture mutation: " + body.mutation.kind);
   }
+  if (url === "/api/areas/map-kinds") return { revision: "no-kinds", source: "vault", kinds: [], icons: {}, problems: [] };
   throw new Error("Unexpected fixture resource route: " + url);
 };
 window.editor = mountAreaBoardEditor(document.querySelector("#map"), {

@@ -35,6 +35,10 @@
 .tangent-map-save.conflict { color: #e8a317; }
 .tangent-map-save.blocked { color: #e03131; }
 .tangent-map-save button { min-height: 28px; }
+/* Definition problems sit in the same status corner, above Saved, so one look
+   covers both. It renders only when the definition or an icon has a problem. */
+.tangent-map-kinds { position: absolute; z-index: 4; right: 62px; bottom: 60px; display: flex; max-width: min(420px, calc(100% - 90px)); flex-direction: column; gap: 2px; padding: 6px 11px; border-radius: 8px; background: var(--tangent-island); color: #e8a317; box-shadow: var(--tangent-shadow); font-size: 12px; }
+.TangentAreaMap:has(.excalidraw--mobile) .tangent-map-kinds { right: 12px; bottom: 110px; }
 .tangent-map-ancestry { position: absolute; z-index: 3; inset: 0; pointer-events: none; overflow: hidden; }
 .tangent-map-ancestry button { position: absolute; padding: 2px 6px; border: 0; border-radius: 4px; background: color-mix(in srgb, var(--tangent-island) 82%, transparent); color: var(--tangent-text); font: 14px Excalifont, Virgil, sans-serif; white-space: nowrap; pointer-events: auto; }
 .tangent-map-ancestry button:focus-visible { outline: 2px solid var(--tangent-accent); outline-offset: 1px; }

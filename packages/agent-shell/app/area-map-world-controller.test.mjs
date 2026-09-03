@@ -1035,3 +1035,82 @@ test("a missing nested shard outside the eager set materializes its projected em
   assert.deepEqual(calls, [missing.key]);
   controller.destroy();
 });
+
+/** One installable Map kinds catalog with a single drawable worktree entry. */
+function worktreeCatalog(revision = "kinds-1") {
+  return {
+    revision, source: "vault", problems: [],
+    kinds: [{ id: "worktree", label: "Worktree", target: "path", provider: null, builtIn: true, icon: "worktree", icons: [], click: "copy-path", problems: [] }],
+    icons: {
+      worktree: {
+        name: "worktree", width: 100, height: 80, elementCount: 1, warning: null,
+        elements: [{ id: "folder", type: "rectangle", x: 0, y: 0, width: 100, height: 80, angle: 0, opacity: 100, strokeWidth: 2, roughness: 1, strokeColor: "#1e1e1e", backgroundColor: "transparent", seed: 3, versionNonce: 4 }],
+      },
+    },
+  };
+}
+
+/** Builds a world whose located Area holds one resolvable worktree Block. */
+function worktreeWorld(owner = "neara/delivery", id = "33333333-3333-4333-8333-333333333333") {
+  const world = fixtureWorld();
+  world.areas.find((node) => node.key === owner).shard.scene.elements.push(
+    ...core.createBlockElements({ id: "worktree-block", kind: "resource", ref: id, title: "Cached", x: 210, y: 190 }),
+  );
+  return { world, owner, id };
+}
+
+/** Builds the current resolution of one available worktree. */
+function worktreeResolution(owner, id) {
+  return {
+    state: "current",
+    value: {
+      locator: { owner, id }, label: "delivery", target: { kind: "worktree", path: "/Users/julianotto/Projects/delivery" },
+      local: { state: "current", value: { state: "available", checkout: { kind: "branch", head: "abc", branchRef: "refs/heads/main" }, dirty: false, repositoryPath: "/Users/julianotto/Projects/delivery" }, checkedAt: "2026-09-02T00:00:00.000Z" },
+      link: null, representation: { state: "current", value: "on-map" }, origin: null, warnings: [],
+    },
+  };
+}
+
+test("installing the Map kinds definition repaints facts, and the same revision is a no-op", () => {
+  const { world, owner, id } = worktreeWorld();
+  const controller = createAreaMapWorldController({ world, storage: memoryStorage() });
+  const authoritative = controller.world();
+  controller.setResourceResolutions([worktreeResolution(owner, id)]);
+  const reasons = [];
+  controller.subscribe?.((snapshot) => reasons.push(snapshot.reason));
+  const before = controller.snapshot();
+  assert.equal(before.mapKinds, null);
+  assert.equal(before.scene.elements.some((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon"), false);
+
+  assert.equal(controller.setMapKinds(worktreeCatalog()), true);
+  const after = controller.snapshot();
+  assert.equal(after.factsRevision, before.factsRevision + 1);
+  assert.equal(after.mapKinds.revision, "kinds-1");
+  const icons = after.scene.elements.filter((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon");
+  assert.equal(icons.length, 1);
+  assert.deepEqual(controller.world(), authoritative, "the definition never touches source authority");
+  assert.equal(after.save.state, "saved");
+  assert.equal(controller.setMapKinds(worktreeCatalog()), false, "the same revision changes nothing");
+  assert.equal(controller.setMapKinds({ revision: "kinds-2" }), false, "a catalog with no kinds list is refused");
+  assert.equal(controller.setMapKinds(worktreeCatalog("kinds-2")), true);
+  controller.destroy();
+});
+
+test("a folded Area hides a figure's icon with its Block", () => {
+  const { world, owner, id } = worktreeWorld();
+  const controller = createAreaMapWorldController({ world, storage: memoryStorage() });
+  controller.setResourceResolutions([worktreeResolution(owner, id)]);
+  controller.setMapKinds(worktreeCatalog());
+  const visible = controller.snapshot();
+  const icon = visible.scene.elements.find((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon");
+  assert.equal(visible.hiddenIds.has(icon.id), false);
+
+  controller.toggleFold(owner);
+  const folded = controller.snapshot();
+  const block = folded.scene.elements.find((element) => core.tangentOf(element)?.kind === "resource");
+  const foldedIcon = folded.scene.elements.find((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon");
+  assert.equal(folded.hiddenIds.has(block.id), true);
+  assert.equal(folded.hiddenIds.has(foldedIcon.id), true, "an icon never outlives the Block it belongs to");
+  assert.equal(foldedIcon.isDeleted, true);
+  controller.destroy();
+});

@@ -62,6 +62,8 @@ import { createAreaCanvasRepository } from "./area-canvas-repository.mjs";
 import { createAreaCanvasRoutes } from "./area-canvas-routes.mjs";
 import { areaCanvasSummary } from "./area-canvas.mjs";
 import { createAreaMapRoutes } from "./area-map-routes.mjs";
+import { createMapKindsCatalog } from "./map-kinds.mjs";
+import { createMapKindsRoutes } from "./map-kinds-routes.mjs";
 import { createAreaMapRecordStore } from "./area-map-record-store.mjs";
 import { createAreaPictures } from "./area-pictures.mjs";
 import { createAreaMapProposals } from "./area-map-proposals.mjs";
@@ -885,7 +887,9 @@ async function spawnSession(area, name) {
   return { status: 200 };
 }
 
-const TREE_SKIP = new Set([".git", ".obsidian", "shared", "node_modules"]);
+// map-icons holds the drawings the Map kinds definition names. It is Julian's
+// icon folder, not an Area, so Area discovery never walks into it.
+const TREE_SKIP = new Set([".git", ".obsidian", "shared", "node_modules", "map-icons"]);
 
 /**
  * Walks the Tangent vault and returns Areas as a nested tree.
@@ -7752,6 +7756,15 @@ const documentRoutes = createDocumentRoutes({
   notifyComments: notifyBrainOfDocumentComments,
   resolve: resolveVaultDocumentComment,
 });
+const mapKindsCatalog = createMapKindsCatalog({
+  root: TREES_ROOT,
+  repository: vaultRepository,
+  commit: vaultCommit,
+  /** Makes one new starter file known to Git before its provenance commit. */
+  stage: (file) => execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {}),
+  writable: !process.env.TANGENT_VERIFY_READONLY,
+});
+const mapKindsRoutes = createMapKindsRoutes({ catalog: mapKindsCatalog });
 const areaMapRoutes = createAreaMapRoutes({
   pictures: areaPictures,
   proposals: areaMapProposals,
@@ -8940,6 +8953,7 @@ const server = http.createServer(async (req, res) => {
     if (AREA_MAP_WORLD_ENABLED && await areaMapWorldRoutes.handle(req, res, url)) return;
     if (await areaMapContextRoutes.handle(req, res, url)) return;
     if (await areaMapRoutes.handle(req, res, url)) return;
+    if (await mapKindsRoutes.handle(req, res, url)) return;
     if (await programRoutes.handle(req, res, url)) return;
     if (await processRoutes.handle(req, res, url)) return;
     if (await areaPresentationRoutes.handle(req, res, url)) return;

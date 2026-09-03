@@ -165,6 +165,27 @@ const resourceFacts = new Map([
   ["wt-c", { label: "Checkout C", target: { kind: "worktree", path: resourceRoot + "/wt-c" }, local: { state: "current", value: { state: "available", checkout: { kind: "branch", head: "ccc", branchRef: "refs/heads/feature/c" }, repositoryPath: resourceRoot + "/repo" }, checkedAt: "2026-09-02T01:00:00.000Z" }, link: null }],
   ["review-7", { label: "Review seven", target: { kind: "link", url: "https://github.com/neara/delivery/pull/7" }, local: null, link: { kind: "github-pr", owner: "neara", repository: "delivery", number: 7, lifecycle: { state: "current", value: { stateLabel: "Merged", treatment: "success", providerUpdatedAt: "2026-09-02T00:00:00.000Z" } } } }],
 ]);
+
+const mapKindsVariant = new URL(location.href).searchParams.get("mapKinds") ?? "";
+/** Builds one small drawing in the normal form the catalog serves. */
+const iconDrawing = (name, colour) => ({
+  name, width: 100, height: 80, elementCount: 1, warning: null,
+  elements: [{ id: name + "-shape", type: "rectangle", x: 0, y: 0, width: 100, height: 80, angle: 0, opacity: 100, strokeWidth: 2, roughness: 1, strokeColor: colour, backgroundColor: "transparent", fillStyle: "solid", strokeStyle: "solid", seed: 11, versionNonce: 12, groupIds: [], frameId: null, roundness: null, boundElements: null, isDeleted: false, locked: false, link: null, updated: 1, version: 1, index: null }],
+});
+/** Builds the Map kinds catalog this fixture serves for the requested variant. */
+const mapKindsCatalog = () => {
+  if (!mapKindsVariant) return { revision: "no-kinds", source: "vault", kinds: [], icons: {}, problems: [] };
+  const missingIcon = mapKindsVariant === "broken-icon";
+  return {
+    revision: "kinds-" + mapKindsVariant, source: "vault",
+    kinds: [
+      { id: "worktree", label: "Worktree", target: "path", provider: null, builtIn: true, icon: missingIcon ? "worktre" : "worktree", icons: [{ when: "dirty", icon: "worktree-dirty" }], click: "copy-path", problems: missingIcon ? ["icon worktre not found"] : [] },
+      { id: "github-pr", label: "GitHub PR", target: "url", provider: "github-pr", builtIn: true, icon: "pull-request", icons: [{ when: "success", icon: "pull-request-merged" }], click: "open", problems: [] },
+    ],
+    icons: { worktree: iconDrawing("worktree", "#1e1e1e"), "worktree-dirty": iconDrawing("worktree-dirty", "#1e1e1e"), "pull-request": iconDrawing("pull-request", "#1e1e1e"), "pull-request-merged": iconDrawing("pull-request-merged", "#9c36b5") },
+    problems: missingIcon ? [{ scope: "entry", name: "worktree", message: "icon worktre not found" }] : [],
+  };
+};
 window.resourceCalls = [];
 window.copied = [];
 Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (value) => { window.copied.push(value); } } });
@@ -179,6 +200,7 @@ const resourceApi = async (url, init = {}) => {
       return { state: "current", value: { locator, ...structuredClone(fact), representation: { state: "current", value: "on-map" }, origin: null, warnings: [] } };
     }) };
   }
+  if (url === "/api/areas/map-kinds") return mapKindsCatalog();
   if (url.startsWith("/api/areas/map-resources?")) return { state: "current", viewedFrom: new URL(url, location.origin).searchParams.get("area"), catalogs: [], counts: { state: "current", confirmedAssociations: 0, suggestions: 0, legacyReview: 0 }, suggestions: [], legacyReview: [], rows: [] };
   throw new Error("Unexpected world fixture resource route: " + url);
 };
@@ -1420,4 +1442,163 @@ test("resource Blocks ride the shared world pipeline through Area move, growth, 
   await find.getByRole("textbox").fill("wt-c");
   await find.getByRole("option", { name: /Checkout C/ }).waitFor();
   assert.deepEqual(await sourceBlocks(page), sourceBefore, "Outline and Find never change resource source Blocks");
+});
+
+/** Returns every drawn icon element, by the Block it belongs to. */
+async function figureIcons(page) {
+  return page.evaluate(() => {
+    const icons = {};
+    for (const element of window.editor.rendered?.() ?? []) {
+      const ephemeral = element.customData?.tangentWorldEphemeral;
+      if (ephemeral?.kind !== "resource-figure-icon" || element.isDeleted) continue;
+      icons[ephemeral.sourceId] ??= [];
+      icons[ephemeral.sourceId].push({ id: element.id, icon: ephemeral.icon, x: element.x, y: element.y, locked: element.locked, opacity: element.opacity });
+    }
+    return icons;
+  });
+}
+
+/** Returns the caption words of every rendered resource Block. */
+async function captions(page) {
+  return page.evaluate(() => (window.editor.rendered?.() ?? [])
+    .filter((element) => element.type === "text" && element.containerId && !element.isDeleted)
+    .map((element) => element.text));
+}
+
+test("a resource kind with an icon renders as a figure that obeys every Block rule", { timeout: 120_000 }, async (context) => {
+  blockCountOverrides.set("neara/delivery/standards", 5);
+  blockCountOverrides.set("neara/delivery", 1);
+  context.after(() => blockCountOverrides.clear());
+  const page = await openWorld(context, "?resources=1&mapKinds=starter");
+  const exactA = "/private/tmp/tangent-world-fixture/wt-a";
+
+  await page.waitForFunction(() => Object.keys((window.editor.rendered?.() ?? [])
+    .filter((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon")
+    .reduce((groups, element) => ({ ...groups, [element.customData.tangentWorldEphemeral.sourceId]: true }), {})).length === 4);
+
+  // The icon says the kind, the caption keeps every other fact, and no rail rides along.
+  const drawn = await figureIcons(page);
+  const names = Object.values(drawn).flat().map((icon) => icon.icon).sort();
+  assert.deepEqual(names, ["pull-request-merged", "worktree", "worktree", "worktree"], "the merged review draws its own state icon");
+  assert.ok(Object.values(drawn).flat().every((icon) => icon.locked), "an icon is never selectable on its own");
+  const words = await captions(page);
+  assert.ok(words.includes("Checkout A\nfeature/a"), `the caption drops the kind word: ${JSON.stringify(words)}`);
+  assert.ok(words.some((text) => text.startsWith("Review seven  ✓")), `the check mark stays on the caption: ${JSON.stringify(words)}`);
+  assert.ok(!words.some((text) => text.startsWith("WORKTREE")), "no figure still prints its kind word");
+  assert.equal(await page.evaluate(() => (window.editor.rendered?.() ?? []).some((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-success-rail")), false, "the rail retires on a figure");
+
+  // The accessible name and the Outline never lost the kind word.
+  await page.keyboard.press("Meta+Shift+o");
+  const outline = page.getByRole("region", { name: "Area hierarchy" });
+  await outline.waitFor();
+  const rowA = outline.getByRole("treeitem", { name: /^Worktree: Checkout A\./ });
+  await rowA.waitFor();
+  assert.ok((await rowA.getAttribute("aria-label")).includes(`Target ${exactA}.`));
+  assert.ok((await rowA.getAttribute("aria-label")).endsWith("Copy path with Enter."));
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !document.querySelector(".tangent-map-outline"));
+
+  // Fold hides every icon with its Block, and unfolding brings both back.
+  await selectArea(page, "neara/delivery");
+  await page.keyboard.press("Space");
+  await page.getByText("folded · Space", { exact: true }).waitFor();
+  await page.waitForFunction(() => !(window.editor.rendered?.() ?? []).some((element) => !element.isDeleted && element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon"));
+  await page.keyboard.press("Space");
+  await page.waitForFunction(() => Object.keys((window.editor.rendered?.() ?? [])
+    .filter((element) => !element.isDeleted && element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon")
+    .reduce((groups, element) => ({ ...groups, [element.customData.tangentWorldEphemeral.sourceId]: true }), {})).length === 4);
+
+  // Dragging a figure to the Area edge keeps its body inside and carries the icon by the same delta.
+  const sourceBefore = await sourceBlocks(page);
+  const region = (await regions(page))["neara/delivery/standards"];
+  const before = (await authoredBlocks(page, "neara/delivery/standards", { rendered: true })).find((block) => block.ref === "wt-a");
+  const iconsBefore = (await figureIcons(page))[before.id];
+  const start = await viewportPoint(page, before.x + before.width / 2, before.y + before.height / 2);
+  const end = await viewportPoint(page, region.x + region.width + 400, before.y + before.height / 2);
+  await page.mouse.click(start.x, start.y);
+  await page.waitForFunction((id) => window.editor.appState().selectedElementIds[id], before.id);
+  const priorEvents = await page.evaluate(() => window.worldEvents.length);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 10 });
+  await page.mouse.up();
+  try {
+    await page.waitForFunction((count) => window.worldEvents.length > count, priorEvents, { timeout: 8_000 });
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => ({
+      selection: window.editor.appState().selectedElementIds,
+      controller: [...window.editor.controller().snapshot().selection],
+      blocks: (window.editor.rendered?.() ?? []).filter((element) => element.customData?.tangent?.ref === "wt-a").map((element) => ({ id: element.id, x: element.x, y: element.y, stroke: element.strokeColor, background: element.backgroundColor, locked: element.locked })),
+    }));
+    throw new Error(`the figure drag published nothing: ${JSON.stringify({ diagnostic, before, start, end })}`, { cause: error });
+  }
+  const after = (await authoredBlocks(page, "neara/delivery/standards", { rendered: true })).find((block) => block.ref === "wt-a");
+  const grownRegion = (await regions(page))["neara/delivery/standards"];
+  assert.ok(after.x >= grownRegion.x - 0.01 && after.x + after.width <= grownRegion.x + grownRegion.width + 0.01, `the dragged body stays inside its Area: ${JSON.stringify({ after, grownRegion })}`);
+  const iconsAfter = (await figureIcons(page))[after.id];
+  const delta = { x: after.x - before.x, y: after.y - before.y };
+  for (const [was, is] of iconsBefore.map((icon, index) => [icon, iconsAfter[index]])) {
+    assert.ok(Math.abs(is.x - was.x - delta.x) < 1 && Math.abs(is.y - was.y - delta.y) < 1, "an icon moves with its Block in the same frame");
+  }
+
+  // The source shard keeps today's body: no icon element and no projected style.
+  const sourceAfter = await sourceBlocks(page);
+  assert.deepEqual(Object.keys(sourceAfter).sort(), Object.keys(sourceBefore).sort(), "a figure writes no new source element");
+  const sourceScene = await page.evaluate(() => {
+    const node = window.editor.controller().world().areas.find((entry) => entry.key === "neara/delivery/standards");
+    const block = node.shard.scene.elements.find((element) => element.customData?.tangent?.ref === "wt-a");
+    const label = node.shard.scene.elements.find((element) => element.id === block.boundElements?.find((binding) => binding.type === "text")?.id);
+    return {
+      icons: node.shard.scene.elements.filter((element) => element.customData?.tangentWorldEphemeral).length,
+      markers: node.shard.scene.elements.filter((element) => element.customData?.tangentWorldFigure).length,
+      body: { strokeColor: block.strokeColor, backgroundColor: block.backgroundColor, opacity: block.opacity },
+      caption: label && { offsetX: label.x - block.x, offsetY: label.y - block.y, width: label.width, textAlign: label.textAlign, verticalAlign: label.verticalAlign, text: label.text, opacity: label.opacity },
+    };
+  });
+  assert.equal(sourceScene.icons, 0);
+  assert.equal(sourceScene.markers, 0, "the projected presentation never reaches a source shard");
+  assert.deepEqual(sourceScene.body, { strokeColor: "#1971c2", backgroundColor: "#a5d8ff", opacity: 100 });
+  assert.deepEqual({ x: sourceScene.caption.offsetX, y: sourceScene.caption.offsetY }, { x: 14, y: 16 }, "the caption geometry returns to today's bound-text box");
+  assert.equal(sourceScene.caption.textAlign, "center");
+  assert.equal(sourceScene.caption.opacity, 100);
+  assert.equal(sourceScene.caption.text, "Checkout A\nfeature/a", "only the caption words persist, as they do today");
+
+  // Enter on the figure runs the verb the definition names.
+  const centre = await viewportPoint(page, after.x + after.width / 2, after.y + after.height / 2);
+  await page.mouse.click(centre.x, centre.y);
+  await page.waitForFunction((id) => window.editor.appState().selectedElementIds[id], after.id);
+  const runVerb = page.getByRole("button", { name: /^Copy path\. Worktree: Checkout A\./ });
+  await runVerb.waitFor();
+  await runVerb.click();
+  await page.waitForFunction(() => window.copied.length === 1);
+  assert.deepEqual(await page.evaluate(() => window.copied), [exactA], "the selected-action button on a figure runs the verb the entry names");
+
+  // The keyboard reaches the same verb through the Outline.
+  await page.evaluate(() => { window.copied.length = 0; });
+  await page.keyboard.press("Meta+Shift+o");
+  const reopened = page.getByRole("region", { name: "Area hierarchy" });
+  await reopened.waitFor();
+  const keyboardRow = reopened.getByRole("treeitem", { name: /^Worktree: Checkout A\./ });
+  await keyboardRow.waitFor();
+  await keyboardRow.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => window.copied.length === 1);
+  assert.deepEqual(await page.evaluate(() => window.copied), [exactA], "Enter on a figure's Outline row runs the same verb");
+});
+
+test("a definition problem gives cards and one notice, never a hidden Block", { timeout: 90_000 }, async (context) => {
+  blockCountOverrides.set("neara/delivery/standards", 5);
+  blockCountOverrides.set("neara/delivery", 1);
+  context.after(() => blockCountOverrides.clear());
+  const page = await openWorld(context, "?resources=1&mapKinds=broken-icon");
+  const notice = page.getByRole("status", { name: "Map kinds status" });
+  await notice.waitFor();
+  assert.equal(await notice.textContent(), "Map kinds: worktree: icon worktre not found");
+
+  await page.waitForFunction(() => (window.editor.rendered?.() ?? []).some((element) => element.type === "text" && element.text.startsWith("WORKTREE")));
+  const drawn = await figureIcons(page);
+  assert.deepEqual(Object.values(drawn).flat().map((icon) => icon.icon), ["pull-request-merged"], "only the broken kind falls back to a card");
+  const words = await captions(page);
+  assert.ok(words.includes("WORKTREE\nCheckout A\nfeature/a"), `the worktree keeps today's card: ${JSON.stringify(words)}`);
+  assert.equal((await authoredBlocks(page, "neara/delivery/standards", { rendered: true })).length, 5, "a definition problem never hides a Block");
 });

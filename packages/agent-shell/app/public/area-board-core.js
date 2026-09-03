@@ -1,3 +1,5 @@
+import { createFigureElements, figureCacheKey, figureCaptionGeometry, figureForFact, figurePresentationMarker, themeInkColor } from "./area-map-figures.js";
+
 const TANGENT_SOURCE = "https://tangent.local/area-map";
 const BLOCK_WIDTH = 280;
 const BLOCK_HEIGHT = 132;
@@ -13,6 +15,10 @@ const CANVAS = "#ffffff";
 const BLOCK_STROKE = "#1971c2";
 const BLOCK_FILL = "#a5d8ff";
 const LABEL_COLUMNS = 26;
+// A figure's caption sits beside the icon in about 160 pixels, so it wraps
+// earlier than a card's full-width label.
+const CAPTION_COLUMNS = 18;
+const VAULT_COMMIT_REF = /^vault@([0-9a-f]{7,40})$/;
 const ENTITY_KINDS = new Set(["goal", "document", "area", "link", "brain", "agent", "person", "request", "commit", "evidence", "resource"]);
 
 /** Returns a stable positive Excalidraw seed for one authored id. */
@@ -141,6 +147,17 @@ function blockLabel(fact) {
   const badge = `${String(fact.kind || "document").toUpperCase()}${fact.live ? "  ●" : ""}${fact.success ? "  ✓" : ""}`;
   return [badge, wrapLabelLine(fact.title || "Untitled"), wrapLabelLine(fact.status || "", " · ")].filter(Boolean).join("\n");
 }
+/**
+ * Formats the caption of a figure: every fact the card shows except the kind
+ * word, which the icon now says. The live dot and check mark stay on the first
+ * line.
+ */
+function captionLabel(fact) {
+  const lines = wrapLabelLine(fact.title || "Untitled", " ", CAPTION_COLUMNS).split("\n");
+  lines[0] = `${lines[0]}${fact.live ? "  ●" : ""}${fact.success ? "  ✓" : ""}`;
+  return [...lines, wrapLabelLine(fact.status || "", " · ", CAPTION_COLUMNS)].filter(Boolean).join("\n");
+}
+
 /** Formats the compact one-line label bound to an Area region. */
 function regionLabel(fact) {
   return `${fact.title || "Untitled"}${fact.live ? " ★" : ""}${fact.status ? ` · ${fact.status}` : ""}`;
@@ -181,6 +198,8 @@ function factForBlock(element, documents = [], resourceFact = null) {
     if (supplied && typeof supplied === "object") {
       return {
         kind: String(supplied.kind || "resource"),
+        kindId: String(supplied.kindId || "resource"),
+        states: Array.isArray(supplied.states) ? [...supplied.states] : [],
         title: String(supplied.title || "Map resource"),
         status: String(supplied.status || ""),
         ghost: supplied.ghost === true,
@@ -188,16 +207,18 @@ function factForBlock(element, documents = [], resourceFact = null) {
         ref: tangent.ref,
       };
     }
-    return { kind: "resource", title: "Map resource", status: "unresolved", ghost: true, success: false, ref: tangent.ref };
+    return { kind: "resource", kindId: "resource", states: ["unresolved"], title: "Map resource", status: "unresolved", ghost: true, success: false, ref: tangent.ref };
   }
   if (tangent.kind === "link") {
     let host = tangent.ref;
     try { host = new URL(tangent.ref).host; } catch {}
-    return { kind: "link", title: host || tangent.ref, status: tangent.ref, ghost: false, ref: tangent.ref };
+    return { kind: "link", kindId: "link", states: [], title: host || tangent.ref, status: tangent.ref, ghost: false, ref: tangent.ref };
   }
+  const commit = tangent.kind === "commit" ? VAULT_COMMIT_REF.exec(tangent.ref) : null;
+  if (commit) return { kind: "commit", kindId: "commit", states: [], title: commit[1].slice(0, 8), status: "vault", ghost: false, ref: tangent.ref };
   const source = splitReference(tangent.ref);
   const document = documents.find((item) => item.file === source.file);
-  if (!document) return { kind: tangent.kind, title: source.file || tangent.ref, status: "gone", ghost: true, ref: tangent.ref };
+  if (!document) return { kind: tangent.kind, kindId: tangent.kind, states: ["gone"], title: source.file || tangent.ref, status: "gone", ghost: true, ref: tangent.ref };
   const title = document.title || document.name || source.file;
   const statusWords = [];
   if (document.status === "verify" || document.verify && document.status === "done") statusWords.push("Check it");
@@ -205,14 +226,31 @@ function factForBlock(element, documents = [], resourceFact = null) {
   const live = Boolean(document.live || document.sessionState === "live");
   if (live) statusWords.push("live");
   if (document.stale || document.olderThanNotes) statusWords.push("older than the notes");
-  return { kind: tangent.kind, title, status: statusWords.join(" · "), ghost: false, live, ref: tangent.ref };
+  return { kind: tangent.kind, kindId: tangent.kind, states: live ? ["live"] : [], title, status: statusWords.join(" · "), ghost: false, live, ref: tangent.ref };
+}
+
+/**
+ * Reuses the drawn elements of one unchanged figure so Excalidraw's own shape
+ * and canvas caches hit on a drag frame. The cache holds the same objects the
+ * scene holds, so a hidden frame can leave `isDeleted` set on them.
+ */
+function cachedFigureElements(cache, key, build) {
+  if (!cache) return build();
+  const hit = cache.get(key);
+  if (hit) { for (const element of hit) element.isDeleted = false; return hit; }
+  const built = build();
+  cache.set(key, built);
+  if (cache.size > 2_000) cache.delete(cache.keys().next().value);
+  return built;
 }
 
 /** Refreshes only fact-cache words and ghost styling, never authored geometry. */
 function refreshTangentFacts(scene, documents = [], options = {}) {
   const next = structuredClone(scene);
   const resourceFact = typeof options === "function" ? options : options?.resourceFact;
-  next.elements = (next.elements ?? []).filter((element) => element.customData?.tangentWorldEphemeral?.kind !== "resource-success-rail");
+  const figures = typeof options === "function" ? null : options?.figures ?? null;
+  const figureCache = typeof options === "function" ? null : options?.figureCache ?? null;
+  next.elements = (next.elements ?? []).filter((element) => !["resource-success-rail", "resource-figure-icon"].includes(element.customData?.tangentWorldEphemeral?.kind));
   const byId = new Map(next.elements.map((element) => [element.id, element]));
   const referenceCounts = new Map();
   for (const element of next.elements) {
@@ -229,10 +267,11 @@ function refreshTangentFacts(scene, documents = [], options = {}) {
     if (!fact) continue;
     const tangentOwner = block.customData.tangent.kind === "resource" ? block.customData?.tangentWorld?.owner ?? "" : "";
     const tangentKey = `${tangentOwner}\u0000${block.customData.tangent.kind}:${block.customData.tangent.ref}`;
-    if (!block.isDeleted && referenceCounts.get(tangentKey) > 1) fact = { ...fact, status: [fact.status, "duplicate"].filter(Boolean).join(" · ") };
+    if (!block.isDeleted && referenceCounts.get(tangentKey) > 1) fact = { ...fact, status: [fact.status, "duplicate"].filter(Boolean).join(" · "), states: [...(fact.states ?? []), "duplicate"] };
     const label = block.boundElements?.find((entry) => entry.type === "text");
     const text = label ? byId.get(label.id) : null;
-    const words = isAreaRegion(block) ? regionLabel(fact) : blockLabel(fact);
+    const figure = figures && !isAreaRegion(block) && !block.isDeleted ? figureForFact(figures, fact) : null;
+    const words = isAreaRegion(block) ? regionLabel(fact) : figure ? captionLabel(fact) : blockLabel(fact);
     if (text?.type === "text" && (text.text !== words || text.originalText !== words)) {
       text.text = words; text.originalText = words; text.version = Number(text.version || 0) + 1;
       text.versionNonce = seedFor(`${text.id}:${text.version}:${words}`); changed = true;
@@ -259,6 +298,34 @@ function refreshTangentFacts(scene, documents = [], options = {}) {
       block.version = Number(block.version || 0) + 1;
       block.versionNonce = seedFor(`${block.id}:facts:${block.version}:${fact.ghost}`);
       changed = true;
+    }
+    if (figure) {
+      const opacity = fact.ghost ? 45 : Number(block.opacity ?? 100);
+      block.customData = {
+        ...block.customData,
+        tangentWorldFigure: figurePresentationMarker(block, ["strokeColor", "backgroundColor", "fillStyle", "opacity"]),
+      };
+      // A near-transparent fill keeps the whole body rectangle a hit surface,
+      // the way a nested Area region does, so the figure is no harder to
+      // select, drag, or bind an arrow to than the card it replaced.
+      Object.assign(block, { strokeColor: "transparent", backgroundColor: "#ffffff01", fillStyle: "solid", opacity });
+      if (text?.type === "text") {
+        text.customData = {
+          ...(text.customData || {}),
+          tangentWorldFigure: {
+            containerId: block.id, dx: text.x - block.x, dy: text.y - block.y,
+            ...figurePresentationMarker(text, ["width", "height", "textAlign", "verticalAlign", "opacity", "strokeColor"]),
+          },
+        };
+        Object.assign(text, figureCaptionGeometry(block), { opacity, strokeColor: themeInkColor(text.strokeColor) });
+      }
+      const owner = block.customData?.tangentWorld?.owner ?? null;
+      const key = figureCacheKey(block, figure.iconName, opacity);
+      /** Draws this figure's icon once for the cache. */
+      const draw = () => createFigureElements({ block, icon: figure.icon, iconName: figure.iconName, opacity, owner, sourceId: block.customData?.tangentWorld?.sourceId ?? block.id });
+      next.elements.push(...cachedFigureElements(figureCache, key, draw));
+      changed = true;
+      continue;
     }
     if (!block.isDeleted && tangent.kind === "resource" && fact.success) {
       const owner = block.customData?.tangentWorld?.owner;
@@ -576,6 +643,6 @@ function legacyCanvasToExcalidraw(canvas) {
   return scene;
 }
 
-const api = { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, convertToBlankSlate, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, hiddenResourceRecordIds, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, migrateAreaCardsToRegions, normalizeSceneColors, referenceFromText, refreshTangentFacts, regionSize, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, tangentOf, viewFromAppState, withBoundary };
-export { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, convertToBlankSlate, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, hiddenResourceRecordIds, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, migrateAreaCardsToRegions, normalizeSceneColors, referenceFromText, refreshTangentFacts, regionSize, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, tangentOf, viewFromAppState, withBoundary };
+const api = { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, captionLabel, convertToBlankSlate, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, hiddenResourceRecordIds, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, migrateAreaCardsToRegions, normalizeSceneColors, referenceFromText, refreshTangentFacts, regionSize, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, tangentOf, viewFromAppState, withBoundary };
+export { addBlock, appStateWithView, areaForBlock, authoredFingerprint, blockLabel, blockMatchesFocus, captionLabel, convertToBlankSlate, createAreaBoundary, createBlockElements, createEmptyScene, createRegionElements, createShapeElement, createTextElement, entityChoices, factForBlock, hiddenResourceRecordIds, insertionPoint, isAreaBoundary, isAreaRegion, kindForReference, legacyCanvasToExcalidraw, migrateAreaCardsToRegions, normalizeSceneColors, referenceFromText, refreshTangentFacts, regionSize, sceneForSave, sceneOutline, scopedEntities, setBlockHidden, spatialRole, splitReference, tangentOf, viewFromAppState, withBoundary };
 export default api;

@@ -5,6 +5,7 @@ import worldCore from "../public/area-map-world-core.js";
 import pickerModel from "../public/area-board-picker.js";
 import { mapFindMatches } from "../public/area-map-find-core.js";
 import { resolveMapEntity, resourceLocatorKey, runMapEntityAction, selectedMapEntityElement } from "../public/area-map-entities.js";
+import { restoreFigurePresentation } from "../public/area-map-figures.js";
 import { areaMapPointerCommand, areaMapStructuralHullChanged, createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "../public/area-map-world-controller.js";
 
 const EXCALIDRAW_UI_OPTIONS = Object.freeze({
@@ -515,6 +516,16 @@ export function AreaMapWorld({ host, bridge, options }) {
     return () => clearInterval(timer);
   }, [options.resourceCadenceMs]);
 
+  /** Re-reads the Map kinds definition Julian owns on the shared resource cadence. */
+  useEffect(() => {
+    if (typeof options.api !== "function") return undefined;
+    let cancelled = false;
+    void requestResource("/api/areas/map-kinds").then((catalog) => {
+      if (!cancelled) controller.setMapKinds?.(catalog);
+    }, () => { /* The Map keeps the catalog it already installed. */ });
+    return () => { cancelled = true; };
+  }, [options.api, resourceCadence]);
+
   /** Resolves loaded resource Blocks in one bounded request; facts never touch scene authority. */
   useEffect(() => {
     if (typeof options.api !== "function") return undefined;
@@ -758,13 +769,23 @@ export function AreaMapWorld({ host, bridge, options }) {
     return resourceResolutions.get(resourceLocatorKey({ owner, id: tangent.ref })) ?? null;
   }
 
+  /** Resolves one entity with the Map kinds definition every surface must agree on. */
+  function resolveEntity(input) {
+    return resolveMapEntity({ ...input, kinds: state.mapKinds ?? null });
+  }
+
   /** Resolves one Map Block into the common accessible/display/action contract. */
   function resolvedBlock(block) {
-    return resolveMapEntity({ element: block, documents, resource: resolutionForBlock(block) });
+    return resolveEntity({ element: block, documents, resource: resolutionForBlock(block) });
   }
 
   /** Preserves the existing shell navigation adapter for non-browser actions. */
   function dispatchShellEntityAction(action, entity) {
+    if (action?.kind === "details" && entity?.reference?.kind === "resource") {
+      if (!openResources(entity.source.owner)) return false;
+      setResourceDetails(action.resource);
+      return true;
+    }
     if (typeof options.onEntityAction === "function") { options.onEntityAction(action, entity); return true; }
     if (action?.kind === "open-goal") options.onEntityVerb?.({ kind: "goal", ref: action.file, verb: "enter" });
     else if (action?.kind === "open-document") options.onEntityVerb?.({ kind: "document", ref: `${action.file}${action.subpath ?? ""}`, verb: action.mode === "read" ? "read" : "open" });
@@ -2116,7 +2137,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       }
     }
 
-    const restored = restoreMaskedElements(elements, baselineComposition, state.hiddenIds);
+    const restored = restoreFigurePresentation(restoreMaskedElements(elements, baselineComposition, state.hiddenIds));
     const baselineElements = new Map(baselineComposition.scene.elements.map((element) => [element.id, element]));
     const selectedSources = pointerSelectedRef.current.size ? pointerSelectedRef.current : new Set(selectedIds(appState));
     const selectedWithBindings = new Set(selectedSources);
@@ -2641,7 +2662,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const resourceChoices = resourceRows.flatMap((row) => {
     const entity = resourceEntityForRow(row); if (!entity || entity.reason) return [];
     const resolution = resourceResolutions.get(resourceLocatorKey(entity.locator)) ?? resourceResolutionForRow(row);
-    const facts = resolveMapEntity({ source: { owner: entity.locator.owner, sourceId: entity.locator.id }, tangent: { kind: "resource", ref: entity.locator.id }, resource: resolution });
+    const facts = resolveEntity({ source: { owner: entity.locator.owner, sourceId: entity.locator.id }, tangent: { kind: "resource", ref: entity.locator.id }, resource: resolution });
     if (!facts) return [];
     const representation = representationForRow(row);
     return [{
@@ -2670,7 +2691,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     const entity = resourceEntityForRow(row); const needle = resourceFilter.trim().toLowerCase();
     if (!needle || !entity) return true;
     const resolution = resourceResolutions.get(resourceLocatorKey(entity.locator)) ?? resourceResolutionForRow(row);
-    const facts = resolveMapEntity({ source: { owner: entity.locator.owner, sourceId: entity.locator.id }, tangent: { kind: "resource", ref: entity.locator.id }, resource: resolution });
+    const facts = resolveEntity({ source: { owner: entity.locator.owner, sourceId: entity.locator.id }, tangent: { kind: "resource", ref: entity.locator.id }, resource: resolution });
     return facts?.searchText.toLowerCase().includes(needle);
   });
   const resourceGroups = [
@@ -2685,7 +2706,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const resourceDetailsEntity = resourceDetailsRow ? resourceEntityForRow(resourceDetailsRow) : null;
   const resourceDetailsResolution = resourceDetailsEntity ? resourceResolutions.get(resourceLocatorKey(resourceDetailsEntity.locator)) ?? resourceResolutionForRow(resourceDetailsRow) : null;
   const resourceDetailsObservedEntity = resourceDetailsResolution?.value ?? resourceDetailsEntity;
-  const resourceDetailsFacts = resourceDetailsEntity ? resolveMapEntity({
+  const resourceDetailsFacts = resourceDetailsEntity ? resolveEntity({
     source: { owner: resourceDetailsEntity.locator.owner, sourceId: resourceDetailsEntity.locator.id },
     tangent: { kind: "resource", ref: resourceDetailsEntity.locator.id },
     resource: resourceDetailsResolution,
@@ -2747,7 +2768,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     const key = resourceLocatorKey(entity.locator);
     const resolution = resourceResolutions.get(key) ?? resourceResolutionForRow(row);
     const observedEntity = resolution?.value ?? entity;
-    const facts = resolveMapEntity({ source: { owner: entity.locator.owner, sourceId: entity.locator.id }, tangent: { kind: "resource", ref: entity.locator.id }, resource: resolution });
+    const facts = resolveEntity({ source: { owner: entity.locator.owner, sourceId: entity.locator.id }, tangent: { kind: "resource", ref: entity.locator.id }, resource: resolution });
     if (!facts) return null;
     const representation = representationForRow(row);
     const representationLabel = representation === "on-map" ? "On Map" : representation === "hidden" ? "Not on Map · Hidden" : representation === "never-placed" ? "Not on Map · Never placed" : "Map state unavailable";
@@ -2958,6 +2979,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       })}
     </div>
     <div className={`tangent-map-save ${state.save.state}`} role="status" aria-live="polite" aria-label="Map save status">{state.save.state === "saving" ? "Saving…" : state.save.state === "dirty" ? "Pending save…" : state.save.state === "conflict" ? <>Not saved <button type="button" onClick={() => recoverMap("reload")}>Reload saved</button><button type="button" onClick={() => recoverMap("keepMine")}>Keep mine</button></> : state.save.state === "blocked" ? <>Not saved <button type="button" onClick={() => recoverMap("retry")}>Retry</button><button type="button" onClick={() => recoverMap("reload")}>Reload saved</button><button type="button" onClick={() => recoverMap("keepMine")}>Keep mine</button></> : state.draft && !state.draft.restored ? "Saved · Recovery available" : "Saved"}</div>
+    {(state.mapKinds?.problems ?? []).length ? <div className="tangent-map-kinds" role="status" aria-live="polite" aria-label="Map kinds status">{state.mapKinds.problems.map((problem, index) => <span key={`${problem.scope}:${problem.name ?? index}`}>Map kinds: {problem.name ? `${problem.name}: ` : ""}{problem.message}</span>)}</div> : null}
     {notice && !resourcePlacement && <div className="tangent-map-location" aria-hidden="true">{notice}</div>}
     {announcement.text && <div key={announcement.id} className="tangent-map-live" role="status" aria-live="polite" aria-atomic="true">{announcement.text}</div>}
     {resourcePlacement && <section className="tangent-map-resource-placement" role="status" aria-label={`Place ${resourcePlacement.entity.label} on the Map`}><strong>Place {resourcePlacement.entity.label} in {areaName(resourcePlacement.entity.locator.owner)}</strong><span>Move the pointer or use <kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd></span><span>Click or <kbd>Enter</kbd> to place · <kbd>Esc</kbd> to cancel</span><button type="button" onClick={cancelResourcePlacement}>Cancel</button></section>}
@@ -3027,7 +3049,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       </form> : <div className="tangent-map-resource-inventory">
         {resourceEditor?.hidden && <div className="tangent-map-resource-draft"><span>Unsaved resource draft</span><button type="button" onClick={() => setResourceEditor((current) => ({ ...current, hidden: false }))}>Resume</button><button type="button" onClick={() => setResourceEditor(null)}>Discard</button></div>}
         <div className="tangent-map-resource-controls"><label>Filter resources<input value={resourceFilter} onChange={(event) => setResourceFilter(event.target.value)} placeholder="Label, path, branch, host, or state" /></label><div><button type="button" disabled={!resourceWritesAvailable()} onClick={() => editResource({ kind: "worktree" })}>Add Worktree</button><button type="button" disabled={!resourceWritesAvailable()} onClick={() => editResource({ kind: "repository" })}>Add Repository</button><button type="button" disabled={!resourceWritesAvailable()} onClick={() => editResource({ kind: "link" })}>Add Link</button></div><div><button type="button" disabled={Boolean(resourceBusy) || !resourceControlsAvailable()} onClick={() => void discoverResources()}>{resourceBusy === "discover" ? "Checking worktrees…" : "Discover worktrees"}</button><button type="button" disabled={Boolean(resourceBusy) || Boolean(resourceRefreshing.size) || !resourceRows.length || !resourceControlsAvailable()} onClick={() => void refreshResourceFacts(resourceRows.map((row) => resourceEntityForRow(row)?.locator).filter(Boolean))}>{resourceRefreshing.size ? "Checking…" : "Refresh status"}</button></div><p>Discovery checks recorded repositories and the latest 20 Area attempts from 30 days. It never adds or places a Block.</p></div>
-        {resourceDiscovery && <section className="tangent-map-resource-review" aria-label="Worktree discovery results"><h3>Discovery sources</h3>{resourceDiscovery.state === "checking" ? <p role="status">Checking recorded repositories and recent Attempt folders…</p> : !(resourceDiscovery.sources?.length) ? <p>Add a repository or run a Goal from a folder first.</p> : <ul>{resourceDiscovery.sources.map((result, index) => { const locator = result.source?.resource; const row = locator ? resourceRows.find((candidate) => resourceLocatorKey(resourceEntityForRow(candidate)?.locator) === resourceLocatorKey(locator)) : null; const entity = row ? resourceEntityForRow(row) : null; const facts = row ? resolveMapEntity({ source: { owner: entity.locator.owner, sourceId: entity.locator.id }, tangent: { kind: "resource", ref: entity.locator.id }, resource: resourceResolutionForRow(row) }) : null; const label = entity?.label ?? (result.source?.jobSlug ? `Goal ${result.source.jobSlug}` : result.source?.file ?? `Discovery source ${index + 1}`); return <li key={`${result.source?.kind ?? "source"}:${locator?.owner ?? ""}:${locator?.id ?? result.source?.jobSlug ?? index}`}><strong>{label}</strong><span>{result.state === "complete" ? "Checked" : result.state === "partial" ? "Checked with problems" : "Could not inspect"}</span>{result.diagnostics?.map((problem) => <span key={`${problem.code}:${problem.path ?? ""}`}>{problem.message}</span>)}{facts?.primaryAction?.kind === "copy-path" && <button type="button" onClick={(event) => void dispatchMapEntity(facts, facts.primaryAction, event.currentTarget)}>Copy repository path</button>}</li>; })}</ul>}{resourceDiscovery.problems?.length ? <ul>{resourceDiscovery.problems.map((problem, index) => <li key={`${problem.code}:${index}`}><strong>{problem.code}</strong><span>{problem.message}</span>{problem.retryable && <button type="button" onClick={() => void discoverResources()}>Retry discovery</button>}</li>)}</ul> : null}</section>}
+        {resourceDiscovery && <section className="tangent-map-resource-review" aria-label="Worktree discovery results"><h3>Discovery sources</h3>{resourceDiscovery.state === "checking" ? <p role="status">Checking recorded repositories and recent Attempt folders…</p> : !(resourceDiscovery.sources?.length) ? <p>Add a repository or run a Goal from a folder first.</p> : <ul>{resourceDiscovery.sources.map((result, index) => { const locator = result.source?.resource; const row = locator ? resourceRows.find((candidate) => resourceLocatorKey(resourceEntityForRow(candidate)?.locator) === resourceLocatorKey(locator)) : null; const entity = row ? resourceEntityForRow(row) : null; const facts = row ? resolveEntity({ source: { owner: entity.locator.owner, sourceId: entity.locator.id }, tangent: { kind: "resource", ref: entity.locator.id }, resource: resourceResolutionForRow(row) }) : null; const label = entity?.label ?? (result.source?.jobSlug ? `Goal ${result.source.jobSlug}` : result.source?.file ?? `Discovery source ${index + 1}`); return <li key={`${result.source?.kind ?? "source"}:${locator?.owner ?? ""}:${locator?.id ?? result.source?.jobSlug ?? index}`}><strong>{label}</strong><span>{result.state === "complete" ? "Checked" : result.state === "partial" ? "Checked with problems" : "Could not inspect"}</span>{result.diagnostics?.map((problem) => <span key={`${problem.code}:${problem.path ?? ""}`}>{problem.message}</span>)}{facts?.primaryAction?.kind === "copy-path" && <button type="button" onClick={(event) => void dispatchMapEntity(facts, facts.primaryAction, event.currentTarget)}>Copy repository path</button>}</li>; })}</ul>}{resourceDiscovery.problems?.length ? <ul>{resourceDiscovery.problems.map((problem, index) => <li key={`${problem.code}:${index}`}><strong>{problem.code}</strong><span>{problem.message}</span>{problem.retryable && <button type="button" onClick={() => void discoverResources()}>Retry discovery</button>}</li>)}</ul> : null}</section>}
         {resourceTransport.state === "loading" && !resourceProjection && <p role="status">Loading Map resources…</p>}
         {resourceProjection?.state === "current" && resourceTransport.state === "current" && !filteredResourceRows.length && !(resourceProjection.suggestions?.length) && !(resourceProjection.legacyReview?.length) && <p>{resourceFilter ? "No resources match this filter." : "No confirmed Map resources in this Area yet."}</p>}
         {!!filteredResourceRows.length && <ul className="tangent-map-resource-list">{filteredResourceRows.map(resourceRowView)}</ul>}

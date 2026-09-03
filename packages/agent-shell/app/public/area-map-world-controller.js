@@ -196,6 +196,9 @@ export function createAreaMapWorldController({
   let revision = 0;
   let factsRevision = 0;
   let resourceResolutions = new Map();
+  let mapKinds = null;
+  let figures = null;
+  const figureCache = new Map();
   let authorityGeneration = 0;
   let viewTimer = null;
   let pendingView = null;
@@ -259,17 +262,19 @@ export function createAreaMapWorldController({
     const resourceFact = (element, tangent) => {
       const owner = element.customData?.tangentWorld?.owner;
       const key = resourceLocatorKey({ owner, id: tangent.ref });
-      const entity = key ? resolveMapEntity({ element, resource: resourceResolutions.get(key) ?? null }) : null;
+      const entity = key ? resolveMapEntity({ element, kinds: mapKinds, resource: resourceResolutions.get(key) ?? null }) : null;
       if (!entity) return null;
       return {
         kind: entity.display.kindLabel,
+        kindId: entity.kindId,
+        states: entity.states,
         title: entity.display.label,
         status: [entity.display.targetClue, ...entity.display.stateText].filter(Boolean).join(" · "),
         ghost: entity.sourceState !== "current",
         success: entity.display.externalTreatment === "success",
       };
     };
-    const scene = boardCore.refreshTangentFacts(clone(composition.scene), getDocuments(), { resourceFact }).scene;
+    const scene = boardCore.refreshTangentFacts(clone(composition.scene), getDocuments(), { resourceFact, figures, figureCache }).scene;
     const visibleFolds = effectiveFolds();
     const hidden = new Set();
     const hiddenBlocks = new Set();
@@ -308,9 +313,7 @@ export function createAreaMapWorldController({
       }
     }
     for (const element of scene.elements) {
-      const sourceId = element.customData?.tangentWorldEphemeral?.kind === "resource-success-rail"
-        ? element.customData.tangentWorldEphemeral.sourceId
-        : null;
+      const sourceId = element.customData?.tangentWorldEphemeral?.sourceId ?? null;
       if (sourceId && hidden.has(sourceId)) hidden.add(element.id);
     }
     for (const element of scene.elements) {
@@ -376,7 +379,7 @@ export function createAreaMapWorldController({
     dirtyOwners.delete(undefined);
     return {
       reason, revision, factsRevision,
-      world, composition, scene: projectedScene, hiddenIds,
+      world, composition, scene: projectedScene, hiddenIds, mapKinds,
       focus, folded: effectiveFolds(), manualFolded: folded, restrictionArea, scopedAreas: scopedAreas(), findRevealId, detailAreas, camera, locatedArea, cameraTarget, cameraTrail, viewRestored: Boolean(validView),
       selection, save, draft, dirtyOwners,
       nextEscape: selection.size ? "Esc clears selection" : cameraTrail.length ? `Esc → ${leaf(cameraTrail.at(-1))}` : "Esc → Work",
@@ -841,6 +844,22 @@ export function createAreaMapWorldController({
     return reconcileTree();
   }
 
+  /**
+   * Installs the Map kinds definition Julian owns. A changed revision repaints
+   * every fact and drops the drawn-figure cache; the same revision is a no-op,
+   * so the resource cadence can re-read the catalog freely.
+   */
+  function setMapKinds(catalog) {
+    if (!catalog || typeof catalog !== "object" || !Array.isArray(catalog.kinds)) return false;
+    if (mapKinds && mapKinds.revision === catalog.revision) return false;
+    mapKinds = clone(catalog);
+    figures = { kinds: new Map(mapKinds.kinds.map((entry) => [entry.id, entry])), icons: mapKinds.icons ?? {} };
+    figureCache.clear();
+    factsRevision += 1;
+    notify("map-kinds");
+    return true;
+  }
+
   /** Installs current resource read facts without changing world or Map history authority. */
   function setResourceResolutions(values = [], { replace = false } = {}) {
     if (!Array.isArray(values)) return false;
@@ -1097,7 +1116,7 @@ export function createAreaMapWorldController({
       return changed;
     },
     selectArea, setSelection, setFindReveal, fitArea, navigateArea, setRestriction, toggleRestriction, escape, toggleFold, setFocus, setCamera, captureView, restoreView,
-    materialize, prioritizeLoads, refreshFacts, setResourceResolutions, installResourceSourceUpdates,
+    materialize, prioritizeLoads, refreshFacts, setMapKinds, setResourceResolutions, installResourceSourceUpdates,
     /** Drains durable work, but never waits for a user Retry decision after a failed save. */
     async flush() {
       while (worldHistory.state.scheduled || worldHistory.state.active || worldHistory.state.queue.length) {

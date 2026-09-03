@@ -66,3 +66,70 @@ export function runBoundKey(bindings: KeyBindings | undefined, event: KeyEventLi
   handler(modifiersOf(event));
   return true;
 }
+
+/**
+ * One chord on the Map host: the key and, per modifier, whether it must be held (`true`), must be
+ * up (`false`) or does not matter (absent). `command` is Cmd on a Mac and Ctrl elsewhere; both
+ * satisfy it. A single-letter key matches without regard to case, so Shift never hides a letter.
+ */
+export type KeyChord = {
+  readonly key: string;
+  readonly command?: boolean;
+  readonly shift?: boolean;
+  readonly alt?: boolean;
+};
+
+/** The key and the modifier state a chord is matched against. */
+export type ChordInput = KeyModifiers & { readonly key: string };
+
+/** The Map's host keys, named once. `input/key-routes.ts` decides what each does and in what order. */
+export const MAP_KEYS = {
+  escape: [{ key: "Escape" }],
+  find: [{ key: "f", command: true, shift: false, alt: false }, { key: "/", command: false, shift: false, alt: false }],
+  help: [{ key: "?" }, { key: "/", shift: true }],
+  picker: [{ key: "b", command: false, alt: false }],
+  outline: [{ key: "o", command: true, shift: true }],
+  undo: [{ key: "z", command: true, shift: false }],
+  redo: [{ key: "z", command: true, shift: true }],
+  duplicate: [{ key: "d", command: true }],
+  only: [{ key: "o", command: false, shift: true, alt: false }],
+  findNext: [{ key: "n", command: false, shift: false, alt: false }],
+  findPrevious: [{ key: "n", command: false, shift: true, alt: false }],
+  activate: [{ key: "Enter" }],
+  read: [{ key: "o", command: false, alt: false }],
+  hide: [{ key: "x", command: false, alt: false }],
+  fold: [{ key: " " }],
+  remove: [{ key: "Backspace" }, { key: "Delete" }],
+  finishTextEdit: [{ key: "Enter", command: true }],
+  left: [{ key: "ArrowLeft" }],
+  right: [{ key: "ArrowRight" }],
+  up: [{ key: "ArrowUp" }],
+  down: [{ key: "ArrowDown" }]
+} as const satisfies Record<string, readonly KeyChord[]>;
+
+/** The name of one Map host key. */
+export type MapKey = keyof typeof MAP_KEYS;
+
+/** True when a modifier requirement is met: absent means any state, else the flag must equal it. */
+function modifierMatches(required: boolean | undefined, held: boolean): boolean {
+  return required === undefined || required === held;
+}
+
+/** True when the pressed key is the chord's key, ignoring case for a single letter. */
+function keyMatches(chord: KeyChord, key: string): boolean {
+  if (chord.key.length === 1 && /[a-z]/i.test(chord.key)) return key.toLowerCase() === chord.key.toLowerCase();
+  return key === chord.key;
+}
+
+/** True when the press is exactly this chord. */
+export function chordMatches(chord: KeyChord, input: ChordInput): boolean {
+  return keyMatches(chord, input.key)
+    && modifierMatches(chord.command, input.metaKey || input.ctrlKey)
+    && modifierMatches(chord.shift, input.shiftKey)
+    && modifierMatches(chord.alt, input.altKey);
+}
+
+/** True when the press is any chord of the named Map key. */
+export function isMapKey(name: MapKey, input: ChordInput): boolean {
+  return MAP_KEYS[name].some((chord) => chordMatches(chord, input));
+}

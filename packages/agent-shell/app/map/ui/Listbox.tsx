@@ -32,6 +32,8 @@ export type ListboxProps = {
   readonly id?: string;
   readonly ariaLabel?: string;
   readonly className?: string;
+  /** The class of a group heading; the picker's suites know it as `tangent-map-picker-group`. */
+  readonly groupClassName?: string;
   readonly options: readonly ListboxOption[];
   /** The selected option, or null for none. It is the tab stop and carries aria-selected. */
   readonly selectedId: string | null;
@@ -42,6 +44,7 @@ export type ListboxProps = {
 };
 
 const OPTION_SELECTOR = '[role="option"]';
+const DEFAULT_GROUP_CLASS = "tangent-map-listbox-group";
 
 /** Lists the option elements of a listbox in DOM order, which is the order of `options`. */
 function optionElements(list: HTMLElement): HTMLElement[] {
@@ -66,7 +69,7 @@ function selectedIndexOf(options: readonly ListboxOption[], selectedId: string |
 
 /** A single-select listbox with a roving tabindex over data-driven options. */
 export function Listbox(props: ListboxProps): ReactNode {
-  const { id, ariaLabel, className, options, selectedId, onSelect, onActivate } = props;
+  const { id, ariaLabel, className, groupClassName, options, selectedId, onSelect, onActivate } = props;
   const listRef = useRef<HTMLUListElement>(null);
   const total = count(options.length);
   const stop = tabStop(selectedIndexOf(options, selectedId), total);
@@ -100,7 +103,7 @@ export function Listbox(props: ListboxProps): ReactNode {
     const startsGroup = option.group !== undefined && option.group !== previous?.group;
     return (
       <li key={option.id}>
-        {startsGroup && <div className="tangent-map-listbox-group">{option.group}</div>}
+        {startsGroup && <div className={groupClassName ?? DEFAULT_GROUP_CLASS}>{option.group}</div>}
         <button
           type="button"
           role="option"

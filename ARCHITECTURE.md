@@ -65,6 +65,8 @@ A framework-neutral layout kernel resolves nested requirements, automatic spacin
 
 Agent Shell embeds Excalidraw as one persistent browser island. The world controller owns loading, selection, history, view masks, drafts, and conflicts. A durable coordinator commits all shards from one gesture in one exact Git commit. Fact refresh and camera changes do not change map authority (ADR-0049, ADR-0051).
 
+The browser Map above that kernel is TypeScript under `packages/agent-shell/app/map/`, held to a lint-enforced engineering bar: branded units instead of raw numbers, one typed boundary to the kernel, one pointer authority that subordinates Excalidraw's selection, one surface registry that owns overlay order and focus, layout numbers named once, copy in one place, and a minter-beside-guard registry for every value the server mints and later checks. The lints live in `scripts/lint/` and run on every commit (ADR-0059).
+
 Each physical Area can own a `map-resources.json` catalog. The catalog records Worktrees, Repositories, Links, and durable Suggestion decisions.
 Resource Blocks store only an owner-scoped opaque ID. The server joins that ID with catalog, source-scene, launch, and cached observation facts.
 Catalog membership and Map placement are separate operations. Both operations use the Area-map transaction barrier and exact Git commits.

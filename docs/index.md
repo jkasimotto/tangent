@@ -47,6 +47,7 @@ Decisions:
 - decisions/ADR-0039-durable-generic-agent-message-queue.md
 - decisions/ADR-0054-explicit-area-harness-contracts.md
 - decisions/ADR-0055-separate-goals-jobs-agents-and-brains.md
+- decisions/ADR-0059-map-engineering-bar.md
 - decisions/ADR-0030-area-triggers.md (amended by ADR-0043)
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md
@@ -64,6 +65,10 @@ Agent workflow:
 Product design:
 - design/agent-shell-area-desk.md
 - design/task-outcomes.md
+
+Code design:
+- design/area-map-rebuild/code.md (the rebuilt browser Map and its lint bar)
+- design/area-map-rebuild/selector-contract.md (the selectors the Map browser suites depend on)
 
 Agent Shell packages:
 - ../packages/agent-shell/docs/index.md

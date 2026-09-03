@@ -24,5 +24,5 @@ export type { RecoverableActionKind } from "./copy/recovery.ts";
 export { RESOURCE_RECOVERY, SCENE_RECOVERY, MUTATION_RECOVERY, TRANSACTION } from "./copy/recovery.ts";
 export { SAVE_ANNOUNCEMENTS, REASON_ANNOUNCEMENTS, RECOVERY_ANNOUNCEMENTS, CANVAS_ANNOUNCEMENTS, FIND_ANNOUNCEMENTS, PICKER_ANNOUNCEMENTS, RESOURCE_ANNOUNCEMENTS } from "./copy/announcements.ts";
 export type { FailureCopy } from "./copy/errors.ts";
-export { INTERNAL_ERRORS, copyForFailure, knownFailureKinds } from "./copy/errors.ts";
+export { EDITOR_BOUNDARY, INTERNAL_ERRORS, copyForFailure, knownFailureKinds } from "./copy/errors.ts";
 export { DEBUG } from "./copy/debug.ts";

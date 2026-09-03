@@ -10,7 +10,7 @@ import type { GestureBaseline, Region } from "./kernel-types.ts";
 const EXPECTED_EXPORTS = {
   controller: ["createAreaMapWorldController", "areaMapPointerCommand", "areaMapProjectionUpdate", "selectedAreaMapRegionChanges", "ownerForNewAreaMapElement", "areaMapStructuralHullChanged", "areaMapDeferredLoadPlan"],
   worldCore: ["AREA_MAP_LAYOUT", "composeAreaMapWorld", "solveAreaMapGesture", "solveOwnedElementGesture", "nearestFreeRectangle", "placeBlockAtNearestFreePoint", "placeBlockInSourceScene", "splitComposed", "unionRects", "inflateRect", "runtimeId", "regionId", "regionKey", "shardHulls", "detachCrossOwnerTextBindings", "reprioritizeAreaPlacement", "protectAreaRegions", "sourceAreaContentBounds"],
-  boardCore: ["areaForBlock", "authoredFingerprint", "createEmptyScene", "entityChoices", "insertionPoint", "isAreaBoundary", "isAreaRegion", "referenceFromText", "setBlockHidden", "tangentOf"],
+  boardCore: ["areaForBlock", "authoredFingerprint", "createEmptyScene", "entityChoices", "insertionPoint", "isAreaBoundary", "isAreaRegion", "referenceFromText", "sceneForSave", "setBlockHidden", "tangentOf"],
   entities: ["resolveMapEntity", "resourceLocatorKey", "runMapEntityAction", "selectedMapEntityElement", "isMapEntityBlock", "mapEntityLocator", "isSafeResourceId"],
   figures: ["figureIconFiles", "restoreFigurePresentation", "themeInkColor", "figureIconFileId"],
   find: ["mapFindMatches", "mapFindTextMatches", "areaInRestriction"],

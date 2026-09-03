@@ -17,6 +17,14 @@ export const INTERNAL_ERRORS = {
   changeStartedMidInstall: "A Map change started before the resource source could be installed.",
   notSavedTogether: "The Area resource and Map source were not saved together.",
   notSaved: "Map resources were not saved.",
+  /** The mount refused because the host passed neither a world nor a controller. */
+  worldUnavailable: "The complete Area-map world is unavailable",
+} as const;
+
+/** The words of the error boundary that stands in for a Map that did not render. */
+export const EDITOR_BOUNDARY = {
+  heading: "The complete Area map did not load.",
+  retry: "Retry",
 } as const;
 
 const RETRY_SAME = "Retry the same operation from the recovery dialog.";

@@ -25,7 +25,7 @@ import type {
   ComposingKeyboardEvent, Composition, ControllerOptions, FigureIconFile, FindAreaInput, FindBlockInput, FindRow, GestureBaseline, KeyboardContext,
   KeyboardContextFacts, LoadPlanOptions, MapElement, MapEntityAction, MapEntityActionResult, MapEntityEffects, MapEntityFacts, MapIcon,
   OwnedElementIntent, OwnedElementResult, PickerChoice, PickerSceneFacts, PickerSection, PickerTargetFacts, PlacedBlock, PointerCommand,
-  ProjectionUpdate, ProjectionUpdateInput, Region, RegionKey, ResolveMapEntityInput, ResourceLocator, ResourceLocatorKey, SceneElement, Selection,
+  ProjectionUpdate, ProjectionUpdateInput, Region, RegionKey, ResolveMapEntityInput, ResourceLocator, ResourceLocatorKey, SceneAppState, SceneElement, Selection,
   ShardHulls, SourceElement, SourceScene, TangentBlockMeta, TangentMeta, VaultDocument, VaultIndexItem, World,
 } from "./kernel-types.ts";
 
@@ -143,6 +143,8 @@ export const isAreaRegion = typed<(element: MapElement<Frame> | null | undefined
 export const referenceFromText = typed<(text: string | null | undefined, choices?: readonly BlockChoice[]) => BlockChoice | null>(boardCore.referenceFromText);
 /** Hides or restores a Block and its bound text without deleting other ink. */
 export const setBlockHidden = typed<(scene: SourceScene, blockId: SourceId, hidden: boolean) => SourceScene>(boardCore.setBlockHidden);
+/** Returns one shard scene ready to save: the elements without selection, scroll or zoom state. */
+export const sceneForSave = typed<(elements: readonly MapElement<Frame>[], appState?: Partial<SceneAppState> | Readonly<AppState>) => SourceScene>(boardCore.sceneForSave);
 /** Returns the Tangent metadata of a connectable Block, or null for structure and ink. */
 export const tangentOf = typed<(element: MapElement<Frame> | null | undefined) => TangentBlockMeta | null>(boardCore.tangentOf);
 

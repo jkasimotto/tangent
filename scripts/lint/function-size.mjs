@@ -33,8 +33,6 @@ const GRANDFATHERED_FILES = new Set([
   "packages/agent-shell/app/area-resource-representations.mjs",
   "packages/agent-shell/app/area-resource-service.mjs",
   "packages/agent-shell/app/brain-routes.mjs",
-  "packages/agent-shell/app/browser/area-board-excalidraw.jsx",
-  "packages/agent-shell/app/browser/area-map-world.jsx",
   "packages/agent-shell/app/document-routes.mjs",
   "packages/agent-shell/app/gateway.mjs",
   "packages/agent-shell/app/job-routes.mjs",

@@ -29,7 +29,6 @@ const GRANDFATHERED_FILES = new Set([
   "packages/agent-shell/app/area-resource-mutations.mjs",
   "packages/agent-shell/app/area-resource-projection.mjs",
   "packages/agent-shell/app/area-resource-recovery.mjs",
-  "packages/agent-shell/app/browser/area-map-world.jsx",
   "packages/agent-shell/app/gateway.mjs",
   "packages/agent-shell/app/job-record.mjs",
   "packages/agent-shell/app/launch-environment.mjs",

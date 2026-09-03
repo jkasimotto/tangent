@@ -29,6 +29,12 @@ export type KeyboardDeps = {
   readonly setShiftHeld?: ((held: boolean) => void) | undefined;
   /** Runs one routed command. */
   readonly run: (command: KeyCommand) => void;
+  /**
+   * True when a pointer drag happened while Space was held. A Space press folds the selected Area
+   * only on its keyup, and only when nothing was dragged in between: the documented Space-drag is
+   * a pan, never a fold. Optional; without it every Space keyup folds.
+   */
+  readonly draggedWhileSpaceHeld?: (() => boolean) | undefined;
   /** Called with every decision, for a diagnostic or a test. Optional. */
   readonly observe?: ((press: KeyPress, decision: KeyDecision) => void) | undefined;
 };
@@ -77,6 +83,9 @@ function consume(event: KeyEventInput, decision: KeyDecision): void {
   if (decision.consume === "stop") event.stopPropagation();
 }
 
+/** The fold each dispatcher holds between a Space keydown and its keyup, keyed by the deps that own it. */
+const pendingFolds = new WeakMap<KeyboardDeps, KeyCommand>();
+
 /** Routes one keydown and acts on the decision. Exported so a test can drive it without listeners. */
 export function dispatchKeydown(event: KeyEventInput, deps: KeyboardDeps): KeyDecision {
   const press = pressOf(event, deps.surfaceOf(event.target));
@@ -85,14 +94,21 @@ export function dispatchKeydown(event: KeyEventInput, deps: KeyboardDeps): KeyDe
   const decision = routeKey(press, deps.facts());
   deps.observe?.(press, decision);
   consume(event, decision);
-  if (decision.owner === "map") deps.run(decision.command);
+  if (decision.owner !== "map") return decision;
+  if (decision.command.kind === "fold-selected-area") pendingFolds.set(deps, decision.command);
+  else deps.run(decision.command);
   return decision;
 }
 
-/** Clears the Space flag when Space comes up. */
+/** Clears the Space flag when Space comes up, and runs the fold it held unless the press became a pan. */
 export function dispatchKeyup(event: KeyEventInput, deps: KeyboardDeps): void {
   deps.setShiftHeld?.(event.shiftKey);
-  if (isSpace(event)) deps.setSpaceHeld(false);
+  if (!isSpace(event)) return;
+  const fold = pendingFolds.get(deps);
+  pendingFolds.delete(deps);
+  const dragged = deps.draggedWhileSpaceHeld?.() ?? false;
+  deps.setSpaceHeld(false);
+  if (fold !== undefined && !dragged) deps.run(fold);
 }
 
 /**
@@ -112,6 +128,7 @@ export function installKeyboardDispatch(host: KeyboardHost, deps: KeyboardDeps):
   };
   /** The window blur listener. */
   const onBlur = (): void => {
+    pendingFolds.delete(deps);
     deps.setSpaceHeld(false);
     deps.setShiftHeld?.(false);
   };

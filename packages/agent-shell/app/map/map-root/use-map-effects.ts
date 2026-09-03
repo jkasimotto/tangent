@@ -74,7 +74,9 @@ function useCanvasEffects(input: EffectsInput): void {
       /** The open surface an event target sits inside, or null for the canvas. */
       surfaceOf: (target) => surfaceOfTarget(target),
       /** Keeps the flag rule 1 of `press-meaning.ts` reads. */
-      setSpaceHeld: (held) => { core.session.spaceHeld = held; },
+      setSpaceHeld: (held) => { core.session.spaceHeld = held; if (held) core.session.spaceDragged = false; },
+      /** Whether a pointer dragged while Space was held, which makes the Space press a pan and not a fold. */
+      draggedWhileSpaceHeld: () => core.session.spaceDragged,
       /** Keeps the flag rule 5 of `press-meaning.ts` reads, which Excalidraw never reports. */
       setShiftHeld: (held) => { core.session.shiftPress = held; },
       run: wiring.runCommand,

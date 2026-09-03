@@ -9,8 +9,9 @@ import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { AREA_LABELS, PICKER } from "../../copy.ts";
 import { KeyedSentence } from "../../ui/KeyedSentence.tsx";
-import { Listbox } from "../../ui/Listbox.tsx";
+import { Listbox, focusListboxOption } from "../../ui/Listbox.tsx";
 import type { ListboxOption } from "../../ui/Listbox.tsx";
+import { index } from "../../units/units.ts";
 import type { KeyModifiers } from "../../ui/key-bindings.ts";
 import { Surface } from "../../ui/Surface.tsx";
 import { TextField } from "../../ui/TextField.tsx";
@@ -23,6 +24,8 @@ import type { PickerState, PickerTarget } from "./picker-store.ts";
 
 /** The class of a group heading in the list, which the suites know. */
 const GROUP_CLASS = "tangent-map-picker-group";
+/** The id of the results listbox, so ArrowDown in the query can move focus into it. */
+const LIST_ID = "tangent-map-picker-results";
 /** The class of the backdrop, which carries the dock side. */
 const BACKDROP_CLASS = "tangent-map-dialog-backdrop";
 
@@ -104,10 +107,12 @@ export function Picker(props: PickerProps): ReactNode {
           Tab: () => { env.dispatch({ kind: "toggle-wide" }); },
           /** Places the first listed choice; Shift keeps the dialog open to place another. */
           Enter: (modifiers) => { void placeFirst(env, entries, target, modifiers.shiftKey); },
+          /** Moves the keyboard from the query onto the first result; the listbox's own keys reach the rest. */
+          ArrowDown: () => { focusListboxOption(LIST_ID, index(0)); },
         }}
         onChange={(query) => { env.dispatch({ kind: "set-query", query }); }}
       />
-      <Listbox options={entryOptions(entries, areaName(target.area))} selectedId={null} groupClassName={GROUP_CLASS} onActivate={activate} />
+      <Listbox id={LIST_ID} options={entryOptions(entries, areaName(target.area))} selectedId={null} groupClassName={GROUP_CLASS} onActivate={activate} />
       <p><KeyedSentence parts={PICKER.keys(state.wide)} /></p>
     </Surface>
   );

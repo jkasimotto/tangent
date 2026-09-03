@@ -219,6 +219,7 @@ export function createCanvasHandlers(deps: CanvasDeps, setApi: (api: ExcalidrawI
     /** Previews the open gesture, or moves the open placement preview. */
     onPointerMove: (at, button) => {
       deps.session.lastPointer = at;
+      if (button === "down" && deps.session.spaceHeld) deps.session.spaceDragged = true;
       if (deps.placementOpen()) {
         deps.movePlacement(at);
         return;

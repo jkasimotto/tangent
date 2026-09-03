@@ -4,7 +4,7 @@
 // Tab kept inside while modal. Feature surfaces render inside it and receive `close` and
 // `backStep`. Nothing outside `ui/` renders a dialog, a backdrop, or calls `.focus()`.
 
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 import { surfaceDeclaration } from "../surfaces/surface-registry.ts";
 import type { SurfaceFocusOnOpen, SurfaceId } from "../surfaces/surface-registry.ts";
@@ -71,8 +71,12 @@ export function Surface(props: SurfaceProps): ReactNode {
   const openerRef = useRef<HTMLElement | null | undefined>(props.opener);
   openerRef.current = props.opener;
 
-  useEffect(
-    /** Moves focus in on open and back out on close, as the registry row declares. */
+  useLayoutEffect(
+    /**
+     * Moves focus in on open and back out on close, as the registry row declares. A layout effect,
+     * so the first control is focused before the surface is ever painted, the way `autoFocus` did:
+     * a key typed the moment a dialog appears lands in its field and not on the canvas behind it.
+     */
     () => {
       const section = sectionRef.current;
       if (section === null) return undefined;
@@ -153,7 +157,7 @@ function canTakeFocus(element: HTMLElement): boolean {
 function scheduleFocusIn(section: HTMLElement, target: SurfaceFocusOnOpen, initialFocus: string | undefined): FocusAttempt {
   let handle: ReturnType<typeof requestAnimationFrame> | null = null;
   let attempts = count(0);
-  /** One frame's attempt: focus the named control when it is ready, retry while it is not, else fall back. */
+  /** One attempt: focus the named control when it is ready, retry next frame while it is not, else fall back. */
   const attempt = (): void => {
     handle = null;
     const preferred = preferredControlOf(section, initialFocus);
@@ -165,7 +169,7 @@ function scheduleFocusIn(section: HTMLElement, target: SurfaceFocusOnOpen, initi
     }
     moveFocusIn(section, target, ready ? initialFocus : undefined);
   };
-  handle = requestAnimationFrame(attempt);
+  attempt();
   /** Drops the pending frame so a closed or re-asked surface never moves focus late. */
   const cancel = (): void => {
     if (handle !== null) cancelAnimationFrame(handle);

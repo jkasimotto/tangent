@@ -14,7 +14,8 @@ import type { VisibleScene } from "../input/hit-test.ts";
 import { PointerSession } from "../input/pointer-session.ts";
 import { runMapEntityAction } from "../kernel/kernel-boundary.ts";
 import type { AreaMapController, MapEntityAction, MapEntityFacts, SceneElement, Snapshot } from "../kernel/kernel-types.ts";
-import { LAYOUT } from "../layout/layout-tokens.ts";
+import { LAYOUT, retainedPanelWidth } from "../layout/layout-tokens.ts";
+import { cameraForStrip, stripWidth } from "../canvas/strip-camera.ts";
 import type { WorldMountOptions } from "../mount-options.ts";
 import type { AnnounceAction } from "../surfaces/announce/announce-store.ts";
 import type { SurfaceId } from "../surfaces/surface-registry.ts";
@@ -24,6 +25,7 @@ import type { Camera, Point, Size } from "../units/frames.ts";
 import { shardOwner } from "../units/ids.ts";
 import type { AreaKey, ShardOwner } from "../units/ids.ts";
 import { scenePx, screenPx, zoom as zoomOf } from "../units/units.ts";
+import type { ScreenPx } from "../units/units.ts";
 import type { MapSession } from "./map-session.ts";
 import type { MapView } from "./map-root-view.ts";
 import { selectionAppState } from "../canvas/projection.ts";
@@ -88,6 +90,8 @@ export type ReadsInput = {
   readonly runShellAction: (facts: MapEntityFacts, action: MapEntityAction, opener: HTMLElement | null) => boolean;
   /** Hides one Block through the Map's own command path, which is a publish of the composed scene. */
   readonly hideBlock: (block: SceneElement) => void;
+  /** True while the Resources panel is retained beside the canvas, taking the right part of the Map. */
+  readonly panelRetained: () => boolean;
 };
 
 /** The Block actions the browser itself performs; everything else is the shell's. */
@@ -118,13 +122,23 @@ export function buildReads(input: ReadsInput): RuntimeReads {
     const state = core.session.api?.getAppState();
     return state === undefined ? null : { scrollX: scenePx(state.scrollX), scrollY: scenePx(state.scrollY), zoom: zoomOf(state.zoom.value) };
   };
-  /** Scrolls Excalidraw and keeps the overlays on the same live camera. */
+  /** The width the retained panel takes now, or zero when it is closed or shown as the narrow sheet. */
+  const panelInset = (): ScreenPx => (input.panelRetained() ? retainedPanelWidth(measure(core.host).width) : screenPx(0));
+  /**
+   * Scrolls Excalidraw to the elements and keeps the overlays on the same live camera. Beside the
+   * retained panel the fit is re-aimed at the strip the panel leaves, without animation, so the
+   * Area a person asked to see is never centred under the panel.
+   */
   const scrollTo = (elements: readonly SceneElement[], animate: boolean): void => {
     const api = core.session.api;
     if (api === null || elements.length === 0) return;
-    api.scrollToContent(elements as never, { fitToContent: true, animate });
-    const camera = liveCamera();
-    if (camera !== null) core.controller.setCamera(camera);
+    const inset = panelInset();
+    api.scrollToContent(elements as never, { fitToContent: true, animate: animate && inset <= 0 });
+    const fitted = liveCamera();
+    if (fitted === null) return;
+    const camera = cameraForStrip(fitted, elements, measure(core.host), inset);
+    if (camera !== fitted) core.projection.project({ camera }, "view-return");
+    core.controller.setCamera(camera);
   };
   /** Runs one Block action: a browser effect here, a shell navigation through the host. */
   const runAction = (facts: MapEntityFacts, action: MapEntityAction, opener: HTMLElement | null): void => {
@@ -147,8 +161,11 @@ export function buildReads(input: ReadsInput): RuntimeReads {
     announce,
     /** The deepest visible Area at a scene point, or the located Area when the point is over none. */
     ownerAt: (at: Point<"scene">) => shardOwner(deepestVisibleArea(scene, at) ?? snapshot.locatedArea),
-    /** The Map's own size in screen pixels. */
-    viewport: () => measure(core.host),
+    /** The part of the Map a person can see: its size less the retained panel, so placements land in the open strip. */
+    viewport: () => {
+      const full = measure(core.host);
+      return size("screen", stripWidth(full, panelInset()), full.height);
+    },
     liveCamera,
     scrollTo,
     /** True when the person asked for reduced motion. */

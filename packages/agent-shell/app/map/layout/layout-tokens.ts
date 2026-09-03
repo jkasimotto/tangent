@@ -77,6 +77,8 @@ const SCREEN_TOKENS = {
   grabPadding: screenPx(10),
   /** Widths of the window at which the layout changes. CSS media queries cannot read a custom property, so `map.css` restates these and a test holds the two equal. */
   narrowBreakpoint: screenPx(960),
+  /** The most the retained Resources panel takes; below that it takes `panelWidthShare` of the Map. */
+  panelMaxWidth: screenPx(680),
   rowUnderToolbarBreakpoint: screenPx(1199),
   rowUnderToolbarWithVerbsBreakpoint: screenPx(1579),
   toolbarRecentreBreakpoint: screenPx(1240),
@@ -111,6 +113,8 @@ const ZOOM_TOKENS = {
 const PERCENT_TOKENS = {
   /** The placement preview Block is drawn translucent so it reads as not yet placed. */
   placementPreviewOpacity: percent(70),
+  /** The share of the Map the retained Resources panel takes when `panelMaxWidth` does not cap it. */
+  panelWidthShare: percent(72),
 } as const satisfies Record<string, Percent>;
 
 /** Durations: the windows and cadences the Map keeps time with. */
@@ -212,4 +216,13 @@ export function layoutCssVariables(layout: Layout): Record<LayoutCssVariable, st
     variables[layoutCssVariableName(token)] = layoutCssValue(token, value);
   }
   return variables;
+}
+
+/**
+ * The width the retained Resources panel takes beside a Map of the given width, in pixels: the
+ * same `min(680px, 72%)` that `panelWidth` says in CSS, computed here so the canvas can keep its
+ * placements and camera fits in the strip the panel leaves.
+ */
+export function retainedPanelWidth(mapWidth: ScreenPx): ScreenPx {
+  return screenPx(Math.min(SCREEN_TOKENS.panelMaxWidth, (mapWidth * PERCENT_TOKENS.panelWidthShare) / 100));
 }

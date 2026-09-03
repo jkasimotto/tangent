@@ -46,6 +46,19 @@ export type ListboxProps = {
 const OPTION_SELECTOR = '[role="option"]';
 const DEFAULT_GROUP_CLASS = "tangent-map-listbox-group";
 
+/**
+ * Moves keyboard focus onto one option of the listbox with the given id, from a field beside it.
+ * The picker's query field binds ArrowDown to this so every result is reachable; the listbox's
+ * own roving keys take over from there. Only the kit may call `.focus(`.
+ */
+export function focusListboxOption(listId: string, position: Index): boolean {
+  const list = document.getElementById(listId);
+  const option = list === null ? undefined : optionElements(list)[position];
+  if (option === undefined) return false;
+  option.focus({ preventScroll: true });
+  return true;
+}
+
 /** Lists the option elements of a listbox in DOM order, which is the order of `options`. */
 function optionElements(list: HTMLElement): HTMLElement[] {
   return Array.from(list.querySelectorAll<HTMLElement>(OPTION_SELECTOR));

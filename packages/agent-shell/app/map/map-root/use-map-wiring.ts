@@ -90,6 +90,8 @@ export function useMapWiring(input: WiringInput): MapWiring {
   const reads = buildReads({
     core, snapshot, view,
     announceAction: stores.dispatchAnnounce,
+    /** The wide panel is retained beside the canvas; the narrow sheet covers it and takes no strip. */
+    panelRetained: () => stores.resources.open && !stores.resources.narrow,
     openSurface,
     closeSurface,
     /** Opens the dialog a refused copy or open needs. */

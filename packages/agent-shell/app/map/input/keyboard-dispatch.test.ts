@@ -119,13 +119,25 @@ test("Space sets the flag on its first keydown, folds a selected Area with only 
   const down = fakeEvent(" ");
   dispatchKeydown(down, deps);
   assert.deepEqual(deps.recorded.space, [true]);
-  assert.deepEqual(deps.recorded.commands, [{ kind: "fold-selected-area", area: areaKey("otto") }]);
+  assert.deepEqual(deps.recorded.commands, [], "the fold waits for the keyup, because the press may become a Space-drag pan");
   assert.deepEqual({ prevented: down.prevented, stopped: down.stopped }, { prevented: true, stopped: false }, "Excalidraw still sees Space held for the pan");
   dispatchKeydown(fakeEvent(" ", { repeat: true }), deps);
   assert.deepEqual(deps.recorded.space, [true], "a repeat does not set the flag again");
-  assert.equal(deps.recorded.commands.length, 1, "a repeat does not fold again");
   dispatchKeyup(fakeEvent(" "), deps);
   assert.deepEqual(deps.recorded.space, [true, false]);
+  assert.deepEqual(deps.recorded.commands, [{ kind: "fold-selected-area", area: areaKey("otto") }], "a plain Space press folds once, on its keyup");
+});
+
+test("a Space held through a pointer drag pans and never folds", () => {
+  let dragged = false;
+  /** Reports whether the pointer dragged while Space was held. */
+  const draggedWhileSpaceHeld = (): boolean => dragged;
+  const deps = { ...fakeDeps({ selectedArea: areaKey("otto"), hasSelection: true }), draggedWhileSpaceHeld };
+  dispatchKeydown(fakeEvent(" "), deps);
+  dragged = true;
+  dispatchKeyup(fakeEvent(" "), deps);
+  assert.deepEqual(deps.recorded.space, [true, false]);
+  assert.deepEqual(deps.recorded.commands, [], "the drag turned the press into a pan, so the selected Area stays unfolded");
 });
 
 test("Space typed into a text field never sets the flag", () => {

@@ -33,6 +33,8 @@ export type MapSession = {
   api: ExcalidrawImperativeAPI | null;
   /** True while Space is held, which makes the next press a pan. */
   spaceHeld: boolean;
+  /** True once a pointer dragged while Space was held, so the Space keyup pans instead of folding. */
+  spaceDragged: boolean;
   /** True when the press Excalidraw is reading was made with Shift held, which makes it additive. */
   shiftPress: boolean;
   /** True while the Map is dispatching the double click that opens a placed Block's label, so it does not read its own event. */
@@ -78,6 +80,7 @@ export function createMapSession(): MapSession {
   return {
     api: null,
     spaceHeld: false,
+    spaceDragged: false,
     shiftPress: false,
     openingLabel: false,
     lastPointer: null,

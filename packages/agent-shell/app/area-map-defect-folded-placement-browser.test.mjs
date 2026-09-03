@@ -99,6 +99,11 @@ function inside(point, box) {
   return point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height;
 }
 
+/** The middle of one composed Area rectangle, which is the point a person aims at inside that Area. */
+function centreOf(box) {
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
 /** Matches one fixture Area's name pill by its accessible name up to its fold state, because placing a Block changes the block count that follows. */
 function areaLabel(area, { folded = false } = {}) {
   const parts = area.split("/");
@@ -131,6 +136,18 @@ async function toggleFold(page, area, { folded }) {
   await settled(page);
 }
 
+/** Points at one scene point and opens the Block picker there with B, the way a person does, and waits for the heading that names the target Area. */
+async function openPickerAt(page, scenePoint) {
+  const at = await viewportPoint(page, scenePoint);
+  await page.mouse.move(at.x, at.y);
+  await page.locator(".excalidraw canvas.interactive").focus();
+  await page.keyboard.press("b");
+  const picker = page.getByRole("dialog", { name: "Place a Tangent block" });
+  await picker.waitFor();
+  await picker.getByRole("heading").first().waitFor({ timeout: 10_000 });
+  return picker;
+}
+
 test("a Block placed while an Area is folded lands in the folded Area a person can see, never in the hidden child under the pointer", { skip: !enabled, timeout: 90_000 }, async (context) => {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -159,15 +176,10 @@ test("a Block placed while an Area is folded lands in the folded Area a person c
   assert.equal(inside(geometry.viewportCentre, foldedRect), false, "the viewport centre is outside the folded Area, so only the pointer can put the Block there");
 
   // Point at the middle of the rectangle the hidden child still occupies, then place a Block there.
-  const hiddenCentre = { x: hiddenRect.x + hiddenRect.width / 2, y: hiddenRect.y + hiddenRect.height / 2 };
-  const at = await viewportPoint(page, hiddenCentre);
-  await page.mouse.move(at.x, at.y);
-  await page.locator(".excalidraw canvas.interactive").focus();
-  await page.keyboard.press("b");
-  const picker = page.getByRole("dialog", { name: "Place a Tangent block" });
-  await picker.waitFor();
-  await picker.getByRole("heading", { name: "Place in tangent" }).waitFor();
-  assert.equal(await picker.getByRole("heading", { name: "Place in map" }).count(), 0, "the picker never offers to place into the Area the fold has hidden");
+  const hiddenCentre = centreOf(hiddenRect);
+  assert.equal(inside(hiddenCentre, foldedRect), true, "the hidden child's rectangle lies inside the folded Area, so the pointer rests on open Area body a person can see");
+  const picker = await openPickerAt(page, hiddenCentre);
+  assert.deepEqual(await picker.getByRole("heading").allInnerTexts(), ["Place in tangent"], "the picker names the folded Area a person sees, never the Area the fold has hidden");
   await picker.getByRole("textbox").fill("Prove placement");
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => window.worldEvents.length > 0, null, { timeout: 10_000 });
@@ -182,6 +194,8 @@ test("a Block placed while an Area is folded lands in the folded Area a person c
   assert.deepEqual(events[0], { areas: ["otto/tangent"], owners: ["otto/tangent"] }, "placing saves the visible Area");
   assert.ok(events.every((event) => !event.areas.includes("otto/tangent/map") && !event.owners.includes("otto/tangent/map")), `the Area the fold has hidden is never written: ${JSON.stringify(events)}`);
 
+  assert.equal(await drawnBlock(page, GOAL_REF), null, "a fold hides the folded Area's own Blocks, so the new Block waits off the canvas rather than showing in a hidden child");
+
   // Opening the fold shows the Block that was placed, inside the Area that stores it. Nothing vanished.
   await toggleFold(page, "otto/tangent", { folded: false });
   await page.waitForFunction((ref) => (window.editor.rendered?.() ?? []).some((element) => !element.isDeleted && element.customData?.tangent?.ref === ref), GOAL_REF, { timeout: 10_000 });
@@ -190,4 +204,10 @@ test("a Block placed while an Area is folded lands in the folded Area a person c
   assert.equal(block.owner, "otto/tangent", "the drawn Block belongs to the Area that was folded");
   const openedRect = opened.rects["otto/tangent"];
   assert.ok(inside({ x: block.x, y: block.y }, openedRect) && inside({ x: block.x + block.width, y: block.y + block.height }, openedRect), `the Block sits inside the Area a person pointed at: ${JSON.stringify({ block, openedRect })}`);
+
+  // The same point with the fold open names the child instead. The fold is therefore the one reason
+  // the first Block went to the Area a person can see, rather than an accident of this fixture.
+  const openedPicker = await openPickerAt(page, centreOf(opened.rects["otto/tangent/map"]));
+  assert.deepEqual(await openedPicker.getByRole("heading").allInnerTexts(), ["Place in map"], "with the fold open the same point names the child Area, so only the fold sent the earlier Block to its parent");
+  await page.keyboard.press("Escape");
 });

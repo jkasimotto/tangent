@@ -15,9 +15,21 @@ const CANVAS = "#ffffff";
 const BLOCK_STROKE = "#1971c2";
 const BLOCK_FILL = "#a5d8ff";
 const LABEL_COLUMNS = 26;
-// A figure's caption sits beside the icon in about 160 pixels, so it wraps
-// earlier than a card's full-width label.
-const CAPTION_COLUMNS = 18;
+// A figure's caption shares its Block with the icon, so it wraps in the narrow
+// space beside it rather than the Block's full width. This is only the fallback
+// for a caption formatted without its Block: captionColumns measures the real
+// space, which is 148 pixels on a default 280 by 132 Block.
+const CAPTION_COLUMNS = 16;
+// The caption font's average character width, measured in Excalifont at 18
+// pixels over the paths, branch refs and links the Map really captions. It
+// turns the space beside the icon into a column budget.
+const CAPTION_CHAR_WIDTH = 9.1;
+// One caption line: the 18 pixel font at the 1.25 line height every bound
+// label carries.
+const CAPTION_LINE_HEIGHT = 22.5;
+// The characters a run with no space may be cut after, so a path, a branch ref
+// or a URL still reads left to right when it needs more than one line.
+const LABEL_BREAK_AFTER = /[\s/\-_.]/;
 const VAULT_COMMIT_REF = /^vault@([0-9a-f]{7,40})$/;
 const ENTITY_KINDS = new Set(["goal", "document", "area", "link", "brain", "agent", "person", "request", "commit", "evidence", "resource"]);
 
@@ -130,16 +142,83 @@ function blockMatchesFocus(element, documents, focus = {}, locatedArea = "", res
   return onLocatedPath || starred && active;
 }
 
-/** Packs pieces into lines of at most `columns` characters so a block label fits its block instead of being clipped. */
+/**
+ * Splits one run the separator could not break, such as a path, a branch ref or
+ * a URL, into pieces that each fit `columns`. Excalidraw clips container-bound
+ * text at the Block rectangle and never re-wraps what Tangent writes, so a run
+ * left whole is painted with both ends cut off and the Block stops saying which
+ * thing it is.
+ */
+function breakLongRun(run, columns) {
+  const pieces = [];
+  let rest = String(run);
+  while (rest.length > columns) {
+    let cut = 0;
+    // A break that leaves a nearly empty line wastes the box, so a delimiter is
+    // only worth taking in the second half of the line.
+    for (let index = columns - 1; index >= Math.floor(columns / 2) && !cut; index -= 1) if (LABEL_BREAK_AFTER.test(rest[index])) cut = index + 1;
+    if (!cut) cut = columns;
+    const piece = rest.slice(0, cut).trimEnd();
+    if (piece) pieces.push(piece);
+    rest = rest.slice(cut);
+  }
+  if (rest) pieces.push(rest);
+  return pieces;
+}
+
+/** Packs pieces into lines of at most `columns` characters so a block label fits its block instead of being clipped. A piece too long for one line is broken rather than left to run past the block. */
 function wrapLabelLine(line, separator = " ", columns = LABEL_COLUMNS) {
   const lines = [];
   let current = "";
   for (const piece of String(line).split(separator).map((part) => part.trim()).filter(Boolean)) {
+    if (piece.length > columns) {
+      const runs = breakLongRun(piece, columns);
+      if (!runs.length) continue;
+      if (current) lines.push(current);
+      lines.push(...runs.slice(0, -1));
+      current = runs[runs.length - 1];
+      continue;
+    }
     if (current && `${current}${separator}${piece}`.length > columns) { lines.push(current); current = piece; }
     else current = current ? `${current}${separator}${piece}` : piece;
   }
   if (current) lines.push(current);
   return lines.join("\n");
+}
+
+/**
+ * The space a caption may paint into before Excalidraw clips it. Excalidraw
+ * clips container-bound text at the Block rectangle, not at the caption box, so
+ * a caption reaches the Block edge and the ceiling is wider and taller than
+ * figureCaptionGeometry.
+ */
+function captionCeiling(block) {
+  const geometry = figureCaptionGeometry(block);
+  return {
+    width: Math.max(CAPTION_CHAR_WIDTH * 6, Number(block.x) + Number(block.width) - geometry.x),
+    height: Math.max(CAPTION_LINE_HEIGHT, Number(block.y) + Number(block.height) - geometry.y),
+  };
+}
+
+/** The number of characters one Block's caption holds, measured from the Block rather than a fixed guess. */
+function captionColumns(block) {
+  if (!block) return CAPTION_COLUMNS;
+  return Math.max(6, Math.floor(captionCeiling(block).width / CAPTION_CHAR_WIDTH));
+}
+
+/** The number of caption lines one Block can paint before Excalidraw clips the rest at the Block edge. */
+function captionLineLimit(block) {
+  if (!block) return Number.POSITIVE_INFINITY;
+  return Math.max(1, Math.floor(captionCeiling(block).height / CAPTION_LINE_HEIGHT));
+}
+
+/** Ends a label its box cannot hold with an ellipsis, so a dropped tail is something the person can see instead of text that is silently never painted. */
+function capLabelLines(lines, limit, columns) {
+  if (lines.length <= limit) return lines;
+  const kept = lines.slice(0, Math.max(1, limit));
+  const last = kept[kept.length - 1];
+  kept[kept.length - 1] = `${last.length < columns ? last : last.slice(0, columns - 1)}…`;
+  return kept;
 }
 
 /** Formats the visible, replaceable fact cache inside a Tangent block. */
@@ -152,10 +231,17 @@ function blockLabel(fact) {
  * word, which the icon now says. The live dot and check mark stay on the first
  * line.
  */
-function captionLabel(fact) {
-  const lines = wrapLabelLine(fact.title || "Untitled", " ", CAPTION_COLUMNS).split("\n");
-  lines[0] = `${lines[0]}${fact.live ? "  ●" : ""}${fact.success ? "  ✓" : ""}`;
-  return [...lines, wrapLabelLine(fact.status || "", " · ", CAPTION_COLUMNS)].filter(Boolean).join("\n");
+function captionLabel(fact, block = null) {
+  const columns = captionColumns(block);
+  const title = wrapLabelLine(fact.title || "Untitled", " ", columns).split("\n");
+  title[0] = `${title[0]}${fact.live ? "  ●" : ""}${fact.success ? "  ✓" : ""}`;
+  const status = fact.status ? wrapLabelLine(fact.status, " · ", columns).split("\n") : [];
+  const limit = captionLineLimit(block);
+  if (title.length + status.length <= limit) return [...title, ...status].join("\n");
+  // The name and the state words both say which thing this is, so a caption
+  // box too short for both keeps one line of state and elides the name.
+  const kept = capLabelLines(status, 1, columns);
+  return [...capLabelLines(title, Math.max(1, limit - kept.length), columns), ...kept].join("\n");
 }
 
 /** Formats the compact one-line label bound to an Area region. */
@@ -271,7 +357,7 @@ function refreshTangentFacts(scene, documents = [], options = {}) {
     const label = block.boundElements?.find((entry) => entry.type === "text");
     const text = label ? byId.get(label.id) : null;
     const figure = figures && !isAreaRegion(block) && !block.isDeleted ? figureForFact(figures, fact) : null;
-    const words = isAreaRegion(block) ? regionLabel(fact) : figure ? captionLabel(fact) : blockLabel(fact);
+    const words = isAreaRegion(block) ? regionLabel(fact) : figure ? captionLabel(fact, block) : blockLabel(fact);
     if (text?.type === "text" && (text.text !== words || text.originalText !== words)) {
       text.text = words; text.originalText = words; text.version = Number(text.version || 0) + 1;
       text.versionNonce = seedFor(`${text.id}:${text.version}:${words}`); changed = true;

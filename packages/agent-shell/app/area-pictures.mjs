@@ -2,10 +2,14 @@ import { createHash } from "node:crypto";
 
 const SIGNALS = new Set(["needs-you", "waiting-on", "moving", "stuck", "quiet"]);
 const RELATIONS = new Set(["needs", "feeds", "same-as", "blocks", "shares-branch-with"]);
+/** Hashes a value's JSON as sha256 hex. */
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+/** True for a trimmed, non-empty string no longer than max. */
 const short = (value, max) => typeof value === "string" && value.trim() === value && value.length > 0 && value.length <= max;
+/** True when a source names a bounded file and, if given, a subpath starting with #. */
 function sourceValid(source) { return source && short(source.file, 2_000) && (source.subpath === undefined || short(source.subpath, 2_000) && source.subpath.startsWith("#")); }
 
+/** Validates a presented Area picture against its closed vocabulary and limits. */
 export function validateAreaPicture(area, input) {
   const errors = [];
   if (!input || typeof input !== "object") return { ok: false, errors: ["picture must be an object"] };
@@ -22,9 +26,12 @@ export function validateAreaPicture(area, input) {
   return { ok: errors.length === 0, errors };
 }
 
+/** Creates the Area picture operations over a record store. */
 export function createAreaPictures({ store, now = () => new Date().toISOString() }) {
   const name = "picture.json";
+  /** Reads the current picture of an Area, or null. */
   async function get(area) { return store.read(area, name, null); }
+  /** Validates and stores a picture, skipping the write when its content is unchanged. */
   async function present(area, input, presenter) {
     const validation = validateAreaPicture(area, input); if (!validation.ok) return { status: 422, errors: validation.errors };
     const previous = await get(area); const content = { ...input, schema: "area-picture.v1", area, presenter };
@@ -33,6 +40,7 @@ export function createAreaPictures({ store, now = () => new Date().toISOString()
     const picture = { ...content, version: (previous?.version ?? 0) + 1, presentedAt: now(), contentHash };
     await store.write(area, name, picture); return { status: 200, picture, idempotent: false };
   }
+  /** Removes an Area's picture, fenced by its content hash when one is given. */
   async function withdraw(area, contentHash) {
     const current = await get(area);
     if (!current) return { status: 404, error: "picture was not found" };

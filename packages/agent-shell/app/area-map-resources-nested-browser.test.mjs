@@ -116,6 +116,9 @@ window.editor = mountAreaBoardEditor(document.querySelector("#map"), {
   // The shell mounts through area-board.js, which loads deferred shards with the same api client. The fixture mounts the editor directly, so it supplies that loader itself.
   loadShard: (area, context = {}) => resourceApi("/api/areas/map-shard?area=" + encodeURIComponent(area) + "&worldRevision=" + encodeURIComponent(context.worldRevision ?? world.worldRevision) + "&located=" + encodeURIComponent(context.locatedArea ?? world.locatedArea)),
   onWorldChange: async (next, areas, owners) => {
+    // One refused save on demand, so a test can reach the recovery buttons the
+    // status corner renders for a world the server would not accept.
+    if (window.conflictNext) { window.conflictNext = false; return { status: 409 }; }
     const index = window.worldChanges.length + 1;
     const placed = next.areas.map((node) => [node.key, (node.shard?.scene?.elements ?? []).filter((element) => element.customData?.tangent?.kind === "resource" && !element.isDeleted).map((element) => element.customData.tangent.ref)]);
     window.worldChanges.push({ areas: [...areas], owners: [...owners], placed: Object.fromEntries(placed) });
@@ -160,6 +163,19 @@ async function rect(page, selector) {
     const box = element.getBoundingClientRect();
     return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height };
   }, selector);
+}
+
+/** Waits for the frame after React commits, so a geometry assertion never reads the layout of the state before it. */
+async function settled(page) {
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+/** Names every Map control, drawing tool, and Outline row whose own centre resolves inside the open Resources panel. The panel is opaque, so anything on this list is a control the person can neither read nor aim at, however they reached it. */
+async function coveredByPanel(page) {
+  return page.evaluate(() => [...document.querySelectorAll(".tangent-map-top-right button, .tangent-map-save button, .tangent-map-outline.visible button, .App-toolbar label.ToolIcon")].filter((element) => {
+    const box = element.getBoundingClientRect();
+    return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)?.closest(".tangent-map-resources");
+  }).map((element) => (element.textContent || "").trim() || element.getAttribute("title")));
 }
 
 /** Proves the visible toast is fully inside the viewport and nothing covers its centre. */
@@ -278,6 +294,59 @@ test("the narrow Resources sheet places into the nested Area and shows panel-rai
     assert.deepEqual(pageErrors, []);
   } finally {
     if (browser) await browser.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+// The wide Resources panel is retained beside the canvas and is opaque, so it
+// takes its width out of the Map. Every Map surface anchored to the right edge
+// has to move with it: the control row, the drawing tools, the Outline, and the
+// save status corner, which in a refused save holds the only recovery buttons.
+test("the wide Resources panel leaves the Map controls, the drawing tools, the Outline, and the recovery buttons of a refused save beside it", { skip: !enabled, timeout: 90_000 }, async () => {
+  const server = await startFixtureServer();
+  let browser = null;
+  try {
+    browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath(), headless: true });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce", colorScheme: "dark" });
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.goto("http://127.0.0.1:" + server.address().port + "/fixture", { waitUntil: "networkidle" });
+    await openNestedResources(page);
+    await settled(page);
+    const panel = await rect(page, ".tangent-map-resources");
+    for (const selector of [".tangent-map-top-right", ".tangent-map-save"]) {
+      const box = await rect(page, selector);
+      assert.ok(box.right <= panel.left, `${selector} stays beside the open panel: ${JSON.stringify(box)} vs panel ${panel.left}`);
+    }
+    assert.deepEqual(await coveredByPanel(page), [], "the open panel covers no Map control and no drawing tool");
+
+    // The Outline hangs under the control row, so it moves with it.
+    await page.getByRole("button", { name: "Outline", exact: true }).click();
+    await page.locator(".tangent-map-outline.visible").waitFor();
+    await settled(page);
+    const outline = await rect(page, ".tangent-map-outline.visible");
+    assert.ok(outline.right <= panel.left, `the Outline stays beside the open panel: ${JSON.stringify(outline)} vs panel ${panel.left}`);
+    assert.deepEqual(await coveredByPanel(page), [], "the open Outline and the control row under it both stay clear of the panel");
+    await page.getByRole("button", { name: "Outline", exact: true }).click();
+    await page.locator(".tangent-map-outline.visible").waitFor({ state: "hidden" });
+
+    // A save the server refuses puts Reload saved and Keep mine in the status
+    // corner. Those are the only way out, so the panel must not sit over them.
+    await page.evaluate(() => { window.conflictNext = true; });
+    const row = page.locator(".tangent-map-resource-row").filter({ hasText: "Nested docs" });
+    await row.getByRole("button", { name: /^Place on Map\. .*Nested docs/ }).click();
+    await page.getByRole("status", { name: "Place Nested docs on the Map" }).waitFor();
+    await page.keyboard.press("Enter");
+    const refused = page.getByRole("status", { name: "Map save status" });
+    await refused.getByText("Not saved", { exact: false }).waitFor();
+    for (const name of ["Reload saved", "Keep mine"]) await refused.getByRole("button", { name }).waitFor();
+    await settled(page);
+    const island = await rect(page, ".tangent-map-save");
+    assert.ok(island.right <= panel.left, `the refused-save island stays beside the open panel: ${JSON.stringify(island)} vs panel ${panel.left}`);
+    assert.deepEqual(await coveredByPanel(page), [], "the recovery buttons of a refused save stay readable and clickable beside the panel");
+    assert.deepEqual(pageErrors, []);
+  } finally {
+    await browser?.close();
     await new Promise((resolve) => server.close(resolve));
   }
 });

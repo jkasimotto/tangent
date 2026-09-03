@@ -5,12 +5,27 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { WebSocketServer } from "ws";
+import { themeInkColor } from "./public/area-map-figures.js";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { workTableFixture } from "./work-table-fixture.mjs";
 import { legacyFixtureWork } from "./work-table-harness.mjs";
 
 const enabled = process.env.TANGENT_BROWSER_TEST === "1";
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+/** Returns the WCAG relative luminance of one six-digit hex colour. */
+function relativeLuminance(hex) {
+  const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
+  const linear = channels.map((channel) => (channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+/** Returns the WCAG contrast ratio between two six-digit hex colours. */
+function contrastRatio(left, right) {
+  const light = Math.max(relativeLuminance(left), relativeLuminance(right));
+  const dark = Math.min(relativeLuminance(left), relativeLuminance(right));
+  return (light + 0.05) / (dark + 0.05);
+}
 
 /** Sends one JSON response from the browser-path fixture server. */
 function sendJson(response, status, value) {
@@ -99,6 +114,25 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     await page.waitForFunction(() => !window.editor.appState().editingTextElement);
     assert.equal(await page.getByRole("button", { name: /Ask brain/ }).count(), 0, "the map has no Ask action");
     assert.equal(await page.getByRole("button", { name: /^Correct/ }).count(), 0, "the map has no legacy Correct action");
+
+    // A selected Block adds its verbs to the same control row, which is what
+    // pushes the row furthest into the centred tool bar. A covered tool answers
+    // the wrong click, so the row has to give way rather than paint over one.
+    await page.getByRole("group", { name: /^Actions for / }).waitFor();
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const selected = await page.evaluate(() => {
+      /** Returns one element's box as plain numbers. */
+      const box = (selector) => { const rect = document.querySelector(selector)?.getBoundingClientRect(); return rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null; };
+      return {
+        toolbar: box(".App-toolbar"), controls: box(".tangent-map-top-right"),
+        stolen: [...document.querySelectorAll(".App-toolbar label.ToolIcon")].filter((tool) => {
+          const rect = tool.getBoundingClientRect();
+          return document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)?.closest(".tangent-map-top-right");
+        }).map((tool) => tool.getAttribute("title")),
+      };
+    });
+    assert.equal(overlaps(selected.toolbar, selected.controls), false, "the verbs of a selected Block never widen the Tangent row over the tool bar");
+    assert.deepEqual(selected.stolen, [], "no drawing tool answers with a Tangent control");
 
     const canvas = page.locator(".excalidraw canvas.interactive");
     const box = await canvas.boundingBox();
@@ -207,8 +241,23 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     assert.ok(authored.length >= 5, `the journey keeps every new source-owned element: ${JSON.stringify(summary)}`);
     assert.ok(authored.every((element) => element.world.owner === "otto"), `every new element keeps the Area chosen at pointer start: ${JSON.stringify(authored)}`);
 
-    const inkColor = await page.evaluate(() => window.editor.current().elements.find((element) => element.type === "text" && element.text === "plain text")?.strokeColor);
-    assert.equal(inkColor, "#1e1e1e", "typed text uses Excalidraw's default ink, which the dark theme shows light on the dark canvas");
+    // The Map runs Excalidraw's dark theme, whose canvas filter inverts everything
+    // it paints, so a stored colour is only readable once that filter has run.
+    // themeInkColor is that filter in arithmetic, so it says what a person sees.
+    const drawnInk = await page.evaluate(() => {
+      const elements = window.editor.current().elements;
+      return {
+        text: elements.find((element) => element.type === "text" && element.text === "plain text")?.strokeColor,
+        freehand: elements.find((element) => element.type === "freedraw")?.strokeColor,
+        background: window.editor.appState().viewBackgroundColor,
+      };
+    });
+    const renderedGround = themeInkColor(drawnInk.background);
+    for (const [what, stored] of [["typed text", drawnInk.text], ["free ink", drawnInk.freehand]]) {
+      const rendered = themeInkColor(stored);
+      const ratio = contrastRatio(rendered, renderedGround);
+      assert.ok(ratio >= 4.5, `${what} stored as ${stored} renders as ${rendered} on the Map's ${renderedGround} ground, contrast ${ratio.toFixed(2)}`);
+    }
 
     const changesBeforeOutline = await page.evaluate(() => window.changes.length);
     await page.getByRole("button", { name: "Outline", exact: true }).click();
@@ -332,6 +381,26 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
     assert.equal(await page.locator("#map-tab").getAttribute("aria-current"), "page", "Map is the first announced surface before Work is opened");
+
+    // The Map owns the bottom-right corner: its save status lives there, and a
+    // failed save puts Retry, Reload saved, and Keep mine in the same island.
+    // The shell toast is fixed to that corner too, so it has to step above it.
+    await page.locator("#awake-button").dispatchEvent("click");
+    await page.locator("#toast.show").waitFor();
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const savedCorner = await page.evaluate(() => {
+      const box = document.querySelector(".tangent-map-save").getBoundingClientRect();
+      const toast = document.querySelector("#toast").getBoundingClientRect();
+      const map = document.querySelector(".TangentAreaMap").getBoundingClientRect();
+      return {
+        mapOwnsTheCorner: toast.right <= map.right && toast.bottom <= map.bottom,
+        overlaps: toast.bottom > box.top && toast.top < box.bottom && toast.right > box.left && toast.left < box.right,
+      };
+    });
+    assert.equal(savedCorner.mapOwnsTheCorner, true, "the proof measures a Map that really reaches the corner the toast is fixed to");
+    assert.equal(savedCorner.overlaps, false, "a shell toast never covers the Map save status corner");
+    await page.locator("#awake-button").dispatchEvent("click");
+    await page.locator("#toast.show").waitFor({ state: "hidden" });
     const shellBack = page.locator("#back-button");
     assert.equal(await shellBack.getAttribute("aria-haspopup"), "menu", "top-level Agent Shell opens a menu");
     assert.equal(await shellBack.getAttribute("aria-controls"), "shell-menu");
@@ -565,6 +634,7 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     const blockedSave = page.getByRole("status", { name: "Map save status" });
     await blockedSave.getByText("Not saved", { exact: false }).waitFor();
     for (const name of ["Retry", "Reload saved", "Keep mine"]) await blockedSave.getByRole("button", { name }).waitFor();
+
     const draftCanvas = page.locator(".excalidraw canvas.interactive");
     await draftCanvas.evaluate((canvas) => { canvas.dataset.failedDraftIdentity = "original"; });
     const draftCamera = await tangentPosition();

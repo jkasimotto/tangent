@@ -5,6 +5,7 @@ import { rebaseAreaMapOwners } from "./area-map-world-conflict.js";
 import { createAreaMapWorldDraftStore } from "./area-map-world-draft-store.js";
 import { areaInRestriction } from "./area-map-find-core.js";
 import { resolveMapEntity, resourceLocatorKey } from "./area-map-entities.js";
+import { WIRE_VALUES } from "./area-map-wire-values.js";
 
 const VIEW_SCHEMA = "area-map-view.v2";
 const DRAFT_SCHEMA = "area-map-draft.v1";
@@ -40,9 +41,9 @@ function failureSaveState(result = {}) {
 
 /** Keeps only opaque correlation tokens that cannot contain paths or authored text. */
 function safeCorrelationFields({ operationId = null, gestureId = null } = {}) {
-  /** Accepts one bounded opaque machine correlation value. */
-  const safe = (value) => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(String(value ?? "")) ? String(value) : null;
-  return Object.fromEntries([["operationId", safe(operationId)], ["gestureId", safe(gestureId)]].filter(([, value]) => value));
+  /** Accepts one bounded opaque machine correlation value through the guard registered beside its minter. */
+  const safe = (wire, value) => wire.accepts(String(value ?? "")) ? String(value) : null;
+  return Object.fromEntries([["operationId", safe(WIRE_VALUES.operationId, operationId)], ["gestureId", safe(WIRE_VALUES.gestureId, gestureId)]].filter(([, value]) => value));
 }
 
 /** Recovers save correlation from one private draft without exposing its authored payload. */
@@ -203,6 +204,8 @@ export function createAreaMapWorldController({
   let viewTimer = null;
   let pendingView = null;
   let draft = null;
+  // True only while a draft loaded at startup is still an unanswered offer, so a later save cannot delete work the person never chose to throw away.
+  let draftOffered = false;
   let draftEpoch = 0;
   let draftWrites = Promise.resolve();
   let draftLoad = Promise.resolve();
@@ -443,6 +446,7 @@ export function createAreaMapWorldController({
       status: result?.status ?? 0,
       failure: clone(result ?? {}),
     };
+    draftOffered = false;
     draftEpoch += 1;
     const record = clone(draft);
     const correlation = draftCorrelation(record, result);
@@ -459,6 +463,7 @@ export function createAreaMapWorldController({
 
   /** Clears private recovery after every required command is durable. */
   function clearDraft(result = {}) {
+    draftOffered = false;
     draftEpoch += 1;
     const correlation = draftCorrelation(draft, result);
     draft = null;
@@ -520,7 +525,7 @@ export function createAreaMapWorldController({
       }
       failedSave = null;
       const hasLater = Boolean(gesture || worldHistory.state.open || recoveryQueue.length || worldHistory.state.queue.length || worldHistory.state.active && worldHistory.state.active.command?.id !== command.id);
-      if (!hasLater) clearDraft({ operationId: result.operationId, gestureId: command.id });
+      if (!hasLater && !draftOffered) clearDraft({ operationId: result.operationId, gestureId: command.id });
       saveBarrier?.resolve?.(); saveBarrier = null;
       save = { state: hasLater ? "dirty" : "saved", result };
       recordEvent("area_map_save", { operationId: result.operationId, gestureId: command.id, gestureKind: command.kind, phase: "acknowledged", outcome: "saved", saveState: save.state, status: Number(result.status ?? 200), idempotent: result.idempotent === true, shardCount: changedOwners.size, affectedCount: changedAreas.size + changedOwners.size, pendingCount: worldHistory.state.queue.length, duration: performance.now() - saveStartedAt, worldRevision: result.worldRevision, treeRevision: result.treeRevision });
@@ -1055,7 +1060,7 @@ export function createAreaMapWorldController({
     worldHistory.state.undo.splice(0, worldHistory.state.undo.length, ...(clone(draft.history?.undo ?? [])));
     worldHistory.state.redo.splice(0, worldHistory.state.redo.length, ...(clone(draft.history?.redo ?? [])));
     const pending = clone(draft.pending ?? []); failedSave = pending.shift() ?? null; recoveryQueue = pending;
-    draft = { ...draft, restored: true };
+    draft = { ...draft, restored: true }; draftOffered = false;
     const result = { ...(draft.failure ?? {}), status: Number(draft.status ?? draft.failure?.status ?? 0), draft: true };
     save = { state: failureSaveState(result), result }; notify("draft-ready");
     recordEvent("area_map_draft", { phase: "restored", draftState: "active", pendingCount: pending.length + Boolean(failedSave), status: result.status, failureKind: failureKind(result), ...draftCorrelation(draft) });
@@ -1090,7 +1095,7 @@ export function createAreaMapWorldController({
   const loadEpoch = draftEpoch;
   draftLoad = Promise.resolve(recoveryStore.load(world.worldId)).then((record) => {
     if (destroyed || draftEpoch !== loadEpoch || record?.schema !== DRAFT_SCHEMA || record.worldId !== world.worldId) return;
-    draft = record; notify("draft-found");
+    draft = record; draftOffered = true; notify("draft-found");
     recordEvent("area_map_draft", { phase: "found", draftState: "available", pendingCount: record.pending?.length ?? 0, status: Number(record.status ?? 0), failureKind: failureKind(record.failure), ...draftCorrelation(record) });
   }).catch(() => { recordEvent("area_map_draft", { phase: "failed", draftState: "unavailable", pendingCount: 0, failureKind: "storage" }); });
 

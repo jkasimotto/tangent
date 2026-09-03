@@ -2,13 +2,16 @@ import { createHash } from "node:crypto";
 
 export const CARD_KINDS = Object.freeze(["copy", "link", "links", "progress", "checklist", "commits", "reviews"]);
 
+/** Throws a card validation error naming the card kind. */
 const fail = (kind, message) => { throw new Error(`${kind} card: ${message}`); };
+/** Returns a trimmed string field, failing when it is empty or longer than max. */
 const text = (kind, value, name, max = 80) => {
   const result = String(value ?? "").trim();
   if (!result || result.length > max) fail(kind, `${name} must be 1-${max} characters`);
   return result;
 };
 
+/** Resolves a card URL: http(s) as given, otherwise a vault file through resolveFile. */
 async function url(kind, value, resolveFile) {
   const raw = String(value ?? "").trim();
   try {
@@ -63,14 +66,17 @@ export async function validateCard(kindValue, titleValue, raw = {}, resolveFile)
   return Object.freeze({ kind, title, fields });
 }
 
+/** Sorts object keys recursively so equal fields hash equally. */
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
   return value;
 }
 
+/** Hashes a card's canonical fields as sha256 hex. */
 export function cardFieldsHash(fields) { return createHash("sha256").update(JSON.stringify(canonical(fields))).digest("hex"); }
 
+/** Returns the one-line summary a card shows in a list. */
 export function cardSummary(card) {
   const f = card.fields;
   if (card.kind === "copy") return f.text.replace(/\s+/g, " ").slice(0, 100);

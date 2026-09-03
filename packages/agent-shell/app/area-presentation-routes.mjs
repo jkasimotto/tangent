@@ -1,6 +1,8 @@
 import { readJson, sendJson } from "./http-json.mjs";
 
+/** Creates the POST routes that present, withdraw, dismiss and open Area Documents. */
 export function createAreaPresentationRoutes(operations) {
+  /** Handles one request when its path names a presentation operation; returns false otherwise. */
   async function handle(request, response, url) {
     if (request.method !== "POST") return false;
     const operation = ({

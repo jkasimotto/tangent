@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
-import { createAreaMapWorldIndex } from "./area-map-world-index.mjs";
+import { createAreaMapWorldIndex, digest, OPAQUE_ID } from "./area-map-world-index.mjs";
 import { createAreaMapWorldRoutes } from "./area-map-world-routes.mjs";
 import { saveAreaMapGestureRequest, symmetricOverlapClosure } from "./public/area-board.js";
 import { createEmptyScene, createRegionElements, createShapeElement, createTextElement } from "./public/area-board-core.js";
@@ -562,4 +562,35 @@ test("returns every transaction conflict in one 409", async () => {
   ])), result, new URL("http://local/api/areas/map-gestures"));
   assert.equal(result.status, 409);
   assert.deepEqual(JSON.parse(result.body).currentHashes, { root: "external-parent", "root/child": "external-child" });
+});
+
+test("every identifier the world index mints satisfies the validator that guards a save", () => {
+  // The base64url alphabet includes "-" and "_", and OPAQUE_ID demands an
+  // alphanumeric first character. A world revision round-trips through the
+  // browser and back into applyGesture, so a digest that began with either
+  // character made the server reject its own value with 400 and lose the save.
+  const rejected = [];
+  for (let seed = 0; seed < 20_000; seed += 1) {
+    const minted = digest(`area-map-world-${seed}`);
+    if (!OPAQUE_ID.test(minted)) rejected.push(minted);
+  }
+  assert.deepEqual(rejected, [], `the index minted ${rejected.length} identifiers its own request validator rejects`);
+});
+
+test("a save carrying the world revision the index just minted is accepted", async () => {
+  const { index } = mutationFixture();
+  const world = await index.snapshot("root/child");
+  assert.match(world.worldRevision, OPAQUE_ID, "the minted world revision passes the guard applyGesture applies to it");
+  assert.match(world.treeRevision, OPAQUE_ID);
+  assert.match(world.worldId, OPAQUE_ID);
+  const saved = [];
+  /** Accepts the gesture and records the revision the client sent back. */
+  async function saveGesture(writes, options) {
+    saved.push(options);
+    return { status: 200, operationId: options.operationId, worldRevision: options.acknowledgement.worldRevision };
+  }
+  const put = [createTextElement({ id: "after", text: "After", x: 10, y: 20, width: 90, height: 40 })];
+  const result = await index.applyGesture(gesture(world, [{ owner: "root/child", put, remove: [] }]), saveGesture);
+  assert.equal(result.status, 200, `the round-tripped revision was refused: ${result.error ?? ""}`);
+  assert.equal(saved.length, 1);
 });

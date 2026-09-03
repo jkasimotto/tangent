@@ -132,6 +132,7 @@ Development workflow:
 Validate work:
 - npm run check
 - npm run test
+- npm run lint (the Map lint kit under scripts/lint plus jscpd; the pre-commit hook runs it on staged files)
 - npm run governance
 - npm run build
 

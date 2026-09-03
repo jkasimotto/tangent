@@ -1,0 +1,8 @@
+{
+  "path": ["packages/agent-shell/app/map", "scripts/lint"],
+  "ignore": ["**/*.test.*", "**/node_modules/**", "**/dist/**"],
+  "minTokens": 45,
+  "threshold": 0,
+  "reporters": ["console"],
+  "gitignore": true
+}

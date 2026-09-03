@@ -1,0 +1,56 @@
+/* Every colour, shadow, font and type size of the Map, named once as a --tangent-* custom property.
+   The colours are Excalidraw's own theme values, repeated here because the editor scopes its
+   variables to .excalidraw and the Tangent controls sit beside it. This is the only file in the
+   Map that may hold a raw colour, a font-family or a font-size (design-token-confinement lint).
+   map.css composes these; feature code composes the kit. */
+.TangentAreaMap {
+  /* Surfaces and text, in Excalidraw's light theme. */
+  --tangent-canvas: #ffffff;
+  --tangent-island: #ffffff;
+  --tangent-border: #f1f0ff;
+  --tangent-text: #1b1b1f;
+  --tangent-muted: #7a7a7a;
+  --tangent-hover: #f1f0ff;
+  --tangent-accent: #6965db;
+  --tangent-input: #ffffff;
+  --tangent-overlay: rgba(255, 255, 255, .7);
+  /* Meaning colours, the same in both themes: a warning, a blocked save, a Find miss, a healthy resource, and the default stroke of new ink. */
+  --tangent-warning: #e8a317;
+  --tangent-danger: #e03131;
+  --tangent-miss: #ff8787;
+  --tangent-success: #51cf66;
+  --tangent-ink: #1e1e1e;
+  /* Shadows: the island shadow every control wears, and the deeper ones under floating surfaces. */
+  --tangent-shadow: 0 0 .93px rgba(0, 0, 0, .17), 0 0 3.1px rgba(0, 0, 0, .08), 0 7px 14px rgba(0, 0, 0, .05);
+  --tangent-shadow-find: 0 14px 48px rgba(0, 0, 0, .5);
+  --tangent-shadow-modal: 0 12px 50px rgba(0, 0, 0, .45);
+  --tangent-shadow-panel: -18px 0 50px rgba(0, 0, 0, .35);
+  --tangent-shadow-recovery: 0 16px 60px rgba(0, 0, 0, .55);
+  /* Fonts: the interface face, Excalidraw's hand-drawn face for labels on the canvas, and the code face. */
+  --tangent-font-ui: Assistant, system-ui, sans-serif;
+  --tangent-font-hand: Excalifont, Virgil, sans-serif;
+  --tangent-font-mono: ui-monospace, SFMono-Regular, monospace;
+  /* Type sizes, smallest to largest. */
+  --tangent-type-label: 10px;
+  --tangent-type-fine: 11px;
+  --tangent-type-small: 12px;
+  --tangent-type-control: 13px;
+  --tangent-type-body: 14px;
+  --tangent-type-glyph: 15px;
+  --tangent-type-heading: 17px;
+  --tangent-type-hint: 18px;
+  --tangent-type-dialog-heading: 19px;
+  --tangent-type-panel-heading: 22px;
+}
+/* Excalidraw's dark theme values. The meaning colours, shadows, fonts and sizes do not change. */
+.TangentAreaMap.theme--dark {
+  --tangent-canvas: #121212;
+  --tangent-island: #232329;
+  --tangent-border: hsl(245, 10%, 21%);
+  --tangent-text: #e3e3e8;
+  --tangent-muted: #b8b8b8;
+  --tangent-hover: #363541;
+  --tangent-accent: #a8a5ff;
+  --tangent-input: #121212;
+  --tangent-overlay: rgba(0, 0, 0, .6);
+}

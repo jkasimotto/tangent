@@ -187,6 +187,31 @@ test("block labels wrap long titles instead of being clipped by the block", () =
   assert.deepEqual(core.blockLabel({ kind: "goal", title: "Map", status: "active · older than the notes · duplicate" }).split("\n"), ["GOAL", "Map", "active", "older than the notes", "duplicate"], "status phrases stay whole");
 });
 
+test("block labels break a path, a branch ref and a URL that hold no space", () => {
+  const path = "neara/pgande/megabranch/viz-input/graphics-design-doc-draft.md";
+  const lines = core.blockLabel({ kind: "document", title: path, status: "gone" }).split("\n");
+  assert.deepEqual(lines, ["DOCUMENT", "neara/pgande/megabranch/", "viz-input/graphics-design-", "doc-draft.md", "gone"], "the breaks land after a path delimiter, so the name still reads left to right");
+  assert.ok(lines.every((line) => line.length <= 26), `every line fits the card: ${JSON.stringify(lines)}`);
+  assert.equal(lines.slice(1, -1).join(""), path, "the whole path is on the card, in order, with nothing dropped");
+  assert.deepEqual(core.blockLabel({ kind: "link", title: "x".repeat(70) }).split("\n").slice(1), ["x".repeat(26), "x".repeat(26), "x".repeat(18)], "a run with no delimiter at all falls back to a character break");
+});
+
+test("figure captions wrap beside the icon and mark a tail the Block cannot hold", () => {
+  // Beside its icon a default Block paints 148 pixels of caption across and 120
+  // down, which is 16 characters and 5 lines of the 18 pixel caption font.
+  const block = { x: 0, y: 0, width: 280, height: 132 };
+  assert.deepEqual(core.captionLabel({ title: "otto-tangent-map-usability", status: "feature/a" }, block).split("\n"), ["otto-tangent-", "map-usability", "feature/a"]);
+  assert.deepEqual(core.captionLabel({ title: "https://example.com/review/17" }, block).split("\n"), ["https://example.", "com/review/17"]);
+  const path = core.captionLabel({ title: "neara/pgande/megabranch/viz-input/graphics-design-doc-draft.md", status: "gone" }, block).split("\n");
+  assert.deepEqual(path, ["neara/pgande/", "megabranch/viz-", "input/graphics-", "design-doc-…", "gone"], "a name too long for the Block ends in an ellipsis and keeps the state word");
+  assert.ok(path.every((line) => line.length <= 16), `every caption line fits beside the icon: ${JSON.stringify(path)}`);
+  // A smaller Block leaves a smaller icon but a narrower caption: 130 pixels
+  // across and 98 down, which is 14 characters and 4 lines.
+  const narrow = core.captionLabel({ title: "neara/pgande/megabranch/viz-input/graphics-design-doc-draft.md", status: "gone" }, { x: 0, y: 0, width: 240, height: 110 }).split("\n");
+  assert.deepEqual(narrow, ["neara/pgande/", "megabranch/", "viz-input/…", "gone"], "a smaller Block wraps earlier and elides more of the name");
+  assert.ok(narrow.every((line) => line.length <= 14), `every caption line fits beside the icon: ${JSON.stringify(narrow)}`);
+});
+
 /** One small worktree drawing in the normal form the catalog serves. */
 const worktreeIcon = {
   name: "worktree", width: 100, height: 80, elementCount: 2, warning: null,
@@ -226,7 +251,7 @@ test("a Block whose kind has an icon becomes a figure: icon, caption, quiet body
   const label = projected.elements.find((element) => element.id === block.boundElements[0].id);
   const icons = projected.elements.filter((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon");
 
-  assert.equal(label.text, "delivery\nmap-entities-first-class", "the caption drops the kind word the icon now says");
+  assert.equal(label.text, "delivery\nmap-entities-\nfirst-class", "the caption drops the kind word the icon now says and wraps inside the box beside it");
   assert.equal(label.text.includes("WORKTREE"), false);
   assert.equal(icons.length, 2);
   assert.equal(icons.every((element) => element.locked && element.customData.tangentWorldEphemeral.sourceId === block.id), true);

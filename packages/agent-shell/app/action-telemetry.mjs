@@ -1,4 +1,5 @@
 import { appendFile } from "node:fs/promises";
+import { WIRE_VALUES } from "./public/area-map-wire-values.js";
 
 export const ACTION_TELEMETRY_SCHEMA = "agent-shell-action.v1";
 const AREA_MAP_ACTIONS = new Set([
@@ -13,16 +14,13 @@ function field(value, limit = 160) {
 }
 
 const UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const REVISION_ID = /^[A-Za-z0-9_-]{16}$/;
-const SHARD_REVISION_ID = /^(?:[0-9a-f]{64}|(?:legacy|unreadable):[A-Za-z0-9_-]{16}|missing)$/;
 
-/** Keeps only the machine shape generated for one correlation field. */
+/** Keeps only the machine shape generated for one correlation field; revisions use the guard registered beside their minter. */
 function areaMapId(name, value) {
   const next = field(value, 128);
   if (["operationId", "gestureId"].includes(name)) return UUID_ID.test(next) ? next : "";
   if (name === "projectionId") return /^\d{1,16}$/.test(next) ? next : "";
-  if (name === "shardRevision") return SHARD_REVISION_ID.test(next) ? next : "";
-  return REVISION_ID.test(next) ? next : "";
+  return WIRE_VALUES[name]?.accepts(next) ? next : "";
 }
 
 /** Keeps only controlled enum-like diagnostic words. */

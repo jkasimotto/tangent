@@ -1,12 +1,13 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { WIRE_VALUES } from "./public/area-map-wire-values.js";
 
 const VIEW_SCHEMA = "area-map-view.v2";
 
-/** Reports whether a world ID is safe for one private state file. */
+/** Reports whether a world ID is safe for one private state file; the guard lives in the wire registry beside its minter. */
 export function validAreaMapWorldId(worldId) {
-  return typeof worldId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(worldId);
+  return WIRE_VALUES.worldId.accepts(worldId);
 }
 
 /** Creates the private, world-keyed Area-map view store. */

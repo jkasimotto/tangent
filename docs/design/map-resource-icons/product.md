@@ -4,12 +4,24 @@ Product design for [[goal-map-resources-look-like-what-they-are]]. Step 1 of 3. 
 
 Brief: `~/.tangent/trees/otto/tangent/records/brief-map-resources-look-like-what-they-are.md`. Precedent record: `docs/design/map-entities/design-record.md`.
 
+## Revision, 2026-09-03: icons may be image files
+
+Julian overruled the icon-format decision below: "I dont want the icons to be excalidraw drawings I want pngs or images or whatever."
+
+`map-icons/` now accepts `.png`, `.svg`, `.webp`, `.jpg` and `.jpeg` beside `.excalidraw` and `.excalidrawlib`. Every other decision in this document stands. In particular the definition shape in `map-kinds.md` is unchanged: Julian still picks a default `icon`, an ordered `icons` list of one icon per state, and a `click` verb per entry. Only the format of the file an icon name resolves to is new, and the drawings already in his vault keep working.
+
+The reason this document gave for rejecting images was the dark theme. That reason does not hold. Excalidraw already draws image elements through `invert(100%) hue-rotate(180deg) saturate(1.25)` when its theme is dark, which the canvas filter then undoes, so a raster icon is registered exactly as supplied. Excalidraw skips that filter for `image/svg+xml` alone, so an SVG is rasterized once to PNG, unfiltered, at no less than 512 pixels on its long edge, and joins the same path. Pre-inverting an icon's pixels the way `themeInkColor` pre-inverts drawn ink is wrong here: it cancels Excalidraw's own inversion and washes the icon out.
+
+An image and a drawing that share one icon name is a named problem on that kind, and the image wins. A file that lies about its type or is truncated is a problem too, so the kind falls back to a card and a bad icon still never hides a Block.
+
+Implementation: `feat(agent-shell): let Map icons be images, not only drawings`.
+
 ## Decision summary
 
 - **Decision:** A Block whose kind has an icon becomes a figure: one large hand-drawn icon with a caption beside it. The kind word leaves the caption. The icon is the recogniser.
 - **Decision:** Julian controls icons and click actions in one vault Document, `~/.tangent/trees/map-kinds.md`. It has the same shape as `harnesses.md`. Worktree, repository, link, GitHub PR, Phabricator revision, and commit are entries in that Document, not cases in the renderer.
 - **Decision:** An entry can name one icon per state. Tangent publishes a closed list of state names per target type. The first matching state in the entry wins.
-- **Decision:** Icons are Excalidraw drawings, not image files. They live in `~/.tangent/trees/map-icons/`. Tangent writes a starter set there when the folder is empty.
+- **Decision:** Icons live in `~/.tangent/trees/map-icons/`. Tangent writes a starter set there when the folder is empty. ~~Icons are Excalidraw drawings, not image files.~~ Superseded: see the revision above. Image files are accepted.
 - **Decision:** The click action of an entry is one verb from a closed list. It runs on the existing primary-action triggers: Enter, double-click, the selected-action button, and Enter on an Outline row. A single click still selects.
 - **Decision:** A figure keeps the Block footprint and the Block body. Every Area rule, placement rule, keyboard rule, and accessible name stays as it is today.
 - **Decision:** A kind without an icon keeps today's card with the kind word. An error in the definition never hides a Block.

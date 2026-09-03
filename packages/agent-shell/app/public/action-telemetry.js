@@ -1,3 +1,5 @@
+import { WIRE_VALUES } from "./area-map-wire-values.js";
+
 const ACTION_ATTRIBUTES = [
   "data-launch-start", "data-launch-for", "data-pipeline-control", "data-open-session",
   "data-open-brain", "data-verdict", "data-reply-subject", "data-goal-action",
@@ -20,16 +22,13 @@ const AREA_MAP_FRAME_ACTIONS = new Set(["area_map_gesture_solved", "area_map_pro
 /** Returns one bounded machine token, or an empty value for authored-looking input. */
 const safeToken = (value) => typeof value === "string" && /^[a-z][a-z0-9_-]{0,39}$/i.test(value) ? value : "";
 const UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const REVISION_ID = /^[A-Za-z0-9_-]{16}$/;
-const SHARD_REVISION_ID = /^(?:[0-9a-f]{64}|(?:legacy|unreadable):[A-Za-z0-9_-]{16}|missing)$/;
 
-/** Keeps only the machine shape generated for one correlation field. */
+/** Keeps only the machine shape generated for one correlation field; revisions use the guard registered beside their minter. */
 function safeAreaMapId(name, value) {
   const next = String(value ?? "");
   if (["operationId", "gestureId"].includes(name)) return UUID_ID.test(next) ? next : "";
   if (name === "projectionId") return /^\d{1,16}$/.test(next) ? next : "";
-  if (name === "shardRevision") return SHARD_REVISION_ID.test(next) ? next : "";
-  return REVISION_ID.test(next) ? next : "";
+  return WIRE_VALUES[name]?.accepts(next) ? next : "";
 }
 
 /** Reduces one map event to fields that cannot contain authored content or coordinates. */

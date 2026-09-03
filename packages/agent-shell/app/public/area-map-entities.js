@@ -1,16 +1,16 @@
+import { isSafeResourceId } from "./area-map-wire-values.js";
+
+// isSafeResourceId lives in the wire registry beside the resource ID minter.
+// It is re-exported here so existing importers keep working.
+export { isSafeResourceId };
+
 const MAP_ENTITY_KINDS = new Set(["goal", "document", "area", "link", "brain", "agent", "person", "request", "commit", "evidence", "resource"]);
-const OPAQUE_RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const VAULT_COMMIT_REF = /^vault@([0-9a-f]{7,40})$/;
 const VERB_LABELS = Object.freeze({
   "copy-path": "Copy path", open: "Open", "open-document": "Open Document",
   "open-goal": "Open Goal", "open-brain": "Open Brain", details: "Details",
 });
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
-
-/** Reports whether one value is safe to use as a catalog-local opaque identity. */
-export function isSafeResourceId(value) {
-  return typeof value === "string" && OPAQUE_RESOURCE_ID.test(value);
-}
 
 /** Joins the complete runtime identity of one Area resource without path ambiguity. */
 export function resourceLocatorKey(locator) {

@@ -1,4 +1,4 @@
-import { isAreaBoundary, isAreaRegion, tangentOf } from "./area-board-core.js";
+import { addBlock, hiddenResourceRecordIds, isAreaBoundary, isAreaRegion, tangentOf } from "./area-board-core.js";
 
 export const AREA_MAP_LAYOUT = Object.freeze({
   spacing: 60,
@@ -103,9 +103,12 @@ function rewriteIds(value, tables) {
 
 /** Converts one source shard into namespaced world elements. */
 export function composeShard(owner, scene, offset = { x: 0, y: 0 }) {
-  const regionIds = new Set((scene?.elements ?? []).filter((element) => element?.customData?.tangent?.role === "region").map((element) => element.id));
-  const elements = (scene?.elements ?? []).filter((element) => !element.isDeleted && !["boundary", "region"].includes(element?.customData?.tangent?.role) && !regionIds.has(element.containerId));
-  const tables = identityTables(owner, { elements, files: scene?.files ?? {} });
+  const sourceElements = scene?.elements ?? [];
+  const regionIds = new Set(sourceElements.filter((element) => element?.customData?.tangent?.role === "region").map((element) => element.id));
+  const retainedIds = hiddenResourceRecordIds(scene);
+  const elements = sourceElements.filter((element) => !element.isDeleted && !retainedIds.has(element.id) && !["boundary", "region"].includes(element?.customData?.tangent?.role) && !regionIds.has(element.containerId));
+  const retained = sourceElements.filter((element) => retainedIds.has(element.id));
+  const tables = identityTables(owner, { elements: [...elements, ...retained], files: scene?.files ?? {} });
   const inverse = reverseTables(tables);
   const origins = new Map();
   const composed = elements.map((source) => {
@@ -113,9 +116,14 @@ export function composeShard(owner, scene, offset = { x: 0, y: 0 }) {
     runtime.x = Number(runtime.x ?? 0) + Number(offset.x ?? 0);
     runtime.y = Number(runtime.y ?? 0) + Number(offset.y ?? 0);
     runtime.customData = { ...(runtime.customData ?? {}), tangentWorld: { owner, sourceId: source.id } };
-    origins.set(runtime.id, { owner, sourceId: source.id, identity: inverse, source: clone(source) });
+    origins.set(runtime.id, { owner, sourceId: source.id, identity: inverse, source: clone(source), sourceIndex: sourceElements.indexOf(source) });
     return runtime;
   });
+  for (const source of retained) {
+    origins.set(tables.elements.get(source.id), {
+      owner, sourceId: source.id, identity: inverse, source: clone(source), sourceIndex: sourceElements.indexOf(source), retainedResource: true,
+    });
+  }
   const files = Object.fromEntries(Object.entries(scene?.files ?? {}).map(([id, file]) => {
     const runtime = tables.files.get(id);
     const next = clone(file);
@@ -128,8 +136,11 @@ export function composeShard(owner, scene, offset = { x: 0, y: 0 }) {
 /** Converts world elements back into exact source-owner groups. */
 export function splitComposed(elements, origins, offsets = new Map()) {
   const byOwner = new Map();
+  const emitted = new Set();
+  const sourceOrder = new Map([...origins.values()].flatMap((origin) => Number.isInteger(origin.sourceIndex) ? [[elementKey(origin.owner, origin.sourceId), origin.sourceIndex]] : []));
   const fallback = { elements: new Map([...origins].map(([runtime, source]) => [runtime, source.sourceId])), groups: new Map(), files: new Map() };
   for (const runtime of elements ?? []) {
+    if (runtime?.customData?.tangentWorldEphemeral) continue;
     const origin = origins.get(runtime.id) ?? runtime.customData?.tangentWorld;
     if (!origin) continue;
     const source = rewriteIds(runtime, origin.identity ?? fallback);
@@ -166,7 +177,18 @@ export function splitComposed(elements, origins, offsets = new Map()) {
       if (!Object.keys(source.customData).length) delete source.customData;
     }
     const list = byOwner.get(origin.owner) ?? [];
-    list.push(source); byOwner.set(origin.owner, list);
+    list.push(source); byOwner.set(origin.owner, list); emitted.add(elementKey(origin.owner, origin.sourceId));
+  }
+  const retained = [...origins.values()].filter((origin) => origin.retainedResource && !emitted.has(elementKey(origin.owner, origin.sourceId))).sort((left, right) => left.sourceIndex - right.sourceIndex);
+  for (const origin of retained) {
+    const list = byOwner.get(origin.owner) ?? [];
+    const insertion = list.findIndex((element) => {
+      const order = sourceOrder.get(elementKey(origin.owner, element.id));
+      return Number.isInteger(order) && order > origin.sourceIndex;
+    });
+    const source = clone(origin.source);
+    if (insertion < 0) list.push(source); else list.splice(insertion, 0, source);
+    byOwner.set(origin.owner, list);
   }
   return byOwner;
 }
@@ -463,6 +485,46 @@ export function nearestFreeRectangle(preferred, occupied = [], { gap = 0 } = {})
   candidates.sort((left, right) => left.distance - right.distance || left.travel - right.travel
     || left.direction - right.direction || left.value.x - right.value.x || left.value.y - right.value.y);
   return candidates[0].value;
+}
+
+/** Returns visible source-local geometry that participates in Block collision and Area growth. */
+function sourcePlacementObstacles(scene) {
+  return (scene?.elements ?? []).filter((element) => !element?.isDeleted
+    && !element?.containerId
+    && !element?.customData?.tangentWorldEphemeral
+    && !isAreaBoundary(element)
+    && finiteRect(element));
+}
+
+/** Returns the current source-local content bounds from the same minimum and growth rules as the world solver. */
+export function sourceAreaContentBounds(scene) {
+  const required = unionRects(sourcePlacementObstacles(scene).map(rectangleOf));
+  const size = storedSizeFloor(required);
+  return { x: 0, y: 0, width: size.width, height: Math.max(1, size.height - LABEL_BAND) };
+}
+
+/** Adds any Tangent Block at the nearest free point through the shared Block and collision pipeline. */
+export function placeBlockAtNearestFreePoint(scene, choice, point, id, { occupied = sourcePlacementObstacles(scene) } = {}) {
+  const next = addBlock(scene, choice, point, id);
+  const added = next.elements.slice(scene?.elements?.length ?? 0);
+  const root = added.find((element) => tangentOf(element) && !element.containerId);
+  if (!root) return { scene: next, root: null };
+  const placed = nearestFreeRectangle(rectangleOf(root), occupied.map(rectangleOf), { gap: CONTENT_MARGIN });
+  const dx = placed.x - root.x;
+  const dy = placed.y - root.y;
+  const bound = new Set([root.id, ...(root.boundElements ?? []).map((binding) => binding.id)]);
+  for (const element of added) if (bound.has(element.id)) {
+    element.x += dx;
+    element.y += dy;
+  }
+  return { scene: next, root: next.elements.find((element) => element.id === root.id) ?? null };
+}
+
+/** Places any Tangent Block from the center of its source Area's current world-layout bounds. */
+export function placeBlockInSourceScene(scene, choice, id) {
+  const bounds = sourceAreaContentBounds(scene);
+  const point = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  return placeBlockAtNearestFreePoint(scene, choice, point, id);
 }
 
 /** Returns the local hulls that affect one Area's structural and drawn rectangles. */
@@ -808,4 +870,4 @@ export function remapAreaMapWorld(world, changedPaths) {
   return moved;
 }
 
-export default { AREA_MAP_LAYOUT, composeAreaMapWorld, composeRegionElement, composeShard, computeWorldGeometry, detachCrossOwnerTextBindings, elementKey, inflateRect, nearestFreeRectangle, protectAreaRegions, provisionalRegions, rectanglesOverlap, regionId, regionKey, remapAreaMapWorld, reprioritizeAreaPlacement, runtimeId, shardHulls, solveAreaMapGesture, solveOwnedElementGesture, splitComposed, unionRects };
+export default { AREA_MAP_LAYOUT, composeAreaMapWorld, composeRegionElement, composeShard, computeWorldGeometry, detachCrossOwnerTextBindings, elementKey, inflateRect, nearestFreeRectangle, placeBlockAtNearestFreePoint, placeBlockInSourceScene, protectAreaRegions, provisionalRegions, rectanglesOverlap, regionId, regionKey, remapAreaMapWorld, reprioritizeAreaPlacement, runtimeId, shardHulls, solveAreaMapGesture, solveOwnedElementGesture, sourceAreaContentBounds, splitComposed, unionRects };

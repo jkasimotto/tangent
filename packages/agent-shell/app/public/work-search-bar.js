@@ -11,12 +11,15 @@ import { motions, resolveMotion } from "./motion-keys.js";
  * Matches are painted as a row class after every Work render.
  */
 export function createWorkSearchBar({
-  state, document, bar, input, count, keys, screen,
+  state, document, bar, input, count, keys, screen, isWorkVisible = () => state.view === "work",
+  isWorkTop = isWorkVisible,
   paint, setWorkCursor, revealCursor, closeRevealedFold, announce,
 }) {
+  /** Returns the Work root whether it is the legacy screen or the Map lens. */
+  const root = () => typeof screen === "function" ? screen() : screen;
   /** Every Work row, hidden ones included, as matcher input. */
   function searchRows() {
-    return [...screen.querySelectorAll("[data-work-cursor]")].map((row) => ({
+    return [...root().querySelectorAll("[data-work-cursor]")].map((row) => ({
       cursor: row.dataset.workCursor,
       text: row.dataset.searchText ?? row.textContent,
     }));
@@ -34,7 +37,7 @@ export function createWorkSearchBar({
 
   /** The Work row for one cursor id, or null. */
   function rowFor(cursor) {
-    return [...screen.querySelectorAll("[data-work-cursor]")].find((row) => row.dataset.workCursor === cursor) ?? null;
+    return [...root().querySelectorAll("[data-work-cursor]")].find((row) => row.dataset.workCursor === cursor) ?? null;
   }
 
   /** Moves the cursor to one match, opening folds on the way, without stealing focus from the input. */
@@ -54,11 +57,12 @@ export function createWorkSearchBar({
     const pattern = state.searchPattern;
     const open = isOpen();
     const found = pattern ? matches() : [];
-    for (const row of screen.querySelectorAll("[data-work-cursor]")) {
+    for (const row of root().querySelectorAll("[data-work-cursor]")) {
       row.classList.toggle("search-match", found.includes(row.dataset.workCursor));
     }
-    const visible = open || Boolean(pattern);
+    const visible = isWorkTop() && (open || Boolean(pattern));
     bar.hidden = !visible;
+    bar.toggleAttribute("inert", !visible);
     document.body.classList.toggle("work-search-open", visible);
     bar.classList.toggle("quiet", !open);
     if (!visible) return;
@@ -84,10 +88,10 @@ export function createWorkSearchBar({
 
   /** Opens the bar and remembers where `/` was pressed. */
   function open() {
-    if (state.view !== "work") return false;
+    if (!isWorkVisible()) return false;
     state.searchOrigin = {
       workCursor: state.workCursor,
-      scrollTop: screen.scrollTop,
+      scrollTop: root().scrollTop,
       openedFolds: [],
     };
     state.searchNotice = "";
@@ -147,7 +151,7 @@ export function createWorkSearchBar({
       if (row) setWorkCursor(row, false);
     }
     paint(true);
-    if (origin) screen.scrollTop = origin.scrollTop;
+    if (origin) root().scrollTop = origin.scrollTop;
     restoreFocus(origin?.workCursor);
     announce("");
   }

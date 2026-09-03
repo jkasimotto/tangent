@@ -4,11 +4,24 @@ import { readFile } from "node:fs/promises";
 
 import { currentTmuxSession, listAreaNodes, postJson, requireArea, resolveServerUrl, vaultFetch } from "../client.js";
 import { areaCommandSpec } from "../spec.js";
+import { type MapResourceLocator, type MapResourceTarget, printJson, resourceCommand, resourceFailureEnvelope, resourceTargetText } from "./area-resource.js";
 
 /** Dispatches `tangent area` subcommands. */
 export async function runAreaCli(argv = process.argv.slice(2)): Promise<void> {
-  const args = parseArgs(argv, { boolean: argv[0] === "propose" ? [] : ["withdraw"] });
+  const args = parseArgs(argv, {
+    boolean: ["json", "all", "allow-missing", "clear-label", "confirm-last-known", ...(argv[0] === "propose" ? [] : ["withdraw"])],
+    repeatable: ["candidate"],
+  });
   const subcommand = args._[0];
+  if (subcommand === "resource") {
+    try { return await resourceCommand(args); }
+    catch (error) {
+      if (!booleanArg(args.json)) throw error;
+      printJson(resourceFailureEnvelope(error, args));
+      process.exitCode = 1;
+      return;
+    }
+  }
   if (!subcommand || args.help) return help();
   if (subcommand === "list") return listCommand(args);
   if (subcommand === "show") return showCommand(args);
@@ -22,7 +35,7 @@ export async function runAreaCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "done") return statusCommand(args, "done");
   if (subcommand === "archive") return statusCommand(args, "archived");
   if (subcommand === "reopen") return statusCommand(args, "active");
-  throw new Error(`Unknown area command: ${subcommand}. Try "tangent area list", "tangent area show <area>", "tangent area create <parent> <name>", "tangent area done <area>", "tangent area archive <area>", or "tangent area reopen <area>".`);
+  throw new Error(`Unknown area command: ${subcommand}. Try "tangent area list", "tangent area show <area>", "tangent area resource --help", "tangent area create <parent> <name>", "tangent area done <area>", "tangent area archive <area>", or "tangent area reopen <area>".`);
 }
 
 /** Presents or withdraws the exact Area brain's structured big picture. */
@@ -165,6 +178,7 @@ async function showCommand(args: Args): Promise<void> {
     console.log(detail.purpose);
   }
   printResources(detail);
+  printAreaShowMapResources(detail);
   printSkills(detail);
   printProcesses(detail);
   if (detail.map) {
@@ -196,6 +210,27 @@ function printResources(detail: AreaShowDetail): void {
   if (!lines.length) console.log("  Repository: none bound");
   for (const [label, item] of lines) console.log(`  ${label}: ${item.value} (from ${item.area})`);
   if (detail.workFolder) console.log(`  Workers start in ${detail.workFolder.cwd} (from ${detail.workFolder.source})`);
+}
+
+/** Prints the additive active Map-resource projection without starting checks or discovery. */
+function printAreaShowMapResources(detail: AreaShowDetail): void {
+  const projected = detail.mapResources;
+  if (!projected) return;
+  console.log("");
+  console.log("Map resources:");
+  if (projected.state === "unavailable") {
+    console.log(`  Unavailable: ${projected.error?.message ?? "catalog could not be read"}`);
+    return;
+  }
+  if (!projected.rows.length) console.log(projected.state === "current" ? "  None." : "  No confirmed rows loaded.");
+  for (const row of projected.rows) {
+    const source = row.source.kind === "inherited" ? `inherited from ${row.source.sourceArea}` : "direct";
+    console.log(`  ${row.locator.id.slice(0, 12)}  ${row.target.kind}  ${row.label}  (${source}; ${row.locator.owner})`);
+    console.log(`    ${resourceTargetText(row.target)}`);
+  }
+  if (projected.state === "partial") for (const problem of projected.problems ?? []) {
+    console.log(`  Problem: ${problem.message ?? "catalog source unavailable"}`);
+  }
 }
 
 /**
@@ -237,6 +272,20 @@ type AreaShowProcess = { slug: string; file: string; when: string; status: strin
 /** One resource value with the Area whose note declares it. */
 type ResolvedResource = { value: string; area: string };
 
+/** One active Map-resource row from the additive Area-show contract. */
+type AreaShowMapResourceRow = {
+  locator: MapResourceLocator;
+  label: string;
+  target: MapResourceTarget;
+  source: { kind: "direct" } | { kind: "inherited"; sourceArea: string };
+};
+
+/** The additive Area-show resource projection, kept distinct from launch bindings. */
+type AreaShowMapResources =
+  | { state: "current"; rows: AreaShowMapResourceRow[] }
+  | { state: "partial"; rows: AreaShowMapResourceRow[]; problems?: Array<{ message?: string }> }
+  | { state: "unavailable"; error?: { message?: string } };
+
 /** The parts of `/api/areas/show` the resource printout reads. */
 type AreaShowDetail = {
   resolved?: { repository?: ResolvedResource | null; worktree?: ResolvedResource | null; branch?: ResolvedResource | null };
@@ -244,6 +293,7 @@ type AreaShowDetail = {
   processes?: AreaShowProcess[];
   skills?: AreaShowSkill[];
   projectSkills?: AreaShowSkill[];
+  mapResources?: AreaShowMapResources;
 };
 
 /**
@@ -290,6 +340,9 @@ Examples:
   tangent area list
   tangent area list --json
   tangent area show otto/tangent
+  tangent area resource list otto/tangent
+  tangent area resource add otto/tangent --kind worktree --path /absolute/path --operation-id brain-add-worktree-1
+  tangent area resource place otto/tangent <resource-id> --operation-id brain-place-worktree-1
   tangent area create otto/tangent "Area map"
   tangent area archive neara/hackathon
   tangent area list --all

@@ -32,11 +32,34 @@ Non-Work screens load their own bounded routes. These include `/api/navigation/s
 
 `GET` and `POST /api/areas/map-view` read or write private `area-map-view.v2` state by world ID. A world response also includes this state when it exists.
 
+`GET /api/areas/map-resources?area=<area>` returns the joined panel projection. The read starts no Git, provider, or filesystem work.
+
+`POST /api/areas/map-resources/resolve` resolves at most 500 ordered owner-and-ID locators from cached facts.
+
+`POST /api/areas/map-resources/refresh` refreshes at most 500 current resources. Eight observation tasks can operate at the same time.
+
+`POST /api/areas/map-resources/discover` searches recorded Repositories and the newest 20 Attempts from the last 30 days.
+
+`POST /api/areas/map-resources/inspect-target` normalizes one Worktree, Repository, or HTTP(S) Link target before a mutation.
+
+`POST /api/areas/map-resources/apply` applies one typed mutation with exact catalog revisions and an operation ID.
+
+`POST /api/areas/map-resources/representation` gives Brain CLI commands a canonical Place, Hide, or Restore adapter.
+
+`GET /api/areas/map-kinds` returns the Map kinds catalog: the normalized entries of `map-kinds.md`, the drawings in `map-icons/`, one revision hash, and every problem. The route is read-only and never fails on a bad definition.
+
+`GET /api/areas/show` includes an additive `mapResources` field. The existing `resources`, `resolved`, and `workFolder` fields stay unchanged.
+
 `tangent vault commit` writes the vault history directly. `tangent study` starts one local interactive agent directly. No other package command writes vault files or starts a process itself.
 
 ## Vault and Area commands
 
 - `tangent area list|show <area>` reads Areas. `show` prints the Repository, Worktree, and Branch the Area sees, each with the Area whose note declares it, and the folder a worker starts in.
+- `tangent area resource list|show <area> ...` reads confirmed resources, inherited resources, legacy review rows, and Suggestions.
+- `tangent area resource add|import|dismiss|edit|remove|undo ...` changes catalog membership through revision-fenced exact transactions.
+- `tangent area resource place|hide|restore ...` changes a resource Block through the canonical Area source and shared Block shape.
+- `tangent area resource discover <area>` reads bounded Worktree evidence. It does not add or place a resource.
+- `tangent area resource check|refresh <area> [resource-id...]` refreshes cached observations. It does not write the Map or catalog.
 - `tangent area create <parent> <name>` creates one nested Area.
 - `tangent area recent <area>` reads subtree milestones. `--since` takes a window (`30d`, `12h`, `2w`, `90m`) or an ISO time, and `--query` keeps the milestones whose summary or reference holds any of its words.
 - `tangent area audit <area>` writes one detached compatibility audit.

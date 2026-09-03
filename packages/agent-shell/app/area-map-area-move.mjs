@@ -44,7 +44,10 @@ function rewriteMetadata(value, changedPaths, key = "") {
     if (key === "ref") return remapReference(value, changedPaths);
     return value;
   }
-  return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, rewriteMetadata(child, changedPaths, childKey)]));
+  return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [
+    childKey,
+    childKey === "ref" && value.kind === "resource" ? child : rewriteMetadata(child, changedPaths, childKey),
+  ]));
 }
 
 /** Returns the Area key encoded by one canonical structural-region reference. */

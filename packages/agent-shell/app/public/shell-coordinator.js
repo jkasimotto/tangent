@@ -23,7 +23,8 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     screen, backButton, shellMenu, goToButton, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
     modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
     restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill, openSessionLayer, closeSessionLayer,
-    documentPeekLayer, syncLayerInertness,
+    documentPeekLayer, syncLayerInertness, openWorkLens, closeWorkLens,
+    showMapHome, openAreaMap, drillAreaMap, toggleMapBrain, showMapFromDocument, showMapFromBrain,
   } = chrome;
   const {
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
@@ -44,20 +45,43 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   let navigation = null;
   let navigationQuery = null;
   let navigationGeneration = 0;
+  let shellStatusRequest = null;
+
+  /** Shows a completed mutation in Work without replacing the retained Map home. */
+  function revealWorkMutation(file = "") {
+    if (state.sessionPeek) closeSessionLayer();
+    if (state.view !== "area-workspace") showMapHome({ focus: false });
+    openWorkLens({ mode: "all", focus: false });
+    paint(true);
+    window.setTimeout(() => {
+      const row = file ? document.querySelector(`[data-goal-anchor="${CSS.escape(file)}"]`) : null;
+      (row?.querySelector("[data-work-row-title]") ?? document.querySelector("#work-lens-content [data-work-cursor] [data-work-row-title]"))?.focus?.({ preventScroll: true });
+    }, 0);
+  }
   let navigationRequest = null;
+
+  /** Loads bounded shell chrome facts once without reading Work or Agent sources. */
+  async function loadShellStatus({ force = false, reportError = true } = {}) {
+    if (state.shellStatusLoaded && !force) return true;
+    shellStatusRequest ??= api("/api/shell/status").then((status) => {
+      Object.assign(state, status, { updateAvailable: Boolean(status.sourceChanged), rebuilding: ["building", "restarting", "reconnecting"].includes(status.rebuild?.phase), shellStatusLoaded: true });
+      return true;
+    });
+    try { return await shellStatusRequest; }
+    catch (error) {
+      if (reportError) showToast(`Shell status is unavailable: ${error.message}`);
+      return false;
+    } finally { shellStatusRequest = null; }
+  }
 
   /** Opens, closes, or toggles the shell menu. */
   async function toggleShellMenu(open = shellMenu.hidden) {
     if (!open) {
       shellMenu.hidden = true;
+      if (backButton.getAttribute("aria-haspopup") === "menu") backButton.setAttribute("aria-expanded", "false");
       return;
     }
-    if (!state.shellStatusLoaded) {
-      try {
-        const status = await api("/api/shell/status");
-        Object.assign(state, status, { updateAvailable: Boolean(status.sourceChanged), rebuilding: ["building", "restarting", "reconnecting"].includes(status.rebuild?.phase), shellStatusLoaded: true });
-      } catch (error) { showToast(`Shell status is unavailable: ${error.message}`); }
-    }
+    if (!state.shellStatusLoaded) await loadShellStatus();
     const awakeItem = shellMenu.querySelector("#menu-awake");
     if (awakeItem) awakeItem.textContent = state.caffeinate ? "Let Mac sleep normally" : "Keep Mac awake";
     updateStatusPill();
@@ -65,6 +89,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     shellMenu.style.top = `${Math.round(rect.bottom + 6)}px`;
     shellMenu.style.left = `${Math.round(rect.left)}px`;
     shellMenu.hidden = false;
+    backButton.setAttribute("aria-expanded", "true");
   }
 
   // ---- Go to ----
@@ -78,7 +103,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
    * exists, and every Area brain. Null while the vault is still loading.
    */
   function goToRows() {
-    return navigation ? buildGoToRows({ vault: navigation.vault, brains: navigation.brains, query: state.goTo.query, area: state.goTo.area, kind: state.goTo.kind, view: state.goTo.view, areaLabel, brainStateLabel }) : null;
+    return navigation ? buildGoToRows({ vault: navigation.vault, brains: navigation.brains, objects: navigation.objects, query: state.goTo.query, area: state.goTo.area, kind: state.goTo.kind, view: state.goTo.view, areaLabel, brainStateLabel }) : null;
   }
 
   /** Opens the finder over the current screen, or closes it when ⌘K repeats. */
@@ -109,6 +134,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
    */
   function goToReturnTarget(origin) {
     const usable = Boolean(origin) && origin !== document.body && origin.isConnected;
+    if (usable && !origin.closest?.("[inert]")) return origin;
     if (!state.documentPeek) return usable ? origin : null;
     if (usable && documentPeekLayer.contains(origin)) return origin;
     return documentPeekLayer.querySelector(".document-peek-surface");
@@ -144,23 +170,25 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       const request = new AbortController();
       navigationRequest = request;
       const generation = ++navigationGeneration;
-      goToList.innerHTML = `<li class="go-to-empty" role="status">Searching…</li>`;
+      const retained = state.goTo.lastValidHtml ?? "";
+      goToList.innerHTML = `<li class="go-to-empty go-to-progress" role="status">Searching…</li>${retained}`;
       void api(`/api/navigation/search?q=${encodeURIComponent(requested)}&limit=100`, { signal: request.signal }).then((result) => {
         if (!state.goTo || generation !== navigationGeneration || request !== navigationRequest) return;
         navigationRequest = null;
         const rows = result.rows ?? [];
         const areas = result.areas ?? rows.filter((row) => row.kind === "area").map((row) => ({ path: row.area, name: row.name }));
-        const documents = rows.filter((row) => ["document", "goal", "note", "area"].includes(row.kind)).map((row) => ({
+        const documents = rows.filter((row) => ["document", "note"].includes(row.kind)).map((row) => ({
           ...row,
           title: row.name,
-          kind: row.kind === "area" ? "note" : row.kind,
-          docKind: row.kind === "area" ? "note" : row.docKind,
+          kind: row.kind,
+          docKind: row.docKind,
           missing: false,
           file: row.file,
           area: row.area,
         }));
         const brains = rows.filter((row) => row.kind === "brain").map((row) => ({ area: row.area, status: row.live ? "active" : "inactive", live: row.live, session: row.session }));
-        navigation = { vault: { areas, documents }, brains };
+        const objects = rows.filter((row) => ["area", "goal", "agent"].includes(row.kind));
+        navigation = { vault: { areas, documents }, brains, objects };
         const areaSelect = document.querySelector("#go-to-area");
         const kindSelect = document.querySelector("#go-to-kind");
         if (areaSelect) {
@@ -175,7 +203,11 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       }).catch((error) => {
         if (!state.goTo || generation !== navigationGeneration || request !== navigationRequest || error?.kind === "abort") return;
         navigationRequest = null;
-        goToList.innerHTML = `<li class="go-to-empty go-to-error" role="alert">${escapeHtml(error.message)}</li>`;
+        navigationQuery = null;
+        state.goTo.error = error.message;
+        const scrollTop = goToList.scrollTop;
+        goToList.innerHTML = `<li class="go-to-empty go-to-error" role="alert"><span>Search is unavailable: ${escapeHtml(error.message)}</span><button type="button" data-retry-go-to>Retry</button></li>${state.goTo.lastValidHtml ?? ""}`;
+        goToList.scrollTop = scrollTop;
       });
       return;
     }
@@ -189,7 +221,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     }
     state.goTo.rows = rows;
     if (state.goTo.view === "graph") {
-      const documents = rows.filter((row) => row.kind !== "brain");
+      const documents = rows.filter((row) => ["document", "note"].includes(row.kind));
       state.goTo.rows = documents;
       if (!documents.length) {
         goToList.innerHTML = `<li class="go-to-empty" role="status">No Documents match these filters.</li>`;
@@ -210,8 +242,10 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     goToList.innerHTML = rows.map((row, index) => `
       <li id="go-to-row-${index}" role="option" aria-selected="${index === state.goTo.selected}" data-go-to-row="${index}">
         <span class="search-result-kind">${escapeHtml(row.kindLabel)}</span>
-        <span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.detail || row.areaLabel)}</small></span>
+        <span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml([row.detail, row.areaLabel].filter(Boolean).join(" · "))}</small></span>
       </li>`).join("");
+    state.goTo.error = "";
+    state.goTo.lastValidHtml = goToList.innerHTML;
     goToInput.setAttribute("aria-activedescendant", `go-to-row-${state.goTo.selected}`);
     goToList.children[state.goTo.selected]?.scrollIntoView?.({ block: "nearest" });
   }
@@ -229,12 +263,43 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     // The finder's own input is never the return target: the layer inherits
     // the focus origin the finder captured when it opened.
     const origin = state.goTo?.returnFocus ?? null;
+    const brainWasFocused = Boolean(document.querySelector('[data-split-pane="brain"].focused'));
     closeGoTo();
+    if (row.kind === "area") {
+      if (state.workLens) return openAreaMap(row.area, origin);
+      if (state.documentPeek && !state.documentPeek.suspended) showMapFromDocument();
+      else if (brainWasFocused || origin?.closest?.(".area-workspace-brain-pane")) return showMapFromBrain(row.area);
+      else if (state.view !== "area-workspace") showMapHome();
+      return drillAreaMap(row.area);
+    }
+    if (row.kind === "goal") {
+      state.workCursor = `goal:${row.file || row.id}`;
+      localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+      return openWorkLens({ area: row.area, mode: "all" });
+    }
+    if (row.kind === "agent") {
+      const session = state.sessions.find((item) => item.name === row.session);
+      if (session) {
+        const goalId = row.goalId || session.goal;
+        state.workCursor = goalId ? `goal:${goalId}` : `area:${row.area || session.area}`;
+        localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+        openWorkLens({ area: row.area || session.area, mode: "all", returnFocus: origin });
+        return openSessionLayer(session, session.kind === "brain" ? "brain" : "agent", captureReturnPoint());
+      }
+      if (row.status === "unknown" || !row.goalId) {
+        state.workCursor = `problem:agent:${row.session || row.id}`;
+        localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+        return openWorkLens({ area: row.area, mode: "problems" });
+      }
+      state.workCursor = row.goalId ? `goal:${row.goalId}` : `area:${row.area}`;
+      localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+      return openWorkLens({ area: row.area, mode: "all" });
+    }
     if (row.kind === "brain") {
-      if (state.documentPeek) closeDocumentPeek();
-      if (row.live && row.session) return openBrainSession(row.session);
       if (state.sessionPeek) closeSessionLayer();
-      return openOrStartBrain(row.area, goToButton);
+      const returnPoint = state.workLens ? captureReturnPoint() : null;
+      if (returnPoint) closeWorkLens({ restoreFocus: false, remember: true });
+      return toggleMapBrain(row.area, { returnPoint });
     }
     return openDocumentPeek(row.file, { origin });
   }
@@ -311,16 +376,12 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
    */
   function selectGoal(file) {
     const goal = rememberGoal(file);
-    state.view = "work";
     state.searchPattern = "";
-    state.document = null;
-    state.goalDetail = null;
-    state.documentTrail = [];
-    state.documentTrailIndex = -1;
     if (goal && state.workFilter !== "all" && !filteredGoalTrees(goalTrees().filter((tree) => tree.goals.some((item) => item.file === file))).length) {
       state.workFilter = "all";
       localStorage.setItem("agent-shell.work-filter", state.workFilter);
     }
+    openWorkLens({ area: goal?.area ?? goal?.areaId ?? "", mode: "all", focus: false });
     paint(true);
     window.setTimeout(() => {
       const row = document.querySelector(`[data-goal-anchor='${String(file).replaceAll("\\", "\\\\").replaceAll("'", "\\'")}']`);
@@ -344,7 +405,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   async function openGoalRun(file) {
     const goal = rememberGoal(file);
     if (!goal) return;
-    state.agentReturn = state.view === "work" ? captureReturnPoint() : null;
+    state.agentReturn = state.workLens || state.view === "work" ? captureReturnPoint() : null;
     state.agentSessionName = null;
     state.document = null;
     state.goalDetail = null;
@@ -373,12 +434,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Returns to the work list. */
   function showWork() {
-    state.view = "work";
-    state.document = null;
-    state.goalDetail = null;
-    state.documentTrail = [];
-    state.documentTrailIndex = -1;
-    paint(true);
+    openWorkLens({ mode: "all" });
   }
 
   /** Opens the temporary area hierarchy. */
@@ -540,6 +596,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   /** Opens a fresh or unfinished description without taking over another defining agent. */
   function showDescribe({ source = null, area = "", description = "" } = {}) {
     state.describeReturn = captureReturnPoint();
+    if (state.workLens) closeWorkLens({ restoreFocus: false, remember: true });
     if (source) {
       state.describeDraft = { area: source.area, description: "", sources: [] };
       addDescribeSource(source);
@@ -751,9 +808,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       const pendingBrain = brain ? state.brains.find((item) => item.area === (session.brain || session.area)) : null;
       if (pendingBrain) pendingBrain.pendingStop = true;
       if (!describing) {
-        state.view = "work";
-        paint(true);
-        window.setTimeout(() => [...screen.querySelectorAll("[data-goal-anchor]")].find((item) => item.dataset.goalAnchor === (goal?.file ?? ""))?.querySelector("[data-work-row-title]")?.focus({ preventScroll: true }), 0);
+        revealWorkMutation(goal?.file ?? "");
       }
       (window.requestAnimationFrame ?? window.setTimeout)(() => actionTelemetry.record("work-mutation", "pending-paint", { operationId: operation.operationId, phase: "stop", durationMs: performance.now() - operation.startedAt }));
       try {
@@ -787,7 +842,8 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
         showToast("The conversation ended. Saved work stays in Tangent.");
         return true;
       }
-      state.view = returnToDocument ? "document" : "work";
+      if (returnToDocument) state.view = "document";
+      else revealWorkMutation(goal?.file ?? "");
       void refresh({ trigger: "mutation-verify" });
       if (returnToDocument) void refreshDocument();
       showToast(shell ? "The session closed." : brain ? "The brain stopped. Its work continues." : "The agent stopped. The work stays open.");
@@ -844,7 +900,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
           showToast("Agent Shell could not complete the Goal. The failure was logged.");
           return false;
         }
-        state.view = "work";
+        revealWorkMutation(goal.file);
         await refresh();
         paint(true);
         showToast("The work is complete.");
@@ -890,7 +946,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
           showToast("Agent Shell could not mark the Goal won't do. The failure was logged.");
           return false;
         }
-        state.view = "work";
+        revealWorkMutation(goal.file);
         await refresh();
         paint(true);
         showToast("The work is marked won't do.");
@@ -901,5 +957,5 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Toggles the server-owned macOS sleep assertion. */
 
-  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, openAgentById, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, openGoalAgent, openReaderAgent, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
+  return { loadShellStatus, toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, openAgentById, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, openGoalAgent, openReaderAgent, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
 }

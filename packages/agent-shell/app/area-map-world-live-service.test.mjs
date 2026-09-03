@@ -239,7 +239,10 @@ async function mountLiveWorld(page, base, { navigate = true, isolated = false } 
   await page.locator(".excalidraw canvas.interactive").waitFor();
   await page.waitForFunction(() => window.liveEditor?.current?.()?.elements?.length);
   await page.waitForFunction(() => window.liveEditor?.rendered?.()?.length);
-  await page.evaluate(() => window.liveEditor.toggleRestriction("neara"));
+  await page.evaluate(() => {
+    const restriction = window.liveEditor.captureView().restrictionArea;
+    if (restriction) window.liveEditor.toggleRestriction(restriction);
+  });
   await page.waitForFunction(() => window.liveEditor.rendered()?.some((element) => element.customData?.tangent?.area === "otto"));
   await page.evaluate(async () => { await document.fonts.ready; await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
 }
@@ -732,6 +735,13 @@ test("retryable text edits survive fact refresh and controller replacement in br
   await page.getByRole("button", { name: "Restore" }).click();
   const restoredTexts = await page.evaluate(() => (window.liveEditor.rendered() ?? []).filter((element) => !element.isDeleted && element.type === "text").map((element) => element.text));
   assert.ok(restoredTexts.includes(firstText) && restoredTexts.includes(secondText), "controller replacement restores the failed and later text exactly");
+  const blockedSave = page.getByRole("status", { name: "Map save status" });
+  for (const name of ["Retry", "Reload saved", "Keep mine"]) await blockedSave.getByRole("button", { name }).waitFor();
+  await blockedSave.getByRole("button", { name: "Keep mine" }).click();
+  await page.locator(".tangent-map-live").filter({ hasText: "Local draft kept. Retry or reload saved." }).waitFor();
+  await page.waitForFunction(() => window.liveEvents.some((event) => event.name === "area_map_draft" && event.phase === "kept" && event.draftState === "active"));
+  assert.match(await blockedSave.textContent(), /Not saved/, "keeping the draft does not falsely claim that it was saved");
+  for (const name of ["Retry", "Reload saved", "Keep mine"]) assert.equal(await blockedSave.getByRole("button", { name }).count(), 1, `${name} remains available after keeping the draft`);
   await page.getByRole("button", { name: "Retry" }).click();
   await page.getByText("Saved", { exact: true }).waitFor();
   await page.waitForFunction(() => !document.querySelector(".tangent-map-draft-choice"));
@@ -739,6 +749,18 @@ test("retryable text edits survive fact refresh and controller replacement in br
   const savedTextByRequest = savedRequests.map((request) => request.mutations.flatMap((mutation) => mutation.put).filter((element) => element.type === "text").map((element) => element.text));
   assert.ok(savedTextByRequest[0].includes(firstText), "the failed command saves first");
   assert.ok(savedTextByRequest[1].includes(secondText), "the later queued command saves second");
+
+  const discardedText = "Reload discards this local text";
+  failedAttempts = 0;
+  await placeText(discardedText, 0.5, 0.42);
+  await page.evaluate(() => window.liveEditor.flush());
+  await blockedSave.getByText("Not saved", { exact: false }).waitFor();
+  await page.waitForFunction((expected) => (window.liveEditor.rendered() ?? []).some((element) => !element.isDeleted && element.type === "text" && element.text === expected), discardedText);
+  await blockedSave.getByRole("button", { name: "Reload saved" }).click();
+  await blockedSave.getByText("Saved", { exact: true }).waitFor();
+  await page.waitForFunction((expected) => !(window.liveEditor.rendered() ?? []).some((element) => !element.isDeleted && element.type === "text" && element.text === expected), discardedText);
+  const reloadedTexts = await page.evaluate(() => (window.liveEditor.rendered() ?? []).filter((element) => !element.isDeleted && element.type === "text").map((element) => element.text));
+  assert.ok(reloadedTexts.includes(firstText) && reloadedTexts.includes(secondText), "Reload saved discards only the failed local edit and keeps both durable edits");
 
   await page.evaluate(() => window.liveEditor.destroy());
   await mountLiveWorld(page, server.base, { navigate: false });

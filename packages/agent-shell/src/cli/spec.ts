@@ -2,6 +2,87 @@ import type { CliCommandSpec } from "@tangent/core";
 
 const serverOption = { name: "server", takesValue: true, description: "Agent Shell server URL (default http://127.0.0.1:4321, or TANGENT_SHELL_URL)" };
 const jsonOption = { name: "json", description: "Print machine-readable JSON" };
+const resourceOperationOption = { name: "operation-id", takesValue: true, description: "Stable retry identity; reuse it only for the exact same mutation" };
+
+const areaResourceCommandSpec: CliCommandSpec = {
+  name: "resource",
+  description: "List and manage one Area's first-class Map resources and Blocks",
+  args: "<list|show|add|associate|import|discover|dismiss|place|hide|restore|add-back|edit|remove|check|refresh|undo>",
+  subcommands: [
+    { name: "list", description: "List direct, inherited, removed, legacy-review, and suggested Map resources without running discovery or checks", args: "<area>", options: [serverOption, jsonOption] },
+    { name: "show", description: "Show one Map resource, resolved from a full ID or unambiguous ID prefix", args: "<area> <resource-id>", options: [serverOption, jsonOption] },
+    {
+      name: "add",
+      description: "Add a direct resource, or confirm one exact Suggestion, without placing a Block",
+      args: "<area>",
+      options: [
+        { name: "kind", takesValue: true, values: ["worktree", "repository", "link"], description: "Resource kind" },
+        { name: "path", takesValue: true, description: "Exact absolute Worktree or Repository path" },
+        { name: "url", takesValue: true, description: "Exact HTTP or HTTPS Link target" },
+        { name: "label", takesValue: true, description: "Optional authored label" },
+        { name: "suggestion", takesValue: true, description: "Suggestion ID or unambiguous prefix to confirm" },
+        { name: "allow-missing", description: "Confirm the inspected missing local path" },
+        resourceOperationOption, serverOption, jsonOption,
+      ],
+    },
+    {
+      name: "associate",
+      description: "Associate one existing generic Link Block in place as a direct Area resource",
+      args: "<area> <source-element-id>",
+      options: [
+        { name: "label", takesValue: true, description: "Optional authored label for a newly created association" },
+        resourceOperationOption, serverOption, jsonOption,
+      ],
+    },
+    {
+      name: "import",
+      description: "Atomically import explicitly reviewed legacy resource declarations",
+      args: "<area> [<legacy-id>...]",
+      options: [
+        { name: "candidate", takesValue: true, description: "Legacy ID to import; repeatable" },
+        { name: "all", description: "Import every valid legacy-review row" },
+        { name: "branch-to", takesValue: true, description: "Legacy ID that receives an otherwise ambiguous declared Branch" },
+        resourceOperationOption, serverOption, jsonOption,
+      ],
+    },
+    { name: "discover", description: "Discover bounded worktree Suggestions without adding or placing them", args: "<area>", options: [serverOption, jsonOption] },
+    { name: "dismiss", description: "Dismiss one exact Suggestion evidence tuple", args: "<area> <suggestion-id>", options: [resourceOperationOption, serverOption, jsonOption] },
+    { name: "place", description: "Place a never-placed resource through the shared Map Block and world-layout pipeline", args: "<area> <resource-id>", options: [resourceOperationOption, serverOption, jsonOption] },
+    { name: "hide", description: "Hide an on-Map resource Block while retaining its reusable Map record", args: "<area> <resource-id>", options: [resourceOperationOption, serverOption, jsonOption] },
+    { name: "restore", description: "Restore a hidden resource Block through the shared Map pipeline", args: "<area> <resource-id>", options: [resourceOperationOption, serverOption, jsonOption] },
+    {
+      name: "add-back",
+      description: "Add one visible gone Block back to its owning Area with a new resource ID",
+      args: "<area> <resource-id>",
+      options: [
+        { name: "confirm-last-known", description: "Confirm the exact cached label and target when no tombstone remains" },
+        { name: "kind", takesValue: true, values: ["worktree", "repository", "link"], description: "Exact Last-known kind when the server no longer has it" },
+        { name: "path", takesValue: true, description: "Exact Last-known Worktree or Repository path" },
+        { name: "url", takesValue: true, description: "Exact Last-known Link URL" },
+        { name: "label", takesValue: true, description: "Exact Last-known label, including an explicitly empty value" },
+        resourceOperationOption, serverOption, jsonOption,
+      ],
+    },
+    {
+      name: "edit",
+      description: "Edit one direct Area association while preserving its resource ID and Block identity",
+      args: "<area> <resource-id>",
+      options: [
+        { name: "kind", takesValue: true, values: ["worktree", "repository", "link"], description: "New resource kind, or the current kind by default" },
+        { name: "path", takesValue: true, description: "New exact absolute Worktree or Repository path" },
+        { name: "url", takesValue: true, description: "New exact HTTP or HTTPS Link target" },
+        { name: "label", takesValue: true, description: "New authored label" },
+        { name: "clear-label", description: "Remove the authored label" },
+        { name: "allow-missing", description: "Confirm the inspected missing local path" },
+        resourceOperationOption, serverOption, jsonOption,
+      ],
+    },
+    { name: "remove", description: "Remove one direct association without treating Hide as removal", args: "<area> <resource-id>", options: [resourceOperationOption, serverOption, jsonOption] },
+    { name: "check", description: "Refresh system-owned state for selected resources, or every current row", args: "<area> [<resource-id>...]", options: [serverOption, jsonOption] },
+    { name: "refresh", description: "Refresh system-owned state for selected resources, or every current row", args: "<area> [<resource-id>...]", options: [serverOption, jsonOption] },
+    { name: "undo", description: "Apply the current retained-process Undo token from a catalog mutation", args: "<area> <token>", options: [resourceOperationOption, serverOption, jsonOption] },
+  ],
+};
 
 export const sendCommandSpec: CliCommandSpec = {
   name: "send",
@@ -15,13 +96,13 @@ export const sendCommandSpec: CliCommandSpec = {
 
 export const harnessCommandSpec: CliCommandSpec = {
   name: "harness",
-  description: "List the machine harness catalog and resolved Area launch defaults",
+  description: "List the machine harness catalog and effective Area launch policy",
   subcommands: [
     {
       name: "list",
-      description: "List valid harness, model, and effort ids; with --area, include its resolved work and brain defaults",
+      description: "List valid harness, model, and effort ids; with --area, include its policy, contract health, and remembered launch",
       options: [
-        { name: "area", takesValue: true, description: "Area whose inherited work and brain defaults to resolve" },
+        { name: "area", takesValue: true, description: "Area whose inherited policy and remembered launch to resolve" },
         serverOption,
         jsonOption
       ]
@@ -31,10 +112,11 @@ export const harnessCommandSpec: CliCommandSpec = {
 
 export const areaCommandSpec: CliCommandSpec = {
   name: "area",
-  description: "List, inspect, and create Tangent tree Areas",
+  description: "List, inspect, create, and manage Tangent tree Areas",
   subcommands: [
     { name: "list", description: "List every open Area path in the vault; done and archived Areas fold away", options: [{ name: "all", description: "Include done and archived Areas, each with its status" }, serverOption, jsonOption] },
     { name: "show", description: "Show one Area's purpose, resources, skills, and processes", args: "<area>", options: [serverOption, jsonOption] },
+    areaResourceCommandSpec,
     { name: "recent", description: "Show material milestones for one Area and its child Areas", args: "<area>", options: [{ name: "since", takesValue: true, description: "Only milestones inside a window (30d, 12h, 2w, 90m) or after an ISO time" }, { name: "query", takesValue: true, description: "Only milestones whose summary or reference holds any of these words" }, { name: "limit", takesValue: true, description: "Maximum rows (default 12)" }, serverOption, jsonOption] },
     { name: "audit", description: "Export detached legacy Area-brain records for explicit audit", args: "<area>", options: [serverOption, jsonOption] },
     { name: "present", description: "Present an Area Document without a Goal", args: "<area> <file>...", options: [{ name: "note", takesValue: true, description: "Short reason to read it" }, { name: "withdraw", description: "Withdraw one presented Document" }, { name: "session", takesValue: true, description: "Calling brain session" }, serverOption] },

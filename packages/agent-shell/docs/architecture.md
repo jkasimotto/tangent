@@ -42,10 +42,21 @@ The browser refreshes through `GET /api/work` v3 only. The controller reads seve
 - record modules: the only readers and writers of `job.v1`, worker report receipts, Brains, inboxes, Requests, Operation events, armed exact-prompt receipts, and rebuild state. `job-record.mjs` preserves numbered run history and reads both old execution schemas; `pipeline-record.mjs` is a one-release re-export.
 - `area-brain-domain.mjs`: milestone storage, Goal queue transitions, Operation projection, and detached audit export.
 - `area-presentations.mjs`: Area-keyed runtime attention records. They project only to `area.presentations`, use the existing Document readers, and are removed when an Area is done or archived.
+- `area-resource-catalog.mjs`: the additive Area catalog schema, compatibility reader, tombstones, and pure catalog mutations.
+- `area-resource-projection.mjs`: the joined catalog, source-scene, launch, Suggestion, and cached-observation read model.
+- `area-resource-mutations.mjs`: revision-fenced catalog changes and one process-local immediate Undo receipt.
+- `area-resource-representations.mjs`: CLI placement, Hide, and Restore through the shared Block and source transaction path.
+- `area-resource-observations.mjs`: bounded local Git facts and injected GitHub or Phabricator reader adapters.
+- `area-resource-discovery.mjs`: explicit bounded Worktree Suggestions from recorded Repositories and durable Job Attempts.
 
 The browser entry `app/public/shell.js` composes feature ports. `shell-coordinator.js` owns cross-feature navigation. Views and controllers receive cohesive `shell`, `work`, `areas`, `programs`, `launch`, `documents`, and chrome records. A record groups one authority; it is not a generic service locator. Browser capabilities must not be attached to functions. Gateway admission limits duplicate and total controller work. Telemetry does not publish projection invalidations.
 
 Area maps use one Excalidraw source shard for each Area. `area-map-world-index.mjs` combines the Area tree, shard summaries, and structural regions. One framework-neutral layout kernel resolves nested requirements and sibling reflow for both the server and browser. `area-map-world-controller.js` keeps one composed world across camera and fact changes. `area-map-transaction-repository.mjs` commits each multi-shard gesture through one durable transaction. Tangent block text remains a cache of vault facts (ADR-0049, ADR-0051, ADR-0052).
+
+Area resource catalogs use the same transaction barrier as source shards. Membership never implies placement, and discovery never implies membership.
+The browser uses normal Map gestures for interactive Place, Hide, and Restore. Thus Map history, collision rules, folding, and composed growth stay shared.
+The Brain CLI uses the resource representation adapter. That adapter creates the same Block shape and commits the same source shard.
+Provider readers are injected capabilities. The default server has no GitHub or Phabricator integration.
 
 Private module and controller-loopback contracts can change with all in-repository callers. The public loopback URL, Vault Markdown, Git provenance, tmux bindings, and persisted workflow schemas remain compatible. The runtime ownership key remains `@tangent_agent_shell_instance`. See ADR-0031, ADR-0032, and ADR-0036.
 

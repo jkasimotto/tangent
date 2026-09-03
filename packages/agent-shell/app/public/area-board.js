@@ -78,8 +78,24 @@ function showWorldError(host, error, retry = null) {
   host.replaceChildren(section);
 }
 
+/**
+ * Builds one canonical source mutation while retaining hidden resource
+ * representations. Other deleted Excalidraw records keep their established
+ * remove-or-ignore behavior.
+ */
+function sourceSceneElementMutation(nextScene, oldScene = null) {
+  const retained = core.hiddenResourceRecordIds(nextScene);
+  const nextElements = new Map((nextScene?.elements ?? []).filter((element) => !core.isAreaBoundary(element) && (!element.isDeleted || retained.has(element.id))).map((element) => [element.id, element]));
+  const structural = new Set((oldScene?.elements ?? []).filter(core.isAreaRegion).flatMap((element) => [element.id, ...(element.boundElements ?? []).map((binding) => binding.id)]));
+  const remove = [];
+  for (const element of oldScene?.elements ?? []) {
+    if (!element.isDeleted && !core.isAreaBoundary(element) && !nextElements.has(element.id) && !structural.has(element.id)) remove.push(element.id);
+  }
+  return { put: [...nextElements.values()].map((element) => structuredClone(element)), remove };
+}
+
 /** Mounts the complete hierarchy through one persistent browser island. */
-function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = null, onViewState = null, onEntityVerb = null, onEvent = null, focus = null }) {
+function mountWorld(host, { world, getDocuments, searchDocuments = null, api, onBack, onNavigation = null, onViewState = null, onEntityVerb = null, onEntityAction = null, onEvent = null, focus = null }) {
   host.replaceChildren();
   const loader = document.createElement("div"); loader.className = "area-board-loading"; loader.innerHTML = "<p>Loading drawing tools…</p>"; host.append(loader);
   let editor = null; let pendingNavigation = null; let pendingFind = false; let authority = null; let closing = false; let closePromise = null;
@@ -101,10 +117,9 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
       const nextScene = shardFor(nextWorld, owner)?.scene; const oldScene = shardFor(previous, owner)?.scene;
       if (!nextScene) throw new Error(`Cannot save ${owner}: its map shard is unavailable`);
       const mutation = mutationFor(owner);
-      const nextElements = new Map((nextScene.elements ?? []).filter((element) => !element.isDeleted && !core.isAreaBoundary(element)).map((element) => [element.id, element]));
-      const structural = new Set((oldScene?.elements ?? []).filter(core.isAreaRegion).flatMap((element) => [element.id, ...(element.boundElements ?? []).map((binding) => binding.id)]));
-      for (const element of nextElements.values()) putElement(mutation, element);
-      for (const element of oldScene?.elements ?? []) if (!element.isDeleted && !core.isAreaBoundary(element) && !nextElements.has(element.id) && !structural.has(element.id)) mutation.remove.add(element.id);
+      const sceneMutation = sourceSceneElementMutation(nextScene, oldScene);
+      for (const element of sceneMutation.put) putElement(mutation, element);
+      for (const sourceId of sceneMutation.remove) mutation.remove.add(sourceId);
     }
     for (const area of symmetricOverlapClosure(nextWorld, changedAreas)) {
       const node = nextWorld.areas.find((entry) => entry.key === area); if (!node) continue;
@@ -163,13 +178,13 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
   });
   const ready = editorLoader().then((module) => {
     if (closing) { loader.remove(); return null; }
-    loader.remove(); editor = module.mountAreaBoardEditor(host, { world, controller: authority, scene: { elements: [], appState: {}, files: {} }, getDocuments, onEntityVerb, onViewState });
+    loader.remove(); editor = module.mountAreaBoardEditor(host, { world, controller: authority, scene: { elements: [], appState: {}, files: {} }, getDocuments, searchDocuments, api, onEntityVerb, onEntityAction, onViewState });
     if (pendingNavigation) editor.navigateArea?.(pendingNavigation.area, pendingNavigation.settings);
     if (pendingFind) editor.openFind?.();
     return editor;
   }).catch((error) => {
     if (closing) return null;
-    loader.remove(); showWorldError(host, error, () => mountWorld(host, { world, getDocuments, api, onBack, onNavigation, onViewState, onEntityVerb, onEvent, focus })); throw error;
+    loader.remove(); showWorldError(host, error, () => mountWorld(host, { world, getDocuments, searchDocuments, api, onBack, onNavigation, onViewState, onEntityVerb, onEntityAction, onEvent, focus })); throw error;
   });
   return {
     /** Returns the live composed scene after the editor mounts. */
@@ -189,6 +204,12 @@ function mountWorld(host, { world, getDocuments, api, onBack, onNavigation = nul
     },
     /** Fits one Area without changing an active restriction target. */
     fitArea(area, settings) { return editor?.fitArea?.(area, settings) ?? authority.fitArea(area, settings); },
+    /** Captures the exact private camera and selection for a temporary route. */
+    captureView() { return editor?.captureView?.() ?? authority.captureView(); },
+    /** Restores a captured private camera and selection without touching Map authority. */
+    restoreView(value) { return editor?.restoreView?.(value) ?? authority.restoreView(value); },
+    /** Returns keyboard focus to the mounted Map canvas. */
+    focus() { return editor?.focus?.() ?? false; },
     /** Runs the map-owned Escape order. */
     escape() { return editor?.escape?.() ?? authority.escape(); },
     /** Opens map find after the browser island is ready. */
@@ -221,7 +242,19 @@ function mountLegacy(host, { area, payload, api, onBack = null }) {
   const loader = document.createElement("div"); loader.className = "area-board-loading"; loader.innerHTML = "<p>Loading drawing tools…</p>"; host.append(loader);
   let editor = null; let pending = null; let failed = null; let timer = null; let runner = null; let destroyed = false;
   let baseHash = payload.hash ?? null;
-  const initial = structuredClone(payload.scene ?? payload.canvas ?? core.createEmptyScene());
+  const source = structuredClone(payload.scene ?? payload.canvas ?? core.createEmptyScene());
+  // Hidden resource records are inert under rollback. Excalidraw strips the
+  // label binding of a deleted container, so they stay out of the editor and
+  // return verbatim on every save (compatibility floor, ADR-0049 retention).
+  const retainedIds = core.hiddenResourceRecordIds(source);
+  const retained = source.elements.filter((element) => retainedIds.has(element.id));
+  const initial = { ...source, elements: source.elements.filter((element) => !retainedIds.has(element.id)) };
+
+  /** Appends the verbatim hidden resource records to one editor scene. */
+  function withRetained(scene) {
+    if (!retained.length || !scene) return scene;
+    return { ...scene, elements: [...(scene.elements ?? []).filter((element) => !retainedIds.has(element.id)), ...structuredClone(retained)] };
+  }
 
   /** Saves the latest direct shard without allowing a world mutation route. */
   async function drain() {
@@ -247,7 +280,7 @@ function mountLegacy(host, { area, payload, api, onBack = null }) {
   /** Coalesces live Excalidraw changes into an ordered direct-shard save. */
   function queue(scene) {
     if (destroyed) return;
-    pending = scene;
+    pending = withRetained(scene);
     if (failed) { editor?.setSaveState?.({ state: "blocked", result: failed.error?.result }); return; }
     editor?.setSaveState?.({ state: "dirty" });
     if (timer !== null) clearTimeout(timer);
@@ -281,11 +314,17 @@ function mountLegacy(host, { area, payload, api, onBack = null }) {
 
   return {
     /** Returns the direct source scene after the editor mounts. */
-    current: () => editor?.current?.() ?? initial,
+    current: () => withRetained(editor?.current?.() ?? initial),
     /** Flushes only the direct format-2 source queue. */
     async flush() { await ready.catch(() => null); await flushPending(); },
     /** A rollback shard has no composed Area camera target. */
     fitArea: () => null,
+    /** A rollback shard has no complete-world private view snapshot. */
+    captureView: () => null,
+    /** A rollback shard cannot restore a complete-world private view snapshot. */
+    restoreView: () => null,
+    /** Returns focus to the direct editor when supported. */
+    focus: () => editor?.focus?.() ?? false,
     /** A rollback shard has no composed Area navigation target. */
     navigateArea: () => null,
     /** A rollback shard has no complete-world Area finder. */
@@ -317,6 +356,12 @@ function mount(host, options) {
     flush: async () => null,
     /** Cannot fit an Area without world authority. */
     fitArea: () => null,
+    /** Cannot capture a view without world authority. */
+    captureView: () => null,
+    /** Cannot restore a view without world authority. */
+    restoreView: () => null,
+    /** Cannot focus a missing Map. */
+    focus: () => false,
     /** Cannot navigate without world authority. */
     navigateArea: () => null,
     /** Cannot find without world authority. */
@@ -334,5 +379,5 @@ function mount(host, options) {
   };
 }
 
-export { loadAreaMapAuthority, mount, mountLegacy, mountWorld, symmetricOverlapClosure };
-export default { loadAreaMapAuthority, mount, mountLegacy, mountWorld, symmetricOverlapClosure };
+export { loadAreaMapAuthority, mount, mountLegacy, mountWorld, sourceSceneElementMutation, symmetricOverlapClosure };
+export default { loadAreaMapAuthority, mount, mountLegacy, mountWorld, sourceSceneElementMutation, symmetricOverlapClosure };

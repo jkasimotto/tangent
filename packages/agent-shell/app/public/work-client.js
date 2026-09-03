@@ -32,7 +32,7 @@ export function createWorkClient({ fetchImpl = globalThis.fetch, session = globa
         record("work_refresh_total", 1, { result: "not-modified" });
         return { snapshot: current.snapshot, metadata, changed: false, durationMs: now() - startedAt };
       }
-      if (!response.ok) throw httpError(response.status, await response.json().catch(() => ({})));
+      if (!response.ok) throw httpError(response.status, await response.json().catch(() => ({})), response.headers);
       const length = Number(response.headers.get("content-length") || 0);
       if (length > HARD_LIMIT_BYTES) throw new Error("Work response exceeds 1 MiB.");
       const text = await response.text();
@@ -102,4 +102,11 @@ function writeCache(session, config, value) {
   try { session?.setItem(cacheKey(config), JSON.stringify({ ...value, instanceId: config.instanceId || "unknown", schema: WORK_SCHEMA, rollout: config.rollout || "v3" })); } catch {}
 }
 /** Creates one classified Work HTTP error. */
-function httpError(status, body) { const error = new Error(body?.error || `Work request failed (${status}).`); error.kind = "http"; error.status = status; error.code = body?.code; return error; }
+function httpError(status, body, headers) {
+  const error = new Error(body?.error || `Work request failed (${status}).`);
+  error.kind = "http";
+  error.status = status;
+  error.code = body?.code;
+  error.retryAfterMs = Math.max(0, Number(headers?.get?.("retry-after") || 0) * 1_000);
+  return error;
+}

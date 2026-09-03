@@ -64,6 +64,12 @@ Each Area can store one Excalidraw source scene at `<area>/<leaf>.excalidraw`. T
 A framework-neutral layout kernel resolves nested requirements, automatic spacing, intentional overlap, and world transforms. React and Excalidraw project its immutable result but do not own Area geometry (ADR-0052).
 
 Agent Shell embeds Excalidraw as one persistent browser island. The world controller owns loading, selection, history, view masks, drafts, and conflicts. A durable coordinator commits all shards from one gesture in one exact Git commit. Fact refresh and camera changes do not change map authority (ADR-0049, ADR-0051).
+
+Each physical Area can own a `map-resources.json` catalog. The catalog records Worktrees, Repositories, Links, and durable Suggestion decisions.
+Resource Blocks store only an owner-scoped opaque ID. The server joins that ID with catalog, source-scene, launch, and cached observation facts.
+Catalog membership and Map placement are separate operations. Both operations use the Area-map transaction barrier and exact Git commits.
+The shared Block and world-layout pipeline owns resource geometry. Resource status refresh never writes a scene or changes Map history.
+One vault Document, `map-kinds.md`, decides what each kind of thing looks like on a Map and what one click does with it. Drawings live in `map-icons/`. A Block whose kind has an icon renders as a figure: one large drawing with a caption beside it. The icon is a locked ephemeral projection element, like the success rail, so it never enters a source shard, a fingerprint, or a hit test. A kind with no usable icon keeps its card, and a problem in the definition never hides a Block.
 Area skills live at `<area>/.agents/skills/<name>/SKILL.md`. Tangent creates `<area>/.claude/skills` as a relative link, so Codex and Claude discover the same inherited files. Legacy `skill-<slug>.md` Documents remain readable during migration. See ADR-0045.
 Agent Shell derives inherited sources by path. It owns bounded runtime projections, durable Area inbox delivery, Requests, Goal intent, durable Jobs, live Agent sessions, logical Brains, presented-document attention, and Operation health. A `job.v1` file keeps every numbered run for one Goal; old execution schemas convert on first write without losing history (ADR-0055).
 Each Area can declare allowed agent launches. Child policies intersect with parent policies. Agent Shell remembers the last successful Brain and Work launch separately.

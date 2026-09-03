@@ -19,12 +19,14 @@ test("tangent harness help comes from the exported command specification", async
     console.log = previousLog;
   }
   const output = printed.join("\n");
+  assert.match(output, /effective Area launch policy/);
+  assert.match(output, /policy, contract health, and remembered launch/);
   assert.match(output, /list/);
   assert.match(output, /--area/);
   assert.match(output, /tangent harness list --area otto\/tangent --json/);
 });
 
-test("tangent harness list reports resolved defaults and exact model-specific effort commands", async (context) => {
+test("tangent harness list reports policy, remembered launch, contract health, and exact effort commands", async (context) => {
   const previousFetch = globalThis.fetch;
   const previousLog = console.log;
   const printed = [];
@@ -34,8 +36,14 @@ test("tangent harness list reports resolved defaults and exact model-specific ef
     if (url.pathname === "/api/launch/options") return Response.json({
       source: "/tmp/trees/harnesses.md",
       area: "otto/tangent",
-      workDefault: { harness: "codex", model: "sol", effort: "low", label: "Codex · Sol · Low", command: "codex --model gpt-sol -c effort=low" },
-      brainDefault: { harness: "codex", model: "sol", effort: "low", label: "Codex · Sol · Low", command: "codex --model gpt-sol -c effort=low" },
+      remembered: { harness: "codex", model: "sol", effort: "low", source: "otto", label: "Codex · Sol · Low", command: "codex --model gpt-sol -c effort=low" },
+      policy: {
+        allow: [{ harness: "codex", model: "sol", effort: "low" }],
+        declaredBy: ["otto"],
+        unrestricted: false,
+        health: "valid",
+        contracts: [{ area: "otto", state: "valid" }, { area: "otto/tangent", state: "valid" }],
+      },
       harnesses: [{
         id: "codex", label: "Codex", command: "codex", efforts: [],
         models: [{
@@ -55,8 +63,11 @@ test("tangent harness list reports resolved defaults and exact model-specific ef
   await runHarnessCli(["list", "--area", "otto/tangent"]);
   const output = printed.join("\n");
   assert.match(output, /source: \/tmp\/trees\/harnesses\.md/);
-  assert.match(output, /work default: codex\/sol\/low/);
-  assert.match(output, /brain default: codex\/sol\/low/);
+  assert.match(output, /policy: codex\/sol\/low/);
+  assert.match(output, /declared by: otto/);
+  assert.match(output, /contract: valid \(otto: valid, otto\/tangent: valid\)/);
+  assert.match(output, /remembered: codex\/sol\/low .* from otto/);
+  assert.doesNotMatch(output, /work default|brain default/);
   assert.match(output, /sol\/ultra: codex --model gpt-sol -c effort=ultra/);
 });
 

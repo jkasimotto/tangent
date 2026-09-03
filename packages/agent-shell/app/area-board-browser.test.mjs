@@ -4,9 +4,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
+import { WebSocketServer } from "ws";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { workTableFixture } from "./work-table-fixture.mjs";
-import worldCore from "./public/area-map-world-core.js";
+import { legacyFixtureWork } from "./work-table-harness.mjs";
 
 const enabled = process.env.TANGENT_BROWSER_TEST === "1";
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -15,33 +16,6 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 function sendJson(response, status, value) {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(value));
-}
-
-/** Requires one shell-map Area region center to equal the mounted map center. */
-async function assertShellAreaCentered(page, target, reference, composition) {
-  const targetRect = composition.regionRects.get(target);
-  const referenceRect = composition.regionRects.get(reference);
-  const result = await page.evaluate(({ targetArea, referenceArea, targetRect, referenceRect }) => {
-    /** Returns one Area label's projected viewport position. */
-    const position = (area) => {
-      const button = document.querySelector(`[data-area-map-label="${area}"]`);
-      return { left: Number.parseFloat(button.style.left), top: Number.parseFloat(button.style.top) };
-    };
-    const target = position(targetArea); const other = position(referenceArea);
-    const xDelta = referenceRect.x - targetRect.x; const yDelta = referenceRect.y - targetRect.y;
-    const zoom = Math.abs(xDelta) >= Math.abs(yDelta) ? (other.left - target.left) / xDelta : (other.top - target.top) / yDelta;
-    const host = document.querySelector(".TangentAreaMap").getBoundingClientRect();
-    return {
-      expected: { x: host.width / 2, y: host.height / 2 },
-      actual: { x: target.left - 12 + targetRect.width * zoom / 2, y: target.top - 10 + targetRect.height * zoom / 2 },
-      zoom,
-    };
-  }, {
-    targetArea: target,
-    referenceArea: reference,
-    targetRect, referenceRect,
-  });
-  assert.ok(Math.abs(result.actual.x - result.expected.x) < 3 && Math.abs(result.actual.y - result.expected.y) < 3, `${target} is centered: ${JSON.stringify(result)}`);
 }
 
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/agent-shell-map.css"><style>html,body,#map{width:100%;height:100%;margin:0}</style></head><body><div id="map"></div><script type="module">
@@ -120,6 +94,9 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     await page.getByRole("dialog", { name: "Place a Tangent block" }).getByRole("textbox").fill("map");
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => window.editor.current().elements.some((element) => element.customData?.tangent?.kind === "goal"));
+    await page.waitForFunction(() => window.editor.appState().editingTextElement && document.activeElement?.matches('textarea[data-type="wysiwyg"]'));
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !window.editor.appState().editingTextElement);
     assert.equal(await page.getByRole("button", { name: /Ask brain/ }).count(), 0, "the map has no Ask action");
     assert.equal(await page.getByRole("button", { name: /^Correct/ }).count(), 0, "the map has no legacy Correct action");
 
@@ -138,6 +115,7 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
     await page.waitForFunction(() => document.activeElement?.matches('textarea[data-type="wysiwyg"]'));
     await page.keyboard.type("plain text");
     await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !window.editor.appState().editingTextElement);
 
     await tool("r");
     await page.mouse.move(point(720, 250).x, point(720, 250).y);
@@ -153,9 +131,12 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
         rectangle: rectangle && { id: rectangle.id, x: rectangle.x, width: rectangle.width, height: rectangle.height, sourceId: origin?.sourceId },
         appSelection: window.editor.appState().selectedElementIds,
         controllerSelection: controller ? [...controller.snapshot().selection] : null,
+        appState: { activeTool: window.editor.appState().activeTool, scrollX: window.editor.appState().scrollX, scrollY: window.editor.appState().scrollY, zoom: window.editor.appState().zoom },
+        elements: window.editor.current().elements.map((element) => ({ id: element.id, type: element.type, x: element.x, y: element.y, width: element.width, height: element.height, role: element.customData?.tangent?.role })),
         active: { tag: document.activeElement?.tagName, className: String(document.activeElement?.className ?? "") },
       };
     });
+    beforeNudge.canvasBox = box;
     assert.ok(beforeNudge.controllerSelection, `the live world controller remains mounted: ${JSON.stringify(beforeNudge)}`);
     assert.ok(beforeNudge.rectangle, `the real rectangle tool creates one authored shape: ${JSON.stringify(beforeNudge)}`);
     assert.ok(Object.values(beforeNudge.appSelection).some(Boolean), `the new shape remains visibly selected for a keyboard command: ${JSON.stringify(beforeNudge)}`);
@@ -245,11 +226,13 @@ test("real Excalidraw paths create text, ink, shapes, a Tangent block, manipulat
   }
 });
 
-test("m opens exact root, intermediate, and leaf Areas isolated and centered", { skip: !enabled, timeout: 90_000 }, async () => {
+test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibility state exact", { skip: !enabled, timeout: 90_000 }, async () => {
   const work = workTableFixture();
   work.vault.areas.push(
     { path: "otto", name: "otto", goals: [], documents: [] },
     { path: "otto/tangent/desk", name: "desk", goals: [], documents: [] },
+    { path: "neara", name: "neara", goals: [], documents: [] },
+    { path: "neara/designwarden", name: "designwarden", goals: [], documents: [] },
   );
   /** Returns one source-compatible empty scene. */
   const empty = () => ({ type: "excalidraw", version: 2, source: "test", elements: [], appState: { viewBackgroundColor: "#ffffff" }, files: {} });
@@ -257,32 +240,126 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     schema: "area-map-world.v1", worldId: "work-world", treeRevision: "tree-1", worldRevision: "world-1", locatedArea: "otto/tangent",
     rootShard: { owner: "@root", hash: "root-1", state: "ready", elementCount: 0, scene: empty() },
     areas: [
-      { key: "otto", parent: "@root", children: ["otto/tangent", "otto/other"], depth: 0, region: { key: "@root>otto", owner: "@root", child: "otto", sourceId: "root-otto", labelSourceId: "root-otto-label", source: "stored", storedRect: { x: 80, y: 80, width: 1100, height: 800 } }, shard: { owner: "otto", hash: "otto-1", state: "ready", elementCount: 0, scene: empty() } },
+      { key: "otto", parent: "@root", children: ["otto/tangent", "otto/other", "otto/standards"], depth: 0, region: { key: "@root>otto", owner: "@root", child: "otto", sourceId: "root-otto", labelSourceId: "root-otto-label", source: "stored", storedRect: { x: 80, y: 80, width: 1100, height: 800 } }, shard: { owner: "otto", hash: "otto-1", state: "ready", elementCount: 0, scene: empty() } },
       { key: "otto/tangent", parent: "otto", children: ["otto/tangent/desk"], depth: 1, region: { key: "otto>otto/tangent", owner: "otto", child: "otto/tangent", sourceId: "otto-tangent", labelSourceId: "otto-tangent-label", source: "stored", storedRect: { x: 100, y: 100, width: 820, height: 580 } }, shard: { owner: "otto/tangent", hash: "tangent-1", state: "ready", elementCount: 0, scene: empty() } },
       { key: "otto/tangent/desk", parent: "otto/tangent", children: [], depth: 2, region: { key: "otto/tangent>otto/tangent/desk", owner: "otto/tangent", child: "otto/tangent/desk", sourceId: "tangent-desk", labelSourceId: "tangent-desk-label", source: "stored", storedRect: { x: 120, y: 120, width: 360, height: 260 } }, shard: { owner: "otto/tangent/desk", hash: "desk-1", state: "ready", elementCount: 0, scene: empty() } },
       { key: "otto/other", parent: "otto", children: [], depth: 1, region: { key: "otto>otto/other", owner: "otto", child: "otto/other", sourceId: "otto-other", labelSourceId: "otto-other-label", source: "stored", storedRect: { x: 940, y: 120, width: 340, height: 260 } }, shard: { owner: "otto/other", hash: "other-1", state: "ready", elementCount: 0, scene: empty() } },
-      { key: "neara", parent: "@root", children: [], depth: 0, region: { key: "@root>neara", owner: "@root", child: "neara", sourceId: "root-neara", labelSourceId: "root-neara-label", source: "stored", storedRect: { x: 1300, y: 100, width: 420, height: 320 } }, shard: { owner: "neara", hash: "neara-1", state: "ready", elementCount: 0, scene: empty() } },
+      { key: "otto/standards", parent: "otto", children: [], depth: 1, region: { key: "otto>otto/standards", owner: "otto", child: "otto/standards", sourceId: "otto-standards", labelSourceId: "otto-standards-label", source: "stored", storedRect: { x: 940, y: 420, width: 340, height: 260 } }, shard: { owner: "otto/standards", hash: "standards-1", state: "ready", elementCount: 0, scene: empty() } },
+      { key: "neara", parent: "@root", children: ["neara/designwarden"], depth: 0, region: { key: "@root>neara", owner: "@root", child: "neara", sourceId: "root-neara", labelSourceId: "root-neara-label", source: "stored", storedRect: { x: 1300, y: 100, width: 520, height: 420 } }, shard: { owner: "neara", hash: "neara-1", state: "ready", elementCount: 0, scene: empty() } },
+      { key: "neara/designwarden", parent: "neara", children: [], depth: 1, region: { key: "neara>neara/designwarden", owner: "neara", child: "neara/designwarden", sourceId: "neara-designwarden", labelSourceId: "neara-designwarden-label", source: "stored", storedRect: { x: 120, y: 120, width: 320, height: 220 } }, shard: { owner: "neara/designwarden", hash: "designwarden-1", state: "ready", elementCount: 0, scene: empty() } },
     ],
   };
-  const shellComposition = worldCore.composeAreaMapWorld(shellWorld);
+  const designDocument = { file: "otto/tangent/design-map-first-proof.md", area: "otto/tangent", kind: "document", docKind: "design", title: "Map-first proof", links: [], mtime: 1 };
+  work.vault.documents.push(designDocument);
+  work.vault.areas.find((area) => area.path === designDocument.area).documents.push(designDocument);
+  const workProjection = legacyFixtureWork(work);
+  let rejectMapSaves = false;
+  let rejectedMapSaveAttempts = 0;
+  let brainConnections = 0;
+  let resolveReplacementConnection;
+  const replacementConnection = new Promise((resolve) => { resolveReplacementConnection = resolve; });
+  const websocketServer = new WebSocketServer({ noServer: true });
+  websocketServer.on("connection", (socket, request) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    const session = url.searchParams.get("session") ?? "";
+    if (session !== "otto-tangent--brain") {
+      socket.send(`\r\n${session} ready\r\n`);
+      return;
+    }
+    brainConnections += 1;
+    if (brainConnections === 1) {
+      socket.send("\r\nOtto / Tangent Brain ready\r\n");
+      setTimeout(() => socket.close(1012, "fixture transport restart"), 80);
+      return;
+    }
+    if (brainConnections === 2) resolveReplacementConnection(socket);
+    else socket.send("\r\nOtto / Tangent Brain ready\r\n");
+  });
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
+    if (url.pathname === "/api/work") {
+      const body = JSON.stringify(workProjection);
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength(body),
+        etag: `"${workProjection.epoch}:${workProjection.revision}"`,
+        "x-tangent-work-state": "current",
+        "x-tangent-work-epoch": workProjection.epoch,
+        "x-tangent-work-revision": String(workProjection.revision),
+        "x-tangent-work-published-at": workProjection.publishedAt,
+      });
+      response.end(body);
+      return;
+    }
     if (url.pathname === "/api/vault") return sendJson(response, 200, work.vault);
     if (url.pathname === "/api/sessions") return sendJson(response, 200, { boot: "test", pipelines: work.pipelines, sessions: work.sessions, brains: work.brains });
     if (url.pathname === "/api/operations") return sendJson(response, 200, { operations: [], processes: [], problems: [], areas: [], liveCount: 0 });
     if (url.pathname === "/api/areas/map-world") return sendJson(response, 200, { ...shellWorld, locatedArea: url.searchParams.get("located") || shellWorld.locatedArea });
     if (url.pathname === "/api/areas/map-view") return sendJson(response, 200, { ok: true });
+    if (url.pathname === "/api/areas/map-gestures") {
+      if (rejectMapSaves) {
+        rejectedMapSaveAttempts += 1;
+        return sendJson(response, 503, { status: 503, code: "proof-save-failure", retryable: true, error: "injected Map save failure" });
+      }
+      return sendJson(response, 200, { status: 200, hashes: {}, worldRevision: shellWorld.worldRevision, treeRevision: shellWorld.treeRevision });
+    }
+    if (url.pathname === "/api/navigation/search") return sendJson(response, 200, {
+      schema: "agent-shell-navigation.v1", query: url.searchParams.get("q") ?? "", limit: 100,
+      rows: [{ kind: "document", id: designDocument.file, area: designDocument.area, name: designDocument.title, file: designDocument.file, docKind: designDocument.docKind }],
+      areas: shellWorld.areas.map((area) => ({ path: area.key, name: area.key.split("/").at(-1) })), areasComplete: true, kinds: ["document"],
+    });
+    if (url.pathname === "/api/document") return sendJson(response, 200, { ...designDocument, text: "# Map-first proof\n\nA compact-reader proof.", hash: "design-proof-1", comments: [] });
     if (url.pathname.startsWith("/api/")) return sendJson(response, 200, { ok: true });
     await serveStaticAsset(url, response, here);
+  });
+  server.on("upgrade", (request, socket, head) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    if (url.pathname !== "/term") return socket.destroy();
+    websocketServer.handleUpgrade(request, socket, head, (client) => websocketServer.emit("connection", client, request));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || chromium.executablePath();
   let browser = null;
   try {
     browser = await chromium.launch({ executablePath, headless: true });
-    const page = await browser.newPage({ viewport: { width: 1400, height: 760 } });
+    const page = await browser.newPage({ viewport: { width: 2048, height: 900 } });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.addInitScript(() => localStorage.setItem("tangent.area-map-view.v2:work-world", JSON.stringify({
+      schema: "area-map-view.v2", worldId: "work-world", pan: { x: -40, y: -30 }, zoom: 0.8,
+      foldedAreas: [], detailAreas: [], locatedArea: "otto/tangent", cameraTarget: "otto/tangent",
+      cameraTrail: [], restrictionArea: "otto/tangent", selection: [],
+    })));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
-    await page.evaluate(() => localStorage.setItem("tangent.area-map-view.v2:work-world", JSON.stringify({ schema: "area-map-view.v2", worldId: "work-world", pan: { x: -9000, y: 7000 }, zoom: 0.15, foldedAreas: [], detailAreas: [] })));
+    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
+    assert.equal(await page.locator("#map-tab").getAttribute("aria-current"), "page", "Map is the first announced surface before Work is opened");
+    const shellBack = page.locator("#back-button");
+    assert.equal(await shellBack.getAttribute("aria-haspopup"), "menu", "top-level Agent Shell opens a menu");
+    assert.equal(await shellBack.getAttribute("aria-controls"), "shell-menu");
+    assert.equal(await shellBack.getAttribute("aria-expanded"), "false");
+    await shellBack.click();
+    assert.equal(await page.locator("#shell-menu").isVisible(), true);
+    assert.equal(await shellBack.getAttribute("aria-expanded"), "true");
+    await shellBack.click();
+    assert.equal(await page.locator("#shell-menu").isHidden(), true);
+    assert.equal(await shellBack.getAttribute("aria-expanded"), "false");
+    assert.match(await page.locator("#bar-context").textContent(), /otto \/ tangentMap/i, "the wide header names the active Area and Map surface");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain/, "the wide header exposes the responsible named Brain");
+    assert.match(await page.locator("#context-brain-button kbd").textContent(), /⌘⇧↵/, "the visible contextual Brain action names its working shortcut");
+    assert.equal(await page.locator("#context-brain-button").getAttribute("aria-keyshortcuts"), "Meta+Shift+Enter");
+    assert.deepEqual(await page.locator(".primary-tabs > button:visible").allTextContents(), ["Map", "Work"], "Map and Work are the only primary destinations");
+    assert.equal(await page.locator(".app-bar [data-map-brain]").count(), 0, "the 2048px header has no duplicate Brain row action");
+    assert.equal(await page.locator(".map-screen > header").count(), 0, "the Map has no duplicate header row");
+    assert.equal(await page.locator("#prompts-tab").evaluate((button) => button.closest("#shell-menu") !== null), true, "Model lives in the shell menu instead of primary navigation");
+    assert.equal(await page.locator(".tangent-map-toolbar-extra .tangent-map-label").textContent(), "Block", "the wide Map names its primary creation action");
+    await page.setViewportSize({ width: 1440, height: 760 });
+    const wideForYou = page.locator("#for-you-button");
+    assert.match(await wideForYou.textContent(), /^For you \d+$/, "direct attention is a visible named route");
+    await wideForYou.click();
+    assert.equal(await page.locator("#work-lens-title").textContent(), "For you", "the visible attention route opens filtered Work");
+    await page.locator("[data-close-work-lens]").click();
+    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
+    await page.locator("#work-tab").click();
+    await page.locator("#work-lens-layer").waitFor();
     const row = page.locator('[data-work-cursor="area:otto/tangent"]');
     await row.dispatchEvent("click");
     await row.locator("[data-work-cursor-control]").focus();
@@ -294,6 +371,18 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await brainFirstPane.locator('.map-brain-terminal[data-session="otto-tangent--brain"]').waitFor();
     const brainFirstComposer = brainFirstPane.locator(".xterm-helper-textarea");
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    try {
+      await brainFirstComposer.waitFor({ state: "attached", timeout: 5_000 });
+    } catch (error) {
+      const diagnostics = await brainFirstPane.evaluate((pane) => ({
+        html: pane.innerHTML,
+        mode: pane.dataset.mode,
+        terminal: typeof window.Terminal,
+        fitAddon: typeof window.FitAddon,
+        active: document.activeElement?.outerHTML,
+      }));
+      throw new Error(`the Area Brain terminal did not mount: ${JSON.stringify(diagnostics)}`, { cause: error });
+    }
     assert.equal(
       await brainFirstComposer.evaluate((composer) => document.activeElement === composer),
       true,
@@ -307,13 +396,25 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     assert.equal(await page.evaluate(() => window.brainFocusKey), "q", "typing immediately reaches the composer without another pointer click");
     const brainFirstTerminal = brainFirstPane.locator(".xterm").first();
     await brainFirstTerminal.evaluate((node) => { node.dataset.workspaceIdentity = "brain-first"; });
-    const openMap = brainFirstPane.locator("[data-toggle-workspace-map]");
-    assert.equal(await openMap.textContent(), "Map", "every Area Brain has one visible Map action");
-    await openMap.click();
-    await page.locator('[data-tangent-area-map="otto/tangent"] .excalidraw canvas.interactive').waitFor();
-    assert.equal(await brainFirstTerminal.getAttribute("data-workspace-identity"), "brain-first", "opening Map preserves the exact xterm node");
-    assert.equal(await page.locator('[data-area-workspace="otto/tangent"]').getAttribute("data-presentation"), "wide", "1200px and wider keeps both panes beside each other");
-    await brainFirstPane.locator("[data-leave-area-workspace]").click();
+    const reconnectStatus = brainFirstPane.locator("[data-terminal-transport-status]");
+    await reconnectStatus.waitFor({ state: "visible" });
+    assert.equal(await reconnectStatus.getAttribute("data-state"), "reconnecting", "a lasting transport loss is explained inside its terminal");
+    const replacementSocket = await replacementConnection;
+    assert.equal(brainConnections, 2, "the replacement transport opened exactly once");
+    assert.equal(await reconnectStatus.getAttribute("data-state"), "reconnecting", "socket open alone does not claim recovery");
+    assert.doesNotMatch(await page.locator("#toast").textContent(), /reconnect/i, "terminal recovery never interrupts the shell with a global toast");
+    replacementSocket.send("\r\nreplacement terminal frame\r\n");
+    await page.waitForFunction(() => document.querySelector("[data-terminal-transport-status]")?.getAttribute("data-state") === "restored");
+    assert.equal(await brainFirstTerminal.getAttribute("data-workspace-identity"), "brain-first", "replacement data restores the same xterm node");
+    assert.equal(await brainFirstComposer.evaluate((composer) => document.activeElement === composer), true, "recovery does not move composer focus");
+    await reconnectStatus.waitFor({ state: "hidden" });
+    assert.equal(await brainFirstPane.locator("[data-toggle-workspace-map], [data-leave-area-workspace], [data-hide-workspace-brain]").count(), 0, "Brain metadata has no duplicate navigation row");
+    assert.match(await page.locator("#back-button").textContent(), /^Work ⌘⇧↵$/i, "the global Back route names its working Brain return chord");
+    assert.equal(await page.locator("#back-button").getAttribute("aria-keyshortcuts"), "Meta+Shift+Enter");
+    assert.equal(await page.locator("#back-button").getAttribute("aria-haspopup"), null, "a child Back route does not claim menu behavior");
+    assert.equal(await page.locator("#back-button").getAttribute("aria-expanded"), null);
+    assert.equal(await page.locator("[data-area-workspace]").getAttribute("data-presentation"), "wide", "1200px and wider keeps both retained panes beside each other");
+    await page.locator("#back-button").click();
     await row.waitFor();
     await row.dispatchEvent("click");
     await row.locator("[data-work-cursor-control]").focus();
@@ -331,15 +432,20 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await page.getByRole("button", { name: "Desk, child of Otto / Tangent, depth 3, unfolded, ready, 0 blocks" }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Other, child of Otto, depth 2, unfolded, ready, 0 blocks" }).count(), 0);
     assert.equal(await page.getByRole("button", { name: "Neara, child of map root, depth 1, unfolded, ready, 0 blocks" }).count(), 0);
-    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 3);
+    assert.equal(await page.locator(".tangent-map-ancestry [data-area-map-label]").count(), 3);
     assert.match(await page.locator("#back-button").textContent(), /^Work esc$/i, "the primary shell Back control owns the one map exit");
     assert.equal(await page.locator(".map-screen > header").count(), 0, "the map has no redundant sub-header");
     assert.equal(await page.locator(".tangent-map-escape").count(), 0, "the canvas has no second Escape ladder");
-    await assertShellAreaCentered(page, "otto/tangent", "otto/tangent/desk", shellComposition);
     assert.match(await page.locator("#bar-context").textContent(), /otto \/ tangentMap/i);
-    const tangentLabel = page.getByRole("button", { name: "Tangent, child of Otto, depth 2, unfolded, ready, 0 blocks" });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const tangentLabel = page.locator('[data-area-map-label="otto/tangent"]');
+    /** Reads the Tangent label position from the rendered Map. */
+    const tangentPosition = () => tangentLabel.evaluate((label) => ({ left: Number.parseFloat(label.style.left), top: Number.parseFloat(label.style.top) }));
     const openingBox = await tangentLabel.boundingBox();
+    const openingPosition = await tangentPosition();
     assert.ok(openingBox);
+    const mapPaneBox = await page.locator("[data-map-column]").boundingBox();
+    assert.ok(mapPaneBox && openingBox.x + openingBox.width > mapPaneBox.x && openingBox.y + openingBox.height > mapPaneBox.y && openingBox.x < mapPaneBox.x + mapPaneBox.width && openingBox.y < mapPaneBox.y + mapPaneBox.height, `the exact Work target is visible inside Map: ${JSON.stringify({ openingBox, mapPaneBox })}`);
 
     // Keyboard find owns Ctrl-F, reports misses, previews a folded descendant,
     // and Cancel restores the exact opening camera instead of creating history.
@@ -348,15 +454,15 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     const findInput = find.getByRole("textbox", { name: "Find on the map" });
     await findInput.fill("does-not-exist");
     await find.getByText("No match", { exact: true }).waitFor();
-    const missBox = await tangentLabel.boundingBox();
-    assert.ok(Math.abs(missBox.x - openingBox.x) < 1 && Math.abs(missBox.y - openingBox.y) < 1, "a miss does not move the camera");
+    const missPosition = await tangentPosition();
+    assert.ok(Math.abs(missPosition.left - openingPosition.left) < 1 && Math.abs(missPosition.top - openingPosition.top) < 1, "a miss does not move the camera");
     await findInput.fill("desk");
     assert.equal(await find.getByRole("option").count(), 1);
     assert.match(await find.textContent(), /1 of 1/);
     await find.getByRole("button", { name: "Cancel" }).click();
     await find.waitFor({ state: "detached" });
-    const restoredBox = await tangentLabel.boundingBox();
-    assert.ok(Math.abs(restoredBox.x - openingBox.x) < 1 && Math.abs(restoredBox.y - openingBox.y) < 1, "Cancel restores the camera from before find");
+    const restoredPosition = await tangentPosition();
+    assert.ok(Math.abs(restoredPosition.left - openingPosition.left) < 1 && Math.abs(restoredPosition.top - openingPosition.top) < 1, `Cancel restores the camera from before find: ${JSON.stringify({ openingPosition, missPosition, restoredPosition })}`);
     await page.keyboard.press("Control+f");
     await findInput.fill("desk");
     await page.keyboard.press("Enter");
@@ -382,11 +488,27 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await page.getByRole("button", { name: "Desk, child of Otto / Tangent, depth 3, unfolded, ready, 0 blocks" }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Neara, child of map root, depth 1, unfolded, ready, 0 blocks" }).count(), 0);
     assert.equal(await page.getByRole("button", { name: "Other, child of Otto, depth 2, folded, ready, 0 blocks" }).count(), 0);
-    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 3, "Only renders only the target lineage and subtree");
+    assert.equal(await page.locator(".tangent-map-ancestry [data-area-map-label]").count(), 3, "Only renders only the target lineage and subtree");
     await only.click();
     await waitForOnly(false);
     await page.getByRole("button", { name: "Neara, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
+    await page.getByRole("button", { name: "Designwarden, child of Neara, depth 2, unfolded, ready, 0 blocks" }).waitFor();
     await page.getByRole("button", { name: "Other, child of Otto, depth 2, folded, ready, 0 blocks" }).waitFor();
+
+    // The contextual Brain follows the exact selected Area. Map and Work use
+    // the same pane implementation, while the global route owns navigation.
+    const designwardenLabel = page.locator('[data-area-map-label="neara/designwarden"]');
+    await designwardenLabel.dispatchEvent("click");
+    await page.waitForFunction(() => document.querySelector("#context-brain-button")?.dataset.brainArea === "neara/designwarden");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Neara \/ Designwarden Brain\s+⌘⇧↵/, "the global Brain action follows the selected Area and shows its shortcut");
+    await page.locator("#context-brain-button").click();
+    const mismatchPane = page.locator("[data-map-brain-pane]");
+    assert.match(await mismatchPane.locator(":scope > header strong").textContent(), /Neara \/ Designwarden Brain · No brain/, "Map opens the selected Area's exact Brain identity and lifecycle");
+    assert.equal(await mismatchPane.locator("[data-toggle-workspace-map], [data-leave-area-workspace], [data-hide-workspace-brain]").count(), 0, "the same Brain pane has metadata without local navigation");
+    await page.locator("#map-tab").click();
+    await page.locator('[data-area-map-label="otto/tangent"]').dispatchEvent("click");
+    await page.waitForFunction(() => document.querySelector("#context-brain-button")?.dataset.brainArea === "otto/tangent");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain\s+⌘⇧↵/, "returning to Tangent restores the same contextual route used from Work");
     await page.locator("[data-map-column]").focus();
     await page.keyboard.press("Shift+o");
     await waitForOnly(true);
@@ -395,18 +517,18 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
 
     // Find searches only the current projection. An outside Area is a miss
     // that leaves the exact scope and camera unchanged.
-    const scopedBox = await tangentLabel.boundingBox();
+    const scopedPosition = await tangentPosition();
     await page.locator("[data-map-find]").click();
     await findInput.fill("neara");
     await find.getByText("No match", { exact: true }).waitFor();
     assert.equal(await find.getByRole("option").count(), 0, "an Area outside Only is not a result");
     assert.equal(await only.getAttribute("aria-pressed"), "true");
-    const afterOutsideMiss = await tangentLabel.boundingBox();
-    assert.ok(Math.abs(afterOutsideMiss.x - scopedBox.x) < 1 && Math.abs(afterOutsideMiss.y - scopedBox.y) < 1, "an outside miss leaves the camera unchanged");
+    const afterOutsideMiss = await tangentPosition();
+    assert.ok(Math.abs(afterOutsideMiss.left - scopedPosition.left) < 1 && Math.abs(afterOutsideMiss.top - scopedPosition.top) < 1, "an outside miss leaves the camera unchanged");
     await find.getByRole("button", { name: "Cancel" }).click();
     await find.waitFor({ state: "detached" });
     assert.equal(await only.getAttribute("aria-pressed"), "true");
-    assert.equal(await page.locator(".tangent-map-ancestry button").count(), 3, "the Tangent scope never changed");
+    assert.equal(await page.locator(".tangent-map-ancestry [data-area-map-label]").count(), 3, "the Tangent scope never changed");
 
     // The toolbar click bubbles through the complete shell after React gives
     // the picker input focus. Shell focus styling must not take that focus.
@@ -426,12 +548,76 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await page.locator("[data-tangent-area-map]").dispatchEvent("pointerdown");
     await pickerInput.waitFor({ state: "detached" });
 
+    // A failed local Map draft survives a direct reading route, its named
+    // Brain, and Work. The same selected block, camera, and canvas return.
+    rejectMapSaves = true;
+    await page.getByRole("button", { name: /^Block/ }).click();
+    const draftPicker = page.getByRole("dialog", { name: "Place a Tangent block" });
+    await page.keyboard.press("Tab");
+    await draftPicker.getByRole("heading", { name: "Place from the whole vault" }).waitFor();
+    await draftPicker.getByRole("textbox").fill("map-first proof");
+    await draftPicker.getByRole("button", { name: /Map-first proof/ }).waitFor();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.activeElement?.matches('textarea[data-type="wysiwyg"]'));
+    await page.keyboard.press("Escape");
+    const blockedSave = page.getByRole("status", { name: "Map save status" });
+    await blockedSave.getByText("Not saved", { exact: false }).waitFor();
+    for (const name of ["Retry", "Reload saved", "Keep mine"]) await blockedSave.getByRole("button", { name }).waitFor();
+    const draftCanvas = page.locator(".excalidraw canvas.interactive");
+    await draftCanvas.evaluate((canvas) => { canvas.dataset.failedDraftIdentity = "original"; });
+    const draftCamera = await tangentPosition();
+    await page.getByRole("group", { name: "Actions for Map-first proof" }).waitFor();
+    await page.keyboard.press("Enter");
+    const mapDocument = page.locator("#document-peek-layer .document-peek-surface");
+    await mapDocument.waitFor();
+    await mapDocument.getByText("Map-first proof", { exact: true }).first().waitFor();
+    assert.match(await mapDocument.textContent(), /Map-first proof/, "Enter opens the selected Map block directly");
+    assert.match(await blockedSave.textContent(), /Not saved/, "opening a Document keeps the failed Map draft");
+    await mapDocument.getByRole("button", { name: "Discuss with Otto / Tangent Brain" }).click();
+    const discussionSubject = page.locator("[data-map-brain-pane] [data-brain-subject]:visible");
+    const discussionPane = discussionSubject.locator("xpath=ancestor::*[@data-map-brain-pane][1]");
+    await discussionSubject.waitFor();
+    assert.match(await discussionSubject.textContent(), /Map-first proof/, "the responsible Brain receives the exact removable subject");
+    assert.match(await discussionPane.locator(":scope > header").textContent(), /Otto \/ Tangent Brain/);
+    assert.match(await blockedSave.textContent(), /Not saved/, "opening the responsible Brain keeps the failed Map draft");
+    await discussionSubject.getByRole("button", { name: "Remove Document subject" }).click();
+    await discussionSubject.waitFor({ state: "hidden" });
+    assert.match(await page.locator("#back-button").textContent(), /^Document ⌘⇧↵$/i, "the global Back route names the working Brain return chord");
+    await page.locator("#back-button").click();
+    await mapDocument.waitFor();
+    await mapDocument.getByRole("button", { name: "Close" }).click();
+    await mapDocument.waitFor({ state: "detached" });
+    await page.locator("#work-tab").click();
+    await page.locator("#work-lens-layer").waitFor();
+    assert.match(await blockedSave.textContent(), /Not saved/, "opening Work keeps the failed Map draft");
+    await page.locator("[data-close-work-lens]").click();
+    assert.equal(await draftCanvas.getAttribute("data-failed-draft-identity"), "original", "surface changes retain the exact Map canvas");
+    await page.getByRole("group", { name: "Actions for Map-first proof" }).waitFor();
+    assert.deepEqual(await tangentPosition(), draftCamera, "surface changes retain the failed draft camera");
+    assert.ok(rejectedMapSaveAttempts >= 1, "the proof injected a real failed Map save");
+    rejectMapSaves = false;
+    await blockedSave.getByRole("button", { name: "Retry" }).click();
+    await blockedSave.getByText("Saved", { exact: true }).waitFor();
+
     await page.locator(".excalidraw canvas.interactive").evaluate((canvas) => { canvas.dataset.companionIdentity = "original"; });
-    await page.keyboard.press("b");
-    const pane = page.locator("[data-map-brain-pane]");
-    await pane.waitFor();
-    assert.equal(await pane.isVisible(), true, "b docks the exact Area brain on a wide map");
-    assert.match(await pane.locator(":scope > header").textContent(), /Brain working/);
+    const mapBrainRoute = await page.locator("#context-brain-button").evaluate((button) => ({ area: button.dataset.brainArea, hidden: button.hidden, text: button.textContent, active: { tag: document.activeElement?.tagName, className: String(document.activeElement?.className ?? "") } }));
+    assert.deepEqual({ area: mapBrainRoute.area, hidden: mapBrainRoute.hidden }, { area: "otto/tangent", hidden: false }, `Map keeps the exact Tangent Brain route before its shortcut: ${JSON.stringify(mapBrainRoute)}`);
+    assert.match(mapBrainRoute.active.className, /excalidraw/, "successful Map recovery returns focus to the retained editor instead of body");
+    await page.keyboard.press("Meta+Shift+Enter");
+    const pane = page.locator('[data-map-brain-pane]:has(.map-brain-terminal[data-session="otto-tangent--brain"])');
+    try { await pane.waitFor({ timeout: 3_000 }); }
+    catch (error) {
+      const diagnostics = await page.evaluate(() => ({
+        active: { tag: document.activeElement?.tagName, id: document.activeElement?.id, className: String(document.activeElement?.className ?? "") },
+        context: document.querySelector("#context-brain-button")?.outerHTML,
+        panes: [...document.querySelectorAll("[data-map-brain-pane]")].map((item) => ({ hidden: item.hidden, mode: item.dataset.mode, header: item.querySelector(":scope > header")?.textContent })),
+        launch: document.querySelector("[data-launch-popover]")?.outerHTML,
+        toast: document.querySelector("#toast")?.textContent,
+      }));
+      throw new Error(`the named Map Brain shortcut did not open Tangent: ${JSON.stringify(diagnostics)}`, { cause: error });
+    }
+    assert.equal(await pane.isVisible(), true, "the named Brain shortcut docks the exact Area brain on a wide map");
+    assert.match(await pane.locator(":scope > header").textContent(), /Brain · working/);
     assert.equal(await pane.locator(".map-brain-terminal").getAttribute("data-session"), "otto-tangent--brain");
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(
@@ -439,6 +625,12 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
       true,
       "opening the live Brain from its hidden Map companion focuses its composer",
     );
+    await pane.locator(".xterm-helper-textarea").evaluate((composer) => {
+      window.wideMapBrainKey = null;
+      composer.addEventListener("keydown", (event) => { window.wideMapBrainKey = event.key; }, { capture: true, once: true });
+    });
+    await page.keyboard.press("w");
+    assert.equal(await page.evaluate(() => window.wideMapBrainKey), "w", "the 1440px Map → Brain route accepts typing without another click");
     const widths = await page.evaluate(() => ({ pane: document.querySelector("[data-map-brain-pane]").getBoundingClientRect().width, map: document.querySelector("[data-map-column]").getBoundingClientRect().width }));
     assert.ok(widths.pane >= 550 && widths.pane <= 570, `the dock starts at 560px: ${JSON.stringify(widths)}`);
     assert.ok(widths.map >= 560, `the map keeps its usable minimum: ${JSON.stringify(widths)}`);
@@ -447,9 +639,18 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     await page.keyboard.press("ArrowLeft");
     const resizedBrainWidth = await pane.evaluate((node) => node.getBoundingClientRect().width);
     assert.ok(resizedBrainWidth > widths.pane, `the keyboard separator resizes Brain without route logic: ${resizedBrainWidth}`);
+    await page.locator("#map-tab").click();
     await page.locator('[data-map-breadcrumb="otto"]').click();
     assert.equal(await pane.locator(".map-brain-terminal").getAttribute("data-session"), "otto-tangent--brain", "Map drill does not close or retarget Brain");
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "Map drill preserves the same Map controller");
+    await page.locator("[data-map-find]").click();
+    await findInput.fill("tangent");
+    const tangentResult = find.getByRole("option").filter({ hasText: "Tangent" }).first();
+    await tangentResult.click();
+    await findInput.focus();
+    await page.keyboard.press("Enter");
+    await find.waitFor({ state: "detached" });
+    await page.waitForFunction(() => document.querySelector('[data-map-breadcrumb="otto/tangent"]')?.getAttribute("aria-current") === "page");
     await page.locator("[data-map-column]").click({ position: { x: 20, y: 20 } });
     assert.match(await page.locator("[data-map-column]").getAttribute("class"), /focused/);
     await pane.dispatchEvent("pointerdown");
@@ -471,42 +672,244 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     assert.deepEqual(terminalKeyOwnership, [["m", false], ["b", false], ["Escape", false], ["Control-H", false], ["Control-L", false]], "Brain terminal keys reach xterm without split interception");
     await page.locator("[data-map-column]").click({ position: { x: 20, y: 20 } });
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "focus changes never remount the canvas");
-    await pane.locator("[data-hide-workspace-brain]").click();
-    assert.equal(await pane.isVisible(), false, "Close b hides only the pane");
-    await page.keyboard.press("b");
-    assert.equal(await pane.isVisible(), true, "b reopens the same companion");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain\s+⌘⇧↵/, "Map exposes one visible named route back to its Brain");
+    await page.locator("#context-brain-button").click();
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    assert.equal(await pane.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer), true, "reopening Brain after Map focus returns typing to its composer");
-    assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "close and reopen keep the map island");
+    assert.equal(await pane.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer), true, "the global Brain route returns typing to its composer");
+    assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "Map and Brain navigation keeps the map island");
     const companionTerminal = pane.locator(".xterm").first();
     await companionTerminal.evaluate((node) => { node.dataset.responsiveIdentity = "original"; });
-    await page.setViewportSize({ width: 900, height: 760 });
+    await page.locator("#map-tab").click();
+    await page.setViewportSize({ width: 800, height: 760 });
     await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "single");
     assert.equal(await page.locator("[data-split-pane]").count(), 2, "narrow presentation keeps both pane roots mounted");
     assert.equal(await pane.isVisible(), false, "the primary Map is the initial narrow pane");
-    await page.keyboard.press("b");
-    assert.equal(await pane.isVisible(), true, "the Map key selects the mounted Brain in narrow mode");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain\s+⌘⇧↵/, "the 800px Map keeps the Brain shortcut label visible");
+    await page.keyboard.press("Meta+Shift+Enter");
+    assert.equal(await pane.isVisible(), true, "the named Brain shortcut selects the mounted Brain in narrow mode");
     assert.equal(await page.locator("[data-map-column]").isVisible(), false);
+    assert.equal(await page.locator('[data-split-pane="map"]').getAttribute("inert"), "", "the hidden compact Map is absent from keyboard and assistive input");
     assert.equal(await pane.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer), true, "narrow Brain activation owns the keyboard immediately");
+    await pane.locator(".xterm-helper-textarea").evaluate((composer) => {
+      window.compactMapBrainKey = null;
+      composer.addEventListener("keydown", (event) => { window.compactMapBrainKey = event.key; }, { capture: true, once: true });
+    });
+    await page.keyboard.press("n");
+    assert.equal(await page.evaluate(() => window.compactMapBrainKey), "n", "the 800px Map → Brain route accepts typing without another click");
     assert.equal(await companionTerminal.getAttribute("data-responsive-identity"), "original", "narrow selection preserves the exact xterm node");
-    await page.setViewportSize({ width: 1400, height: 760 });
+    assert.equal(await page.locator("#map-tab").getAttribute("aria-current"), null, "the hidden compact Map is not announced as current");
+    assert.equal(await page.locator("#context-brain-button").getAttribute("aria-pressed"), "true", "the compact Brain state is reflected by the one contextual route");
+    assert.equal(await page.locator("#context-brain-button").isHidden(), true, "the open Brain action is not duplicated on the Brain surface");
+    assert.match(await page.locator("#back-button").textContent(), /^Map ⌘⇧↵$/i, "the compact Brain has one visible global Map return chord");
+    const compactActions = await page.locator(".app-bar button:visible").evaluateAll((buttons) => buttons.map((button) => {
+      const box = button.getBoundingClientRect();
+      return { label: button.getAttribute("aria-label") || button.textContent, left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+    }));
+    assert.ok(compactActions.every((box) => box.left >= 0 && box.right <= 800 && box.top >= 0 && box.bottom <= 760), `every visible compact action stays in the 800px viewport: ${JSON.stringify(compactActions)}`);
+    await page.setViewportSize({ width: 1440, height: 760 });
     await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "wide");
-    await page.setViewportSize({ width: 900, height: 760 });
+    await page.setViewportSize({ width: 800, height: 760 });
     await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "single");
     assert.equal(await pane.isVisible(), true, "a later narrow interval restores the last narrow pane");
     assert.equal(await page.locator("[data-map-column]").isVisible(), false);
-    await pane.locator("[data-toggle-workspace-map]").click();
-    assert.equal(await page.locator("[data-map-column]").isVisible(), true, "the Brain Map action selects the mounted Map in narrow mode");
+    await page.locator("#map-tab").click();
+    assert.equal(await page.locator("[data-map-column]").isVisible(), true, "the global Map route selects the mounted Map in narrow mode");
     assert.equal(await page.locator(".excalidraw canvas.interactive").getAttribute("data-companion-identity"), "original", "narrow selection preserves the exact canvas");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain\s+⌘⇧↵/);
+    await page.locator("#context-brain-button").click();
+    assert.equal(await pane.isVisible(), true, "the contextual Brain route restores the exact compact companion");
+    assert.equal(await companionTerminal.getAttribute("data-responsive-identity"), "original", "Brain → Map → Brain keeps the exact terminal node");
+    assert.equal(await pane.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer), true, "Brain → Map → Brain restores composer focus");
+    // The terminal-visible route is the pointer alternative to Command-K.
+    // Its selected Document closes to the exact compact Brain terminal.
+    const compactComposer = pane.locator(".xterm-helper-textarea");
+    await page.locator("#go-to-button").click();
+    await page.locator("#go-to-input").fill("Map-first proof");
+    await page.getByRole("option", { name: /Map-first proof/ }).waitFor();
+    const compactGoToLayout = await page.locator("#go-to-layer .go-to").evaluate((surface) => ({
+      width: surface.getBoundingClientRect().width,
+      scrollWidth: surface.scrollWidth,
+      controls: [...surface.querySelectorAll("input, select, button")].filter((control) => control.offsetParent !== null).map((control) => {
+        const box = control.getBoundingClientRect();
+        return { label: control.getAttribute("aria-label") || control.textContent, left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+      }),
+    }));
+    assert.ok(compactGoToLayout.scrollWidth <= compactGoToLayout.width + 1, `the 800px Go To layer has no clipped horizontal controls: ${JSON.stringify(compactGoToLayout)}`);
+    assert.ok(compactGoToLayout.controls.every((box) => box.left >= 0 && box.right <= 800 && box.top >= 0 && box.bottom <= 760), `every Go To control remains reachable at 800px: ${JSON.stringify(compactGoToLayout.controls)}`);
+    await page.keyboard.press("Enter");
+    const compactReader = page.locator("#document-peek-layer .document-peek-surface");
+    await compactReader.waitFor();
+    assert.equal(await compactReader.getAttribute("role"), "region");
+    assert.equal(await page.locator('#document-peek-layer [aria-modal="true"]').count(), 0, "the visible global header is not outside an asserted Document modal");
+    await compactReader.focus();
+    await page.keyboard.press("Shift+Tab");
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "go-to-button", "Shift-Tab reaches the visible global header from the Document");
+    await page.keyboard.press("Tab");
+    assert.equal(await compactReader.evaluate((reader) => reader.contains(document.activeElement)), true, "Tab returns from global chrome to the Document");
+    assert.match(await compactReader.getByRole("button", { name: /Discuss with Otto \/ Tangent Brain/ }).textContent(), /Otto \/ Tangent Brain/);
+    await compactReader.getByRole("button", { name: /Close/ }).click();
+    await compactReader.waitFor({ state: "detached" });
+    assert.equal(await companionTerminal.getAttribute("data-responsive-identity"), "original", "Go To from compact Brain preserves the exact terminal node");
+    assert.equal(await compactComposer.evaluate((composer) => document.activeElement === composer), true, "closing the Go To Document restores compact Brain focus");
+
+    await page.locator("#map-tab").click();
+    assert.equal(await page.locator("[data-map-column]").isVisible(), true, "the global Map route exposes the retained Map after the return proof");
+    assert.equal(await page.locator("#map-tab").getAttribute("aria-current"), "page", "the compact header announces Map as the active surface");
+    assert.match(await page.locator("#context-brain-button").textContent(), /Otto \/ Tangent Brain/, "the compact header keeps the active Area visible in its named Brain route");
+    await page.locator("#map-tab").focus();
+    for (const expected of [
+      "#work-tab",
+      '[data-map-breadcrumb="otto"]',
+      '[data-map-breadcrumb="otto/tangent"]',
+      "[data-map-find]",
+      "[data-map-only]",
+      "#for-you-button",
+      "#problems-button",
+      "#context-brain-button",
+      "#go-to-button",
+    ]) {
+      await page.keyboard.press("Tab");
+      const focused = await page.locator(expected).evaluate((control) => document.activeElement === control);
+      assert.equal(focused, true, `compact header focus reaches ${expected} in visible order`);
+    }
+    if (await only.getAttribute("aria-pressed") === "true") {
+      await only.click();
+      await waitForOnly(false);
+    }
+    await designwardenLabel.dispatchEvent("click");
+    await page.waitForFunction(() => document.querySelector("#context-brain-button")?.dataset.brainArea === "neara/designwarden");
+    const shortcutLayout = await page.locator("#context-brain-button").evaluate((button) => {
+      const key = button.querySelector("kbd");
+      const outer = button.getBoundingClientRect();
+      const inner = key?.getBoundingClientRect();
+      return inner && {
+        left: inner.left, right: inner.right, top: inner.top, bottom: inner.bottom,
+        outerLeft: outer.left, outerRight: outer.right, outerTop: outer.top, outerBottom: outer.bottom,
+        width: inner.width, height: inner.height, visibility: getComputedStyle(key).visibility,
+      };
+    });
+    assert.ok(shortcutLayout && shortcutLayout.width > 0 && shortcutLayout.height > 0
+      && shortcutLayout.visibility === "visible"
+      && shortcutLayout.left >= shortcutLayout.outerLeft - 1
+      && shortcutLayout.right <= shortcutLayout.outerRight + 1
+      && shortcutLayout.top >= shortcutLayout.outerTop - 1
+      && shortcutLayout.bottom <= shortcutLayout.outerBottom + 1,
+    `the complete Designwarden Brain shortcut is visible at 800px: ${JSON.stringify(shortcutLayout)}`);
+    await page.locator('[data-area-map-label="otto/tangent"]').dispatchEvent("click");
+    await page.waitForFunction(() => document.querySelector("#context-brain-button")?.dataset.brainArea === "otto/tangent");
+    const compactBlockAction = page.getByRole("button", { name: /^Block/ });
+    await compactBlockAction.waitFor();
+    assert.equal(await compactBlockAction.locator(".tangent-map-label").isVisible(), true, "the primary Block action keeps its visible name at 800px");
+    const compactBlockBox = await compactBlockAction.boundingBox();
+    assert.ok(compactBlockBox && compactBlockBox.x >= 0 && compactBlockBox.x + compactBlockBox.width <= 800, `the named Block action stays inside the 800px viewport: ${JSON.stringify(compactBlockBox)}`);
+
+    // At 800px, B places the complete-vault Document directly. A real save
+    // rejection then survives Document, Brain, and Work before Retry succeeds.
+    rejectMapSaves = true;
+    const compactFailureCanvas = page.locator(".excalidraw canvas.interactive");
+    await compactFailureCanvas.evaluate((canvas) => { canvas.dataset.compactFailureIdentity = "original"; });
+    await page.locator("[data-tangent-area-map] .excalidraw").focus();
+    await page.keyboard.press("b");
+    const compactPicker = page.getByRole("dialog", { name: "Place a Tangent block" });
+    await compactPicker.waitFor();
+    await page.keyboard.press("Tab");
+    await compactPicker.getByRole("heading", { name: "Place from the whole vault" }).waitFor();
+    await compactPicker.getByRole("textbox").fill("map-first proof");
+    await compactPicker.getByRole("button", { name: /Map-first proof/ }).waitFor();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.activeElement?.matches('textarea[data-type="wysiwyg"]'));
+    await page.keyboard.press("Escape");
+    await blockedSave.getByText("Not saved", { exact: false }).waitFor();
+    const compactFailureCamera = await tangentPosition();
+    await page.getByRole("group", { name: "Actions for Map-first proof" }).waitFor();
+    await compactFailureCanvas.focus();
+    await page.keyboard.press("Enter");
+    await compactReader.waitFor();
+    await compactReader.getByText("Map-first proof", { exact: true }).first().waitFor();
+    assert.match(await compactReader.textContent(), /Map-first proof/, "the 800px Map Document opens in one direct keyboard action");
+    const readerLayout = await compactReader.evaluate((surface) => ({
+      width: surface.getBoundingClientRect().width,
+      scrollWidth: surface.scrollWidth,
+      actions: [...surface.querySelectorAll(".document-peek-actions button")].map((button) => {
+        const box = button.getBoundingClientRect();
+        return { label: button.textContent, left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+      }),
+    }));
+    assert.ok(readerLayout.scrollWidth <= readerLayout.width + 1, `the 800px quick reader has no clipped horizontal action row: ${JSON.stringify(readerLayout)}`);
+    assert.ok(readerLayout.actions.every((box) => box.left >= 0 && box.right <= 800 && box.top >= 0 && box.bottom <= 760), `every quick-reader action remains reachable at 800px: ${JSON.stringify(readerLayout.actions)}`);
+    const exposedDialogs = await page.locator('[role="dialog"]:visible').evaluateAll((dialogs) => dialogs
+      .filter((dialog) => !dialog.closest("[inert], [hidden]"))
+      .map((dialog) => dialog.getAttribute("aria-label") || dialog.getAttribute("aria-labelledby")));
+    assert.deepEqual(exposedDialogs, [], `the quick Document does not claim modal ownership of visible global routes: ${JSON.stringify(exposedDialogs)}`);
+    assert.equal(await page.locator("#context-brain-button").getAttribute("data-brain-area"), "otto/tangent");
+    await page.locator("#context-brain-button").click();
+    const compactDiscussionBrain = page.locator("#document-peek-layer [data-map-brain-pane]");
+    await compactDiscussionBrain.waitFor();
+    assert.equal(await page.locator('#document-peek-layer [aria-modal="true"]').count(), 0, "the combined Document discussion is also nonmodal");
+    assert.deepEqual(await page.locator(".document-discussion-switcher button:visible").allTextContents(), ["Document", "Otto / Tangent Brain"], "compact discussion switches only between its two retained surfaces");
+    assert.match(await compactDiscussionBrain.locator("[data-brain-subject]").textContent(), /Map-first proof/, "the 800px discussion names the exact Document subject");
+    assert.equal(await compactDiscussionBrain.locator(".xterm-helper-textarea").evaluate((composer) => document.activeElement === composer), true, "the 800px discussion Brain accepts typing immediately");
+    assert.match(await page.locator(".tangent-map-save").textContent(), /Not saved/, "the compact discussion preserves the failed local Map draft");
+    assert.match(await page.locator("#back-button").textContent(), /^Document ⌘⇧↵$/i);
+    await page.locator("#back-button").click();
+    await compactReader.waitFor();
+    await compactReader.getByRole("button", { name: /Close/ }).click();
+    await compactReader.waitFor({ state: "detached" });
+
+    const compactMapReturn = page.locator('[data-area-map-label="otto/tangent"]');
+    await compactMapReturn.evaluate((control) => { control.dataset.compactMapReturnIdentity = "original-map-control"; });
+    await compactMapReturn.focus();
+    await page.keyboard.press("Meta+/");
+    const compactWork = page.locator("#work-lens-layer");
+    await compactWork.waitFor();
+    assert.match(await page.locator(".tangent-map-save").textContent(), /Not saved/, "the 800px Work layer preserves the failed local Map draft");
+    const compactWorkLayout = await compactWork.locator(".work-lens-surface").evaluate((surface) => ({
+      width: surface.getBoundingClientRect().width,
+      scrollWidth: surface.scrollWidth,
+      controls: [...surface.querySelectorAll("button, input")].filter((control) => control.offsetParent !== null).map((control) => {
+        const box = control.getBoundingClientRect();
+        return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+      }),
+    }));
+    assert.ok(compactWorkLayout.scrollWidth <= compactWorkLayout.width + 1, `the 800px Work lens has no clipped horizontal controls: ${JSON.stringify(compactWorkLayout)}`);
+    assert.ok(compactWorkLayout.controls.every((box) => box.left >= 0 && box.right <= 800), `every Work control stays horizontally reachable in the 800px scroll surface: ${JSON.stringify(compactWorkLayout.controls)}`);
+    const compactQuery = page.locator("#work-search-input");
+    await compactQuery.fill("compact");
+    const compactWorkerRow = page.locator('[data-goal-anchor="otto/tangent/goal-compact-table.md"]');
+    const compactWorkerTitle = compactWorkerRow.locator("[data-work-row-title]");
+    await compactWorkerRow.dispatchEvent("click");
+    await compactWorkerTitle.evaluate((node) => { node.dataset.compactReturnIdentity = "original-work-row"; });
+    await compactWorkerTitle.focus();
+    await page.keyboard.press("Meta+Shift+Enter");
+    const compactSession = page.locator("#session-layer:not([hidden])");
+    await compactSession.locator('.xterm').waitFor();
+    assert.equal(await compactSession.locator("#session-layer-terminal").getAttribute("data-session"), "tangent--table", "the 800px Work route opens the exact worker");
+    const compactSessionActions = await compactSession.locator(".session-layer-header button:visible").evaluateAll((buttons) => buttons.map((button) => {
+      const box = button.getBoundingClientRect();
+      return { label: button.textContent, left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+    }));
+    assert.ok(compactSessionActions.every((box) => box.left >= 0 && box.right <= 800 && box.top >= 0 && box.bottom <= 760), `full-screen agent actions remain reachable at 800px: ${JSON.stringify(compactSessionActions)}`);
+    await compactSession.locator("[data-close-session-layer]").click();
+    await page.waitForFunction(() => document.activeElement?.dataset.compactReturnIdentity === "original-work-row");
+    assert.equal(await compactQuery.inputValue(), "compact", "800px worker inspection restores the exact Work query");
+    await compactWork.locator("[data-close-work-lens]").click();
+    await page.waitForFunction(() => document.querySelector("#work-lens-layer").hidden);
+    assert.equal(await compactFailureCanvas.getAttribute("data-compact-failure-identity"), "original", "800px worker inspection preserves the exact Map canvas");
+    assert.equal(await compactMapReturn.getAttribute("data-compact-map-return-identity"), "original-map-control", "800px Work retains the exact Map opener");
+    assert.equal(await compactMapReturn.evaluate((control) => document.activeElement === control), true, "closing compact Work restores exact Map focus");
+    assert.deepEqual(await tangentPosition(), compactFailureCamera, "800px Document, Brain, and Work routes preserve the failed-draft camera");
+    rejectMapSaves = false;
+    await blockedSave.getByRole("button", { name: "Retry" }).click();
+    await blockedSave.getByText("Saved", { exact: true }).waitFor();
+
     await page.evaluate(() => { document.activeElement.dataset.pollFocusProof = "before"; });
     await page.waitForTimeout(30_500);
     assert.equal(await page.evaluate(() => document.activeElement?.dataset.pollFocusProof), "before", "a session poll preserves the exact Map focus instead of stealing it for Brain");
-    await page.setViewportSize({ width: 1400, height: 760 });
+    await page.setViewportSize({ width: 1440, height: 760 });
     await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "wide");
-    await pane.locator("[data-hide-workspace-brain]").click();
     await page.getByRole("button", { name: "Outline", exact: true }).click();
     await page.getByRole("treeitem", { name: "Otto, child of map root, depth 1, unfolded, ready, 0 blocks" }).waitFor();
-    await page.getByRole("treeitem", { name: "Tangent, child of Otto, depth 2, unfolded, ready, 0 blocks" }).waitFor();
+    await page.locator('[data-area-map-label="otto/tangent"]').waitFor();
     await page.getByRole("button", { name: "Outline", exact: true }).click();
     await page.setViewportSize({ width: 520, height: 760 });
     await page.locator(".excalidraw canvas.interactive").waitFor();
@@ -526,46 +929,75 @@ test("m opens exact root, intermediate, and leaf Areas isolated and centered", {
     assert.match(structure.theme, /theme--dark/);
     assert.equal(structure.canvas, "rgb(18, 18, 18)", "the map ground is dark behind a dark-theme editor");
 
-    // Every Work entry creates a fresh restricted visit. The exact target fit
-    // wins over the camera saved by the previous visit.
-    await page.setViewportSize({ width: 1400, height: 760 });
-    /** Returns to Work once and waits for the exact row focus. */
-    const returnToWork = async (area) => {
-      await page.locator("#back-button").click();
-      await page.waitForFunction(() => !document.querySelector(".map-screen"));
-      await page.waitForFunction((target) => document.activeElement === document.querySelector(`[data-work-cursor="area:${target}"] [data-open-area-map]`), area);
-    };
-    /** Opens one exact Work Area through the real m shortcut. */
-    const openFromWork = async (area) => {
-      const targetRow = page.locator(`[data-work-cursor="area:${area}"]`);
-      await targetRow.dispatchEvent("click");
-      await targetRow.locator("[data-work-cursor-control]").focus();
-      await page.keyboard.press("m");
-      await page.locator(`[data-tangent-area-map="${area}"] .excalidraw canvas.interactive`).waitFor();
-      await page.waitForFunction(() => document.querySelector("[data-map-only]")?.getAttribute("aria-pressed") === "true");
-      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    };
+    // Work is a lens. Inspecting a worker and temporarily locating another
+    // Area return to the exact row/query, then closing Work reveals the exact
+    // camera, selection control, and focus that opened it.
+    await page.setViewportSize({ width: 1440, height: 760 });
+    const mapOrigin = page.locator('[data-area-map-label="otto/tangent"]');
+    await mapOrigin.dispatchEvent("click");
+    await mapOrigin.evaluate((node) => { node.dataset.returnIdentity = "original-map-control"; });
+    const cameraBeforeWork = await page.evaluate(() => Object.fromEntries(
+      [...document.querySelectorAll("[data-area-map-label]")].map((node) => [node.dataset.areaMapLabel, { left: node.style.left, top: node.style.top }]),
+    ));
+    await mapOrigin.focus();
+    await page.keyboard.press("Meta+/");
+    await page.locator("#work-lens-layer").waitFor();
+    const query = page.locator("#work-search-input");
+    await query.fill("compact");
+    const workerRow = page.locator('[data-goal-anchor="otto/tangent/goal-compact-table.md"]');
+    const workerTitle = workerRow.locator("[data-work-row-title]");
+    await workerRow.dispatchEvent("click");
+    await workerTitle.evaluate((node) => { node.dataset.returnIdentity = "original-work-row"; });
+    await workerTitle.focus();
+    await page.keyboard.press("Meta+Shift+Enter");
+    await page.locator("#session-layer:not([hidden]) .xterm").waitFor();
+    await page.locator("#session-layer [data-close-session-layer]").click();
+    try {
+      await page.waitForFunction(() => document.activeElement?.dataset.returnIdentity === "original-work-row", null, { timeout: 2_000 });
+    } catch (error) {
+      const diagnostics = await page.evaluate(() => ({
+        active: document.activeElement?.outerHTML,
+        expected: document.querySelector('[data-return-identity="original-work-row"]')?.outerHTML,
+        workHidden: document.querySelector("#work-lens-layer")?.hidden,
+        workInert: document.querySelector("#work-lens-layer")?.hasAttribute("inert"),
+      }));
+      throw new Error(`worker inspection did not restore its exact Work control: ${JSON.stringify(diagnostics)}`, { cause: error });
+    }
+    assert.equal(await query.inputValue(), "compact", "worker inspection returns to the exact Work query");
+    assert.equal(await workerTitle.getAttribute("data-return-identity"), "original-work-row", "worker inspection retains the exact row node");
 
-    assert.equal(await only.getAttribute("aria-pressed"), "true", "Only remains active until the map exits");
-    await page.locator("[data-map-column]").focus();
-    await page.keyboard.press("Escape");
-    await page.waitForFunction(() => !document.querySelector(".map-screen"));
-    await page.waitForFunction(() => document.activeElement === document.querySelector('[data-work-cursor="area:otto/tangent"] [data-open-area-map]'));
-    await openFromWork("otto");
-    assert.deepEqual(await page.locator(".tangent-map-ancestry > button strong").allTextContents(), ["otto", "tangent", "desk", "other"]);
-    assert.equal(await page.getByText("Neara", { exact: true }).count(), 0);
-    await assertShellAreaCentered(page, "otto", "otto/tangent", shellComposition);
-    await returnToWork("otto");
-
-    await openFromWork("otto/tangent/desk");
-    assert.deepEqual(await page.locator(".tangent-map-ancestry > button strong").allTextContents(), ["otto", "tangent", "desk"]);
-    await assertShellAreaCentered(page, "otto/tangent/desk", "otto/tangent", shellComposition);
-    await returnToWork("otto/tangent/desk");
-    await openFromWork("otto/tangent/desk");
-    assert.deepEqual(await page.locator(".tangent-map-ancestry > button strong").allTextContents(), ["otto", "tangent", "desk"], "re-entry rebuilds the same exact leaf scope");
-    await assertShellAreaCentered(page, "otto/tangent/desk", "otto/tangent", shellComposition);
+    await query.fill("");
+    const standardsRow = page.locator('[data-work-cursor="area:otto/standards"]');
+    await standardsRow.dispatchEvent("click");
+    await standardsRow.locator("[data-work-cursor-control]").focus();
+    await page.keyboard.press("m");
+    try {
+      await page.waitForFunction(() => document.querySelector('[data-tangent-area-map="otto/standards"]'), null, { timeout: 3_000 });
+    } catch (error) {
+      const diagnostics = await page.evaluate(() => ({
+        active: document.activeElement?.outerHTML,
+        cursor: document.querySelector("[data-work-cursor].cursor")?.getAttribute("data-work-cursor"),
+        workHidden: document.querySelector("#work-lens-layer")?.hidden,
+        map: document.querySelector("[data-tangent-area-map]")?.getAttribute("data-tangent-area-map"),
+        toast: document.querySelector("#toast")?.textContent,
+      }));
+      throw new Error(`Show on Map did not locate Standards: ${JSON.stringify(diagnostics)}`, { cause: error });
+    }
+    await page.locator("#back-button").click();
+    await page.waitForFunction(() => !document.querySelector("#work-lens-layer").hidden);
+    await page.waitForFunction(() => document.activeElement === document.querySelector('[data-work-cursor="area:otto/standards"] [data-work-cursor-control]'));
+    await page.locator("[data-close-work-lens]").click();
+    await page.waitForFunction(() => document.querySelector("#work-lens-layer").hidden);
+    assert.equal(await mapOrigin.getAttribute("data-return-identity"), "original-map-control", "closing Work returns the exact Map control");
+    assert.equal(await mapOrigin.evaluate((node) => document.activeElement === node), true, "closing Work restores Map focus");
+    const cameraAfterWork = await page.evaluate(() => Object.fromEntries(
+      [...document.querySelectorAll("[data-area-map-label]")].map((node) => [node.dataset.areaMapLabel, { left: node.style.left, top: node.style.top }]),
+    ));
+    assert.deepEqual(cameraAfterWork, cameraBeforeWork, "Work Show on Map restores the exact retained camera");
   } finally {
     await browser?.close();
+    for (const client of websocketServer.clients) client.terminate();
+    await new Promise((resolve) => websocketServer.close(resolve));
     await new Promise((resolve) => server.close(resolve));
   }
 });

@@ -8,13 +8,17 @@ const subcommand = (name) => shellCommandSpec.subcommands.find((entry) => entry.
 /** Lists the option names one spec entry accepts. */
 const optionNames = (entry) => entry.options.map((option) => option.name);
 
-test("tangent shell has one subcommand: rebuild, with a server and a timeout", () => {
+test("tangent shell specifies rebuild and explicit launch-policy repair", () => {
   assert.equal(shellCommandSpec.name, "shell");
-  assert.deepEqual(shellCommandSpec.subcommands.map((entry) => entry.name), ["rebuild"]);
+  assert.deepEqual(shellCommandSpec.subcommands.map((entry) => entry.name), ["rebuild", "migrate-launch-policy"]);
   const rebuild = subcommand("rebuild");
   assert.deepEqual(optionNames(rebuild), ["server", "timeout"]);
   assert.equal(rebuild.options.find((option) => option.name === "timeout").takesValue, true);
   assert.match(rebuild.description, /return when the new boot answers/);
+  const migrate = subcommand("migrate-launch-policy");
+  assert.deepEqual(optionNames(migrate), ["server", "dry-run"]);
+  assert.equal(migrate.options.find((option) => option.name === "dry-run").takesValue, undefined);
+  assert.match(migrate.description, /explicit per-Area harnesses\.md contracts/);
 });
 
 test("tangent shell --help prints the spec and does not call the server", async () => {
@@ -29,6 +33,7 @@ test("tangent shell --help prints the spec and does not call the server", async 
   }
   assert.match(printed.join("\n"), /rebuild/);
   assert.match(printed.join("\n"), /tangent shell rebuild --timeout 600/);
+  assert.match(printed.join("\n"), /tangent shell migrate-launch-policy --dry-run/);
 });
 
 test("tangent shell rejects an unknown subcommand by name", async () => {

@@ -11,6 +11,7 @@ import {
   jsonResponse,
 } from "./focus-shell-ui-fixture.mjs";
 import { ASK_DISMISSALS_KEY } from "./public/ask-dismissal-core.js";
+import { legacyFixtureWork } from "./work-table-harness.mjs";
 
 const goal = {
   mtime: 1,
@@ -36,6 +37,13 @@ async function shellFixture({ storedDismissals = null, request = null } = {}) {
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
   window.setInterval = () => 0;
+  window.structuredClone = globalThis.structuredClone;
+  window.TextEncoder = globalThis.TextEncoder;
+  window.CSS = {
+    /** Escapes fixture values for CSS selectors. */
+    escape: (value) => String(value).replaceAll(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`),
+  };
+  window.localStorage.setItem("agent-shell.work-filter", "all");
   if (storedDismissals) window.localStorage.setItem(ASK_DISMISSALS_KEY, storedDismissals);
   const posts = [];
   const step = {
@@ -65,6 +73,8 @@ async function shellFixture({ storedDismissals = null, request = null } = {}) {
     map: [{ path: goal.area, name: "tangent", goals: [goal] }],
     documents: [],
   };
+  const brains = request ? [{ area: goal.area, status: "active", state: "working", session: "tangent-brain-g1", generation: 1, live: true, requests: [request] }] : [];
+  const projectedWork = legacyFixtureWork({ vault, goals: [goal], sessions: [], pipelines: [pipeline], brains, programs: { processes: [] } });
   window.fetch = async (url, options = {}) => {
     const pathname = new URL(url, window.location.href).pathname;
     if (options.method === "POST") {
@@ -73,32 +83,45 @@ async function shellFixture({ storedDismissals = null, request = null } = {}) {
       if (pathname === "/api/brains/requests/dismiss" && request?.id === body.id) request.status = "closed";
       return jsonResponse({ ok: true });
     }
+    if (pathname === "/api/work") return {
+      ...jsonResponse(projectedWork),
+      headers: {
+        /** Returns no optional response header in this fixture. */
+        get: () => "",
+      },
+      /** Returns the production Work body before schema validation. */
+      async text() { return JSON.stringify(projectedWork); },
+    };
+    if (pathname === "/api/brains/show") return jsonResponse({ brain: brains.find((brain) => brain.area === new URL(url, window.location.href).searchParams.get("area")) ?? null });
     if (pathname === "/api/sessions") return jsonResponse({
       boot: "dismiss-boot",
       caffeinate: false,
       sessions: [],
       pipelines: [pipeline],
-      brains: request ? [{ area: goal.area, session: "tangent-brain-g1", generation: 1, live: true, requests: [request] }] : [],
+      brains,
     });
     if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse(vault);
   };
   window.eval(shellBundle);
   await settle(window);
+  click(window, "#work-tab");
+  await settle(window);
   return { dom, window, posts, step };
 }
 
-test("a stopped pipeline never becomes a question for Julian", async () => {
+test("a stopped pipeline never becomes a question for Julian", async (context) => {
   // Machine state makes no ask. A stopped step is a fact on its Goal row;
   // Julian hears about it from the Area brain, not from Work.
-  const { window } = await shellFixture();
+  const { dom, window } = await shellFixture();
+  context.after(() => dom.window.close());
   assert.equal(window.document.querySelector(".attention-queue"), null, "Work carries no attention strip");
   assert.equal(window.document.querySelector(".ask-table"), null, "no ask table exists");
   assert.equal(window.document.querySelector("[data-dismiss-ask]"), null, "nothing needs dismissing, because nothing was inferred");
   assert.equal(window.localStorage.getItem(ASK_DISMISSALS_KEY), null, "no browser receipt is written");
 });
 
-test("a Request dismissal is durable and tells the brain without using an answer", async () => {
+test("a Request dismissal is durable and tells the brain without using an answer", async (context) => {
   const request = {
     id: "request-one",
     kind: "decision",
@@ -107,7 +130,8 @@ test("a Request dismissal is durable and tells the brain without using an answer
     options: ["Local", "Server"],
     status: "open",
   };
-  const { window, posts } = await shellFixture({ request });
+  const { dom, window, posts } = await shellFixture({ request });
+  context.after(() => dom.window.close());
   // The Question reaches Julian through the Area header count and the
   // deliberate review, which is the only route Work now offers.
   const count = window.document.querySelector(`[data-review-questions="${goal.area}"]`);

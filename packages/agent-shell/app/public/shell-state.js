@@ -15,7 +15,9 @@ export function createShellState(storage = globalThis.localStorage, href = globa
   const requestedDocument = requestedLocation.get("document") || "";
   // `?goal=<file>` opens Work on one Goal row: the Check it notification's link (D14).
   const requestedGoal = requestedLocation.get("goal") || "";
-  const initialView = requestedDocument ? "document" : requestedGoal ? "work" : requestedView === "prompts" ? "prompts" : ["areas", "programs"].includes(requestedView) ? "areas" : "work";
+  // Map is the durable home. Deep links open their temporary/contextual route
+  // above it after the Map has mounted; they do not replace the root surface.
+  const initialView = requestedView === "prompts" ? "prompts" : ["areas", "programs"].includes(requestedView) ? "areas" : "area-workspace";
   const storedDescribeDraft = storedJson("agent-shell.describe-draft");
   const savedDescribeSession = storage.getItem("agent-shell.describe-session") || storedDescribeDraft?.session || "";
   const storedAreaFocus = readAreaFocus(storage);
@@ -24,6 +26,8 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     workTransport: null,
     cost: null,
     workerCost: null,
+    workLens: null,
+    workLensMemory: null,
     vault: null,
     programs: { operations: [], processes: [], problems: [], areas: [], liveCount: 0 },
     sessions: [],
@@ -38,13 +42,15 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     collapsedDeskSections: new Set(storedJson("agent-shell.collapsed-desk-sections") || []),
     collapsedGoalTrees: new Set(storedJson("agent-shell.collapsed-goal-trees") || []),
     areaFocus: storedAreaFocus.areas, areaFocusOnly: storedAreaFocus.only, activeOnly: storage.getItem("agent-shell.active-only") === "true", areaFocusPicker: null, areaFocusStorageError: storedAreaFocus.error,
-    mapStates: new Map(), mapSelectFile: "", mapArea: "", areaWorkspace: null, showDoneAreas: storage.getItem("agent-shell.show-done-areas") === "1", areaEdit: null,
+    mapStates: new Map(), mapSelectFile: "", mapArea: requestedArea || storage.getItem("agent-shell.last-area") || "", areaWorkspace: null, showDoneAreas: storage.getItem("agent-shell.show-done-areas") === "1", areaEdit: null,
     areaQuery: "", areaDocumentQuery: "", areaDocumentPeriod: "any", areaDocumentOrder: "newest", areaDocumentOnly: "", areaDocumentExcluded: new Set(),
     areaWorkQuery: "", areaWorkScope: "", areaWorkState: "all", areaWorkLimits: new Map(), areaHistory: false,
     programId: "", programDraft: { type: "process", area: "", name: "", command: "", cwd: "" },
     launch: { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null, stale: null, queueMutation: null },
     defaultAgents: { area: "", editing: "", mode: "" },
-    pipelines: [], brains: [], brainDraft: null, agentSessionName: null, sessionPeek: null,
+    pipelines: [], brains: [], brainDraft: null, brainDrafts: new Map(), terminalScrolls: new Map(), brainReturn: null, mapReturn: null, agentSessionName: null, sessionPeek: null,
+    documentDiscussion: null,
+    resumeContext: storedJson("agent-shell.resume-context.v1"),
     verdictLines: new Set(), dismissedAskIds: readDismissedAskIds(storage), goTo: null, launchTarget: "", launchAnchor: null, whatHappened: null,
     // Work is one durable projection. Ignore the retired Current/Planned
     // browser choice so an old local-storage value cannot hide Goals.

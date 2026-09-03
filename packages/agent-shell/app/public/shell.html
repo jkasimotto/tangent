@@ -13,11 +13,11 @@
 <body>
   <div id="app">
     <header class="app-bar">
-      <button id="back-button" class="bar-button back-button" type="button" aria-haspopup="menu">Agent Shell</button>
+      <button id="back-button" class="bar-button back-button" type="button" aria-haspopup="menu" aria-controls="shell-menu" aria-expanded="false">Agent Shell</button>
       <nav class="primary-tabs" aria-label="Agent Shell sections">
+        <button id="map-tab" class="primary-tab" type="button">Map</button>
         <button id="work-tab" class="primary-tab" type="button">Work</button>
         <button id="areas-tab" class="primary-tab" type="button" hidden>Areas</button>
-        <button id="prompts-tab" class="primary-tab" type="button">Model</button>
       </nav>
       <div id="bar-context" class="bar-context" aria-live="polite"></div>
       <div class="bar-actions">
@@ -28,6 +28,9 @@
         <span id="status-pill" class="status-pill" role="status" hidden></span>
         <button id="awake-button" class="bar-button awake-button" type="button" aria-label="Keep Mac awake" title="Keep Mac awake">☕︎</button>
         <button id="secondary-action" class="bar-button danger-bar-button" type="button" hidden>Stop agent…</button>
+        <button id="for-you-button" class="bar-button quiet-bar-button" type="button">For you</button>
+        <button id="problems-button" class="bar-button quiet-bar-button" type="button">Problems</button>
+        <button id="context-brain-button" class="bar-button context-brain-button" type="button" hidden>Area Brain</button>
         <button id="go-to-button" class="bar-button find-button" type="button">Go to</button>
         <button id="find-button" class="bar-button find-button" type="button">Find work</button>
       </div>
@@ -35,6 +38,7 @@
 
     <div id="shell-menu" class="shell-menu" role="menu" aria-label="Agent Shell" hidden>
       <button id="menu-update" class="shell-menu-item update" type="button" role="menuitem" hidden>Update available</button>
+      <button id="prompts-tab" class="shell-menu-item" type="button" role="menuitem">Model</button>
       <button id="menu-refresh" class="shell-menu-item" type="button" role="menuitem">Refresh data</button>
       <button id="menu-reload" class="shell-menu-item" type="button" role="menuitem">Reload app</button>
       <button id="menu-rebuild" class="shell-menu-item" type="button" role="menuitem">Rebuild and restart…</button>
@@ -51,9 +55,20 @@
 
     <main id="screen" class="screen" aria-live="polite"></main>
 
+    <div id="work-lens-layer" class="work-lens-layer" hidden>
+      <section class="work-lens-surface" role="region" aria-labelledby="work-lens-title">
+        <header class="work-lens-header">
+          <h2 id="work-lens-title">Work</h2>
+          <p id="work-lens-freshness" class="work-lens-freshness" role="status" aria-live="polite"></p>
+          <button class="bar-button work-lens-close-button" type="button" data-close-work-lens>Close Work</button>
+        </header>
+        <div id="work-lens-content" class="work-lens-content"></div>
+      </section>
+    </div>
+
     <div id="session-layer" class="session-layer" hidden>
       <section class="session-surface" role="dialog" aria-modal="true" aria-label="Agent session">
-        <header class="session-layer-header"><button type="button" data-close-session-layer>Work <kbd>⌘⇧↵</kbd></button><div id="session-layer-title" class="session-layer-title"></div></header>
+        <header class="session-layer-header"><button type="button" data-close-session-layer aria-label="Back to Work"><span data-session-return-label>Back to Work</span> <kbd>⌘⇧↵</kbd></button><div id="session-layer-title" class="session-layer-title"></div><button type="button" data-session-go-to>Go to <kbd>⌘K</kbd></button></header>
         <div id="session-layer-terminal" class="terminal-host session-layer-terminal"></div>
       </section>
     </div>
@@ -80,7 +95,7 @@
           <button id="go-to-view" type="button" aria-pressed="false">Graph</button>
         </div>
         <p class="go-to-hint">↑↓ choose · ↵ open · esc close</p>
-        <ul id="go-to-list" role="listbox" aria-label="Documents and brains"></ul>
+        <ul id="go-to-list" role="listbox" aria-label="Areas, Goals, Documents, Brains, and agents"></ul>
       </section>
     </div>
 

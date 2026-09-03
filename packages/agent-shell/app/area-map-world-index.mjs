@@ -3,7 +3,9 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { areaCanvasPath, canvasHash, parseAreaCanvas, serializeAreaCanvas, validateAreaCanvas } from "./area-canvas.mjs";
 import { areaForBlock, isAreaBoundary, isAreaRegion, tangentOf } from "./public/area-board-core.js";
+import { isSafeResourceId } from "./public/area-map-entities.js";
 import { AREA_MAP_LAYOUT, nearestFreeRectangle, rectanglesOverlap, regionId, regionKey, shardHulls } from "./public/area-map-world-core.js";
+import { validateAreaResourceSceneTransition } from "./area-map-resource-invariant.mjs";
 
 const CONTENT_MARGIN = AREA_MAP_LAYOUT.spacing;
 const SLOT_WIDTH = 460;
@@ -258,11 +260,15 @@ function safeSourceId(value) {
 }
 
 /** Validates one Tangent semantic reference without resolving outside the vault. */
-function tangentReferenceError(element) {
+function tangentReferenceError(element, owner) {
   const tangent = tangentOf(element);
   if (!tangent) return null;
   const reference = tangent.ref;
   if (!reference || reference.length > 8_000 || reference.includes("\0")) return `source element ${element.id} has an unsafe Tangent reference`;
+  if (tangent.kind === "resource") {
+    if (owner === ROOT_OWNER) return `source element ${element.id} resource reference cannot be owned by @root`;
+    return isSafeResourceId(reference) ? null : `source element ${element.id} has an unsafe Tangent resource reference`;
+  }
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(reference)?.[1]?.toLowerCase();
   if (scheme) {
     if (!["http", "https", "mailto"].includes(scheme)) return `source element ${element.id} has an unsafe Tangent reference`;
@@ -440,13 +446,13 @@ function sourceBindingError(element, owner, idsByOwner) {
 }
 
 /** Validates one complete source element at the mutation boundary. */
-function sourceElementError(element, owners) {
+function sourceElementError(element, owners, owner) {
   if (!element || typeof element !== "object" || Array.isArray(element)) return "put entries must be source elements";
   if (typeof element.id !== "string" || !element.id || element.id.length > 256 || element.id.includes("\0")) return "source element IDs must be safe non-empty strings";
   if (element.id.startsWith("tw-") || composedIdentity(element)) return "runtime IDs and composed metadata are not source mutations";
   if (["x", "y", "width", "height", "angle"].some((field) => typeof element[field] !== "number" || !Number.isFinite(element[field]))) return `source element ${element.id} has non-finite geometry`;
   if (element.width < 0 || element.height < 0) return `source element ${element.id} has negative geometry`;
-  const referenceError = tangentReferenceError(element);
+  const referenceError = tangentReferenceError(element, owner);
   if (referenceError) return referenceError;
   const endpointError = endpointMetadataError(element, owners);
   if (endpointError) return endpointError;
@@ -454,7 +460,7 @@ function sourceElementError(element, owners) {
 }
 
 /** Builds complete structural world snapshots over the per-Area shard repository. */
-export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = null, recordEvent = null }) {
+export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = null, recordEvent = null, resolveResource = null }) {
   const summaryCache = new Map();
   const baselineCache = new Map();
   const fallbackCache = new Map();
@@ -618,7 +624,7 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
       if (mutation.baseHash !== null && mutation.baseHash !== undefined && (typeof mutation.baseHash !== "string" || mutation.baseHash.includes("\0"))) return { status: 422, error: `source mutation ${owner} has an unsafe base hash` };
       const ids = new Set();
       for (const element of mutation.put) {
-        const error = sourceElementError(element, ownerSet); if (error) return { status: 422, error };
+        const error = sourceElementError(element, ownerSet, owner); if (error) return { status: 422, error };
         const bindingError = sourceBindingError(element, owner, idsByOwner); if (bindingError) return { status: 422, code: "cross-owner-binding", error: bindingError };
         const ownerError = arrowOwnershipError(element, owner); if (ownerError) return { status: 422, error: ownerError };
         if (ids.has(element.id)) return { status: 422, error: `source ID ${element.id} appears more than once for ${owner}` };
@@ -652,6 +658,8 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
       if (overlapError) return { status: 422, error: overlapError };
       const validation = validateAreaCanvas(scene);
       if (!validation.ok) return { status: 422, error: validation.errors.join("; ") };
+      const resourceError = await validateAreaResourceSceneTransition({ owner, currentScene: current.scene, nextScene: scene, resolveResource });
+      if (resourceError) return resourceError;
       writes.push({ owner, area: owner, baseHash: mutation.baseHash ?? null, canvas: scene, reason: String(request.reason ?? "map gesture").slice(0, 120) });
     }
     if (typeof saveGesture !== "function") return { status: 503, error: "map transaction writer is unavailable" };
@@ -663,20 +671,27 @@ export function createAreaMapWorldIndex({ root, repository, listAreas, runGit = 
         preflight: async () => {
           const current = await readState();
           const expectedWorldRevision = requestedWorldRevision ?? state.world.worldRevision;
-          if (current?.world.worldId === state.world.worldId
+          if (!(current?.world.worldId === state.world.worldId
             && current.world.treeRevision === state.world.treeRevision
             && current.world.worldRevision === state.world.worldRevision
-            && current.world.worldRevision === expectedWorldRevision) return null;
-          return {
-            status: 409,
-            conflict: true,
-            code: "world-race",
-            retryable: false,
-            error: "map world changed while the gesture was preparing",
-            worldId: current?.world.worldId ?? state.world.worldId,
-            treeRevision: current?.world.treeRevision ?? state.world.treeRevision,
-            worldRevision: current?.world.worldRevision ?? state.world.worldRevision,
-          };
+            && current.world.worldRevision === expectedWorldRevision)) {
+            return {
+              status: 409,
+              conflict: true,
+              code: "world-race",
+              retryable: false,
+              error: "map world changed while the gesture was preparing",
+              worldId: current?.world.worldId ?? state.world.worldId,
+              treeRevision: current?.world.treeRevision ?? state.world.treeRevision,
+              worldRevision: current?.world.worldRevision ?? state.world.worldRevision,
+            };
+          }
+          for (const write of writes) {
+            const source = current.reads.get(write.owner);
+            const resourceError = await validateAreaResourceSceneTransition({ owner: write.owner, currentScene: source.scene, nextScene: write.canvas, resolveResource });
+            if (resourceError) return resourceError;
+          }
+          return null;
         },
         /** Persists the exact projected revision before the commit can become recoverable. */
         acknowledgement,

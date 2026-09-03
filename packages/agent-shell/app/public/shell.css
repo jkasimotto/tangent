@@ -87,8 +87,13 @@ summary:focus-visible {
 .find-button { justify-self: end; }
 .find-button kbd { margin-left: 8px; color: var(--quiet); font-family: inherit; font-size: 12px; font-weight: 500; }
 .back-button kbd { margin-left: 8px; color: var(--quiet); font-family: inherit; font-size: 12px; font-weight: 500; }
-.bar-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.bar-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 7px; }
 .bar-button[hidden] { display: none; }
+.quiet-bar-button { color: var(--quiet); font-weight: 600; white-space: nowrap; }
+.quiet-bar-button:hover, .quiet-bar-button.has-attention { color: var(--text); }
+.context-brain-button { display: inline-flex; max-width: min(280px, 32vw); min-width: 0; align-items: center; color: var(--blue); white-space: nowrap; }
+.context-brain-button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.context-brain-button kbd { flex: none; margin-left: 8px; color: var(--quiet); font-family: inherit; font-size: 12px; font-weight: 500; }
 .awake-button { font-size: 15px; padding: 6px 8px; opacity: .35; transition: opacity .15s; }
 .awake-button:hover { opacity: .7; }
 .awake-button.active { opacity: 1; }
@@ -480,11 +485,41 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-row.cursor > *, .work-group-row.cursor > * { background: rgba(94, 144, 255, .09); }
 .work-row.cursor > :first-child, .work-group-row.cursor > :first-child { box-shadow: inset 3px 0 0 var(--blue); }
 
+/* Work is a temporary execution lens. It shares the app's content grid with
+   #screen, so the retained Map or discussion workspace stays mounted below. */
+.screen, .work-lens-layer { min-width: 0; min-height: 0; grid-column: 1; grid-row: 2; }
+.work-lens-layer { z-index: 70; display: grid; overflow: hidden; background: var(--bg); }
+.work-lens-layer.top-layer { z-index: 95; }
+.work-lens-layer[hidden] { display: none; }
+.work-lens-surface { display: grid; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); grid-template-rows: auto minmax(0, 1fr); }
+.work-lens-header { display: grid; min-width: 0; min-height: 54px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 7px 18px; border-bottom: 1px solid var(--line); background: rgba(20, 23, 27, .98); }
+.work-lens-header h2 { margin: 0; font-size: 17px; letter-spacing: -.015em; }
+.work-lens-freshness { display: inline-flex; min-width: 0; align-items: center; gap: 7px; margin: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.work-lens-freshness:not(:empty)::before { flex: none; width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; background: transparent; content: ""; }
+.work-lens-freshness.current, .work-lens-freshness[data-state="current"] { color: var(--green); }
+.work-lens-freshness.current::before, .work-lens-freshness[data-state="current"]::before { background: var(--green); }
+.work-lens-freshness.stale, .work-lens-freshness[data-state="stale"] { color: var(--amber); }
+.work-lens-freshness.stale::before, .work-lens-freshness[data-state="stale"]::before { background: var(--amber); }
+.work-lens-freshness.unknown, .work-lens-freshness[data-state="unknown"] { color: var(--red); }
+.work-lens-surface.stale .work-lens-header, .work-lens-surface[data-state="stale"] .work-lens-header, .work-lens-header:has(.work-lens-freshness[data-state="stale"]) { border-bottom-color: #665735; background: var(--amber-soft); }
+.work-lens-surface.current .work-lens-header, .work-lens-surface[data-state="current"] .work-lens-header, .work-lens-header:has(.work-lens-freshness[data-state="current"]) { border-bottom-color: #345b4a; }
+.work-lens-close-button { justify-self: end; border: 1px solid var(--line-strong); white-space: nowrap; }
+.work-lens-content { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.work-stale-banner, .resume-context-banner { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 9px 14px; border: 1px solid #665735; border-radius: 6px; background: var(--amber-soft); color: var(--amber); }
+.work-stale-banner { margin: 10px 12px 0; }
+.work-stale-banner span, .resume-context-banner span { min-width: 0; flex: 1; }
+.work-stale-banner button, .resume-context-banner button { flex: none; border: 1px solid currentColor; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; }
+.resume-context-banner { position: absolute; z-index: 12; top: 10px; left: 50%; width: min(680px, calc(100% - 24px)); transform: translateX(-50%); box-shadow: 0 10px 32px #0009; }
+.resume-context-banner span { display: grid; gap: 2px; }
+.resume-context-banner small { color: var(--muted); }
+
 .session-layer { position: fixed; inset: 0; z-index: 80; display: grid; padding: 38px; background: rgba(5, 7, 10, .68); place-items: stretch; }
+.session-layer.top-layer { z-index: 98; }
 .session-layer[hidden] { display: none; }
 .session-surface { display: grid; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid #46586d; border-radius: 7px; background: #0d1014; box-shadow: 0 20px 70px #000; grid-template-rows: 48px minmax(0, 1fr); }
 .session-layer-header { display: flex; min-width: 0; align-items: center; gap: 14px; padding: 0 10px; border-bottom: 1px solid #252b33; color: var(--quiet); font-size: 11px; }
 .session-layer-header button { flex: none; border: 0; background: transparent; color: #dbe6f5; cursor: pointer; }
+.session-layer-header [data-session-go-to] { margin-left: auto; }
 .session-layer-title { display: grid; min-width: 0; gap: 1px; }
 .session-layer-title strong, .session-layer-title span, .session-layer-title small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-layer-title strong { color: #e4e9ef; font-size: 12px; font-weight: 720; }
@@ -1302,6 +1337,10 @@ details.more-work .area-work-list { margin-top: 18px; }
 .terminal-host { position: absolute; inset: 14px 18px 18px; overflow: hidden; }
 .session-layer-terminal { position: relative; inset: auto; box-sizing: border-box; width: 100%; height: 100%; padding: 14px 18px 18px; }
 .terminal-host .xterm { height: 100%; }
+.terminal-transport-status { position: absolute; z-index: 5; right: 12px; bottom: 10px; max-width: calc(100% - 24px); padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: rgba(13, 15, 18, .94); color: var(--quiet); font-size: 11px; line-height: 1.35; pointer-events: none; }
+.terminal-transport-status[hidden] { display: none; }
+.terminal-transport-status[data-state="restored"] { color: var(--green); }
+.terminal-transport-status[data-state="ownership-error"], .terminal-transport-status[data-state="ended"] { color: var(--red); }
 
 /* Next step */
 
@@ -1446,11 +1485,10 @@ details.more-work .area-work-list { margin-top: 18px; }
 
 /* Modal and toast */
 
-/* The quick Document layer: Go to reads a Document above the screen or the
-   session Julian is on, and Escape reveals that exact surface again
-   (design-quick-returnable-document-search). It sits above the session layer
+/* The quick Document layer shares the content row, so global Map, Work, and
+   Back routes stay visible. It remains above retained content and sessions,
    and below the modal layer, so the visual order matches the key order. */
-.document-peek-layer { position: fixed; inset: 0; z-index: 90; display: grid; padding: 34px; background: rgba(3, 5, 8, .66); backdrop-filter: blur(3px); place-items: stretch; }
+.document-peek-layer { position: relative; z-index: 90; display: grid; min-width: 0; min-height: 0; overflow: hidden; grid-column: 1; grid-row: 2; padding: 34px; background: rgba(3, 5, 8, .66); backdrop-filter: blur(3px); place-items: stretch; }
 .document-peek-layer[hidden] { display: none; }
 .document-peek-surface { display: grid; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--bg); box-shadow: 0 28px 80px rgba(0, 0, 0, .6); grid-template-rows: 52px minmax(0, 1fr); }
 .document-peek-surface:focus { outline: none; }
@@ -1783,6 +1821,7 @@ body.work-search-open .screen { padding-bottom: 48px; }
 .map-brain-pane > header { position: relative; z-index: 2; display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--bg); color: var(--muted); }
 .map-brain-pane.focused > header { color: var(--text); }
 .map-brain-pane > header strong { margin-right: auto; }
+.map-brain-pane > header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .map-brain-pane > header button { border: 0; background: transparent; color: inherit; cursor: pointer; }
 .map-brain-content, .map-brain-terminal { position: relative; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
 .map-brain-terminal { inset: auto; box-sizing: border-box; width: 100%; padding: 14px 18px 18px; }
@@ -1790,7 +1829,31 @@ body.work-search-open .screen { padding-bottom: 48px; }
 .map-brain-start .launch-picker { max-width: none; }
 .map-brain-state { padding: 20px; color: var(--muted); }
 .map-brain-pane[hidden], .split-workspace-separator[hidden] { display: none; }
-@media (max-width: 1119px) {
+
+/* A discussion retains exactly two persistent surfaces. Document context is
+   on the left and its named Area Brain is on the right. */
+.document-discussion-workspace { display: grid; min-width: 0; min-height: 0; height: 100%; overflow: hidden; background: var(--bg); grid-template-columns: minmax(0, 1fr) minmax(420px, .78fr); grid-template-rows: minmax(0, 1fr); }
+.document-discussion-context-host, .document-discussion-brain-host { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+.document-discussion-context-host { grid-column: 1; grid-row: 1; border-right: 1px solid var(--line); }
+.document-discussion-brain-host { display: grid; grid-column: 2; grid-row: 1; border-left: 1px solid var(--line); background: var(--bg); grid-template-rows: auto minmax(0, 1fr); }
+.document-discussion-context-host.focused, .document-discussion-brain-host.focused { box-shadow: inset 0 0 0 2px var(--focus); }
+.document-discussion-subject-chip { display: inline-flex; min-width: 0; max-width: min(100%, 560px); align-items: center; gap: 7px; padding: 4px 8px; border: 1px solid #3a5068; border-radius: 999px; background: var(--blue-soft); color: #c9e1fb; font-size: 11px; line-height: 1.25; }
+.document-discussion-subject-chip[hidden] { display: none; }
+.document-discussion-subject-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document-discussion-subject-chip button { display: grid; flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; place-items: center; }
+.document-discussion-subject-chip button:hover, .document-discussion-subject-chip button:focus-visible { background: rgba(255, 255, 255, .08); color: var(--text); }
+.document-discussion-switcher { display: none; min-width: 0; align-items: center; gap: 3px; padding: 5px 8px; border-bottom: 1px solid var(--line); background: var(--surface-soft); }
+.document-discussion-switcher button { min-width: 0; min-height: 36px; flex: 1; overflow: hidden; padding: 6px 9px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.document-discussion-switcher button[aria-pressed="true"] { border-color: var(--line-strong); background: var(--surface-raised); color: var(--text); }
+
+/* Retained surfaces use the native inert behavior. These rules make their
+   pointer and selection state explicit while a controller keeps them hidden. */
+:where(.retained-surface, .document-discussion-context-host, .document-discussion-brain-host)[hidden], .document-discussion-switcher[hidden] { display: none; }
+:where(.retained-surface, .document-discussion-context-host, .document-discussion-brain-host, .work-lens-layer, .screen)[inert] { pointer-events: none; user-select: none; }
+:where(.retained-surface, .document-discussion-context-host, .document-discussion-brain-host, .work-lens-layer, .screen)[inert] * { pointer-events: none; }
+
+@media (max-width: 1599px) {
+  .bar-context:has(.map-focus-controls) { justify-content: flex-start; }
   .bar-context [data-starred-only], .bar-context [data-active-only] { display: none; }
 }
 .area-board-loading, .area-board-draft-choice { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 320px; color: var(--muted); }
@@ -1889,4 +1952,54 @@ body.work-search-open .screen { padding-bottom: 48px; }
   .area-work-heading-tools { width: 100%; justify-content: space-between; }
   .area-work-tools { grid-template-columns: minmax(0, 1fr); }
   .area-workspace-section { padding: 20px 16px; }
+}
+
+/* At 800px the global frame uses two compact rows. Every primary route stays
+   in the viewport, while the retained workspace shows one surface at a time. */
+@media (max-width: 900px) {
+  #app { grid-template-rows: auto minmax(0, 1fr); }
+  .app-bar { grid-template-areas: "brand tabs" "actions actions"; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 44px auto; align-content: center; gap: 0 8px; padding: 4px 12px 6px; }
+  .back-button { min-width: 0; grid-area: brand; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .primary-tabs { min-width: 0; grid-area: tabs; justify-self: end; }
+  .primary-tab { min-width: 56px; padding-inline: 7px; }
+  .bar-context { display: none; grid-area: context; }
+  .bar-actions { width: 100%; min-width: 0; grid-area: actions; flex-wrap: wrap; justify-content: flex-end; gap: 2px 5px; }
+  .bar-actions > * { min-width: 0; flex: 0 1 auto; }
+  .bar-actions .bar-button { padding: 6px 8px; }
+  .bar-actions .find-button { justify-self: auto; }
+  .bar-actions .status-pill { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .context-brain-button { max-width: min(280px, 48vw); }
+  #awake-button, #find-button { display: none; }
+
+  .document-peek-layer { padding: 18px; }
+  .document-peek-surface { grid-template-rows: auto minmax(0, 1fr); }
+  .document-peek-header { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; min-height: 0; padding: 8px 12px; }
+  .document-peek-actions { min-width: 0; flex-wrap: wrap; justify-content: flex-start; gap: 5px; }
+  .document-peek-actions button { min-height: 36px; }
+  .map-brain-pane > header { flex-wrap: wrap; }
+  .map-brain-pane > header strong { flex: 1 1 180px; }
+  .document-discussion-subject-chip { order: 3; max-width: 100%; flex: 1 1 100%; }
+
+  .document-discussion-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .document-discussion-switcher { display: flex; grid-column: 1; grid-row: 1; }
+  .document-discussion-context-host, .document-discussion-brain-host { grid-column: 1; grid-row: 2; border-inline: 0; }
+  .document-discussion-workspace[data-visible-surface="context"] .document-discussion-brain-host,
+  .document-discussion-workspace[data-visible-surface="brain"] .document-discussion-context-host { display: none; }
+}
+
+@media (max-width: 600px) {
+  .work-lens-header { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding-inline: 10px; }
+  .work-lens-header h2 { grid-column: 1; grid-row: 1; }
+  .work-lens-freshness { grid-column: 1; grid-row: 2; white-space: normal; }
+  .work-lens-close-button { grid-column: 2; grid-row: 1 / span 2; }
+}
+
+@media (max-width: 479px) {
+  .app-bar { gap: 0 4px; padding-inline: 8px; }
+  .back-button { max-width: 84px; padding-inline: 6px; }
+  .primary-tab { min-width: 50px; padding-inline: 5px; }
+  .bar-actions { justify-content: flex-start; }
+  .bar-actions .bar-button { max-width: 100%; padding: 5px 7px; font-size: 12px; }
+  .context-brain-button { max-width: calc(100vw - 16px); }
+  .document-discussion-switcher { padding-inline: 4px; }
 }

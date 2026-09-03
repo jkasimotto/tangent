@@ -4,6 +4,7 @@ import { createAreaMapWorldHistory } from "./area-map-world-history.js";
 import { rebaseAreaMapOwners } from "./area-map-world-conflict.js";
 import { createAreaMapWorldDraftStore } from "./area-map-world-draft-store.js";
 import { areaInRestriction } from "./area-map-find-core.js";
+import { resolveMapEntity, resourceLocatorKey } from "./area-map-entities.js";
 
 const VIEW_SCHEMA = "area-map-view.v2";
 const DRAFT_SCHEMA = "area-map-draft.v1";
@@ -173,11 +174,15 @@ export function createAreaMapWorldController({
     scrollY: Number(validView?.pan?.y ?? 0),
     zoom: Number(validView?.zoom ?? 1) || 1,
   };
-  let locatedArea = world.locatedArea;
-  let cameraTarget = locatedArea;
-  let cameraTrail = [];
-  let restrictionArea = world.areas.some((node) => node.key === locatedArea) ? locatedArea : null;
-  let selection = new Set();
+  const initialAreaKeys = new Set(world.areas.map((node) => node.key));
+  let locatedArea = initialAreaKeys.has(validView?.locatedArea) ? validView.locatedArea : world.locatedArea;
+  let cameraTarget = initialAreaKeys.has(validView?.cameraTarget) ? validView.cameraTarget : locatedArea;
+  let cameraTrail = (validView?.cameraTrail ?? []).filter((area, index, values) => initialAreaKeys.has(area) && area !== cameraTarget && values.indexOf(area) === index);
+  let restrictionArea = validView && Object.hasOwn(validView, "restrictionArea")
+    ? initialAreaKeys.has(validView.restrictionArea) ? validView.restrictionArea : null
+    : initialAreaKeys.has(locatedArea) ? locatedArea : null;
+  const initialElementIds = new Set(composition.scene.elements.map((element) => element.id));
+  let selection = new Set((validView?.selection ?? []).filter((id) => initialElementIds.has(id)));
   let findRevealId = null;
   let hiddenIds = new Set();
   let projectedScene = composition.scene;
@@ -190,6 +195,10 @@ export function createAreaMapWorldController({
   let destroyed = false;
   let revision = 0;
   let factsRevision = 0;
+  let resourceResolutions = new Map();
+  let mapKinds = null;
+  let figures = null;
+  const figureCache = new Map();
   let authorityGeneration = 0;
   let viewTimer = null;
   let pendingView = null;
@@ -249,7 +258,23 @@ export function createAreaMapWorldController({
 
   /** Builds a disposable render mask. Source and composed elements stay unchanged. */
   function project() {
-    const scene = boardCore.refreshTangentFacts(clone(composition.scene), getDocuments()).scene;
+    /** Converts one resolved resource into the normal Tangent Block fact cache. */
+    const resourceFact = (element, tangent) => {
+      const owner = element.customData?.tangentWorld?.owner;
+      const key = resourceLocatorKey({ owner, id: tangent.ref });
+      const entity = key ? resolveMapEntity({ element, kinds: mapKinds, resource: resourceResolutions.get(key) ?? null }) : null;
+      if (!entity) return null;
+      return {
+        kind: entity.display.kindLabel,
+        kindId: entity.kindId,
+        states: entity.states,
+        title: entity.display.label,
+        status: [entity.display.targetClue, ...entity.display.stateText].filter(Boolean).join(" · "),
+        ghost: entity.sourceState !== "current",
+        success: entity.display.externalTreatment === "success",
+      };
+    };
+    const scene = boardCore.refreshTangentFacts(clone(composition.scene), getDocuments(), { resourceFact, figures, figureCache }).scene;
     const visibleFolds = effectiveFolds();
     const hidden = new Set();
     const hiddenBlocks = new Set();
@@ -282,10 +307,14 @@ export function createAreaMapWorldController({
         hidden.add(element.id);
         if (boardCore.tangentOf(element)) hiddenBlocks.add(element.id);
       }
-      if (!revealedByFind && boardCore.tangentOf(element) && !boardCore.blockMatchesFocus(element, getDocuments(), focus, locatedArea)) {
+      if (!revealedByFind && boardCore.tangentOf(element) && !boardCore.blockMatchesFocus(element, getDocuments(), focus, locatedArea, resourceFact)) {
         hidden.add(element.id); hiddenBlocks.add(element.id);
         for (const binding of element.boundElements ?? []) if (binding.type === "text") hidden.add(binding.id);
       }
+    }
+    for (const element of scene.elements) {
+      const sourceId = element.customData?.tangentWorldEphemeral?.sourceId ?? null;
+      if (sourceId && hidden.has(sourceId)) hidden.add(element.id);
     }
     for (const element of scene.elements) {
       if (element.type !== "arrow") continue;
@@ -311,6 +340,11 @@ export function createAreaMapWorldController({
       zoom: camera.zoom,
       foldedAreas: [...folded].sort(),
       detailAreas: [...detailAreas].sort(),
+      locatedArea,
+      cameraTarget,
+      cameraTrail: [...cameraTrail],
+      restrictionArea,
+      selection: [...selection].sort(),
     };
     writeStored(storage, viewKey(world.worldId), value);
     pendingView = value;
@@ -345,7 +379,7 @@ export function createAreaMapWorldController({
     dirtyOwners.delete(undefined);
     return {
       reason, revision, factsRevision,
-      world, composition, scene: projectedScene, hiddenIds,
+      world, composition, scene: projectedScene, hiddenIds, mapKinds,
       focus, folded: effectiveFolds(), manualFolded: folded, restrictionArea, scopedAreas: scopedAreas(), findRevealId, detailAreas, camera, locatedArea, cameraTarget, cameraTrail, viewRestored: Boolean(validView),
       selection, save, draft, dirtyOwners,
       nextEscape: selection.size ? "Esc clears selection" : cameraTrail.length ? `Esc → ${leaf(cameraTrail.at(-1))}` : "Esc → Work",
@@ -625,6 +659,7 @@ export function createAreaMapWorldController({
     const element = regionElement(area);
     findRevealId = null;
     selection = new Set(element ? [element.id] : []);
+    saveView();
     notify("selection");
     if (element) void prioritizeLoads(area, { includeDescendants: false, requireSelectedDeferred: true });
     return element;
@@ -635,7 +670,7 @@ export function createAreaMapWorldController({
     const selectable = new Set(projectedScene.elements.filter((element) => !element.isDeleted).map((element) => element.id));
     const next = new Set([...ids].filter((id) => selectable.has(id)));
     if (same([...selection].sort(), [...next].sort())) return;
-    selection = next; notify("selection");
+    selection = next; saveView(); notify("selection");
   }
 
   /** Shows one otherwise masked block while it is the current find match. */
@@ -687,7 +722,7 @@ export function createAreaMapWorldController({
 
   /** Unwinds selection and camera history without changing Only. */
   function escape() {
-    if (selection.size) { selection = new Set(); findRevealId = null; notify("selection"); return { kind: "selection" }; }
+    if (selection.size) { selection = new Set(); findRevealId = null; saveView(); notify("selection"); return { kind: "selection" }; }
     if (cameraTrail.length) {
       const area = cameraTrail.at(-1); cameraTrail = cameraTrail.slice(0, -1);
       const element = fitArea(area, { push: false, select: false });
@@ -715,11 +750,38 @@ export function createAreaMapWorldController({
     updateSemanticDetail(); saveView(); notify("camera");
   }
 
-  /** Materializes one deferred shard in the existing world. */
+  /** Captures every private Map view property needed for an exact temporary return. */
+  function captureView() {
+    return clone({ camera, locatedArea, cameraTarget, cameraTrail, restrictionArea, selection: [...selection], findRevealId });
+  }
+
+  /** Restores one private Map view without changing authored world authority or history. */
+  function restoreView(value = {}) {
+    const areaKeys = new Set(world.areas.map((node) => node.key));
+    const elementIds = new Set(composition.scene.elements.map((element) => element.id));
+    camera = {
+      scrollX: Number(value.camera?.scrollX ?? camera.scrollX),
+      scrollY: Number(value.camera?.scrollY ?? camera.scrollY),
+      zoom: Number(value.camera?.zoom ?? camera.zoom) || 1,
+    };
+    locatedArea = areaKeys.has(value.locatedArea) ? value.locatedArea : locatedArea;
+    cameraTarget = areaKeys.has(value.cameraTarget) ? value.cameraTarget : locatedArea;
+    cameraTrail = (value.cameraTrail ?? []).filter((area, index, values) => areaKeys.has(area) && area !== cameraTarget && values.indexOf(area) === index);
+    restrictionArea = value.restrictionArea && areaKeys.has(value.restrictionArea) ? value.restrictionArea : null;
+    selection = new Set((value.selection ?? []).filter((id) => elementIds.has(id)));
+    findRevealId = value.findRevealId && elementIds.has(value.findRevealId) ? value.findRevealId : null;
+    updateSemanticDetail(); saveView();
+    onNavigation?.({ area: locatedArea, trail: [...cameraTrail], nextEscape: snapshot().nextEscape });
+    notify("view-restored");
+    return snapshot("view-restored");
+  }
+
+  /** Materializes one deferred shard in the existing world. A missing shard outside the eager set has no scene either; loading it supplies the projected empty scene so a nested Area with no Map file yet can still receive Blocks. */
   function materialize(area) {
     if (inFlightLoads.has(area)) return inFlightLoads.get(area);
     const node = world.areas.find((entry) => entry.key === area);
-    if (!node || !["deferred", "load-error"].includes(node.shard.state) || !loadShard) return Promise.resolve(node?.shard ?? null);
+    const loadable = ["deferred", "load-error"].includes(node?.shard?.state) || (node?.shard?.state === "missing" && !node.shard.scene);
+    if (!node || !loadable || !loadShard) return Promise.resolve(node?.shard ?? null);
     const task = (async () => {
       const startedAt = performance.now();
       const generation = authorityGeneration; const requestedRevision = world.worldRevision;
@@ -782,6 +844,116 @@ export function createAreaMapWorldController({
     return reconcileTree();
   }
 
+  /**
+   * Installs the Map kinds definition Julian owns. A changed revision repaints
+   * every fact and drops the drawn-figure cache; the same revision is a no-op,
+   * so the resource cadence can re-read the catalog freely.
+   */
+  function setMapKinds(catalog) {
+    if (!catalog || typeof catalog !== "object" || !Array.isArray(catalog.kinds)) return false;
+    if (mapKinds && mapKinds.revision === catalog.revision) return false;
+    mapKinds = clone(catalog);
+    figures = { kinds: new Map(mapKinds.kinds.map((entry) => [entry.id, entry])), icons: mapKinds.icons ?? {} };
+    figureCache.clear();
+    factsRevision += 1;
+    notify("map-kinds");
+    return true;
+  }
+
+  /** Installs current resource read facts without changing world or Map history authority. */
+  function setResourceResolutions(values = [], { replace = false } = {}) {
+    if (!Array.isArray(values)) return false;
+    const next = replace ? new Map() : new Map(resourceResolutions);
+    for (const resolution of values) {
+      const locator = resolution?.value?.locator ?? resolution?.locator;
+      const key = resourceLocatorKey(locator);
+      if (key) next.set(key, clone(resolution));
+    }
+    if (same([...next], [...resourceResolutions])) return false;
+    resourceResolutions = next;
+    factsRevision += 1;
+    notify("resource-facts");
+    return true;
+  }
+
+  /** Parses one trusted transaction source update without accepting a partial scene. */
+  function sourceUpdateScene(update) {
+    let scene;
+    try { scene = JSON.parse(String(update?.serializedSource ?? "")); }
+    catch { throw Object.assign(new Error("A resource transaction returned an invalid Map source."), { code: "resource-source-invalid" }); }
+    if (!scene || scene.type !== "excalidraw" || !Array.isArray(scene.elements) || typeof update?.owner !== "string" || !update.owner) {
+      throw Object.assign(new Error("A resource transaction returned an invalid Map source."), { code: "resource-source-invalid" });
+    }
+    return scene;
+  }
+
+  /** Applies only changed Tangent metadata to one historical world snapshot. */
+  function rebaseResourceSemantics(target, owner, changes, update) {
+    const node = target?.areas?.find((entry) => entry.key === owner);
+    if (!node?.shard?.scene) return;
+    for (const [sourceId, tangent] of changes) {
+      const element = node.shard.scene.elements.find((candidate) => candidate.id === sourceId);
+      if (!element) continue;
+      element.customData = { ...(element.customData ?? {}), tangent: clone(tangent) };
+    }
+    node.shard.hash = update.hash;
+    node.shard.revision = update.hash;
+    if (update.treeRevision) target.treeRevision = update.treeRevision;
+    if (update.worldRevision) target.worldRevision = update.worldRevision;
+  }
+
+  /** Returns every retained command whose snapshots can later become source authority. */
+  function retainedHistoryCommands() {
+    const items = [
+      ...(worldHistory?.state.undo ?? []),
+      ...(worldHistory?.state.redo ?? []),
+      worldHistory?.state.open,
+      worldHistory?.state.active?.command,
+      ...(worldHistory?.state.queue ?? []).map((item) => item.command),
+      failedSave?.command,
+      ...recoveryQueue.map((item) => item.command),
+    ].filter(Boolean);
+    return [...new Map(items.map((command) => [command.id, command])).values()];
+  }
+
+  /** Installs scene-coupled transaction authority without a Map history entry. */
+  function installResourceSourceUpdates(updates = []) {
+    if (!Array.isArray(updates) || !updates.length) return false;
+    if (hasPendingAuthoredWork()) {
+      throw Object.assign(new Error("Save or recover the current Map change before changing resource authority."), {
+        code: "resource-representation-conflict",
+      });
+    }
+    const next = clone(world);
+    const prepared = updates.map((update) => {
+      const node = next.areas.find((entry) => entry.key === update?.owner);
+      if (!node?.shard?.scene || typeof update?.hash !== "string" || !update.hash) {
+        throw Object.assign(new Error("A resource transaction returned an unknown Map source."), { code: "resource-source-invalid" });
+      }
+      const scene = sourceUpdateScene(update);
+      const previous = new Map(node.shard.scene.elements.map((element) => [element.id, element.customData?.tangent ?? null]));
+      const changes = new Map(scene.elements.flatMap((element) => {
+        const before = previous.get(element.id) ?? null;
+        const after = element.customData?.tangent ?? null;
+        return same(before, after) ? [] : [[element.id, after]];
+      }));
+      if (!changes.size) throw Object.assign(new Error("A resource transaction returned no semantic Map change."), { code: "resource-source-invalid" });
+      node.shard = { ...node.shard, state: "ready", hash: update.hash, revision: update.hash, scene };
+      return { update, changes };
+    });
+    const revisions = new Set(prepared.map(({ update }) => `${update.treeRevision ?? ""}\0${update.worldRevision ?? ""}`));
+    if (revisions.size !== 1) throw Object.assign(new Error("A resource transaction returned inconsistent Map revisions."), { code: "resource-source-invalid" });
+    const final = prepared.at(-1)?.update;
+    if (final?.treeRevision) next.treeRevision = final.treeRevision;
+    if (final?.worldRevision) next.worldRevision = final.worldRevision;
+    for (const command of retainedHistoryCommands()) for (const state of [command.before, command.after]) {
+      const historical = state?.get?.("world");
+      for (const { update, changes } of prepared) rebaseResourceSemantics(historical, update.owner, changes, update);
+    }
+    install(next, "resource-source-update");
+    return true;
+  }
+
   /** Retries an ordered failed save. */
   async function retry() {
     if (!failedSave && !recoveryQueue.length) return worldHistory.flush();
@@ -813,15 +985,29 @@ export function createAreaMapWorldController({
     folded = new Set([...folded].filter((area) => keys.has(area)));
     detailAreas = new Set([...detailAreas].filter((area) => keys.has(area)));
     worldHistory.state.undo.length = 0; worldHistory.state.redo.length = 0; worldHistory.state.queue.length = 0; worldHistory.state.open = null;
-    authorityGeneration += 1; gesture = null; failedSave = null; saveBarrier?.resolve?.(); saveBarrier = null; selection = new Set(); save = { state: "saved", result: null };
+    const retainedSelection = [...selection];
+    authorityGeneration += 1; gesture = null; failedSave = null; saveBarrier?.resolve?.(); saveBarrier = null; save = { state: "saved", result: null };
     recoveryQueue = []; clearDraft(); install(fresh, "reload");
+    const elementIds = new Set(composition.scene.elements.map((element) => element.id));
+    selection = new Set(retainedSelection.filter((id) => elementIds.has(id)));
+    saveView(); notify("reload-selection");
     onNavigation?.({ area: locatedArea, trail: [...cameraTrail], nextEscape: snapshot().nextEscape });
     return clone(world);
   }
 
   /** Rebases local source-ID changes over current shards, then submits a new operation. */
   async function keepMine() {
-    if (!failedSave || save.state !== "conflict" || !reloadWorld) return null;
+    if (!failedSave) return null;
+    if (save.state === "blocked") {
+      storeDraft(save.result);
+      await draftWrites;
+      const result = { ...(save.result ?? {}), retained: true };
+      save = { state: "blocked", result };
+      notify("draft-kept");
+      recordEvent("area_map_draft", { phase: "kept", draftState: "active", pendingCount: recoveryQueue.length + 1, status: Number(result.status ?? 0), failureKind: failureKind(result), ...draftCorrelation(draft) });
+      return result;
+    }
+    if (save.state !== "conflict" || !reloadWorld) return null;
     const pending = failedSave;
     const mineState = pending.command[pending.direction];
     const baseState = pending.command[pending.direction === "after" ? "before" : "after"];
@@ -929,8 +1115,8 @@ export function createAreaMapWorldController({
       if (changed && failedSave) storeDraft(save.result);
       return changed;
     },
-    selectArea, setSelection, setFindReveal, fitArea, navigateArea, setRestriction, toggleRestriction, escape, toggleFold, setFocus, setCamera,
-    materialize, prioritizeLoads, refreshFacts,
+    selectArea, setSelection, setFindReveal, fitArea, navigateArea, setRestriction, toggleRestriction, escape, toggleFold, setFocus, setCamera, captureView, restoreView,
+    materialize, prioritizeLoads, refreshFacts, setMapKinds, setResourceResolutions, installResourceSourceUpdates,
     /** Drains durable work, but never waits for a user Retry decision after a failed save. */
     async flush() {
       while (worldHistory.state.scheduled || worldHistory.state.active || worldHistory.state.queue.length) {

@@ -24,7 +24,7 @@ test("tangent help groups commands by who runs them and names no removed verb", 
   for (const removed of ["brain handover", "goal handover", "handover <facts", "pacing", "checkpoint", "designated review", "completion policy"]) {
     assert.equal(out.includes(removed), false, `help names the removed "${removed}"`);
   }
-  assert.match(out, /send <brain\|session\|area> <note\.\.\.>/);
+  assert.match(out, /send <session\|area> <note\.\.\.>/);
   assert.doesNotMatch(out, /^\s+idea\b/m);
   assert.match(out, /Run tangent <command> --help for the exact flags\./);
 });
@@ -55,7 +55,7 @@ test("tangent brain --help and tangent goal --help match the commands that exist
 test("tangent process start|stop|restart|close still reach tangent service, with a hint", async () => {
   const out = await tangent("help");
   assert.match(out, /^  service <list\|start\|stop\|restart\|close>/m, "help lists tangent service");
-  assert.match(out, /^  process <list\|show\|pause\|resume\|check>/m, "help lists tangent process as repeatable work");
+  assert.match(out, /^  process <list\|show\|pause\|resume\|check\|dismiss\|restore>/m, "help lists tangent process as repeatable work");
   assert.doesNotMatch(out, /trigger/, "help names no trigger command");
   const stderr = await execFileAsync(process.execPath, [cli, "process", "stop", "nothing", "--area", "otto/nowhere"], { env: { ...process.env, TANGENT_TREES_DIR: "/nonexistent" } })
     .then(() => "", (error) => String(error.stderr));

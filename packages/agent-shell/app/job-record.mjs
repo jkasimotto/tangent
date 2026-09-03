@@ -8,7 +8,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
+import { readJsonObject, readJsonObjectResult, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
 import { GOAL_QUEUE_SCHEMA, submitWorkerReport } from "./area-brain-domain.mjs";
 import { normalizeWorkerHandoverReceipts } from "./worker-handover-receipt.mjs";
 
@@ -98,6 +98,28 @@ export async function readAllJobs(root) {
     if (job) jobs.push(job);
   }
   return jobs;
+}
+
+/** Reads complete Job history while retaining one named problem for every unusable evidence file. */
+export async function readAllJobEvidence(root) {
+  const jobs = [];
+  const problems = [];
+  for (const file of await walkJsonFiles(root)) {
+    let result;
+    try { result = await readJsonObjectResult(file); }
+    catch (error) {
+      problems.push({ file, code: "job-record-load-failed", message: "The Job evidence file could not be read.", retryable: true });
+      continue;
+    }
+    if (result.state !== "ok") {
+      if (result.state !== "missing") problems.push({ file, code: "job-record-malformed", message: "The Job evidence file is malformed.", retryable: false });
+      continue;
+    }
+    const job = result.value?.schema === JOB_SCHEMA ? normalizeJobFile(result.value) : legacyJobFile(result.value);
+    if (job) jobs.push(job);
+    else problems.push({ file, code: "job-record-invalid", message: "The Job evidence file has an unsupported record shape.", retryable: false });
+  }
+  return { jobs, problems };
 }
 
 /** Returns one selected run. Older runs are immutable history. */

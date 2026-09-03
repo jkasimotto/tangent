@@ -52,6 +52,21 @@ test("a same-parent Area rename retains and remaps persisted overlap intent", ()
   });
 });
 
+test("an Area move remaps a resource source owner without rewriting its opaque ID", () => {
+  const scene = createEmptyScene();
+  const resource = createTextElement({ id: "resource-block", text: "Worktree" });
+  resource.customData = {
+    tangent: { kind: "resource", ref: "neara/source-shaped-but-opaque" },
+    tangentWorld: { owner: "neara/source", sourceId: "resource-block" },
+  };
+  scene.elements.push(resource);
+
+  const moved = rewriteAreaMapSceneForMove(scene, [{ from: "neara/source", to: "otto/renamed" }]);
+
+  assert.equal(moved.elements[0].customData.tangent.ref, "neara/source-shaped-but-opaque");
+  assert.equal(moved.elements[0].customData.tangentWorld.owner, "otto/renamed");
+});
+
 test("an explicit Area move preserves source IDs and remaps every map owner and reference", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-map-move-"));
   for (const area of ["neara", "neara/source", "neara/source/child", "otto"]) {

@@ -19,7 +19,7 @@ test("shell state restores URL navigation and durable browser choices", () => {
     "agent-shell.ask-dismissals.v1": '{"schema":"agent-shell.ask-dismissals.v1","ids":["stopped-step:one"]}',
   }), "http://shell/?area=otto&document=otto/note.md");
   assert.equal(result.requestedDocument, "otto/note.md");
-  assert.equal(result.state.view, "document");
+  assert.equal(result.state.view, "area-workspace", "a Document deep link opens above the durable Map root");
   assert.equal(result.state.areaSelection, "otto");
   assert.equal(result.state.currentFile, "otto/goal-one.md");
   assert.deepEqual([...result.state.expandedAreas], ["otto"]);
@@ -32,5 +32,5 @@ test("shell state ignores damaged optional JSON", () => {
   const result = createShellState(storage({ "agent-shell.expanded-areas": "{" }), "http://shell/");
   assert.deepEqual([...result.state.expandedAreas], []);
   assert.deepEqual([...result.state.dismissedAskIds], []);
-  assert.equal(result.state.view, "work");
+  assert.equal(result.state.view, "area-workspace");
 });

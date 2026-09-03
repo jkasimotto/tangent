@@ -7,6 +7,9 @@ Provider is a fourth launch axis beside harness, model and effort: an optional f
 
 The root harness registry and explicit per-Area `harnesses.md` contracts jointly resolve brain and worker launches. Area contracts inherit by intersection, retain compatibility aliases, expose health, and are repaired through the shell migration path (ADR-0054).
 
+Each Area can own multiple Map resources in `map-resources.json`. The Map and `tangent area resource` use the same catalog and Block contract.
+See [the accepted Map-entities design](design/map-entities/design-record.md) for the product and code contracts.
+
 Human CLI defaults are `setup`, `status`, `service`, `usage`, `rollup`, `search`, `eval`, `doctor`, and `completion`.
 `tangent service` runs servers and watchers from inherited, ignored `.processes.json` files in Tangent Areas. Services use Area-bound tmux sessions so they remain visible and inspectable in the hierarchy. `tangent process start|stop|restart|close` still reach it for one release with a hint.
 `tangent process` is repeatable work: a `<area>/process-<slug>.md` note with `schedule:` or `when:` plus `every:`. The Agent Shell server is the scheduler. When a process is due it writes one note to the Area brain, which starts the work as a Goal (ADR-0043). With `every:` alone the note is a loop: the brain gets its body as a message every so often while it runs.

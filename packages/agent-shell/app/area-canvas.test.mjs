@@ -43,6 +43,23 @@ test("rejects duplicate ids, unsafe numbers, invalid Tangent metadata, and unsup
   assert.match(result.errors.join("\n"), /type is unsupported/);
 });
 
+test("reads and round-trips inert resource references without treating their IDs as vault files", () => {
+  const scene = createEmptyScene();
+  const [visible, visibleLabel] = createBlockElements({ id: "resource-visible", kind: "resource", ref: "0198e8c5-2be6-7d6a-a142-f0903a13a23b", title: "Resource", x: 10, y: 20 });
+  const [hidden, hiddenLabel] = createBlockElements({ id: "resource-hidden", kind: "resource", ref: "0198e8c5-2be6-7d6a-a142-f0903a13a23c", title: "Hidden", x: 40, y: 50 });
+  hidden.isDeleted = true; hiddenLabel.isDeleted = true;
+  scene.elements.push(visible, visibleLabel, hidden, hiddenLabel);
+  const parsed = parseAreaCanvas(serializeAreaCanvas(scene));
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.scene.elements, scene.elements, "visible and deleted additive records retain exact source bytes");
+  assert.deepEqual(areaCanvasSummary(parsed.scene).references, [{ id: "resource-visible", resourceId: "0198e8c5-2be6-7d6a-a142-f0903a13a23b" }]);
+
+  visible.customData.tangent.ref = "../not-an-opaque-resource";
+  const invalid = validateAreaCanvas(scene);
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.errors.join("\n"), /safe opaque ID/);
+});
+
 test("converts legacy blocks, frames, ink, and edges to bound Excalidraw elements", () => {
   const legacy = { nodes: [
     { id: "frame", type: "group", label: "Now", x: 0, y: 0, width: 700, height: 400 },

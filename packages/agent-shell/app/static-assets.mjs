@@ -19,6 +19,7 @@ const VENDORS = {
 export async function serveStaticAsset(url, response, root) {
   try {
     let file;
+    let fallbacks = [];
     if (url.pathname === "/" || url.pathname === "/index.html") file = path.join(root, "public", "shell.html");
     else {
       const browserAsset = url.pathname === "/agent-shell-map.js" || url.pathname === "/agent-shell-map.css" || url.pathname.startsWith("/agent-shell-map-assets/");
@@ -32,13 +33,18 @@ export async function serveStaticAsset(url, response, root) {
           const relative = files[url.pathname.slice(prefix.length)];
           if (!relative) return notFound(response);
           file = path.join(root, "node_modules", relative);
+          fallbacks = [path.join(root, "..", "..", "..", "node_modules", relative)];
         } else {
           const relative = path.normalize(url.pathname).replace(/^([.][.][/\\])+/, "");
           file = path.join(root, "public", relative);
         }
       }
     }
-    const body = await readFile(file);
+    let body;
+    for (const candidate of [file, ...fallbacks]) {
+      try { body = await readFile(candidate); file = candidate; break; } catch {}
+    }
+    if (!body) return notFound(response);
     response.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream", "cache-control": "no-cache" });
     response.end(body);
   } catch {

@@ -43,10 +43,10 @@ test("a late nested Document is found from a complete production-shaped corpus w
   assert.ok(result.rows.some((row) => row.file === "neara/delivery/standards/design-standards-handbook.md"));
   assert.equal(result.areas.length, areaIds.length, "the Area facet stays complete after the mixed row bound");
   assert.equal(result.areasComplete, true);
-  assert.deepEqual(result.kinds, ["design", "reference"], "Document categories survive the bounded projection");
+  assert.deepEqual(result.kinds, ["area", "design", "reference"], "object and Document categories survive the bounded projection");
 });
 
-test("navigation returns Area notes and Brain destinations without scanning Goals", async () => {
+test("navigation returns explicit Areas, Area notes, and Brain destinations", async () => {
   const result = await buildNavigationSearch({
     query: "tangent",
     requestedLimit: 100,
@@ -58,6 +58,99 @@ test("navigation returns Area notes and Brain destinations without scanning Goal
     brains: [{ areaId: "otto/tangent", agentId: "tangent-brain", updatedAt: "2026-09-01T01:00:00.000Z" }],
   });
 
-  assert.deepEqual(result.rows.map((row) => row.kind).sort(), ["brain", "note"]);
+  assert.deepEqual(result.rows.map((row) => row.kind).sort(), ["area", "brain", "note"]);
+  assert.equal(result.rows.find((row) => row.kind === "area").area, "otto/tangent");
   assert.equal(result.areas[0].status, "archived");
+  assert.deepEqual(result.kinds, ["area", "brain"]);
+});
+
+test("retained Work Goals and agents are routable with their responsible Areas", async () => {
+  const result = await buildNavigationSearch({
+    query: "map first",
+    requestedLimit: 100,
+    areaIds: ["otto", "otto/tangent"],
+    /** Returns the one Document stored in the Tangent fixture Area. */
+    readAreaDocuments: async (area) => area === "otto/tangent" ? [{
+      file: "otto/tangent/design-map-first.md",
+      area,
+      kind: "document",
+      title: "Map first contract",
+      mtime: 10,
+      links: [],
+    }] : [],
+    areas: [
+      { id: "otto", label: "Otto", state: "open" },
+      { id: "otto/tangent", label: "Tangent", state: "open" },
+    ],
+    goals: [{
+      id: "otto/tangent/goal-map-first.md",
+      areaId: "otto/tangent",
+      title: "Map first implementation",
+      lifecycle: "open",
+      startedAt: "2026-09-01T00:00:00.000Z",
+    }],
+    agents: [
+      {
+        id: "map-first-worker",
+        target: "map-first-worker:0.0",
+        role: "worker",
+        areaId: null,
+        owner: { kind: "assignment", goalId: "otto/tangent/goal-map-first.md" },
+        liveness: "live",
+        activity: "working",
+        activitySince: "2026-09-01T02:00:00.000Z",
+        workTitle: "Map first implementation",
+      },
+      {
+        id: "tangent-brain-repair",
+        role: "repair",
+        areaId: null,
+        owner: { kind: "repair", id: "otto/tangent" },
+        liveness: "unknown",
+        activity: "unknown",
+        observedAt: "2026-09-01T01:00:00.000Z",
+      },
+      {
+        id: "completed-worker",
+        role: "worker",
+        areaId: "otto/tangent",
+        owner: { kind: "none", id: null },
+        liveness: "ended",
+        activity: "unknown",
+        observedAt: "2026-09-01T00:30:00.000Z",
+        workTitle: "Map first completed worker",
+      },
+    ],
+    brains: [],
+  });
+
+  assert.equal(result.rows[0].kind, "agent", "the established live-first rank is unchanged");
+  assert.equal(result.rows[0].session, "map-first-worker");
+  assert.equal(result.rows[0].area, "otto/tangent", "an assignment resolves through its Goal Area");
+  assert.ok(result.rows.some((row) => row.kind === "goal" && row.file === "otto/tangent/goal-map-first.md" && row.area === "otto/tangent"));
+  assert.ok(result.rows.some((row) => row.kind === "document" && row.file === "otto/tangent/design-map-first.md" && row.area === "otto/tangent"));
+  assert.equal(result.rows.some((row) => row.kind === "agent" && row.session === "completed-worker"), false, "a historical ended Agent is not advertised as a current runtime destination");
+  assert.deepEqual(result.kinds, ["area", "goal", "design", "agent"]);
+
+  const repair = await buildNavigationSearch({
+    query: "tangent brain repair",
+    requestedLimit: 1,
+    areaIds: ["otto/tangent"],
+    /** Returns no Documents for the repair-only fixture. */
+    readAreaDocuments: async () => [],
+    goals: [],
+    agents: [{
+      id: "tangent-brain-repair",
+      role: "repair",
+      areaId: null,
+      owner: { kind: "repair", id: "otto/tangent" },
+      liveness: "unknown",
+      activity: "unknown",
+      observedAt: "2026-09-01T01:00:00.000Z",
+    }],
+    brains: [],
+  });
+  assert.equal(repair.rows.length, 1, "the mixed result remains bounded by the requested limit");
+  assert.equal(repair.rows[0].area, "otto/tangent", "a repair agent resolves through its Brain Area");
+  assert.equal(repair.areas.length, 1, "the result bound does not truncate the Area facet");
 });

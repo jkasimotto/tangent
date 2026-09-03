@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { createEmptyScene, legacyCanvasToExcalidraw, splitReference, tangentOf } from "./public/area-board-core.js";
+import { isSafeResourceId } from "./public/area-map-entities.js";
 
 export const EMPTY_AREA_CANVAS = Object.freeze(createEmptyScene());
 export const AREA_BOARD_VIEW_SCHEMA = "area-board-view.v1";
@@ -47,6 +48,41 @@ function safeString(value, name, errors, { required = false, max = 100_000 } = {
   if ((required || value !== undefined && value !== null) && (typeof value !== "string" || required && !value || value.length > max || value.includes("\0"))) errors.push(`${name} must be ${required ? "a non-empty " : "a "}safe string`);
 }
 
+/**
+ * Validates one Excalidraw element list on its own, apart from any scene
+ * envelope. The Map kinds catalog reads icon drawings through the same checks
+ * as an Area scene, so one parser owns what an element may contain.
+ */
+export function validateSceneElements(elements) {
+  const errors = [];
+  const warnings = [];
+  const ids = new Set();
+  for (const [index, element] of elements.entries()) {
+    const at = `elements[${index}]`;
+    if (!element || typeof element !== "object" || Array.isArray(element)) { errors.push(`${at} must be an object`); continue; }
+    safeString(element.id, `${at}.id`, errors, { required: true, max: 256 });
+    if (ids.has(element.id)) errors.push(`duplicate id: ${element.id}`); else ids.add(element.id);
+    if (!ELEMENT_TYPES.has(element.type)) errors.push(`${at}.type is unsupported`);
+    for (const field of ["x", "y", "width", "height", "angle", "opacity", "strokeWidth", "roughness"]) finite(element[field], `${at}.${field}`, errors);
+    if (typeof element.width === "number" && element.width < 0 || typeof element.height === "number" && element.height < 0) errors.push(`${at} dimensions cannot be negative`);
+    safeString(element.strokeColor, `${at}.strokeColor`, errors, { max: 100 });
+    safeString(element.backgroundColor, `${at}.backgroundColor`, errors, { max: 100 });
+    safeString(element.link, `${at}.link`, errors, { max: 8_000 });
+    if (element.type === "text") { safeString(element.text, `${at}.text`, errors, { max: 500_000 }); safeString(element.originalText, `${at}.originalText`, errors, { max: 500_000 }); }
+    const tangent = element.customData?.tangent;
+    if (tangent !== undefined && !tangentOf(element)) errors.push(`${at}.customData.tangent must contain a supported kind and string ref`);
+    else if (tangent?.kind === "resource" && !isSafeResourceId(tangent.ref)) errors.push(`${at}.customData.tangent resource ref must be a safe opaque ID`);
+  }
+  const bindings = [];
+  for (const element of elements) {
+    for (const binding of [element.startBinding, element.endBinding]) if (binding?.elementId) bindings.push([element.id, binding.elementId]);
+    if (element.containerId) bindings.push([element.id, element.containerId]);
+    for (const bound of element.boundElements ?? []) if (bound?.id) bindings.push([element.id, bound.id]);
+  }
+  for (const [from, to] of bindings) if (!ids.has(to)) warnings.push(`${from} binds to missing element ${to}`);
+  return { ok: errors.length === 0, errors, warnings };
+}
+
 /** Validates the Excalidraw envelope while preserving forward-compatible element fields. */
 export function validateAreaCanvas(scene) {
   const errors = [];
@@ -62,29 +98,9 @@ export function validateAreaCanvas(scene) {
   if (!Array.isArray(scene.elements)) return { ok: false, errors, warnings };
   if (scene.elements.length > MAX_ELEMENTS) errors.push(`scene must contain at most ${MAX_ELEMENTS} elements`);
   if (scene.files && typeof scene.files === "object" && Object.keys(scene.files).length > MAX_FILES) errors.push(`scene must contain at most ${MAX_FILES} files`);
-  const ids = new Set();
-  for (const [index, element] of scene.elements.entries()) {
-    const at = `elements[${index}]`;
-    if (!element || typeof element !== "object" || Array.isArray(element)) { errors.push(`${at} must be an object`); continue; }
-    safeString(element.id, `${at}.id`, errors, { required: true, max: 256 });
-    if (ids.has(element.id)) errors.push(`duplicate id: ${element.id}`); else ids.add(element.id);
-    if (!ELEMENT_TYPES.has(element.type)) errors.push(`${at}.type is unsupported`);
-    for (const field of ["x", "y", "width", "height", "angle", "opacity", "strokeWidth", "roughness"]) finite(element[field], `${at}.${field}`, errors);
-    if (typeof element.width === "number" && element.width < 0 || typeof element.height === "number" && element.height < 0) errors.push(`${at} dimensions cannot be negative`);
-    safeString(element.strokeColor, `${at}.strokeColor`, errors, { max: 100 });
-    safeString(element.backgroundColor, `${at}.backgroundColor`, errors, { max: 100 });
-    safeString(element.link, `${at}.link`, errors, { max: 8_000 });
-    if (element.type === "text") { safeString(element.text, `${at}.text`, errors, { max: 500_000 }); safeString(element.originalText, `${at}.originalText`, errors, { max: 500_000 }); }
-    const tangent = element.customData?.tangent;
-    if (tangent !== undefined && !tangentOf(element)) errors.push(`${at}.customData.tangent must contain a supported kind and string ref`);
-  }
-  const bindings = [];
-  for (const element of scene.elements) {
-    for (const binding of [element.startBinding, element.endBinding]) if (binding?.elementId) bindings.push([element.id, binding.elementId]);
-    if (element.containerId) bindings.push([element.id, element.containerId]);
-    for (const bound of element.boundElements ?? []) if (bound?.id) bindings.push([element.id, bound.id]);
-  }
-  for (const [from, to] of bindings) if (!ids.has(to)) warnings.push(`${from} binds to missing element ${to}`);
+  const elements = validateSceneElements(scene.elements);
+  errors.push(...elements.errors);
+  warnings.push(...elements.warnings);
   return { ok: errors.length === 0, errors, warnings };
 }
 
@@ -112,6 +128,7 @@ export function areaCanvasSummary(scene) {
     references: elements.flatMap((element) => {
       const tangent = tangentOf(element);
       if (!tangent) return [];
+      if (tangent.kind === "resource") return [{ id: element.id, resourceId: tangent.ref }];
       const reference = splitReference(tangent.ref);
       return reference.url ? [{ id: element.id, url: reference.url }] : [{ id: element.id, file: reference.file, subpath: reference.subpath ?? null }];
     }),

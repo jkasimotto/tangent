@@ -17,8 +17,8 @@ export function resolveKeyboardContext({
 } = {}) {
   if (modal) return "modal";
   if (goTo) return "go-to";
-  if (documentPeek) return "document-peek";
   if (session) return "session";
+  if (documentPeek) return "document-peek";
   if (transient) return "transient";
   if (focusPicker) return "focus-picker";
   if (textEntry) return "text-entry";

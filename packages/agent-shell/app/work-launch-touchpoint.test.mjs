@@ -52,15 +52,15 @@ test("a plain session's open control is its recorded launch ids", async () => {
   const { document } = await bootWorkTable(withLaunches(workTableFixture()));
   const control = openControl(document, "framework-docs");
 
-  assert.equal(words(control), "Claude · claude-otto/opus-5/medium");
-  assert.match(control.getAttribute("aria-label"), /^Open Claude on claude-otto\/opus-5\/medium:/);
+  assert.equal(words(control), "Claude · claude-otto/opus-5/medium · 1/1");
+  assert.match(control.getAttribute("aria-label"), /^Open Assignment 1 on claude-otto\/opus-5\/medium:/);
 });
 
 test("a row with no recorded launch keeps its verb", async () => {
   const { document } = await bootWorkTable(withLaunches(workTableFixture()));
   const control = openControl(document, "nesc-241");
 
-  assert.equal(words(control), "Claude", "a session started before the ids were recorded is never guessed at: the name alone");
+  assert.equal(words(control), "Claude · 1/1", "a session started before the ids were recorded prints no guessed launch ids");
   assert.equal(control.className, "work-agent-ref");
 });
 

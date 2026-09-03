@@ -8,8 +8,14 @@ export type GitResult = {
   stderr: string;
 };
 
+export type GitOptions = {
+  stdin?: string;
+  env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+};
+
 /** Runs a git command in a repo and returns its stdout/stderr, throwing on a non-zero exit. */
-export async function git(repo: string, args: string[], options: { stdin?: string; env?: NodeJS.ProcessEnv } = {}): Promise<GitResult> {
+export async function git(repo: string, args: string[], options: GitOptions = {}): Promise<GitResult> {
   if (options.stdin !== undefined) {
     const result = await runGitProcess(repo, args, options);
     if (result.code !== 0) throw new Error((result.stderr || result.stdout || `git ${args.join(" ")} failed`).trim());
@@ -18,18 +24,19 @@ export async function git(repo: string, args: string[], options: { stdin?: strin
 
   const { stdout, stderr } = await execFileAsync("git", ["-C", repo, ...args], {
     env: { ...process.env, ...options.env },
-    maxBuffer: 64 * 1024 * 1024
+    maxBuffer: 64 * 1024 * 1024,
+    signal: options.signal,
   });
   return { stdout, stderr };
 }
 
 /** Runs a git command and returns its stdout trimmed of surrounding whitespace. */
-export async function gitText(repo: string, args: string[], options: { stdin?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string> {
+export async function gitText(repo: string, args: string[], options: GitOptions = {}): Promise<string> {
   return (await git(repo, args, options)).stdout.trim();
 }
 
 /** Runs a git command and returns its raw stdout without trimming. */
-export async function gitRaw(repo: string, args: string[], options: { stdin?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string> {
+export async function gitRaw(repo: string, args: string[], options: GitOptions = {}): Promise<string> {
   return (await git(repo, args, options)).stdout;
 }
 
@@ -145,11 +152,12 @@ export async function fileOidsAtRef(repo: string, ref: string): Promise<Map<stri
 }
 
 /** Spawns git with piped stdin (for commands that read from stdin) and returns stdout, stderr, and exit code. */
-async function runGitProcess(repo: string, args: string[], options: { stdin?: string; env?: NodeJS.ProcessEnv }): Promise<GitResult & { code: number | null }> {
+async function runGitProcess(repo: string, args: string[], options: GitOptions): Promise<GitResult & { code: number | null }> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", ["-C", repo, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...options.env }
+      env: { ...process.env, ...options.env },
+      signal: options.signal,
     });
     let stdout = "";
     let stderr = "";

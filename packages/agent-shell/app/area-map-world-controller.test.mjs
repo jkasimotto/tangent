@@ -3,6 +3,7 @@ import { performance } from "node:perf_hooks";
 import test from "node:test";
 
 import core from "./public/area-board-core.js";
+import worldCore from "./public/area-map-world-core.js";
 import { areaMapPointerCommand, areaMapProjectionUpdate, areaMapStructuralHullChanged, createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "./public/area-map-world-controller.js";
 
 /** Creates one small complete world with source-owned content. */
@@ -139,6 +140,140 @@ test("view masks and camera history never replace complete world authority", () 
   controller.destroy();
 });
 
+test("resource fact projection updates shared Block words and treatment without Map authority", () => {
+  const world = fixtureWorld();
+  const owner = "neara/delivery";
+  const id = "11111111-1111-4111-8111-111111111111";
+  world.areas.find((node) => node.key === owner).shard.scene.elements.push(
+    ...core.createBlockElements({ id: "review-block", kind: "resource", ref: id, title: "Cached", x: 210, y: 190 }),
+  );
+  const controller = createAreaMapWorldController({ world, storage: memoryStorage() });
+  const authoritative = controller.world();
+  const before = controller.snapshot().scene.elements.find((element) => core.tangentOf(element)?.kind === "resource");
+  const beforeGeometry = { x: before.x, y: before.y, width: before.width, height: before.height };
+  const resolution = {
+    state: "current",
+    value: {
+      locator: { owner, id },
+      label: "Map entities review",
+      target: { kind: "link", url: "https://github.com/otto/tangent/pull/42" },
+      local: null,
+      link: {
+        kind: "github-pr", owner: "otto", repository: "tangent", number: 42,
+        lifecycle: { state: "current", value: { stateLabel: "Merged", treatment: "success", providerUpdatedAt: "2026-09-02T00:00:00.000Z" } },
+      },
+      representation: { state: "current", value: "on-map" },
+      origin: null,
+      warnings: [],
+    },
+  };
+  assert.equal(controller.setResourceResolutions([resolution]), true);
+  const snapshot = controller.snapshot();
+  const block = snapshot.scene.elements.find((element) => core.tangentOf(element)?.kind === "resource");
+  const labelId = block.boundElements.find((entry) => entry.type === "text").id;
+  const label = snapshot.scene.elements.find((element) => element.id === labelId);
+  const rail = snapshot.scene.elements.find((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-success-rail");
+  assert.match(label.text, /^GITHUB PR  ✓\nMap entities review\notto\/tangent#42 · Merged$/);
+  assert.equal(rail.customData.tangentWorldEphemeral.sourceId, block.id);
+  assert.deepEqual({ x: block.x, y: block.y, width: block.width, height: block.height }, beforeGeometry);
+  assert.deepEqual(controller.world(), authoritative, "fact projection leaves every source shard exact");
+  assert.equal(snapshot.save.state, "saved");
+  assert.equal(controller.undo(), false, "fact projection creates no Map history entry");
+  assert.equal(controller.snapshot().composition.scene.elements.some((element) => element.customData?.tangentWorldEphemeral), false, "the composed world never owns the rail");
+  assert.equal(controller.setResourceResolutions([resolution]), false, "an identical fact response is a no-op");
+  controller.destroy();
+});
+
+test("resource source updates preserve authored geometry and rebase retained semantic Undo", async () => {
+  const owner = "neara/delivery";
+  const previousId = "11111111-1111-4111-8111-111111111111";
+  const currentId = "22222222-2222-4222-8222-222222222222";
+  const world = fixtureWorld();
+  world.areas.find((node) => node.key === owner).shard.scene.elements.push(
+    ...core.createBlockElements({ id: "resource-block", kind: "resource", ref: previousId, title: "Worktree", x: 210, y: 190 }),
+  );
+  const saves = [];
+  const controller = createAreaMapWorldController({
+    world,
+    storage: memoryStorage(),
+    /** Captures the exact source authority written by Undo. */
+    persistWorld: async (next, _areas, _owners, _command, direction) => {
+      saves.push({ next: structuredClone(next), direction });
+      return {
+        status: 200,
+        hashes: { [owner]: `saved-${saves.length}` },
+        treeRevision: "tree-saved",
+        worldRevision: `world-saved-${saves.length}`,
+      };
+    },
+  });
+
+  const styled = controller.world();
+  const styledBlock = styled.areas.find((node) => node.key === owner).shard.scene.elements.find((element) => element.id === "resource-block");
+  styledBlock.x += 35;
+  styledBlock.strokeColor = "#7048e8";
+  styledBlock.customData.note = "kept";
+  controller.commitWorld(styled, { changedOwners: [owner] }, "style");
+  await controller.flush();
+
+  const source = controller.world().areas.find((node) => node.key === owner).shard.scene;
+  source.elements.find((element) => element.id === "resource-block").customData.tangent.ref = currentId;
+  const revisionBefore = controller.snapshot().revision;
+  assert.equal(controller.installResourceSourceUpdates([{
+    owner,
+    hash: "resource-source-hash",
+    serializedSource: JSON.stringify(source),
+    treeRevision: "tree-resource",
+    worldRevision: "world-resource",
+  }]), true);
+
+  const installed = controller.world();
+  const installedBlock = installed.areas.find((node) => node.key === owner).shard.scene.elements.find((element) => element.id === "resource-block");
+  assert.equal(installedBlock.customData.tangent.ref, currentId);
+  assert.equal(installedBlock.x, 245);
+  assert.equal(installedBlock.strokeColor, "#7048e8");
+  assert.equal(installedBlock.customData.note, "kept");
+  assert.equal(installed.areas.find((node) => node.key === owner).shard.hash, "resource-source-hash");
+  assert.equal(installed.treeRevision, "tree-resource");
+  assert.equal(installed.worldRevision, "world-resource");
+  assert.ok(controller.snapshot().revision > revisionBefore);
+
+  assert.equal(controller.undo(), true, "the earlier style command remains the next Map history word");
+  const undoneBlock = controller.world().areas.find((node) => node.key === owner).shard.scene.elements.find((element) => element.id === "resource-block");
+  assert.equal(undoneBlock.customData.tangent.ref, currentId, "Undo preserves the newer resource association");
+  assert.equal(undoneBlock.x, 210);
+  assert.notEqual(undoneBlock.strokeColor, "#7048e8");
+  assert.equal(undoneBlock.customData.note, undefined);
+  await controller.flush();
+  assert.equal(saves.at(-1).direction, "before");
+  const persistedUndo = saves.at(-1).next.areas.find((node) => node.key === owner).shard.scene.elements.find((element) => element.id === "resource-block");
+  assert.equal(persistedUndo.customData.tangent.ref, currentId, "a later Map save cannot restore the stale resource ID");
+  assert.equal(controller.undo(), false, "the source update did not add a Map history entry");
+  controller.destroy();
+});
+
+test("resource source updates reject invalid authority and pending Map work", () => {
+  const owner = "neara/delivery";
+  const world = fixtureWorld();
+  world.areas.find((node) => node.key === owner).shard.scene.elements.push(
+    ...core.createBlockElements({ id: "resource-block", kind: "resource", ref: "11111111-1111-4111-8111-111111111111", title: "Worktree", x: 210, y: 190 }),
+  );
+  const controller = createAreaMapWorldController({ world, storage: memoryStorage() });
+  assert.throws(() => controller.installResourceSourceUpdates([{ owner, hash: "next", serializedSource: "{}" }]), { code: "resource-source-invalid" });
+
+  const dirty = controller.world();
+  dirty.areas.find((node) => node.key === owner).region.storedRect.x += 10;
+  controller.beginGesture("pointer");
+  controller.preview(dirty, { changedAreas: [owner] });
+  assert.throws(() => controller.installResourceSourceUpdates([{
+    owner,
+    hash: "next",
+    serializedSource: JSON.stringify(dirty.areas.find((node) => node.key === owner).shard.scene),
+  }]), { code: "resource-representation-conflict" });
+  controller.endGesture();
+  controller.destroy();
+});
+
 test("Only deletes unrelated regions and owner content from the render projection", () => {
   const world = fixtureWorld();
   const delivery = world.areas.find((node) => node.key === "neara/delivery");
@@ -228,9 +363,13 @@ test("Focus filters blocks without changing the isolated Area set", () => {
   controller.destroy();
 });
 
-test("server world view initializes camera but never overrides the newly opened Area", async () => {
+test("server world view restores the durable Map camera, location, folds, and selection", async () => {
   const world = fixtureWorld();
-  world.view = { schema: "area-map-view.v2", worldId: "world", locatedArea: "neara", pan: { x: 12, y: -9 }, zoom: 0.75, foldedAreas: ["neara/delivery"], detailAreas: ["neara"] };
+  const regionId = worldCore.composeAreaMapWorld(world).scene.elements.find((element) => element.customData?.tangent?.area === "neara")?.id;
+  world.view = {
+    schema: "area-map-view.v2", worldId: "world", locatedArea: "neara", cameraTarget: "neara", cameraTrail: ["neara/delivery"],
+    pan: { x: 12, y: -9 }, zoom: 0.75, foldedAreas: ["neara/delivery"], detailAreas: ["neara"], restrictionArea: null, selection: [regionId],
+  };
   const views = [];
   const controller = createAreaMapWorldController({
     world, storage: memoryStorage(),
@@ -238,16 +377,88 @@ test("server world view initializes camera but never overrides the newly opened 
     persistView: async (value) => views.push(value),
   });
   assert.equal(controller.snapshot().viewRestored, true);
-  assert.equal(controller.snapshot().locatedArea, "neara/delivery");
-  assert.deepEqual(controller.snapshot().camera, { scrollX: 12, scrollY: -9, zoom: 0.75 });
+  assert.deepEqual({
+    camera: controller.snapshot().camera,
+    locatedArea: controller.snapshot().locatedArea,
+    cameraTarget: controller.snapshot().cameraTarget,
+    cameraTrail: controller.snapshot().cameraTrail,
+    folded: [...controller.snapshot().folded],
+    restrictionArea: controller.snapshot().restrictionArea,
+    selection: [...controller.snapshot().selection],
+  }, {
+    camera: { scrollX: 12, scrollY: -9, zoom: 0.75 },
+    locatedArea: "neara",
+    cameraTarget: "neara",
+    cameraTrail: ["neara/delivery"],
+    folded: ["neara/delivery"],
+    restrictionArea: null,
+    selection: [regionId],
+  });
+  assert.equal(controller.snapshot().detailAreas.has("neara"), true);
   const authority = controller.world();
-  controller.fitArea("neara");
-  assert.equal(controller.snapshot().locatedArea, "neara");
+  controller.setCamera({ scrollX: 19, scrollY: -14, zoom: 0.85 });
   assert.deepEqual(controller.world(), authority);
   controller.destroy();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(views.at(-1).worldId, "world");
-  assert.equal(Object.hasOwn(views.at(-1), "locatedArea"), false);
+  assert.equal(views.at(-1).locatedArea, "neara");
+  assert.deepEqual(views.at(-1).selection, [regionId]);
+});
+
+test("private Map view survives controller teardown and exact stable-ID restoration", () => {
+  const storage = memoryStorage();
+  const first = createAreaMapWorldController({ world: fixtureWorld(), storage });
+  first.setRestriction(null);
+  first.toggleFold("neara/delivery");
+  first.setCamera({ scrollX: 73, scrollY: -28, zoom: 0.625 });
+  first.fitArea("neara");
+  const durable = first.captureView();
+  const selected = [...first.snapshot().selection];
+  first.destroy();
+
+  const restored = createAreaMapWorldController({ world: fixtureWorld(), storage });
+  assert.equal(restored.snapshot().viewRestored, true);
+  assert.deepEqual(restored.captureView(), durable);
+  assert.deepEqual(restored.snapshot().camera, { scrollX: 73, scrollY: -28, zoom: 0.625 });
+  assert.equal(restored.snapshot().folded.has("neara/delivery"), true);
+  assert.equal(restored.snapshot().locatedArea, "neara");
+  assert.deepEqual([...restored.snapshot().selection], selected);
+  restored.destroy();
+});
+
+test("captureView and restoreView round-trip the exact temporary Map return point", () => {
+  const controller = createAreaMapWorldController({ world: fixtureWorld(), storage: memoryStorage() });
+  const authority = controller.world();
+  controller.setRestriction(null);
+  controller.setCamera({ scrollX: 31, scrollY: -22, zoom: 0.7 });
+  controller.fitArea("neara");
+  const proof = controller.snapshot().scene.elements.find((element) => element.customData?.tangentWorld?.sourceId === "proof");
+  controller.setFindReveal(proof.id);
+  const returnPoint = controller.captureView();
+
+  controller.setFindReveal(null);
+  controller.setCamera({ scrollX: -400, scrollY: 250, zoom: 1.5 });
+  controller.navigateArea("neara/delivery");
+  controller.setRestriction("neara/delivery");
+  controller.setSelection([]);
+  const restored = controller.restoreView(returnPoint);
+
+  assert.deepEqual(controller.captureView(), returnPoint);
+  assert.deepEqual({
+    camera: restored.camera,
+    locatedArea: restored.locatedArea,
+    cameraTarget: restored.cameraTarget,
+    cameraTrail: restored.cameraTrail,
+    restrictionArea: restored.restrictionArea,
+    selection: [...restored.selection],
+    findRevealId: restored.findRevealId,
+  }, {
+    ...returnPoint,
+    selection: returnPoint.selection,
+  });
+  assert.deepEqual(controller.world(), authority, "temporary return state cannot change authored Map authority");
+  assert.equal(controller.undo(), false, "temporary return state cannot enter authored history");
+  controller.destroy();
 });
 
 test("one immutable region gesture saves and undoes with the same owner set", async () => {
@@ -274,12 +485,23 @@ test("one immutable region gesture saves and undoes with the same owner set", as
   controller.destroy();
 });
 
-test("an exhausted retryable head race is blocked for Retry instead of offered Keep mine", async () => {
+test("an exhausted retryable head race keeps its draft until Retry succeeds", async () => {
   const events = [];
   let attempts = 0;
   let reloads = 0;
+  let stored = null;
+  const draftStore = {
+    /** Starts without an earlier recovery draft. */
+    async load() { return null; },
+    /** Captures the draft that Keep mine must retain. */
+    async save(record) { stored = structuredClone(record); },
+    /** Clears recovery only after Retry saves the command. */
+    async remove() { stored = null; },
+    /** Releases the in-memory store. */
+    close() {},
+  };
   const controller = createAreaMapWorldController({
-    world: fixtureWorld(), storage: memoryStorage(),
+    world: fixtureWorld(), storage: memoryStorage(), draftStore,
     /** Captures the classified save and retry lifecycle. */
     onEvent: (event) => events.push(event),
     /** A retryable race has already exhausted the request-layer retries, then succeeds on the user's Retry. */
@@ -299,14 +521,21 @@ test("an exhausted retryable head race is blocked for Retry instead of offered K
   await controller.flush();
 
   assert.equal(controller.snapshot().save.state, "blocked");
-  assert.equal(await controller.keepMine(), null, "a retryable race cannot enter the three-way Keep mine flow");
+  const kept = await controller.keepMine();
+  assert.equal(kept.retained, true);
+  assert.equal(controller.snapshot().save.state, "blocked");
+  assert.equal(controller.snapshot().draft?.pending.length, 1);
+  assert.equal(stored?.pending.length, 1);
+  assert.equal(attempts, 1, "Keep mine retains the local recovery draft without issuing a blind save");
   assert.equal(reloads, 0);
   assert.ok(events.some((event) => event.name === "area_map_save" && event.phase === "failed" && event.failureKind === "head-race" && event.saveState === "blocked"));
+  assert.ok(events.some((event) => event.name === "area_map_draft" && event.phase === "kept"));
 
   await controller.retry();
   await controller.flush();
   assert.equal(controller.snapshot().save.state, "saved");
   assert.equal(attempts, 2);
+  assert.equal(stored, null);
   controller.destroy();
 });
 
@@ -530,6 +759,7 @@ test("reload cancels a stale save and preserves private world view state", async
   controller.toggleFold("neara/delivery");
   controller.setCamera({ scrollX: 41, scrollY: -17, zoom: 0.8 });
   controller.fitArea("neara");
+  const selectedBefore = [...controller.snapshot().selection];
   const changed = controller.world(); changed.areas[1].region.storedRect.x += 10;
   controller.commitWorld(changed, { changedAreas: ["neara/delivery"] }, "pointer");
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -546,6 +776,7 @@ test("reload cancels a stale save and preserves private world view state", async
   assert.equal(snapshot.folded.has("neara/delivery"), true);
   assert.deepEqual(snapshot.camera, { scrollX: 41, scrollY: -17, zoom: 0.8 });
   assert.equal(snapshot.locatedArea, "neara");
+  assert.deepEqual([...snapshot.selection], selectedBefore);
   assert.equal(controller.undo(), false);
   controller.destroy();
 });
@@ -779,5 +1010,107 @@ test("the current 41-Area structure and planned loads stay within product budget
   assert.equal(calls[0], "atlas/focus", "the selected deferred shard starts first");
   assert.deepEqual(calls.slice(1, 36), world.areas.filter((node) => node.key.startsWith("atlas/focus/")).map((node) => node.key));
   assert.ok(plannedDuration < 3_000, `planned subtree loading finished in ${plannedDuration.toFixed(1)} ms`);
+  controller.destroy();
+});
+
+test("a missing nested shard outside the eager set materializes its projected empty scene", async () => {
+  const world = fixtureWorld();
+  const missing = world.areas.find((node) => node.key === "neara/delivery");
+  missing.shard = { owner: missing.key, hash: null, state: "missing", elementCount: 0, blockCount: 0 };
+  const calls = [];
+  const controller = createAreaMapWorldController({
+    world, storage: memoryStorage(),
+    /** Returns the projected empty scene the shard route supplies for a file that does not exist yet. */
+    loadShard: async (area, context) => {
+      calls.push(area);
+      return { owner: area, state: "missing", hash: null, worldRevision: context.worldRevision, scene: core.createEmptyScene() };
+    },
+  });
+  assert.equal(controller.world().areas.find((node) => node.key === missing.key).shard.scene, undefined, "a missing shard starts without a scene");
+  const loaded = await controller.materialize(missing.key);
+  assert.equal(loaded.state, "missing");
+  assert.ok(Array.isArray(loaded.scene?.elements), "the missing shard now carries a scene that placement can extend");
+  assert.deepEqual(calls, [missing.key]);
+  assert.equal((await controller.materialize(missing.key)).state, "missing", "a loaded missing shard is not fetched again");
+  assert.deepEqual(calls, [missing.key]);
+  controller.destroy();
+});
+
+/** One installable Map kinds catalog with a single drawable worktree entry. */
+function worktreeCatalog(revision = "kinds-1") {
+  return {
+    revision, source: "vault", problems: [],
+    kinds: [{ id: "worktree", label: "Worktree", target: "path", provider: null, builtIn: true, icon: "worktree", icons: [], click: "copy-path", problems: [] }],
+    icons: {
+      worktree: {
+        name: "worktree", width: 100, height: 80, elementCount: 1, warning: null,
+        elements: [{ id: "folder", type: "rectangle", x: 0, y: 0, width: 100, height: 80, angle: 0, opacity: 100, strokeWidth: 2, roughness: 1, strokeColor: "#1e1e1e", backgroundColor: "transparent", seed: 3, versionNonce: 4 }],
+      },
+    },
+  };
+}
+
+/** Builds a world whose located Area holds one resolvable worktree Block. */
+function worktreeWorld(owner = "neara/delivery", id = "33333333-3333-4333-8333-333333333333") {
+  const world = fixtureWorld();
+  world.areas.find((node) => node.key === owner).shard.scene.elements.push(
+    ...core.createBlockElements({ id: "worktree-block", kind: "resource", ref: id, title: "Cached", x: 210, y: 190 }),
+  );
+  return { world, owner, id };
+}
+
+/** Builds the current resolution of one available worktree. */
+function worktreeResolution(owner, id) {
+  return {
+    state: "current",
+    value: {
+      locator: { owner, id }, label: "delivery", target: { kind: "worktree", path: "/Users/julianotto/Projects/delivery" },
+      local: { state: "current", value: { state: "available", checkout: { kind: "branch", head: "abc", branchRef: "refs/heads/main" }, dirty: false, repositoryPath: "/Users/julianotto/Projects/delivery" }, checkedAt: "2026-09-02T00:00:00.000Z" },
+      link: null, representation: { state: "current", value: "on-map" }, origin: null, warnings: [],
+    },
+  };
+}
+
+test("installing the Map kinds definition repaints facts, and the same revision is a no-op", () => {
+  const { world, owner, id } = worktreeWorld();
+  const controller = createAreaMapWorldController({ world, storage: memoryStorage() });
+  const authoritative = controller.world();
+  controller.setResourceResolutions([worktreeResolution(owner, id)]);
+  const reasons = [];
+  controller.subscribe?.((snapshot) => reasons.push(snapshot.reason));
+  const before = controller.snapshot();
+  assert.equal(before.mapKinds, null);
+  assert.equal(before.scene.elements.some((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon"), false);
+
+  assert.equal(controller.setMapKinds(worktreeCatalog()), true);
+  const after = controller.snapshot();
+  assert.equal(after.factsRevision, before.factsRevision + 1);
+  assert.equal(after.mapKinds.revision, "kinds-1");
+  const icons = after.scene.elements.filter((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon");
+  assert.equal(icons.length, 1);
+  assert.deepEqual(controller.world(), authoritative, "the definition never touches source authority");
+  assert.equal(after.save.state, "saved");
+  assert.equal(controller.setMapKinds(worktreeCatalog()), false, "the same revision changes nothing");
+  assert.equal(controller.setMapKinds({ revision: "kinds-2" }), false, "a catalog with no kinds list is refused");
+  assert.equal(controller.setMapKinds(worktreeCatalog("kinds-2")), true);
+  controller.destroy();
+});
+
+test("a folded Area hides a figure's icon with its Block", () => {
+  const { world, owner, id } = worktreeWorld();
+  const controller = createAreaMapWorldController({ world, storage: memoryStorage() });
+  controller.setResourceResolutions([worktreeResolution(owner, id)]);
+  controller.setMapKinds(worktreeCatalog());
+  const visible = controller.snapshot();
+  const icon = visible.scene.elements.find((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon");
+  assert.equal(visible.hiddenIds.has(icon.id), false);
+
+  controller.toggleFold(owner);
+  const folded = controller.snapshot();
+  const block = folded.scene.elements.find((element) => core.tangentOf(element)?.kind === "resource");
+  const foldedIcon = folded.scene.elements.find((element) => element.customData?.tangentWorldEphemeral?.kind === "resource-figure-icon");
+  assert.equal(folded.hiddenIds.has(block.id), true);
+  assert.equal(folded.hiddenIds.has(foldedIcon.id), true, "an icon never outlives the Block it belongs to");
+  assert.equal(foldedIcon.isDeleted, true);
   controller.destroy();
 });

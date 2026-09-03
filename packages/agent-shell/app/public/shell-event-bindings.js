@@ -14,7 +14,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     workLensLayer, workLensContent, openWorkLens, closeWorkLens, showMapHome,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
     showDescribe, toggleAwake, openModal, closeModal, modalConfirm, captureReturnPoint, restoreReturnPoint, openSessionLayer, closeSessionLayer, openAreaMap, drillAreaMap, closeAreaMap, openAreaMapFind, toggleAreaMapOnly,
-    toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane, resizeAreaWorkspacePane, areaWorkspaceMapOwnsFocus, returnFromBrain,
+    toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane, toggleAreaWorkspaceSplit, resizeAreaWorkspacePane, areaWorkspaceMapOwnsFocus, returnFromBrain,
     discussDocumentWithBrain, switchDocumentDiscussion, showMapFromDocument, closeDocumentContext, resumeDocumentContext, dismissResumeContext,
   } = chrome;
   const {
@@ -509,12 +509,16 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   /**
    * Owns keyboard movement inside the shared brain, Goal, and defaults
-   * chooser. `h/l` pick a column, `j/k` move the checked value, Enter runs
-   * the primary action, printed letters run the secondary ones.
+   * chooser, wherever it is drawn: the floating popover, and the Brain pane
+   * that shows the same picker in place. `h/l` pick a column, `j/k` move the
+   * checked value, Enter runs the primary action, printed letters run the
+   * secondary ones. The movement keys come from the one motion grammar, so
+   * arrows and `Ctrl-N` / `Ctrl-P` move here exactly as they move in Work.
    */
   function handleLaunchPopoverKey(event) {
-    const popover = surfaceRoot().querySelector("[data-launch-popover]");
+    const popover = event.target.closest?.("[data-launch-picker]") ?? surfaceRoot().querySelector("[data-launch-picker]");
     if (!popover) return false;
+    const surface = popover.closest("[data-launch-popover]") ?? popover;
     const active = event.target;
     // Tab visits controls, and each column once, on its checked value. The
     // options inside a column are walked with j/k, not Tab.
@@ -524,7 +528,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (!stops.length) {
         event.preventDefault();
         event.stopPropagation();
-        popover.focus?.({ preventScroll: true });
+        surface.focus?.({ preventScroll: true });
         return true;
       }
       const current = document.activeElement?.closest?.("[data-launch-column]")
@@ -540,6 +544,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (event.key === "Escape") return false;
     if (active.closest?.("input, textarea, select, [contenteditable='true']")) return false;
+    const motion = resolveMotion(event, { textOwned: false });
     const plain = !event.ctrlKey && !event.altKey && !event.shiftKey;
     const button = active.closest?.("button");
     const option = button?.classList.contains("launch-option") ? button : null;
@@ -557,7 +562,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       button.click();
       return true;
     }
-    if (plain && !event.metaKey && event.key.length === 1 && !/^[hjkl]$/.test(event.key)) {
+    if (plain && !event.metaKey && event.key.length === 1 && !motion) {
       const command = popover.querySelector(`[data-launch-key="${event.key}"]:not([disabled])`);
       if (!command) return false;
       event.preventDefault();
@@ -567,21 +572,19 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     const assignment = active.closest?.("[data-launch-assignment]");
     const assignmentRegion = active.closest?.("[data-launch-assignment-region]");
-    if (assignmentRegion && plain && !event.metaKey) {
+    const vertical = motion === motions.next || motion === motions.previous;
+    const horizontal = motion === motions.child || motion === motions.parent;
+    if (assignmentRegion && vertical) {
       const rows = [...assignmentRegion.querySelectorAll("[data-launch-assignment]")];
       const current = rows.indexOf(assignment);
-      if (["j", "k", "ArrowDown", "ArrowUp"].includes(event.key)) {
-        event.preventDefault();
-        event.stopPropagation();
-        const delta = ["j", "ArrowDown"].includes(event.key) ? 1 : -1;
-        const next = current < 0 ? (delta > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, current + delta));
-        rows[next]?.querySelector("[data-launch-step-select]")?.focus({ preventScroll: true });
-        revealLaunchFocus();
-        return true;
-      }
+      event.preventDefault();
+      event.stopPropagation();
+      const delta = motion === motions.next ? 1 : -1;
+      const next = current < 0 ? (delta > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, current + delta));
+      rows[next]?.querySelector("[data-launch-step-select]")?.focus({ preventScroll: true });
+      revealLaunchFocus();
+      return true;
     }
-    const vertical = plain && !event.metaKey && ["j", "k", "ArrowDown", "ArrowUp"].includes(event.key);
-    const horizontal = plain && !event.metaKey && ["h", "l", "ArrowLeft", "ArrowRight"].includes(event.key);
     if (!vertical && !horizontal) return false;
     const columns = [...popover.querySelectorAll("[data-launch-column]")].filter((column) => column.querySelector(".launch-option"));
     if (!columns.length) return false;
@@ -591,7 +594,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (horizontal) {
       event.preventDefault();
       event.stopPropagation();
-      const delta = ["l", "ArrowRight"].includes(event.key) ? 1 : -1;
+      const delta = motion === motions.child ? 1 : -1;
       const columnIndex = columns.indexOf(column);
       // From outside the columns, l enters the first column and h the last.
       const next = columnIndex < 0 ? (delta > 0 ? 0 : columns.length - 1) : Math.max(0, Math.min(columns.length - 1, columnIndex + delta));
@@ -605,7 +608,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const target = column ?? columns[0];
     const choices = [...target.querySelectorAll(".launch-option")];
     const current = choices.indexOf(column ? option : checkedIn(target));
-    const delta = ["j", "ArrowDown"].includes(event.key) ? 1 : -1;
+    const delta = motion === motions.next ? 1 : -1;
     const index = current < 0 ? (delta > 0 ? 0 : choices.length - 1) : Math.max(0, Math.min(choices.length - 1, current + delta));
     chooseLaunchOption(choices[index]);
     return true;
@@ -1821,6 +1824,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest?.("#work-tab")) return openWorkLens({ mode: "all" });
     if (target.closest?.("#for-you-button")) return openWorkLens({ mode: "for-you" });
     if (target.closest?.("#problems-button")) return openWorkLens({ mode: "problems" });
+    if (target.closest?.("#split-button")) return void toggleAreaWorkspaceSplit();
     const contextBrain = target.closest?.("#context-brain-button");
     if (contextBrain) return toggleMapBrain(contextBrain.dataset.brainArea);
     if (target.closest?.("[data-discuss-current-document]")) return void discussFullDocument(target.closest("[data-discuss-current-document]"));
@@ -1829,13 +1833,17 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest?.("[data-retry-go-to]")) {
       return renderGoToList();
     }
+    // A click already puts the keyboard where it landed. Both panes only take
+    // logical focus for it. Sending the pane its own destination would pull
+    // the keyboard off the exact control just chosen, which left the Brain
+    // chooser stuck on Start after every j or k.
+    const paneClickInteractive = target.closest?.("button, input, select, textarea, a, dialog, [role='dialog'], [contenteditable]:not([contenteditable='false'])");
     if (target.closest?.("[data-map-column]")) {
-      const interactive = target.closest?.("button, input, select, textarea, a, dialog, [role='dialog'], [contenteditable]:not([contenteditable='false'])");
-      focusMapCompanion("map", { moveDomFocus: !interactive });
+      focusMapCompanion("map", { moveDomFocus: !paneClickInteractive });
     }
     else {
       const brainPane = target.closest?.("[data-area-workspace] [data-map-brain-pane]");
-      if (brainPane && !brainPane.hidden) focusMapCompanion("brain");
+      if (brainPane && !brainPane.hidden) focusMapCompanion("brain", { moveDomFocus: !paneClickInteractive });
     }
     if (state.documentPeek && documentPeekLayer.contains(target)) return handleDocumentPeekClick(event);
     const processControl = target.closest?.("[data-control-process]");
@@ -3220,6 +3228,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (context !== "work" && areaWorkspaceMapOwnsFocus() && context !== "text-entry" && !event.metaKey && !event.ctrlKey && !event.altKey && event.shiftKey && String(event.key).toLowerCase() === "o" && !event.target.closest?.("[data-tangent-area-map]")) {
       event.preventDefault(); event.stopPropagation(); toggleAreaMapOnly(); return;
     }
+
+    // The launch chooser owns movement inside itself. In the Brain pane it is
+    // drawn in place, not as a floating layer, so no context claims it there:
+    // answer its keys where they are typed instead of letting them fall
+    // through unhandled, which is what made the selection sit still and beep.
+    if (!["modal", "go-to"].includes(context) && event.target.closest?.("[data-launch-picker]") && handleLaunchPopoverKey(event)) return;
 
     if (context === "modal") {
       const focusedAction = event.target.closest?.("button:not([disabled]), a[href]");

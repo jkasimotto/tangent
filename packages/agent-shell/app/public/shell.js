@@ -73,7 +73,7 @@ if (hydratedWork) {
 
 const {
   screen, "back-button": backButton, "map-tab": mapTab, "work-tab": workTab, "areas-tab": areasTab, "prompts-tab": promptsTab, "bar-context": barContext,
-  "for-you-button": forYouButton, "problems-button": problemsButton, "context-brain-button": contextBrainButton,
+  "for-you-button": forYouButton, "problems-button": problemsButton, "split-button": splitButton, "context-brain-button": contextBrainButton,
   "find-button": findButton, "secondary-action": secondaryAction, "modal-layer": modalLayer,
   "modal-kicker": modalKicker, "modal-title": modalTitle, "modal-copy": modalCopy, "modal-field": modalField,
   "modal-actions": modalActions, toast, "status-pill": statusPill, "awake-button": awakeButton,
@@ -557,7 +557,7 @@ const {
   selectableAreas, preferredArea, areaOptions, renderDescribeCapture, describeSourcesBlock,
   launchOptionsFor, launchSelection, launchRequestFields, launchStepDraft, syncLaunchDraft, commitActiveStep,
   blankLaunchStep, launchStepsForRecord, launchStepIsMutable, activateLaunchStep, loadLaunchStep, launchStepLabel,
-  pipelineForGoal, pipelineRecordForGoal, launchPickerBlock, launchKeyHint,
+  pipelineForGoal, pipelineRecordForGoal, launchPickerBlock,
   toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor,
 } = goalLaunchView;
 
@@ -717,7 +717,7 @@ function launchPopover() {
   const left = Math.max(16, anchor.right - width);
   return `
     <div class="launch-popover" data-launch-popover data-focus-key="launch:surface" tabindex="-1" role="dialog" aria-modal="false" aria-label="${settings ? "Default agents" : "Choose agent and model"}" style="${launchPopoverVerticalStyle(anchor)};left:${left}px;width:${width}px">
-      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : "Default agents"}</strong><span class="launch-key-hint">${launchKeyHint()}</span></header>
+      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : "Default agents"}</strong></header>
       ${launchPickerBlock()}
     </div>
   `;
@@ -885,7 +885,7 @@ function showMapHome({ focus = true } = {}) {
   if (state.workLens) closeWorkLens({ restoreFocus: false });
   if (state.documentPeek) closeDocumentContext({ restoreFocus: false });
   if (state.view !== "area-workspace" || !activeAreaWorkspace) openAreaWorkspace({ area: state.mapArea, entryPane: "map", returnPoint: null });
-  else activeAreaWorkspace.show("map", { focus: true, moveDomFocus: focus });
+  else activeAreaWorkspace.enter("map", { moveDomFocus: focus });
   state.mapReturn = null;
   updateHeader();
 }
@@ -1055,6 +1055,15 @@ function updateHeader() {
     problemsButton.hidden = false;
     problemsButton.textContent = `Problems ${attention.problems}`;
     problemsButton.setAttribute("aria-label", `${attention.problems} problems. Open filtered Work.`);
+  }
+  if (splitButton) {
+    // The split is Julian's standing choice, so this control states it and is
+    // the only way to open a second pane. It hides where a split cannot show.
+    const split = Boolean(activeAreaWorkspace?.splitOpen?.());
+    splitButton.hidden = !isAreaWorkspace || !workspaceLayout?.canSplit || documentSurfaceOpen || workSurfaceActive;
+    splitButton.setAttribute("aria-pressed", String(split));
+    splitButton.setAttribute("aria-label", split ? "Show one pane instead of the split" : "Show Map and Brain side by side");
+    splitButton.classList.toggle("active", split);
   }
   if (contextBrainButton) {
     const documentArea = documentSurfaceOpen
@@ -2437,7 +2446,7 @@ function openAreaMap(area, trigger) {
   }
   if (state.view === "area-workspace" && activeAreaWorkspace) {
     if (area) locateAreaMap(area);
-    activeAreaWorkspace.show("map", { focus: true, moveDomFocus: true });
+    activeAreaWorkspace.enter("map", { moveDomFocus: true });
     updateHeader();
     return;
   }
@@ -2516,9 +2525,9 @@ function toggleMapBrain(area = (state.documentPeek && !state.documentPeek.suspen
   const brainWasActive = activeAreaWorkspace.snapshot().focused === "brain";
   if (returnPoint) state.brainReturn = { kind: "work", point: returnPoint };
   else if (!brainWasActive || !state.brainReturn) state.brainReturn = { kind: "map", focus: document.activeElement };
-  /** Shows and focuses the retained Brain pane. */
+  /** Enters the retained Brain pane and gives it the keyboard. */
   const show = () => {
-    activeAreaWorkspace?.show("brain", { focus: true, moveDomFocus: true });
+    activeAreaWorkspace?.enter("brain", { moveDomFocus: true });
     refreshAreaWorkspace();
     updateHeader();
   };
@@ -2534,8 +2543,16 @@ function returnFromBrain() {
   const point = state.brainReturn;
   state.brainReturn = null;
   if (point?.kind === "work" && point.point) return restoreReturnPoint(point.point);
-  activeAreaWorkspace?.show("map", { focus: true, moveDomFocus: !point?.focus });
+  activeAreaWorkspace?.enter("map", { moveDomFocus: !point?.focus });
   if (point?.focus?.isConnected) point.focus.focus?.({ preventScroll: true });
+  updateHeader();
+  return true;
+}
+/** Opens or closes the split. Nothing else opens a second pane. */
+function toggleAreaWorkspaceSplit() {
+  if (state.view !== "area-workspace" || !activeAreaWorkspace) return false;
+  activeAreaWorkspace.toggleCompanion();
+  refreshAreaWorkspace();
   updateHeader();
   return true;
 }
@@ -2560,14 +2577,14 @@ function openMapBrainSession(session) {
   }
   state.sessionPeek = null;
   if (session?.area === activeMapBrainArea) {
-    activeAreaWorkspace.show("brain", { focus: true, moveDomFocus: true });
+    activeAreaWorkspace.enter("brain", { moveDomFocus: true });
     refreshAreaWorkspace();
     return true;
   }
   rememberBrainDraft(activeMapBrainArea);
   activeMapBrainArea = session.area;
   void activeAreaWorkspace.replace(areaBrainPane(session.area)).then(() => {
-    activeAreaWorkspace?.show("brain", { focus: true, moveDomFocus: true });
+    activeAreaWorkspace?.enter("brain", { moveDomFocus: true });
     refreshAreaWorkspace();
   });
   return true;
@@ -2575,12 +2592,12 @@ function openMapBrainSession(session) {
 shellBindings = bindShellEvents({
   shell: { state, post, paint, refresh, showToast },
   chrome: {
-    screen, backButton, mapTab, workTab, areasTab, promptsTab, forYouButton, problemsButton, contextBrainButton, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
+    screen, backButton, mapTab, workTab, areasTab, promptsTab, forYouButton, problemsButton, splitButton, contextBrainButton, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, workSearch, workSearchInput, workSearchCount, workSearchKeys, modalLayer, documentPeekLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
     workLensLayer, workLensContent, openWorkLens, closeWorkLens, showMapHome,
     confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, captureReturnPoint, restoreReturnPoint,
     showDecision, showDescribe, toggleAwake, openModal, closeModal, modalConfirm: getModalConfirm, openSessionLayer, closeSessionLayer,
-    openAreaMap, drillAreaMap, closeAreaMap, openAreaMapFind, toggleAreaMapOnly, toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane,
+    openAreaMap, drillAreaMap, closeAreaMap, openAreaMapFind, toggleAreaMapOnly, toggleMapBrain, closeMapBrain, focusMapCompanion, renderMapBrainPane, toggleAreaWorkspaceSplit,
     resizeAreaWorkspacePane, areaWorkspaceMapOwnsFocus, returnFromBrain,
     discussDocumentWithBrain, switchDocumentDiscussion, showMapFromDocument, closeDocumentContext,
     resumeDocumentContext, dismissResumeContext,

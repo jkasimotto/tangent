@@ -91,6 +91,7 @@ summary:focus-visible {
 .bar-button[hidden] { display: none; }
 .quiet-bar-button { color: var(--quiet); font-weight: 600; white-space: nowrap; }
 .quiet-bar-button:hover, .quiet-bar-button.has-attention { color: var(--text); }
+.split-button.active { color: var(--text); }
 .context-brain-button { display: inline-flex; max-width: min(280px, 32vw); min-width: 0; align-items: center; color: var(--blue); white-space: nowrap; }
 .context-brain-button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .context-brain-button kbd { flex: none; margin-left: 8px; color: var(--quiet); font-family: inherit; font-size: 12px; font-weight: 500; }

@@ -166,6 +166,8 @@ The global Map and Work controls own direct navigation. Back owns historical ret
 
 **Decision:** At wide widths, Map and Brain can remain side by side. Pointer focus does not remount either pane.
 
+**Decision (2026-09-03):** A split is the user's standing choice, never a side effect of a route. Reaching a pane enters it: the pane fills the workspace and its sibling closes but stays mounted. One control in the app bar opens or closes the second pane, and that choice is stored with the pane order and width (`companion` in `agent-shell.area-workspace-layout.v1`). While it is on, every route keeps both panes open and only moves focus.
+
 **Decision:** At 800px, the split controller keeps both roots. It shows one root and marks the hidden root `inert`.
 
 **Decision:** A compact header keeps Map, Work, contextual Brain, attention, and Go To controls in the viewport.

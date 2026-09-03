@@ -391,11 +391,15 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const registryLink = `<button class="quiet-button launch-registry-link" type="button" data-open-harnesses data-launch-key="${escapeHtml(launchKeyFor("registry"))}" data-focus-key="launch:registry">Edit harnesses and models… <kbd>${escapeHtml(launchKeyFor("registry"))}</kbd></button>`;
     // The brain's common path is Enter on the default. Its summary and actions
     // sit above the columns so the fold never hides them.
+    // The keys are printed above the choices they move, in the popover and in
+    // the Brain pane alike. One list prints them and one grammar answers them.
+    // A surface with no columns has no movement to describe.
+    const keyHint = columns ? `<p class="launch-key-hint">${launchKeyHint()}</p>` : "";
     const body = braining
-      ? `${brainZone}${commandZone}${actions}${columns}${registryLink}`
-      : `${settingsRows}${brainZone}${settingsEditor}${columns}${showChoices ? commandZone : ""}${actions}${registryLink}`;
+      ? `${brainZone}${commandZone}${actions}${keyHint}${columns}${registryLink}`
+      : `${settingsRows}${brainZone}${settingsEditor}${keyHint}${columns}${showChoices ? commandZone : ""}${actions}${registryLink}`;
     return `
-      <div class="launch-picker">
+      <div class="launch-picker" data-launch-picker>
         ${body}
       </div>
     `;

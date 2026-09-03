@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   AREA_WORKSPACE_LAYOUT_KEY,
   createSplitLayout,
+  enterSplitPane,
   focusSplitPane,
   hideSplitPane,
   orderSplitPanes,
@@ -63,12 +64,33 @@ test("layout preference validates new records and migrates the old Brain width",
     /** Writes one in-memory preference. */
     setItem: (key, value) => values.set(key, value),
   };
-  assert.deepEqual(readSplitLayoutPreference(storage), { order: panes, sizePx: { map: 560, brain: 615 } });
+  assert.deepEqual(readSplitLayoutPreference(storage), { order: panes, sizePx: { map: 560, brain: 615 }, companion: false });
   const layout = createSplitLayout({ paneIds: panes, entryPane: "map", preference: readSplitLayoutPreference(storage), minSizePx: minimums });
   writeSplitLayoutPreference(storage, layout);
-  assert.deepEqual(JSON.parse(values.get(AREA_WORKSPACE_LAYOUT_KEY)), { schema: "area-workspace-layout.v1", order: panes, sizePx: { brain: 615 } });
+  assert.deepEqual(JSON.parse(values.get(AREA_WORKSPACE_LAYOUT_KEY)), { schema: "area-workspace-layout.v1", order: panes, sizePx: { brain: 615 }, companion: false });
   values.set(AREA_WORKSPACE_LAYOUT_KEY, '{"schema":"wrong","order":["brain","brain"],"sizePx":{"brain":"bad"}}');
-  assert.deepEqual(readSplitLayoutPreference(storage), { order: panes, sizePx: { map: 560, brain: 615 } });
+  assert.deepEqual(readSplitLayoutPreference(storage), { order: panes, sizePx: { map: 560, brain: 615 }, companion: false });
   values.set(AREA_WORKSPACE_LAYOUT_KEY, '{"schema":"area-workspace-layout.v1","order":["map","brain"],"sizePx":{"brain":"bad"}}');
-  assert.deepEqual(readSplitLayoutPreference(storage), { order: panes, sizePx: { map: 560, brain: 615 } }, "a corrupt new width falls back to the valid legacy preference");
+  assert.deepEqual(readSplitLayoutPreference(storage), { order: panes, sizePx: { map: 560, brain: 615 }, companion: false }, "a corrupt new width falls back to the valid legacy preference");
+});
+
+test("entering a pane closes its sibling, and only a remembered choice opens a split", () => {
+  const entered = enterSplitPane(
+    showSplitPane(createSplitLayout({ paneIds: panes, entryPane: "map", preference, minSizePx: minimums }), "brain", { availableWidth: 1200, minSizePx: minimums }),
+    "brain",
+    { availableWidth: 1200, minSizePx: minimums },
+  );
+  assert.deepEqual([[...entered.open], entered.primary, entered.focused, entered.presentation], [["brain"], "brain", "brain", { kind: "single", active: "brain" }]);
+  assert.equal(enterSplitPane(entered, "outline", { availableWidth: 1200, minSizePx: minimums }), entered, "an unknown pane changes nothing");
+  const chosen = createSplitLayout({ paneIds: panes, entryPane: "brain", preference: { ...preference, companion: true }, minSizePx: minimums });
+  assert.deepEqual([[...chosen.open], chosen.primary], [["map", "brain"], "brain"], "a remembered split opens both panes around the entered one");
+  const values = new Map();
+  const storage = {
+    /** Reads one in-memory preference. */
+    getItem: (key) => values.get(key) ?? null,
+    /** Writes one in-memory preference. */
+    setItem: (key, value) => values.set(key, value),
+  };
+  writeSplitLayoutPreference(storage, chosen);
+  assert.equal(readSplitLayoutPreference(storage).companion, true, "the split choice survives a restart");
 });

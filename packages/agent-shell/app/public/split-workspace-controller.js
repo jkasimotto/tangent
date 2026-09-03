@@ -1,4 +1,5 @@
 import {
+  enterSplitPane,
   focusSplitPane,
   hideSplitPane,
   orderSplitPanes,
@@ -105,7 +106,14 @@ export function createSplitWorkspaceController({
 
   /** Returns a detached state copy for callers and tests. */
   function snapshot() {
-    return { ...current, order: [...current.order], open: new Set(current.open), sizePx: { ...current.sizePx }, presentation: { ...current.presentation } };
+    return {
+      ...current,
+      order: [...current.order],
+      open: new Set(current.open),
+      sizePx: { ...current.sizePx },
+      presentation: { ...current.presentation },
+      canSplit: availableWidth >= current.order.reduce((sum, id) => sum + minSizePx[id], separatorPx),
+    };
   }
 
   /** Measures this container and changes presentation without changing panes. */
@@ -119,6 +127,12 @@ export function createSplitWorkspaceController({
   function show(id, options = {}) {
     const { moveDomFocus = false, ...layoutOptions } = options;
     current = showSplitPane(current, id, { ...layoutOptions, availableWidth, minSizePx, separatorPx });
+    apply();
+    if (moveDomFocus) instances.get(id)?.focus?.();
+  }
+  /** Enters one pane alone without disposing the sibling's instance. */
+  function enter(id, { moveDomFocus = false } = {}) {
+    current = enterSplitPane(current, id, { availableWidth, minSizePx, separatorPx });
     apply();
     if (moveDomFocus) instances.get(id)?.focus?.();
   }
@@ -227,7 +241,7 @@ export function createSplitWorkspaceController({
   instances.get(current.focused)?.focus?.();
 
   return {
-    show, hide, focus, setOrder, setSize, setPrimary, update, restore, replace, portal, unportal, measure, snapshot,
+    show, enter, hide, focus, setOrder, setSize, setPrimary, update, restore, replace, portal, unportal, measure, snapshot,
     /** Returns one stable pane root for integration and tests. */
     root: (id) => roots.get(id) ?? null,
     /** Returns one mounted content instance for domain actions. */

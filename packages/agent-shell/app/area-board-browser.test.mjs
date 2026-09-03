@@ -413,7 +413,9 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     assert.equal(await page.locator("#back-button").getAttribute("aria-keyshortcuts"), "Meta+Shift+Enter");
     assert.equal(await page.locator("#back-button").getAttribute("aria-haspopup"), null, "a child Back route does not claim menu behavior");
     assert.equal(await page.locator("#back-button").getAttribute("aria-expanded"), null);
-    assert.equal(await page.locator("[data-area-workspace]").getAttribute("data-presentation"), "wide", "1200px and wider keeps both retained panes beside each other");
+    assert.equal(await page.locator("[data-area-workspace]").getAttribute("data-presentation"), "single", "opening a Brain from Work enters the Brain alone, however wide the window is");
+    assert.equal(await page.locator('[data-split-pane="map"]').isVisible(), false, "entering a Brain never opens the Map beside it");
+    assert.equal(await page.locator("#split-button").getAttribute("aria-pressed"), "false", "the split control states that one pane is open");
     await page.locator("#back-button").click();
     await row.waitFor();
     await row.dispatchEvent("click");
@@ -631,6 +633,11 @@ test("Map-first shell keeps Brain, Work, camera, focus, and compact accessibilit
     });
     await page.keyboard.press("w");
     assert.equal(await page.evaluate(() => window.wideMapBrainKey), "w", "the 1440px Map → Brain route accepts typing without another click");
+    // The split is Julian's own request. Every pane pair below this line
+    // exists because this control asked for it, never because a route did.
+    await page.locator("#split-button").click();
+    await page.waitForFunction(() => document.querySelector("[data-area-workspace]")?.dataset.presentation === "wide");
+    assert.equal(await page.locator("#split-button").getAttribute("aria-pressed"), "true", "the split control states that both panes are open");
     const widths = await page.evaluate(() => ({ pane: document.querySelector("[data-map-brain-pane]").getBoundingClientRect().width, map: document.querySelector("[data-map-column]").getBoundingClientRect().width }));
     assert.ok(widths.pane >= 550 && widths.pane <= 570, `the dock starts at 560px: ${JSON.stringify(widths)}`);
     assert.ok(widths.map >= 560, `the map keeps its usable minimum: ${JSON.stringify(widths)}`);

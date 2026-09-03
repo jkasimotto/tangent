@@ -41,7 +41,7 @@ export function readSplitLayoutPreference(storage, {
     const fallback = id === "brain" && legacyBrainWidth !== null ? legacyBrainWidth : defaultSizePx[id];
     return [id, validSize(preferred[id], minSizePx[id], fallback)];
   }));
-  return { order, sizePx };
+  return { order, sizePx, companion: parsed?.companion === true };
 }
 
 /** Writes only reusable layout preference and keeps the rollback width current. */
@@ -50,6 +50,7 @@ export function writeSplitLayoutPreference(storage, layout) {
     schema: AREA_WORKSPACE_LAYOUT_SCHEMA,
     order: [...layout.order],
     sizePx: { brain: Math.round(layout.sizePx.brain) },
+    companion: layout.companion === true,
   };
   try {
     storage?.setItem?.(AREA_WORKSPACE_LAYOUT_KEY, JSON.stringify(record));
@@ -69,13 +70,15 @@ export function createSplitLayout({
   if (!paneIds.includes(entryPane)) throw new Error(`Unknown entry pane: ${entryPane}`);
   const order = validOrder(preference.order, paneIds) ? [...preference.order] : [...paneIds];
   const sizePx = Object.fromEntries(paneIds.map((id) => [id, validSize(preference.sizePx?.[id], minSizePx[id], defaultSizePx[id])]));
+  const companion = preference.companion === true;
   return {
     order,
-    open: new Set([entryPane]),
+    open: new Set(companion ? paneIds : [entryPane]),
     primary: entryPane,
     focused: entryPane,
     lastSinglePane: entryPane,
     sizePx,
+    companion,
     presentation: { kind: "single", active: entryPane },
   };
 }
@@ -115,6 +118,24 @@ export function showSplitPane(layout, id, { focus = false, availableWidth, minSi
     next.focused = id;
   }
   return next;
+}
+
+/**
+ * Enters one pane alone. Arriving at a surface is not a request for a split,
+ * so the sibling closes and the entered pane becomes this visit's primary.
+ */
+export function enterSplitPane(layout, id, { availableWidth, minSizePx, separatorPx = 6 } = {}) {
+  if (!layout.order.includes(id)) return layout;
+  const next = {
+    ...layout,
+    open: new Set([id]),
+    order: [...layout.order],
+    sizePx: { ...layout.sizePx },
+    primary: id,
+    focused: id,
+    lastSinglePane: id,
+  };
+  return reconcileSplitPresentation(next, availableWidth, minSizePx, separatorPx);
 }
 
 /** Hides a companion but never hides the visit's primary pane. */
@@ -163,6 +184,7 @@ export default {
   createSplitLayout,
   reconcileSplitPresentation,
   showSplitPane,
+  enterSplitPane,
   hideSplitPane,
   focusSplitPane,
   orderSplitPanes,

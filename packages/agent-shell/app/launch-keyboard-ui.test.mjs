@@ -57,7 +57,7 @@ test("defaults are a complete keyboard chooser with staged Escape and exact retu
   press(window, "ArrowDown");
   await settle(window);
   assert.equal(document.querySelector("[data-launch-effort='high']").classList.contains("selected"), true);
-  assert.equal(document.querySelector("[data-launch-popover] header").textContent.includes("↵ save"), true, "the hint names Enter as Save while editing a default");
+  assert.equal(document.querySelector("[data-launch-popover]").textContent.includes("↵ save"), true, "the hint names Enter as Save while editing a default");
 
   const last = document.querySelector("[data-focus-key='launch:registry']");
   last.focus();

@@ -15,6 +15,9 @@ export function createAreaWorkspaceController({
   const minSizePx = { map: mapPane.minSizePx, brain: brainPane.minSizePx };
   const preference = readSplitLayoutPreference(storage, { minSizePx });
   const layout = createSplitLayout({ paneIds: ["map", "brain"], entryPane, preference, minSizePx });
+  // Julian owns the split. Reaching a surface never opens its sibling: only
+  // this remembered choice does, and it survives navigation and a restart.
+  let companion = preference.companion === true;
   let controller = null;
   controller = createSplitWorkspaceController({
     host,
@@ -27,31 +30,38 @@ export function createAreaWorkspaceController({
     },
   });
 
-  /** Opens or selects Map without changing this visit's return point. */
-  function toggleMap() {
-    const current = controller.snapshot();
-    if (current.open.has("map") && current.presentation.kind === "single" && current.presentation.active !== "map") controller.focus("map", { moveDomFocus: true });
-    else if (current.open.has("map") && current.primary !== "map") controller.hide("map");
-    else if (!current.open.has("map")) controller.show("map");
-    else controller.focus("map", { moveDomFocus: true });
+  /** Writes the reusable layout preference with Julian's current split choice. */
+  function rememberLayout() {
+    writeSplitLayoutPreference(storage, { ...controller.snapshot(), companion });
   }
-  /** Opens or hides Brain without stopping its logical session. */
-  function toggleBrain() {
-    const current = controller.snapshot();
-    if (current.open.has("brain") && current.presentation.kind === "single" && current.presentation.active !== "brain") controller.focus("brain", { moveDomFocus: true });
-    else if (current.open.has("brain") && current.primary !== "brain") controller.hide("brain");
-    else if (!current.open.has("brain")) controller.show("brain", { focus: true, moveDomFocus: true });
-    else controller.focus("brain", { moveDomFocus: true });
+  /**
+   * Arrives at one pane. It fills the workspace alone unless Julian asked for
+   * a split, in which case both panes stay open and this one takes focus.
+   */
+  function enter(id, options = {}) {
+    if (companion) return controller.show(id, { focus: true, ...options });
+    return controller.enter(id, options);
   }
+  /** Opens or closes the sibling pane. This is the one split control. */
+  function toggleCompanion() {
+    const current = controller.snapshot();
+    const active = current.presentation.kind === "single" ? current.presentation.active : current.focused;
+    companion = !companion;
+    rememberLayout();
+    if (companion) controller.show(current.order.find((id) => id !== active) ?? active);
+    else controller.enter(active, { moveDomFocus: false });
+  }
+  /** True when Julian is holding both panes open. */
+  function splitOpen() { return companion; }
   /** Persists only reusable layout preference after an explicit resize. */
   function setSize(id, value) {
     controller.setSize(id, value);
-    writeSplitLayoutPreference(storage, controller.snapshot());
+    rememberLayout();
   }
   /** Persists a future order control without changing pane or route ownership. */
   function setOrder(order) {
     controller.setOrder(order);
-    writeSplitLayoutPreference(storage, controller.snapshot());
+    rememberLayout();
   }
 
   return {
@@ -59,6 +69,7 @@ export function createAreaWorkspaceController({
     entryPane,
     returnPoint,
     show: controller.show,
+    enter,
     hide: controller.hide,
     focus: controller.focus,
     setOrder,
@@ -74,8 +85,8 @@ export function createAreaWorkspaceController({
     root: controller.root,
     instance: controller.instance,
     separator: controller.separator,
-    toggleMap,
-    toggleBrain,
+    toggleCompanion,
+    splitOpen,
     destroy: controller.destroy,
   };
 }

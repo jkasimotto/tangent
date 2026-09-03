@@ -134,7 +134,7 @@ No fact is stored twice. The browser holds the catalog only as an installed snap
 New files:
 
 - `packages/agent-shell/app/map-kinds.mjs`: parse the definition, read and normalize icons, build the catalog, write the starter. Server only.
-- `packages/agent-shell/app/map-kind-starters.mjs`: the starter definition text and the thirteen starter icon scenes as data built from `createShapeElement`, `createTextElement`, and small line and freedraw primitives. Server only.
+- `packages/agent-shell/app/map-kind-starters.mjs`: the starter definition text. Server only. It held thirteen starter icon scenes as data until 2026-09-04, when they were deleted with the code that wrote them; see the revision at the top of `product.md`.
 - `packages/agent-shell/app/map-kinds-routes.mjs`: `createMapKindsRoutes({ catalog })` with one GET handler.
 - `packages/agent-shell/app/public/area-map-figures.js`: pure browser and node module. Icon selection, caption words, icon element creation, caption layout, quiet body, and the publish-time restore. No I/O.
 

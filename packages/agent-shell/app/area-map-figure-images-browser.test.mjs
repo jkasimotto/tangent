@@ -21,10 +21,10 @@ import { pngIconBytes, svgIconText } from "./test-fixtures/map-icon-images.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-// The two icons are painted in colours from the starter icons' own palette, so
-// the test measures what a real icon looks like. The Map's dark theme is not a
-// perfect round trip for either a drawing or a picture, so the check allows the
-// same distance the drawn-ink check allows.
+// The two icons are painted in one saturated colour, the kind a real icon is
+// drawn in, so the test measures what a real icon looks like. The Map's dark
+// theme is not a perfect round trip for either a drawing or a picture, so the
+// check allows the same distance the drawn-ink check allows.
 /** The colour the PNG icon is painted in, which is nothing like a placeholder. */
 const ICON_COLOUR = [0x9c, 0x36, 0xb5];
 /** The largest channel distance the theme's round trip may cost one colour. */

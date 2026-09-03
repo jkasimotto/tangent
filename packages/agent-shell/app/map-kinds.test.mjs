@@ -5,10 +5,12 @@ import path from "node:path";
 import test from "node:test";
 
 import { createMapKindsCatalog, parseMapKinds, readMapIcon, readMapImageIcon } from "./map-kinds.mjs";
-import { MAP_KINDS_STARTER_TEXT, starterMapIconFiles } from "./map-kind-starters.mjs";
+import { MAP_KINDS_STARTER_TEXT } from "./map-kind-starters.mjs";
 import { jpegIconBytes, pngIconBytes, svgIconText, webpIconBytes } from "./test-fixtures/map-icon-images.mjs";
 
-const STARTER_ICON_NAMES = new Set(starterMapIconFiles().map((file) => file.name));
+// The icon names one vault happens to hold. Tangent ships no icon, so a test
+// that resolves an icon name names its own files.
+const ICON_NAMES = new Set(["worktree", "worktree-dirty", "worktree-missing", "repository", "link", "pull-request", "pull-request-merged", "revision", "commit"]);
 
 /** Wraps one JSON body in the fenced definition block, after some prose. */
 function definition(body) {
@@ -20,40 +22,54 @@ function problemsById(parsed) {
   return Object.fromEntries(parsed.kinds.map((entry) => [entry.id, entry.problems]));
 }
 
+/** Returns one valid Excalidraw drawing body, the shape an icon file holds. */
+function drawing() {
+  return JSON.stringify({
+    type: "excalidraw", version: 2,
+    elements: [{ id: "a", type: "rectangle", x: 0, y: 0, width: 8, height: 8, angle: 0, opacity: 100, strokeWidth: 2, roughness: 1 }],
+    appState: {}, files: {},
+  });
+}
+
 /** Creates one temporary vault root for a catalog reader. */
 async function vaultRoot() {
   return mkdtemp(path.join(os.tmpdir(), "tangent-map-kinds-"));
 }
 
-test("the starter definition parses with no problem and names only starter icons", () => {
-  const parsed = parseMapKinds(MAP_KINDS_STARTER_TEXT, STARTER_ICON_NAMES);
+test("the starter definition parses with no problem and names no icon", () => {
+  const parsed = parseMapKinds(MAP_KINDS_STARTER_TEXT, new Set());
   assert.equal(parsed.error, undefined);
   assert.deepEqual(parsed.kinds.map((entry) => entry.id), ["worktree", "repository", "link", "github-pr", "phabricator-revision", "commit"]);
+  // Tangent writes no icon file, so a fresh vault loads its Map with no
+  // problem line and every kind as a card until Julian names an icon of his own.
   for (const entry of parsed.kinds) assert.deepEqual(entry.problems, [], `${entry.id} has a problem`);
+  for (const entry of parsed.kinds) assert.deepEqual({ icon: entry.icon, icons: entry.icons }, { icon: null, icons: [] }, `${entry.id} names an icon`);
   const worktree = parsed.kinds[0];
-  assert.deepEqual(worktree.icons, [{ when: "missing", icon: "worktree-missing" }, { when: "dirty", icon: "worktree-dirty" }]);
+  assert.equal(worktree.label, "Worktree");
   assert.equal(worktree.click, "copy-path");
   assert.equal(worktree.target, "path");
-  assert.equal(parsed.kinds.find((entry) => entry.id === "commit").click, null, "a commit has an icon and no click action");
+  assert.equal(parsed.kinds.find((entry) => entry.id === "commit").click, null, "a commit has no click action");
 });
 
-test("every starter icon reads into the normal form", () => {
-  for (const file of starterMapIconFiles()) {
-    const read = readMapIcon(file.name, file.text, ".excalidraw");
-    assert.equal(read.problem, undefined, `${file.name}: ${read.problem}`);
-    assert.ok(read.icon.width > 0 && read.icon.height > 0);
-    assert.equal(read.icon.warning, null);
-    const minimum = Math.min(...read.icon.elements.map((element) => element.x));
-    assert.equal(Math.round(minimum), 0, "an icon's bounds start at the origin");
-  }
+test("the starter definition still carries the icon and icons keys a kind may name", () => {
+  // The shape does not change with the starters: an entry Julian writes with an
+  // icon, and per-state icons, parses the same way it always did.
+  const named = MAP_KINDS_STARTER_TEXT.replace(
+    '{ "id": "worktree", "label": "Worktree", "click": "copy-path" }',
+    '{ "id": "worktree", "label": "Worktree", "icon": "worktree", "icons": [ { "when": "missing", "icon": "worktree-missing" }, { "when": "dirty", "icon": "worktree-dirty" } ], "click": "copy-path" }',
+  );
+  const worktree = parseMapKinds(named, ICON_NAMES).kinds[0];
+  assert.deepEqual(worktree.problems, []);
+  assert.equal(worktree.icon, "worktree");
+  assert.deepEqual(worktree.icons, [{ when: "missing", icon: "worktree-missing" }, { when: "dirty", icon: "worktree-dirty" }]);
 });
 
 test("a broken definition block names its line and every kind falls back to a card", () => {
-  const parsed = parseMapKinds(definition('{\n  "version": 1,\n  "kinds": [ { "id": "worktree" ]\n}'), STARTER_ICON_NAMES);
+  const parsed = parseMapKinds(definition('{\n  "version": 1,\n  "kinds": [ { "id": "worktree" ]\n}'), ICON_NAMES);
   assert.match(parsed.error, /^map-kinds\.md line \d+: /);
   assert.deepEqual(parsed.kinds, []);
-  assert.match(parseMapKinds(definition('{ "version": 1 }'), STARTER_ICON_NAMES).error, /needs a kinds list/);
-  assert.deepEqual(parseMapKinds("# No block here", STARTER_ICON_NAMES), { kinds: [] });
+  assert.match(parseMapKinds(definition('{ "version": 1 }'), ICON_NAMES).error, /needs a kinds list/);
+  assert.deepEqual(parseMapKinds("# No block here", ICON_NAMES), { kinds: [] });
 });
 
 test("a bad entry keeps its own problem and never touches another entry", () => {
@@ -68,7 +84,7 @@ test("a bad entry keeps its own problem and never touches another entry", () => 
       { id: "design-file", label: "Design file", click: "open" },
       { id: "worktree", label: "Repeat" },
     ],
-  }, null, 2)), STARTER_ICON_NAMES);
+  }, null, 2)), ICON_NAMES);
   const problems = problemsById(parsed);
   assert.deepEqual(problems.worktree, ["a later entry repeats this id"], "the second entry with an id carries the repeat");
   assert.deepEqual(problems.repository, ["a path kind cannot run `open`"]);
@@ -124,11 +140,12 @@ test("the catalog writes the starter once, then never again, and keeps Julian's 
   const first = await catalog.read();
   assert.equal(first.source, "vault");
   assert.deepEqual(first.problems, []);
-  assert.equal(Object.keys(first.icons).length, starterMapIconFiles().length);
+  assert.deepEqual(first.icons, {}, "Tangent writes no icon file, so a fresh vault has none");
+  assert.deepEqual(await readdir(root), ["map-kinds.md"], "the definition is the only file Tangent writes");
   assert.equal(commits.length, 1);
   assert.equal(commits[0].message, "add: machine map kinds starter");
-  assert.equal(staged.length, starterMapIconFiles().length + 1);
-  assert.equal(commits[0].paths[0], "map-kinds.md");
+  assert.deepEqual(staged, ["map-kinds.md"]);
+  assert.deepEqual(commits[0].paths, ["map-kinds.md"]);
 
   const edited = `${await readFile(path.join(root, "map-kinds.md"), "utf8")}\n\nJulian's own note.\n`;
   await writeFile(path.join(root, "map-kinds.md"), edited, "utf8");
@@ -146,8 +163,9 @@ test("a read-only instance serves the starter from memory and writes nothing", a
   assert.equal(result.source, "starter");
   assert.equal(result.kinds.length, 6);
   assert.deepEqual(await readdir(root), []);
+  assert.deepEqual(result.problems, [], "a read-only instance loads its Map with no problem line");
   for (const entry of result.kinds) {
-    assert.deepEqual(entry.problems.filter((problem) => !problem.includes("not found")), [], `${entry.id} has an unexpected problem`);
+    assert.deepEqual(entry.problems, [], `${entry.id} has an unexpected problem`);
   }
 });
 
@@ -156,12 +174,12 @@ test("an icon file Julian drops in is read without a restart, and a broken one n
   const catalog = createMapKindsCatalog({ root });
   await catalog.read();
   await mkdir(path.join(root, "map-icons"), { recursive: true });
-  await writeFile(path.join(root, "map-icons", "figma.excalidraw"), JSON.stringify({
-    type: "excalidraw", version: 2, elements: [{ id: "a", type: "rectangle", x: 0, y: 0, width: 8, height: 8, angle: 0, opacity: 100, strokeWidth: 2, roughness: 1 }], appState: {}, files: {},
-  }), "utf8");
+  await writeFile(path.join(root, "map-icons", "figma.excalidraw"), drawing(), "utf8");
   await writeFile(path.join(root, "map-icons", "broken.excalidraw"), "{ not json", "utf8");
   const result = await catalog.read();
   assert.ok(result.icons.figma, "a new drawing needs no restart");
+  assert.deepEqual({ width: result.icons.figma.width, height: result.icons.figma.height }, { width: 8, height: 8 }, "a drawing keeps the size it was drawn at");
+  assert.deepEqual({ x: result.icons.figma.elements[0].x, y: result.icons.figma.elements[0].y }, { x: 0, y: 0 }, "an icon's bounds start at the origin");
   assert.deepEqual(result.problems.map((problem) => problem.scope), ["icon"]);
   assert.equal(result.problems[0].name, "broken");
 });
@@ -208,19 +226,24 @@ test("an image icon and a drawing of one name are an ambiguity the image wins", 
   const root = await vaultRoot();
   const catalog = createMapKindsCatalog({ root });
   await catalog.read();
+  await mkdir(path.join(root, "map-icons"), { recursive: true });
+  await writeFile(path.join(root, "map-icons", "worktree.excalidraw"), drawing(), "utf8");
+  await writeFile(path.join(root, "map-icons", "worktree-dirty.excalidraw"), drawing(), "utf8");
   await writeFile(path.join(root, "map-icons", "worktree.png"), pngIconBytes({ width: 128, height: 128 }));
   const result = await catalog.read();
   assert.equal(result.icons.worktree.kind, "image", "the picture Julian dropped in wins over the drawing");
   assert.equal(result.icons["worktree-dirty"].kind, "drawing", "every other drawing keeps working");
   const ambiguity = result.problems.find((problem) => problem.name === "worktree");
   assert.match(ambiguity.message, /worktree\.png and worktree\.excalidraw share this icon name, so the Map draws worktree\.png/);
-  assert.deepEqual(parseMapKinds(MAP_KINDS_STARTER_TEXT, new Set(Object.keys(result.icons))).kinds.find((entry) => entry.id === "worktree").problems, [], "the kind still resolves its icon");
+  const named = MAP_KINDS_STARTER_TEXT.replace('{ "id": "worktree", "label": "Worktree", "click": "copy-path" }', '{ "id": "worktree", "label": "Worktree", "icon": "worktree", "click": "copy-path" }');
+  assert.deepEqual(parseMapKinds(named, new Set(Object.keys(result.icons))).kinds.find((entry) => entry.id === "worktree").problems, [], "the kind still resolves its icon");
 });
 
 test("an unreadable image is a problem and its kind falls back to a card", async () => {
   const root = await vaultRoot();
   const catalog = createMapKindsCatalog({ root });
   await catalog.read();
+  await mkdir(path.join(root, "map-icons"), { recursive: true });
   await writeFile(path.join(root, "map-icons", "design-file.png"), pngIconBytes().subarray(0, 20));
   const result = await catalog.read();
   assert.equal(result.icons["design-file"], undefined, "an icon with no readable size never reaches the Map");
@@ -231,6 +254,7 @@ test("an image icon changes the revision the Map watches, and reads without a re
   const root = await vaultRoot();
   const catalog = createMapKindsCatalog({ root });
   const first = await catalog.read();
+  await mkdir(path.join(root, "map-icons"), { recursive: true });
   await writeFile(path.join(root, "map-icons", "design-file.svg"), svgIconText({ width: 200, height: 200 }), "utf8");
   const second = await catalog.read();
   assert.equal(second.icons["design-file"].kind, "image");

@@ -16,6 +16,18 @@ An image and a drawing that share one icon name is a named problem on that kind,
 
 Implementation: `feat(agent-shell): let Map icons be images, not only drawings`.
 
+## Revision, 2026-09-04: the starter icon drawings are removed
+
+Julian: "you can delete the icon drawings". Icons are image files now, so the thirteen `.excalidraw` starter drawings this document specified below are dead weight, and they are deleted with the code that wrote them.
+
+What changed. Tangent writes no icon file at all. `map-icons/` starts absent and stays Julian's own folder: an icon exists when he puts a file in it. The starter definition Tangent writes when `map-kinds.md` is missing therefore names no icon, so a fresh vault loads its Map with every kind as a card and no problem line, and the starter prose says how to name an icon once a file is in the folder. Nothing else moved: the definition shape is the same (`id`, `label`, `target`, `icon`, `icons`, `click`), a kind with no icon still keeps its card, a `.excalidraw` or `.excalidrawlib` file Julian drops in is still read the same way beside an image, and a vault that already has `map-kinds.md`, including Julian's, is untouched.
+
+The starter set below, and the sections that describe drawing them, are the record of what shipped on 2026-09-03. They are history, not the current behaviour.
+
+Still open, and deliberately not fixed here: opening a Map against a vault with no `map-kinds.md` still writes and commits that one file (Goal `opening-a-map-must-not-commit-to-the-vault`).
+
+Implementation: `feat(agent-shell): delete the starter icon drawings`.
+
 ## Decision summary
 
 - **Decision:** A Block whose kind has an icon becomes a figure: one large hand-drawn icon with a caption beside it. The kind word leaves the caption. The icon is the recogniser.

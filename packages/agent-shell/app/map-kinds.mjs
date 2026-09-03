@@ -12,7 +12,7 @@ import path from "node:path";
 
 import { validateSceneElements } from "./area-canvas.mjs";
 import { fencedBlock } from "./launch-environment.mjs";
-import { MAP_KINDS_STARTER_TEXT, starterMapIconFiles } from "./map-kind-starters.mjs";
+import { MAP_KINDS_STARTER_TEXT } from "./map-kind-starters.mjs";
 import {
   BUILT_IN_MAP_KINDS, ICON_ELEMENT_LIMIT, ICON_ELEMENT_WARNING,
   MAP_ICON_DRAWING_EXTENSIONS, MAP_ICON_IMAGE_TYPES, MAP_KIND_TARGETS,
@@ -378,27 +378,18 @@ export function createMapKindsCatalog({ root, repository = null, commit = null, 
   }
 
   /**
-   * Writes the starter definition and the starter icons once per process, and
-   * only into a vault that has neither. A failed write is a problem on the
+   * Writes the starter definition once per process, and only into a vault that
+   * has none. Tangent writes no icon: `map-icons/` is Julian's own folder and
+   * stays empty until he puts a file in it. A failed write is a problem on the
    * catalog, never a failed Map load.
    */
-  async function writeStarters(needDefinition, needIcons) {
+  async function writeStarterDefinition() {
     starterWrite ??= (async () => {
-      const written = [];
-      if (needDefinition) {
-        if (repository) await repository.writeMarkdown(MAP_KINDS_FILE, MAP_KINDS_STARTER_TEXT);
-        else await writeStarterFile(definitionPath, MAP_KINDS_STARTER_TEXT);
-        written.push(MAP_KINDS_FILE);
-      }
-      if (needIcons) {
-        for (const icon of starterMapIconFiles()) {
-          await writeStarterFile(path.join(iconsPath, icon.file), icon.text);
-          written.push(`${MAP_ICONS_FOLDER}/${icon.file}`);
-        }
-      }
-      for (const file of written) await stage?.(file);
-      if (written.length && commit) await commit(written, "add: machine map kinds starter", "machine", null);
-      return written;
+      if (repository) await repository.writeMarkdown(MAP_KINDS_FILE, MAP_KINDS_STARTER_TEXT);
+      else await writeStarterFile(definitionPath, MAP_KINDS_STARTER_TEXT);
+      await stage?.(MAP_KINDS_FILE);
+      if (commit) await commit([MAP_KINDS_FILE], "add: machine map kinds starter", "machine", null);
+      return [MAP_KINDS_FILE];
     })().catch((error) => {
       reportError(`map kinds starter write failed: ${String(error?.message ?? error).slice(0, 200)}`);
       return null;
@@ -410,16 +401,15 @@ export function createMapKindsCatalog({ root, repository = null, commit = null, 
   async function read() {
     const problems = [];
     let definition = await readMemoized(definitionPath, (text) => text);
-    let listed = await listIconFiles();
+    const listed = await listIconFiles();
     let source = "vault";
-    if ((!definition || !listed.files.length) && writable) {
-      const written = await writeStarters(!definition, !listed.files.length);
+    if (!definition && writable) {
+      const written = await writeStarterDefinition();
       if (written === null) {
         problems.push({ scope: "definition", name: null, message: "Could not write the starter definition" });
         source = "starter";
       }
       definition = await readMemoized(definitionPath, (text) => text);
-      listed = await listIconFiles();
     }
     const text = definition?.text ?? (definition ? "" : MAP_KINDS_STARTER_TEXT);
     if (!definition) source = "starter";

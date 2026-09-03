@@ -146,8 +146,6 @@ function noopHandlers(): CanvasHandlers {
   return {
     /** Ignores the api until the component installs its own setter. */
     setApi: () => undefined,
-    /** The rollback editor has no additive selection of its own. */
-    onPressModifiers: () => undefined,
     /** The rollback editor runs no pointer gesture of its own. */
     onPointerDown: () => undefined,
     /** The rollback editor runs no pointer gesture of its own. */

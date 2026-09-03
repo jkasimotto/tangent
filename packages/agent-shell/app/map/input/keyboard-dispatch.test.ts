@@ -52,11 +52,11 @@ function fakeTarget(kind: "field" | "editable" | "plain", surface?: SurfaceId): 
 }
 
 /** The record one fake deps object keeps. */
-type Recorded = { commands: KeyCommand[]; space: boolean[]; decisions: KeyDecision[]; presses: KeyPress[] };
+type Recorded = { commands: KeyCommand[]; space: boolean[]; shift: boolean[]; decisions: KeyDecision[]; presses: KeyPress[] };
 
 /** Fake deps over fixed facts that record every call. */
 function fakeDeps(facts: Partial<KeyFacts> = {}): KeyboardDeps & { recorded: Recorded } {
-  const recorded: Recorded = { commands: [], space: [], decisions: [], presses: [] };
+  const recorded: Recorded = { commands: [], space: [], shift: [], decisions: [], presses: [] };
   return {
     recorded,
     /** The fixed facts. */
@@ -66,6 +66,10 @@ function fakeDeps(facts: Partial<KeyFacts> = {}): KeyboardDeps & { recorded: Rec
     /** Records the Space flag. */
     setSpaceHeld: (held) => {
       recorded.space.push(held);
+    },
+    /** Records the Shift flag. */
+    setShiftHeld: (held) => {
+      recorded.shift.push(held);
     },
     /** Records the command. */
     run: (command) => {
@@ -178,4 +182,11 @@ test("install works on a host with no window, as in a test", () => {
   } as unknown as KeyboardHost;
   const uninstall = installKeyboardDispatch(host, fakeDeps());
   assert.doesNotThrow(uninstall);
+});
+
+test("the Shift flag follows every key event, because Excalidraw never reports Shift on a press", () => {
+  const deps = fakeDeps();
+  dispatchKeydown(fakeEvent("Shift", { shiftKey: true }), deps);
+  dispatchKeyup(fakeEvent("Shift", { shiftKey: false }), deps);
+  assert.deepEqual(deps.recorded.shift, [true, false]);
 });

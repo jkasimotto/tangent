@@ -8,14 +8,16 @@
 import { PICKER_ANNOUNCEMENTS, RESOURCE_ANNOUNCEMENTS } from "../../copy.ts";
 import type { VisibleScene } from "../../input/hit-test.ts";
 import { placementPoint, placementTarget, visibleSceneRect } from "../../input/placement-point.ts";
-import { placeBlockAtNearestFreePoint, referenceFromText, runtimeId, wideChoices } from "../../kernel/kernel-boundary.ts";
-import type { AreaMapController, ResourcePanelRow, Shard, SourceScene, VaultDocument, World } from "../../kernel/kernel-types.ts";
+import { areaMapStructuralHullChanged, placeBlockAtNearestFreePoint, referenceFromText, reprioritizeAreaPlacement, runtimeId, shardHulls, wideChoices } from "../../kernel/kernel-boundary.ts";
+import type { AreaMapController, Composition, ResourcePanelRow, Shard, SourceScene, VaultDocument, World } from "../../kernel/kernel-types.ts";
+import { nextBranchPriority } from "../../layout/branch-priority.ts";
 import { point } from "../../units/frames.ts";
-import type { Camera, Point, Size } from "../../units/frames.ts";
+import type { Camera, Point, Rect, Size } from "../../units/frames.ts";
 import { areaKey, shardOwner, sourceId } from "../../units/ids.ts";
 import type { AreaKey, RuntimeId, SourceId } from "../../units/ids.ts";
 import { rectCenter, toSource } from "../../units/scalar-math.ts";
-import { scenePx } from "../../units/units.ts";
+import { count, scenePx } from "../../units/units.ts";
+import type { Count } from "../../units/units.ts";
 import { pickerDocuments, vaultIndexItems } from "./picker-choices.ts";
 import type { PickerEntry, ResourceChoiceFacts } from "./picker-choices.ts";
 import { pickerTarget } from "./picker-store.ts";
@@ -128,6 +130,19 @@ function mintSourceId(): SourceId {
   return sourceId(crypto.randomUUID());
 }
 
+/**
+ * Re-anchors the Area a new Block landed in, when its own content hull changed. A lower-priority
+ * branch is drawn away from its authored rectangle; raising its priority without absorbing the
+ * position it was drawn at would snap the Area and the new Block back to the old one.
+ */
+function reanchorAfterPlacement(world: World, before: Composition, area: AreaKey, beforeHull: Rect<"source"> | null): World {
+  const node = world.areas.find((entry) => entry.key === area);
+  if (node === undefined || !areaMapStructuralHullChanged(beforeHull, shardHulls(node.shard.scene).blocks)) return world;
+  const anchor = before.geometry.get(area)?.resolvedStored ?? null;
+  const region = reprioritizeAreaPlacement(node.region, anchor, nextBranchPriority(world));
+  return { ...world, areas: world.areas.map((entry) => (entry.key === area ? { ...entry, region } : entry)) };
+}
+
 /** Places one new Block into its Area's shard at the spot and selects it. False when the shard is not loadable. */
 async function placeIntoShard(env: PickerEnvironment, entry: PickerEntry, area: AreaKey, spot: PlacementSpot, keepOpen: boolean): Promise<boolean> {
   const shard = await loadedShard(env.controller, area);
@@ -141,7 +156,10 @@ async function placeIntoShard(env: PickerEnvironment, entry: PickerEntry, area: 
   const placed = placeBlockAtNearestFreePoint(scene, entry, toSource(spot.point, offset), id);
   if (placed.root === null) return false;
   const owner = shardOwner(area);
-  env.controller.commitWorld(worldWithShardScene(env.controller.world(), area, placed.scene), { changedAreas: [area], changedOwners: [owner] }, "place");
+  const before = env.controller.composition();
+  const beforeHull = shardHulls(scene).blocks;
+  const placedWorld = worldWithShardScene(env.controller.world(), area, placed.scene);
+  env.controller.commitWorld(reanchorAfterPlacement(placedWorld, before, area, beforeHull), { changedAreas: [area], changedOwners: [owner] }, "place");
   env.controller.setSelection([runtimeId(owner, id)]);
   const label = labelIdOf(placed.root);
   if (!keepOpen && entry.kind !== "resource" && label !== null) env.editLabel?.(runtimeId(owner, label));

@@ -21,6 +21,12 @@ export type KeyboardDeps = {
   readonly surfaceOf: (target: EventTarget | null) => SurfaceId | null;
   /** Told true on the first keydown of Space and false on its keyup or when the window loses focus. */
   readonly setSpaceHeld: (held: boolean) => void;
+  /**
+   * Told whether Shift is held, on every key event and on blur. Excalidraw's own pointer state
+   * carries Cmd and Ctrl but never Shift, and Shift is what makes a press additive, so the Map has
+   * to keep the flag itself. Optional, because the rollback editor has no additive selection.
+   */
+  readonly setShiftHeld?: ((held: boolean) => void) | undefined;
   /** Runs one routed command. */
   readonly run: (command: KeyCommand) => void;
   /** Called with every decision, for a diagnostic or a test. Optional. */
@@ -74,6 +80,7 @@ function consume(event: KeyEventInput, decision: KeyDecision): void {
 /** Routes one keydown and acts on the decision. Exported so a test can drive it without listeners. */
 export function dispatchKeydown(event: KeyEventInput, deps: KeyboardDeps): KeyDecision {
   const press = pressOf(event, deps.surfaceOf(event.target));
+  deps.setShiftHeld?.(press.modifiers.shiftKey);
   if (press.key === SPACE_KEY && !press.repeat && !press.targetIsTextEntry) deps.setSpaceHeld(true);
   const decision = routeKey(press, deps.facts());
   deps.observe?.(press, decision);
@@ -84,6 +91,7 @@ export function dispatchKeydown(event: KeyEventInput, deps: KeyboardDeps): KeyDe
 
 /** Clears the Space flag when Space comes up. */
 export function dispatchKeyup(event: KeyEventInput, deps: KeyboardDeps): void {
+  deps.setShiftHeld?.(event.shiftKey);
   if (isSpace(event)) deps.setSpaceHeld(false);
 }
 
@@ -105,6 +113,7 @@ export function installKeyboardDispatch(host: KeyboardHost, deps: KeyboardDeps):
   /** The window blur listener. */
   const onBlur = (): void => {
     deps.setSpaceHeld(false);
+    deps.setShiftHeld?.(false);
   };
   const view = host.ownerDocument?.defaultView ?? null;
   host.addEventListener("keydown", onKeydown, true);
@@ -115,5 +124,6 @@ export function installKeyboardDispatch(host: KeyboardHost, deps: KeyboardDeps):
     host.removeEventListener("keyup", onKeyup, true);
     view?.removeEventListener("blur", onBlur);
     deps.setSpaceHeld(false);
+    deps.setShiftHeld?.(false);
   };
 }

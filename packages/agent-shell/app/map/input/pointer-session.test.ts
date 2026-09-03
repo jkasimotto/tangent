@@ -259,3 +259,13 @@ test("the previewed world writes the solved region on the changed Area and leave
   assert.equal(storedRect(base).x, 60, "the world the preview was built from is untouched");
   assert.deepEqual(worldWithRegions(base, new Map([[TANGENT, solved]]), new Set()).areas[0], base.areas[0]);
 });
+
+test("a gesture solves the Areas its context names, not only the ones its meaning does", () => {
+  const gesture = session();
+  const grab: PressMeaning = { kind: "grab-element", id: runtimeId("tw-block") };
+  gesture.session.begin(grab, { point: at(10, 10), selection: new Set([runtimeId("tw-block")]), areas: new Set([TANGENT]) });
+  assert.deepEqual([...gesture.session.selectedAreas()], [TANGENT]);
+  const preview = gesture.session.preview(at(40, 30));
+  assert.ok(preview !== null, "a grab that drags a selected Area solves it");
+  assert.deepEqual(preview.appliedDelta, { dx: 30, dy: 20 });
+});

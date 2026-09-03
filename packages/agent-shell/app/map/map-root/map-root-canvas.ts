@@ -28,7 +28,7 @@ type ChangeAppState = SelectionAppState & TextEditAppState;
 import type { SceneElement, Snapshot } from "../kernel/kernel-types.ts";
 import { point } from "../units/frames.ts";
 import type { Camera, Point } from "../units/frames.ts";
-import type { RuntimeId } from "../units/ids.ts";
+import type { AreaKey, RuntimeId } from "../units/ids.ts";
 import { scenePx } from "../units/units.ts";
 import { publishToWorld } from "./map-publish.ts";
 import type { PublishDeps } from "./map-publish.ts";
@@ -81,6 +81,17 @@ function selectionAfterPress(meaning: PressMeaning, session: MapSession, ids: Re
   return meaning.kind === "pan" || meaning.kind === "rubber-band" ? new Set<RuntimeId>() : ids;
 }
 
+/**
+ * The Areas one press moves. A press that grabs an element inside a selection that also holds an
+ * Area's region drags that Area with it, because that is the selection the person built; the
+ * meaning alone names only the Area a press lands on.
+ */
+function areasOfPress(meaning: PressMeaning, scene: VisibleScene, held: ReadonlySet<RuntimeId>): ReadonlySet<AreaKey> | undefined {
+  if (meaning.kind !== "grab-element") return undefined;
+  const area = selectedVisibleArea(scene, held);
+  return area === null ? undefined : new Set([area]);
+}
+
 /** True for a meaning whose gesture the Map itself carries rather than leaving it to Excalidraw. */
 function movesTheMap(meaning: PressMeaning): boolean {
   return meaning.kind === "move-area" || meaning.kind === "resize-area" || meaning.kind === "grab-element" || meaning.kind === "add-to-selection";
@@ -120,7 +131,7 @@ function beginPress(deps: CanvasDeps, tool: { type: string }, state: PressState)
   }
   deps.session.additiveSelection = meaning.kind === "add-to-selection" ? new Set(held) : null;
   deps.session.pointerSelected = movesTheMap(meaning) ? new Set(held) : new Set<RuntimeId>();
-  deps.pointer.begin(meaning, { point: context.point, selection: held });
+  deps.pointer.begin(meaning, { point: context.point, selection: held, areas: areasOfPress(meaning, scene, held) });
 }
 
 /** Repairs an Excalidraw text editor left holding an id the composed scene no longer has. */
@@ -201,8 +212,6 @@ function handleChange(deps: CanvasDeps, elements: readonly ExcalidrawElement[], 
 export function createCanvasHandlers(deps: CanvasDeps, setApi: (api: ExcalidrawImperativeAPI) => void): CanvasHandlers {
   return {
     setApi,
-    /** Records the modifiers of the press Excalidraw is about to read. */
-    onPressModifiers: (modifiers) => { deps.session.shiftPress = modifiers.shift; },
     /** Opens one press through the pointer authority. */
     onPointerDown: (tool, state) => beginPress(deps, tool, state as PressState),
     /** Ends the open gesture when the pointer is released. */

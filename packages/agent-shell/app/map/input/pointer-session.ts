@@ -67,6 +67,12 @@ export type PointerSessionDeps = {
 export type GestureContext = {
   readonly point: Point<"scene">;
   readonly selection: Selection;
+  /**
+   * The Areas this gesture moves, when they are not the ones the meaning names. A press that grabs
+   * an element inside a selection that also holds an Area's region drags the Area with it, because
+   * that is what the person selected; the meaning alone cannot know that.
+   */
+  readonly areas?: ReadonlySet<AreaKey> | undefined;
 };
 
 /** What the kernel solved for one preview: the scene to paint and what it changed. */
@@ -251,7 +257,7 @@ export class PointerSession {
     this.origin = context.point;
     this.current = context.point;
     this.handle = handleOfMeaning(meaning);
-    this.areas = areasOfMeaning(meaning);
+    this.areas = context.areas ?? areasOfMeaning(meaning);
     this.settling = false;
     this.claimed = new Map();
     this.baselineComposition = null;
@@ -268,7 +274,7 @@ export class PointerSession {
   preview(point: Point<"scene">): PointerPreview | null {
     this.current = point;
     const solver = this.solverBaseline;
-    if (solver === null || this.origin === null || !isSolvedMeaning(this.meaning) || this.areas.size === 0) return null;
+    if (solver === null || this.origin === null || this.areas.size === 0) return null;
     const solved = solveAreaMapGesture(solver, {
       selectedAreas: [...this.areas],
       handle: this.handle,

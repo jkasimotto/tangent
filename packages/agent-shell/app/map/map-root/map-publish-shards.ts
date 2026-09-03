@@ -15,6 +15,7 @@ import {
 import type { AreaMapController, ComposedOrigin, Composition, GestureBaseline, SceneElement, SourceElement, World } from "../kernel/kernel-types.ts";
 import { delta, point, rect } from "../units/frames.ts";
 import type { Delta, Point, Rect } from "../units/frames.ts";
+import { nextBranchPriority } from "../layout/branch-priority.ts";
 import { areaKey } from "../units/ids.ts";
 import type { AreaKey, RuntimeId, ShardOwner, SourceId } from "../units/ids.ts";
 import { add, deltaBetween, subtract, union } from "../units/scalar-math.ts";
@@ -184,16 +185,6 @@ export function writeShards(
   return changed;
 }
 
-/** The highest branch priority any Area carries now, which the next raise sits above. */
-function highestPriority(world: World): Count {
-  let highest = count(0);
-  for (const node of world.areas) {
-    const value = node.region.layout?.priority;
-    if (value !== undefined && Number.isSafeInteger(value) && value >= 0 && value > highest) highest = value;
-  }
-  return highest;
-}
-
 /** Raises the branch priority of every Area whose own content hull changed, absorbing the anchor the solver resolved. */
 export function reprioritizeChangedAreas(
   world: World,
@@ -203,7 +194,7 @@ export function reprioritizeChangedAreas(
   directlyChanged: ReadonlySet<AreaKey>,
 ): Set<AreaKey> {
   const raised = new Set<AreaKey>();
-  const next = count(highestPriority(baselineWorld) + 1);
+  const next = nextBranchPriority(baselineWorld);
   for (const owner of changedOwners) {
     const area = areaKey(owner);
     const node = world.areas.find((entry) => entry.key === area);

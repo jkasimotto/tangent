@@ -73,6 +73,8 @@ function useCanvasEffects(input: EffectsInput): void {
       surfaceOf: (target) => surfaceOfTarget(target),
       /** Keeps the flag rule 1 of `press-meaning.ts` reads. */
       setSpaceHeld: (held) => { core.session.spaceHeld = held; },
+      /** Keeps the flag rule 5 of `press-meaning.ts` reads, which Excalidraw never reports. */
+      setShiftHeld: (held) => { core.session.shiftPress = held; },
       run: wiring.runCommand,
     }),
     [core, stores, wiring],

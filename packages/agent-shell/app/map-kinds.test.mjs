@@ -4,8 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createMapKindsCatalog, parseMapKinds, readMapIcon } from "./map-kinds.mjs";
+import { createMapKindsCatalog, parseMapKinds, readMapIcon, readMapImageIcon } from "./map-kinds.mjs";
 import { MAP_KINDS_STARTER_TEXT, starterMapIconFiles } from "./map-kind-starters.mjs";
+import { jpegIconBytes, pngIconBytes, svgIconText, webpIconBytes } from "./test-fixtures/map-icon-images.mjs";
 
 const STARTER_ICON_NAMES = new Set(starterMapIconFiles().map((file) => file.name));
 
@@ -163,4 +164,76 @@ test("an icon file Julian drops in is read without a restart, and a broken one n
   assert.ok(result.icons.figma, "a new drawing needs no restart");
   assert.deepEqual(result.problems.map((problem) => problem.scope), ["icon"]);
   assert.equal(result.problems[0].name, "broken");
+});
+
+test("every accepted image format is read for the size its own header declares", () => {
+  const png = readMapImageIcon("worktree", pngIconBytes({ width: 96, height: 48 }), ".png");
+  assert.equal(png.problem, undefined);
+  assert.deepEqual({ kind: png.icon.kind, mimeType: png.icon.mimeType, width: png.icon.width, height: png.icon.height }, { kind: "image", mimeType: "image/png", width: 96, height: 48 });
+  assert.match(png.icon.dataURL, /^data:image\/png;base64,[A-Za-z0-9+/=]+$/);
+  assert.match(png.icon.contentHash, /^[0-9a-f]{16}$/);
+
+  const jpeg = readMapImageIcon("commit", jpegIconBytes({ width: 320, height: 200 }), ".jpeg");
+  assert.deepEqual({ mimeType: jpeg.icon.mimeType, width: jpeg.icon.width, height: jpeg.icon.height }, { mimeType: "image/jpeg", width: 320, height: 200 });
+  assert.equal(readMapImageIcon("commit", jpegIconBytes({ width: 12, height: 8 }), ".jpg").icon.mimeType, "image/jpeg", "both spellings of the extension are the same type");
+
+  const webp = readMapImageIcon("link", webpIconBytes({ width: 500, height: 400 }), ".webp");
+  assert.deepEqual({ mimeType: webp.icon.mimeType, width: webp.icon.width, height: webp.icon.height }, { mimeType: "image/webp", width: 500, height: 400 });
+
+  const svg = readMapImageIcon("revision", Buffer.from(svgIconText({ width: 240, height: 120 })), ".svg");
+  assert.deepEqual({ mimeType: svg.icon.mimeType, width: svg.icon.width, height: svg.icon.height }, { mimeType: "image/svg+xml", width: 240, height: 120 });
+  const boxed = readMapImageIcon("revision", Buffer.from(svgIconText({ width: 64, height: 32, sized: false })), ".svg");
+  assert.deepEqual({ width: boxed.icon.width, height: boxed.icon.height }, { width: 64, height: 32 }, "a viewBox alone still gives the drawn size");
+  const inches = readMapImageIcon("revision", Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1in" height="0.5in"></svg>'), ".svg");
+  assert.deepEqual({ width: inches.icon.width, height: inches.icon.height }, { width: 96, height: 48 }, "a length in real units is read in pixels");
+
+  // The same bytes always name the same file, and different bytes never do.
+  assert.equal(readMapImageIcon("worktree", pngIconBytes({ width: 96, height: 48 }), ".png").icon.contentHash, png.icon.contentHash);
+  assert.notEqual(readMapImageIcon("worktree", pngIconBytes({ width: 96, height: 49 }), ".png").icon.contentHash, png.icon.contentHash);
+});
+
+test("an image that is truncated, or is not the type its extension claims, is a problem", () => {
+  assert.match(readMapImageIcon("worktree", pngIconBytes().subarray(0, 20), ".png").problem, /not a readable PNG image/);
+  assert.match(readMapImageIcon("worktree", Buffer.from(svgIconText()), ".png").problem, /not a readable PNG image/, "an SVG that calls itself a PNG is refused");
+  assert.match(readMapImageIcon("worktree", pngIconBytes(), ".svg").problem, /not a readable SVG image/, "a PNG that calls itself an SVG is refused");
+  assert.match(readMapImageIcon("worktree", webpIconBytes().subarray(0, 18), ".webp").problem, /not a readable WEBP image/);
+  assert.match(readMapImageIcon("worktree", jpegIconBytes().subarray(0, 6), ".jpg").problem, /not a readable JPEG image/, "a JPEG with no frame header has no size");
+  assert.match(readMapImageIcon("worktree", Buffer.from("<svg><rect></svg>"), ".svg").problem, /not a readable SVG image/, "an SVG has to be well-formed XML");
+  assert.match(readMapImageIcon("worktree", Buffer.from('<html><body>no</body></html>'), ".svg").problem, /not a readable SVG image/, "the root element has to be svg");
+  assert.match(readMapImageIcon("worktree", Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"></svg>'), ".svg").problem, /not a readable SVG image/, "a percentage is no drawn size");
+  assert.match(readMapImageIcon("worktree", pngIconBytes(), ".gif").problem, /is not an icon file type/);
+});
+
+test("an image icon and a drawing of one name are an ambiguity the image wins", async () => {
+  const root = await vaultRoot();
+  const catalog = createMapKindsCatalog({ root });
+  await catalog.read();
+  await writeFile(path.join(root, "map-icons", "worktree.png"), pngIconBytes({ width: 128, height: 128 }));
+  const result = await catalog.read();
+  assert.equal(result.icons.worktree.kind, "image", "the picture Julian dropped in wins over the drawing");
+  assert.equal(result.icons["worktree-dirty"].kind, "drawing", "every other drawing keeps working");
+  const ambiguity = result.problems.find((problem) => problem.name === "worktree");
+  assert.match(ambiguity.message, /worktree\.png and worktree\.excalidraw share this icon name, so the Map draws worktree\.png/);
+  assert.deepEqual(parseMapKinds(MAP_KINDS_STARTER_TEXT, new Set(Object.keys(result.icons))).kinds.find((entry) => entry.id === "worktree").problems, [], "the kind still resolves its icon");
+});
+
+test("an unreadable image is a problem and its kind falls back to a card", async () => {
+  const root = await vaultRoot();
+  const catalog = createMapKindsCatalog({ root });
+  await catalog.read();
+  await writeFile(path.join(root, "map-icons", "design-file.png"), pngIconBytes().subarray(0, 20));
+  const result = await catalog.read();
+  assert.equal(result.icons["design-file"], undefined, "an icon with no readable size never reaches the Map");
+  assert.equal(result.problems.some((problem) => problem.name === "design-file" && /not a readable PNG image/.test(problem.message)), true);
+});
+
+test("an image icon changes the revision the Map watches, and reads without a restart", async () => {
+  const root = await vaultRoot();
+  const catalog = createMapKindsCatalog({ root });
+  const first = await catalog.read();
+  await writeFile(path.join(root, "map-icons", "design-file.svg"), svgIconText({ width: 200, height: 200 }), "utf8");
+  const second = await catalog.read();
+  assert.equal(second.icons["design-file"].kind, "image");
+  assert.notEqual(second.revision, first.revision);
+  assert.equal((await catalog.read()).revision, second.revision, "an unchanged image keeps one revision");
 });

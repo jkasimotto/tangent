@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  createFigureElements, figureCacheKey, figureCaptionGeometry, figureForFact, figureIconBox,
-  figureIconName, figurePresentationMarker, iconBounds, isMapKindState, isMapKindVerb, restoreFigurePresentation, themeInkColor,
+  MAP_ICON_IMAGE_TYPES, createFigureElements, figureCacheKey, figureCaptionGeometry, figureForFact, figureIconBox,
+  figureIconFileId, figureIconFiles, figureIconName, figurePresentationMarker, iconBounds, isMapKindState, isMapKindVerb,
+  restoreFigurePresentation, themeInkColor,
 } from "./public/area-map-figures.js";
 
 const block = { id: "block-1", x: 100, y: 200, width: 280, height: 132, opacity: 100 };
@@ -143,4 +144,61 @@ test("the shared vocabulary closes the states and verbs one entry may name", () 
   assert.equal(isMapKindVerb("path", "open"), false);
   assert.equal(isMapKindVerb("vault", "open-goal"), true);
   assert.equal(isMapKindVerb("vault", "details"), false);
+});
+
+/** Builds one image icon in the normal form the catalog serves. */
+function imageIcon({ name = "worktree", width = 200, height = 100, mimeType = "image/png", contentHash = "a1b2c3d4e5f60718" } = {}) {
+  return { name, kind: "image", mimeType, dataURL: `data:${mimeType};base64,AAAA`, width, height, contentHash, warning: null };
+}
+
+test("an image icon draws one locked image element that fits the icon square", () => {
+  const drawing = imageIcon({ width: 200, height: 100 });
+  const elements = createFigureElements({ block, icon: drawing, iconName: "worktree", opacity: 100, owner: "otto/tangent", sourceId: "source-1" });
+  assert.equal(elements.length, 1, "an image icon is one element, not a drawing's many");
+  const [element] = elements;
+  const boxSide = figureIconBox(block);
+  assert.equal(element.type, "image");
+  assert.equal(element.width, boxSide, "the long edge fills the square");
+  assert.equal(element.height, boxSide / 2, "the aspect ratio is kept");
+  assert.equal(element.x, block.x + 14, "the picture centres in the icon square");
+  assert.equal(element.y + element.height / 2, block.y + block.height / 2);
+  assert.equal(element.locked, true);
+  assert.equal(element.isDeleted, false);
+  assert.equal(element.status, "saved");
+  assert.equal(element.strokeColor, "transparent", "an image carries no ink of its own");
+  assert.equal(element.customData.tangentWorldEphemeral.kind, "resource-figure-icon");
+  assert.equal(element.customData.tangentWorldEphemeral.sourceId, block.id);
+  assert.equal(element.customData.tangentWorldEphemeral.icon, "worktree");
+  assert.equal(element.customData.tangentWorld.owner, "otto/tangent");
+
+  // A tall picture fits the other way, and a gone Block fades its picture.
+  const [tall] = createFigureElements({ block, icon: imageIcon({ width: 100, height: 400 }), iconName: "worktree" });
+  assert.equal(tall.height, boxSide);
+  assert.equal(tall.width, boxSide / 4);
+  assert.equal(tall.x, block.x + 14 + (boxSide - tall.width) / 2);
+  assert.equal(createFigureElements({ block, icon: drawing, iconName: "worktree", opacity: 45 })[0].opacity, 45);
+  assert.deepEqual(createFigureElements({ block, icon: { ...drawing, dataURL: "" }, iconName: "worktree" }), [], "an image with no bytes stays a card");
+});
+
+test("an image icon's file id follows its name and its bytes, and the Map registers the file once", () => {
+  const drawing = imageIcon({ contentHash: "a1b2c3d4e5f60718" });
+  const [element] = createFigureElements({ block, icon: drawing, iconName: "worktree" });
+  assert.equal(element.fileId, figureIconFileId("worktree", "a1b2c3d4e5f60718"));
+  assert.notEqual(figureIconFileId("worktree", "a1b2c3d4e5f60718"), figureIconFileId("worktree", "a1b2c3d4e5f60719"));
+  assert.notEqual(figureIconFileId("worktree", "a1b2c3d4e5f60718"), figureIconFileId("worktree-dirty", "a1b2c3d4e5f60718"));
+
+  const second = createFigureElements({ block: { ...block, id: "block-2" }, icon: drawing, iconName: "worktree" });
+  const drawn = icon([{ id: "a", type: "rectangle", x: 0, y: 0, width: 10, height: 10 }]);
+  const inkElements = createFigureElements({ block: { ...block, id: "block-3" }, icon: drawn, iconName: "commit" });
+  const icons = { worktree: drawing, commit: drawn };
+  const files = figureIconFiles([element, ...second, ...inkElements], icons, 7);
+  assert.deepEqual(files, [{ id: element.fileId, mimeType: "image/png", dataURL: drawing.dataURL, created: 7 }], "two Blocks with one icon register one file, and a drawing registers none");
+  assert.deepEqual(figureIconFiles([{ ...element, isDeleted: true }], icons), [], "a removed figure registers nothing");
+  assert.deepEqual(figureIconFiles([element], {}), [], "an icon the catalog dropped registers nothing");
+});
+
+test("the accepted image types are the ones Julian can drop into map-icons", () => {
+  assert.deepEqual(Object.keys(MAP_ICON_IMAGE_TYPES), [".png", ".svg", ".webp", ".jpg", ".jpeg"]);
+  assert.equal(MAP_ICON_IMAGE_TYPES[".jpg"], MAP_ICON_IMAGE_TYPES[".jpeg"]);
+  assert.equal(MAP_ICON_IMAGE_TYPES[".svg"], "image/svg+xml");
 });

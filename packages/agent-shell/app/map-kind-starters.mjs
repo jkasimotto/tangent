@@ -3,6 +3,9 @@
 // or the icon folder is empty, and never rewrites them: from then on Julian
 // owns both. Every drawing is ordinary Excalidraw ink in the colours it should
 // render in; the figure projection makes it survive the Map's theme filter.
+// An icon can also be an image file, which Julian is free to drop in beside or
+// in place of a starter drawing. The starters stay drawings so that a vault
+// with no icons still gets a working set with no binary files in its history.
 // Design: docs/design/map-resource-icons/product.md
 
 import { createShapeElement } from "./public/area-board-core.js";
@@ -166,7 +169,8 @@ One entry per kind.
 - \`label\`: the kind word in the accessible name, the Outline, and the
   Resources panel.
 - \`target\`: \`path\`, \`url\`, or \`vault\`. A new id needs one.
-- \`icon\`: the default icon name, a file in \`map-icons/\`.
+- \`icon\`: the default icon name, a file in \`map-icons/\`. The name is the file
+  name without its extension.
 - \`icons\`: an ordered list of \`{ "when": "<state>", "icon": "<name>" }\`. The
   first state that is true wins; otherwise \`icon\` wins.
 - \`click\`: the action Enter, a double click, or the action button runs. A path
@@ -177,8 +181,18 @@ A kind with no icon stays a card with the kind word on it. A problem in this
 file never hides a Block: the kind falls back to a card and the Map says what
 is wrong.
 
-Edit a drawing in \`map-icons/\` with Excalidraw, or drop a library item there.
-The next Map load shows it.
+An icon file is an image (\`.png\`, \`.svg\`, \`.webp\`, \`.jpg\`) or an Excalidraw
+drawing (\`.excalidraw\`, \`.excalidrawlib\`). Edit a drawing with Excalidraw, or
+drop an image in. The next Map load shows it, with no restart. If a name has
+both an image and a drawing, the Map draws the image and says so.
+
+Draw an image large: at least 512 pixels on its long edge, because the Map
+zooms and a small picture goes soft. An \`.svg\` needs no size of its own; the
+Map draws it at 512 pixels or at its own size, whichever is larger. One file is
+at most 2 MB.
+
+The Map is a dark canvas, and it lightens a very saturated colour a little,
+the same way it does the ink of a drawing.
 
 \`\`\`tangent.map-kinds.v1
 {

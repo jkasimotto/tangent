@@ -5,13 +5,111 @@ import worldCore from "../public/area-map-world-core.js";
 import pickerModel from "../public/area-board-picker.js";
 import { mapFindMatches } from "../public/area-map-find-core.js";
 import { resolveMapEntity, resourceLocatorKey, runMapEntityAction, selectedMapEntityElement } from "../public/area-map-entities.js";
-import { restoreFigurePresentation } from "../public/area-map-figures.js";
+import { figureIconFiles, restoreFigurePresentation } from "../public/area-map-figures.js";
 import { areaMapPointerCommand, areaMapStructuralHullChanged, createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "../public/area-map-world-controller.js";
 
 const EXCALIDRAW_UI_OPTIONS = Object.freeze({
   tools: { image: false },
   canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, toggleTheme: false },
 });
+/** The Excalidraw theme the Map always runs in. */
+const MAP_THEME = "dark";
+/** The long edge one vector icon is rasterized at, so it stays sharp as the Map zooms. */
+const ICON_RASTER_LONG_EDGE = 512;
+/** The theme-ready bytes of every image icon drawn so far, by icon, content, and theme. */
+const iconImageCache = new Map();
+
+/** Decodes one data URL into an image the Map can redraw. */
+function decodeIconImage(dataURL) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    /** Hands back the decoded picture. */
+    image.onload = () => resolve(image);
+    /** Fails the conversion so the kind falls back to a card, never a broken picture. */
+    image.onerror = () => reject(new Error("the image did not decode"));
+    image.src = dataURL;
+  });
+}
+
+/**
+ * Returns one image icon's bytes in the form the Map's theme draws correctly.
+ *
+ * The Map runs Excalidraw's dark theme, which puts `invert(0.93)
+ * hue-rotate(180deg)` on the canvas element. A stroke colour is pre-inverted so
+ * that filter turns it back into the drawn colour (see themeInkColor). Pixels
+ * cannot be pre-inverted the same way, and Excalidraw already does that job for
+ * them: in the dark theme it draws every raster image element through
+ * `invert(100%) hue-rotate(180deg) saturate(1.25)`, so the picture comes back
+ * out of the canvas filter looking as it was supplied. It makes exactly one
+ * exception, an SVG, which it draws untouched and the canvas filter then washes
+ * out. So an SVG is drawn once onto an offscreen canvas here and registered as
+ * a PNG, which puts it on the same path every other picture takes. No filter is
+ * applied here: a second inversion would cancel Excalidraw's own and wash the
+ * icon out again.
+ */
+async function themeIconImage(icon, theme) {
+  if (theme !== "dark" || icon.mimeType !== "image/svg+xml") return icon;
+  const image = await decodeIconImage(icon.dataURL);
+  // The catalog read the drawn size out of the file itself, from the width and
+  // height or the viewBox. The browser invents 300 by 150 for an SVG that
+  // declares neither, so the catalog's size is the one to trust.
+  const naturalWidth = Number(icon.width) || image.naturalWidth || 1;
+  const naturalHeight = Number(icon.height) || image.naturalHeight || 1;
+  // A vector icon has no pixels of its own, so it is rasterized large enough to
+  // stay sharp when the Map zooms in, and an SVG already drawn larger than that
+  // keeps its own size. A raster icon is passed through untouched, at the
+  // resolution it was supplied at, and is never downscaled here.
+  const scale = Math.max(1, ICON_RASTER_LONG_EDGE / Math.max(1, naturalWidth, naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(naturalHeight * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("the browser gave no 2d canvas");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  // The bytes are new, so the file id has to be new: Excalidraw keeps one
+  // decoded picture per file id and never reads the same id twice.
+  return { ...icon, mimeType: "image/png", dataURL: canvas.toDataURL("image/png"), contentHash: `${icon.contentHash}-${theme}` };
+}
+
+/**
+ * Returns the Map kinds catalog with every image icon carried in the form the
+ * Map's theme draws correctly. An image the browser cannot read becomes a
+ * problem and leaves the catalog, so the kind that names it falls back to a
+ * card. The result is cached per icon and theme, so the resource cadence
+ * converts nothing twice, and a theme change converts once more.
+ */
+export async function prepareFigureIconImages(catalog, theme = MAP_THEME) {
+  const source = catalog?.icons;
+  if (!source || typeof source !== "object") return catalog;
+  const names = Object.keys(source).filter((name) => source[name]?.kind === "image");
+  if (!names.length) return catalog;
+  const icons = { ...source };
+  const problems = [...(catalog.problems ?? [])];
+  for (const name of names) {
+    const icon = source[name];
+    const key = `${name}:${icon.contentHash}:${theme}`;
+    let ready = iconImageCache.get(key);
+    if (!ready) {
+      try {
+        ready = await themeIconImage(icon, theme);
+        iconImageCache.set(key, ready);
+      } catch (error) {
+        delete icons[name];
+        problems.push({ scope: "icon", name, message: `${name}: ${String(error?.message ?? error)}` });
+        continue;
+      }
+    }
+    icons[name] = ready;
+  }
+  return { ...catalog, revision: `${catalog.revision}:${theme}`, icons, problems };
+}
+
+/** Forwards one coordinate-free Map diagnostic to the host and to browser listeners. */
+function emitAreaMapEvent(options, event) {
+  options.onEvent?.(event);
+  try { globalThis.dispatchEvent?.(new CustomEvent("tangent:area-map", { detail: event })); } catch { /* Diagnostics never block the map. */ }
+}
+
 const PROJECTION_KINDS = new Set([
   "additive-pointer-selection", "additive-selection-repair", "area-pointer-preview", "area-selection", "area-transform-rejected",
   "camera-selection", "claim", "claimed-nudge", "no-change", "placed-block-selection", "pointer-down-selection",
@@ -23,7 +121,7 @@ const StableWorldCanvas = React.memo(function StableWorldCanvas({ initialData, h
   return <Excalidraw
     initialData={initialData}
     excalidrawAPI={(value) => handlers.current.setApi(value)}
-    theme="dark"
+    theme={MAP_THEME}
     name="Area map"
     autoFocus
     handleKeyboardGlobally={false}
@@ -296,8 +394,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     onNavigation: options.onNavigation,
     /** Forwards coordinate-free diagnostics to the host and browser listeners. */
     onEvent(event) {
-      options.onEvent?.(event);
-      try { globalThis.dispatchEvent?.(new CustomEvent("tangent:area-map", { detail: event })); } catch { /* Diagnostics never block the map. */ }
+      emitAreaMapEvent(options, event);
     },
   });
   const controller = controllerRef.current;
@@ -378,6 +475,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const placedBlockEditEventRef = useRef(false);
   const fingerprintRef = useRef(boardCore.authoredFingerprint(state.scene.elements));
   const appliedProjectionRef = useRef("");
+  const registeredIconFilesRef = useRef(new Set());
   const previousSaveStateRef = useRef(state.save.state);
   const announcedReasonRef = useRef(0);
   const deferredCanvasUpdateTokenRef = useRef(0);
@@ -520,9 +618,11 @@ export function AreaMapWorld({ host, bridge, options }) {
   useEffect(() => {
     if (typeof options.api !== "function") return undefined;
     let cancelled = false;
-    void requestResource("/api/areas/map-kinds").then((catalog) => {
-      if (!cancelled) controller.setMapKinds?.(catalog);
-    }, () => { /* The Map keeps the catalog it already installed. */ });
+    void requestResource("/api/areas/map-kinds")
+      .then((catalog) => prepareFigureIconImages(catalog, MAP_THEME))
+      .then((catalog) => {
+        if (!cancelled) controller.setMapKinds?.(catalog);
+      }, () => { /* The Map keeps the catalog it already installed. */ });
     return () => { cancelled = true; };
   }, [options.api, resourceCadence]);
 
@@ -1577,9 +1677,26 @@ export function AreaMapWorld({ host, bridge, options }) {
     else announce(`The ${leaf(pending.owner)} Map did not load. Placement is unavailable.`);
   }, [state.revision]);
 
+  /**
+   * Registers the bytes of every image icon the projection draws. Excalidraw
+   * draws an image element only once its file id is registered, and it keeps
+   * one decoded picture per id, so each id is registered exactly once.
+   */
+  function registerFigureIconFiles() {
+    const files = figureIconFiles(state.scene.elements, state.mapKinds?.icons ?? {}, Date.now());
+    const missing = files.filter((file) => !registeredIconFilesRef.current.has(file.id));
+    if (!missing.length) return;
+    for (const file of missing) registeredIconFilesRef.current.add(file.id);
+    api.addFiles?.(missing);
+    emitAreaMapEvent(options, { name: "map-icon-files", at: Date.now(), files: missing.map((file) => file.id) });
+  }
+
   /** Applies one controller projection without allowing Excalidraw to own history. */
   useEffect(() => {
     if (!api) return;
+    // The icon bytes have to reach Excalidraw before the elements that name
+    // them, and a figure can appear without any authored element changing.
+    registerFigureIconFiles();
     const liveEditingId = api.getAppState?.().editingTextElement?.id;
     if (liveEditingId && textEditRef.current) return;
     // A brand-new Excalidraw element has no baseline selection. Let Excalidraw

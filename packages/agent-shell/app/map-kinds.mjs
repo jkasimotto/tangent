@@ -1,8 +1,9 @@
 // The Map kinds catalog: what each kind of thing looks like on a Map and what
 // one click does with it. The server owns the definition (`map-kinds.md`) and
-// the icon drawings (`map-icons/`) in the vault, reads them per request the way
-// the harness registry is read, and serves one catalog. The browser never
-// parses an Excalidraw file.
+// the icons (`map-icons/`) in the vault, reads them per request the way the
+// harness registry is read, and serves one catalog. An icon is either an
+// Excalidraw drawing or an image file; both arrive at the browser ready to
+// draw, so the browser parses no icon file of its own.
 // Design: docs/design/map-resource-icons/code.md
 
 import { createHash } from "node:crypto";
@@ -13,7 +14,8 @@ import { validateSceneElements } from "./area-canvas.mjs";
 import { fencedBlock } from "./launch-environment.mjs";
 import { MAP_KINDS_STARTER_TEXT, starterMapIconFiles } from "./map-kind-starters.mjs";
 import {
-  BUILT_IN_MAP_KINDS, ICON_ELEMENT_LIMIT, ICON_ELEMENT_WARNING, MAP_KIND_TARGETS,
+  BUILT_IN_MAP_KINDS, ICON_ELEMENT_LIMIT, ICON_ELEMENT_WARNING,
+  MAP_ICON_DRAWING_EXTENSIONS, MAP_ICON_IMAGE_TYPES, MAP_KIND_TARGETS,
   iconBounds, isMapKindState, isMapKindVerb,
 } from "./public/area-map-figures.js";
 
@@ -23,7 +25,10 @@ export const MAP_KINDS_TAG = "tangent.map-kinds.v1";
 
 const SAFE_KIND_ID = /^[a-z][a-z0-9-]{0,63}$/;
 const SAFE_ICON_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const ICON_EXTENSIONS = new Set([".excalidraw", ".excalidrawlib"]);
+const ICON_EXTENSIONS = new Set([...MAP_ICON_DRAWING_EXTENSIONS, ...Object.keys(MAP_ICON_IMAGE_TYPES)]);
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+/** The CSS pixels one length unit an SVG may name is worth. */
+const SVG_UNIT_PIXELS = Object.freeze({ px: 1, pt: 96 / 72, pc: 16, cm: 96 / 2.54, mm: 96 / 25.4, in: 96, q: 96 / 101.6 });
 const REJECTED_ICON_TYPES = new Set(["image", "embeddable", "iframe"]);
 const MAX_ICON_BYTES = 2 * 1024 * 1024;
 
@@ -142,11 +147,167 @@ export function readMapIcon(name, text, extension) {
   return {
     icon: {
       name,
+      kind: "drawing",
       width: bounds.width,
       height: bounds.height,
       elements: elements.map((element) => ({ ...element, x: Number(element.x ?? 0) - bounds.x, y: Number(element.y ?? 0) - bounds.y })),
       elementCount: elements.length,
       warning: elements.length > ICON_ELEMENT_WARNING ? `${name}: more than ${ICON_ELEMENT_WARNING} elements, which can slow the Map` : null,
+    },
+  };
+}
+
+/**
+ * Reads the pixel size out of a PNG IHDR chunk. The signature is checked first,
+ * so a file that only claims the extension is a problem, never a broken picture.
+ */
+function pngSize(bytes) {
+  if (bytes.length < 24 || !bytes.subarray(0, 8).equals(PNG_SIGNATURE)) return null;
+  if (bytes.toString("latin1", 12, 16) !== "IHDR") return null;
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+/** Reads the pixel size out of the first frame header of a JPEG. */
+function jpegSize(bytes) {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) return null;
+  let at = 2;
+  while (at + 9 < bytes.length) {
+    if (bytes[at] !== 0xff) return null;
+    const marker = bytes[at + 1];
+    // The standalone markers carry no length word, so they are stepped over.
+    if (marker === 0x01 || marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd9)) { at += 2; continue; }
+    const length = bytes.readUInt16BE(at + 2);
+    if (length < 2) return null;
+    // C0 to CF are the frame headers, apart from the three table markers among them.
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+      const height = bytes.readUInt16BE(at + 5);
+      const width = bytes.readUInt16BE(at + 7);
+      return width > 0 && height > 0 ? { width, height } : null;
+    }
+    at += 2 + length;
+  }
+  return null;
+}
+
+/** Reads the pixel size out of a WebP VP8, VP8L, or VP8X chunk. */
+function webpSize(bytes) {
+  if (bytes.length < 26 || bytes.toString("latin1", 0, 4) !== "RIFF" || bytes.toString("latin1", 8, 12) !== "WEBP") return null;
+  const chunk = bytes.toString("latin1", 12, 16);
+  if (chunk === "VP8 ") {
+    if (bytes.length < 30 || bytes[23] !== 0x9d || bytes[24] !== 0x01 || bytes[25] !== 0x2a) return null;
+    return { width: bytes.readUInt16LE(26) & 0x3fff, height: bytes.readUInt16LE(28) & 0x3fff };
+  }
+  if (chunk === "VP8L") {
+    if (bytes[20] !== 0x2f) return null;
+    const bits = bytes.readUInt32LE(21);
+    return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+  }
+  if (chunk === "VP8X") {
+    if (bytes.length < 30) return null;
+    return { width: bytes.readUIntLE(24, 3) + 1, height: bytes.readUIntLE(27, 3) + 1 };
+  }
+  return null;
+}
+
+/** Returns the attributes of one XML start tag, by lower-case name. */
+function xmlAttributes(text) {
+  const attributes = {};
+  const pattern = /([A-Za-z_][\w.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  let match = pattern.exec(String(text ?? ""));
+  while (match) {
+    attributes[match[1].toLowerCase()] = match[2] ?? match[3] ?? "";
+    match = pattern.exec(String(text ?? ""));
+  }
+  return attributes;
+}
+
+/**
+ * Returns the single root element of one XML document, or null when the text is
+ * not well-formed XML. An SVG icon has to really be XML with an `svg` root: a
+ * file that only claims the extension is a problem, never a broken picture.
+ */
+function xmlRoot(text) {
+  const body = String(text)
+    .replace(/<\?[\s\S]*?\?>/g, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, " ")
+    .replace(/<!DOCTYPE[^>[]*(?:\[[\s\S]*?\])?[^>]*>/gi, " ");
+  const tag = /<\s*(\/?)([A-Za-z_][\w.:-]*)((?:[^<>"']|"[^"]*"|'[^']*')*?)(\/?)\s*>/g;
+  const open = [];
+  let root = null;
+  let read = 0;
+  let match = tag.exec(body);
+  while (match) {
+    if (body.slice(read, match.index).includes("<")) return null;
+    read = tag.lastIndex;
+    const [, closing, name, attributes, selfClosing] = match;
+    if (closing) {
+      if (open.pop() !== name) return null;
+    } else {
+      if (!open.length) {
+        if (root) return null;
+        root = { name, attributes: xmlAttributes(attributes) };
+      }
+      if (!selfClosing) open.push(name);
+    }
+    match = tag.exec(body);
+  }
+  if (body.slice(read).includes("<")) return null;
+  return open.length ? null : root;
+}
+
+/** Returns one SVG length in CSS pixels, or null for a percentage or a bad value. */
+function svgLength(value) {
+  const match = /^\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)\s*(px|pt|pc|cm|mm|in|q)?\s*$/i.exec(String(value ?? ""));
+  if (!match) return null;
+  const size = Number(match[1]) * SVG_UNIT_PIXELS[(match[2] ?? "px").toLowerCase()];
+  return Number.isFinite(size) && size > 0 ? size : null;
+}
+
+/** Reads the drawn size of one SVG from its width and height, else its viewBox. */
+function svgSize(text) {
+  const root = xmlRoot(text);
+  if (!root || root.name.replace(/^.*:/, "").toLowerCase() !== "svg") return null;
+  const width = svgLength(root.attributes.width);
+  const height = svgLength(root.attributes.height);
+  if (width && height) return { width, height };
+  const box = String(root.attributes.viewbox ?? "").trim().split(/[\s,]+/).map(Number);
+  if (box.length === 4 && box.every((value) => Number.isFinite(value)) && box[2] > 0 && box[3] > 0) return { width: box[2], height: box[3] };
+  return null;
+}
+
+/** Returns the intrinsic size one image file's own header declares. */
+function imageSize(bytes, mimeType) {
+  if (mimeType === "image/png") return pngSize(bytes);
+  if (mimeType === "image/jpeg") return jpegSize(bytes);
+  if (mimeType === "image/webp") return webpSize(bytes);
+  return svgSize(bytes.toString("utf8"));
+}
+
+/**
+ * Reads one image icon into the normal form the projection draws: the bytes as
+ * a data URL, with the intrinsic size read out of the file's own header. Node
+ * decodes no picture here, so a file that lies about its type, and a truncated
+ * one, are both a problem on the file, and every kind that names it stays a
+ * card rather than showing a broken picture.
+ */
+export function readMapImageIcon(name, bytes, extension) {
+  const mimeType = MAP_ICON_IMAGE_TYPES[extension] ?? null;
+  if (!mimeType) return { problem: `${name}: ${extension} is not an icon file type` };
+  const size = imageSize(bytes, mimeType);
+  if (!size) return { problem: `${name}: not a readable ${mimeType.replace("image/", "").replace("+xml", "").toUpperCase()} image` };
+  return {
+    icon: {
+      name,
+      kind: "image",
+      mimeType,
+      dataURL: `data:${mimeType};base64,${bytes.toString("base64")}`,
+      width: size.width,
+      height: size.height,
+      contentHash: createHash("sha256").update(bytes).digest("hex").slice(0, 16),
+      warning: null,
     },
   };
 }
@@ -163,28 +324,49 @@ export function createMapKindsCatalog({ root, repository = null, commit = null, 
   let starterWrite = null;
 
   /** Reads one file through the modification-time memo, or null when absent. */
-  async function readMemoized(file, project) {
+  async function readMemoized(file, project, { binary = false } = {}) {
     let info;
     try { info = await stat(file); }
     catch (error) { if (error.code === "ENOENT" || error.code === "ENOTDIR") { memo.delete(file); return null; } throw error; }
     if (info.size > MAX_ICON_BYTES) return { value: null, problem: `${path.basename(file)}: the file is too large` };
     const hit = memo.get(file);
     if (hit && hit.mtimeMs === info.mtimeMs && hit.size === info.size) return hit.entry;
-    const text = await readFile(file, "utf8");
-    const entry = { text, value: project(text) };
+    const body = await readFile(file, binary ? undefined : "utf8");
+    // An image is bytes, not text, so the revision watches its digest instead.
+    const entry = binary
+      ? { digest: createHash("sha256").update(body).digest("hex"), value: project(body) }
+      : { text: body, value: project(body) };
     memo.set(file, { mtimeMs: info.mtimeMs, size: info.size, entry });
     return entry;
   }
 
-  /** Lists the icon files in the folder, newest read wins; an absent folder is empty. */
+  /**
+   * Lists one icon file per name; an absent folder is empty. An image wins over
+   * a drawing of the same name, because Julian asked for pictures. The drawing
+   * stays on disk, and the ambiguity is a problem that names both files, so the
+   * Map says which one it drew.
+   */
   async function listIconFiles() {
     let names = [];
     try { names = await readdir(iconsPath); }
-    catch (error) { if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error; return []; }
-    return names
-      .map((entry) => ({ name: path.basename(entry, path.extname(entry)), extension: path.extname(entry), file: path.join(iconsPath, entry) }))
-      .filter((entry) => ICON_EXTENSIONS.has(entry.extension) && SAFE_ICON_NAME.test(entry.name))
-      .sort((left, right) => left.name.localeCompare(right.name));
+    catch (error) { if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error; return { files: [], problems: [] }; }
+    const byName = new Map();
+    for (const entry of names) {
+      const extension = path.extname(entry).toLowerCase();
+      const name = path.basename(entry, path.extname(entry));
+      if (!ICON_EXTENSIONS.has(extension) || !SAFE_ICON_NAME.test(name)) continue;
+      const group = byName.get(name) ?? [];
+      group.push({ name, extension, image: extension in MAP_ICON_IMAGE_TYPES, file: path.join(iconsPath, entry), fileName: entry });
+      byName.set(name, group);
+    }
+    const files = [];
+    const problems = [];
+    for (const [name, group] of [...byName].sort(([left], [right]) => left.localeCompare(right))) {
+      group.sort((left, right) => (left.image === right.image ? left.fileName.localeCompare(right.fileName) : left.image ? -1 : 1));
+      files.push(group[0]);
+      if (group.length > 1) problems.push({ scope: "icon", name, message: `${name}: ${group.map((entry) => entry.fileName).join(" and ")} share this icon name, so the Map draws ${group[0].fileName}` });
+    }
+    return { files, problems };
   }
 
   /** Writes one starter file atomically without disturbing a file already there. */
@@ -228,25 +410,28 @@ export function createMapKindsCatalog({ root, repository = null, commit = null, 
   async function read() {
     const problems = [];
     let definition = await readMemoized(definitionPath, (text) => text);
-    let files = await listIconFiles();
+    let listed = await listIconFiles();
     let source = "vault";
-    if ((!definition || !files.length) && writable) {
-      const written = await writeStarters(!definition, !files.length);
+    if ((!definition || !listed.files.length) && writable) {
+      const written = await writeStarters(!definition, !listed.files.length);
       if (written === null) {
         problems.push({ scope: "definition", name: null, message: "Could not write the starter definition" });
         source = "starter";
       }
       definition = await readMemoized(definitionPath, (text) => text);
-      files = await listIconFiles();
+      listed = await listIconFiles();
     }
     const text = definition?.text ?? (definition ? "" : MAP_KINDS_STARTER_TEXT);
     if (!definition) source = "starter";
+    problems.push(...listed.problems);
     const icons = {};
     const parts = [text];
-    for (const entry of files) {
-      const loaded = await readMemoized(entry.file, (body) => readMapIcon(entry.name, body, entry.extension));
+    for (const entry of listed.files) {
+      /** Reads one icon file as the drawing or the image its extension says it is. */
+      const project = (body) => (entry.image ? readMapImageIcon(entry.name, body, entry.extension) : readMapIcon(entry.name, body, entry.extension));
+      const loaded = await readMemoized(entry.file, project, { binary: entry.image });
       if (!loaded) continue;
-      parts.push(loaded.text ?? "");
+      parts.push(loaded.text ?? loaded.digest ?? "");
       const value = loaded.value ?? { problem: loaded.problem };
       if (value.problem) { problems.push({ scope: "icon", name: entry.name, message: value.problem }); continue; }
       if (value.icon.warning) problems.push({ scope: "icon", name: entry.name, message: value.icon.warning });
@@ -269,4 +454,4 @@ export function createMapKindsCatalog({ root, repository = null, commit = null, 
   return { read };
 }
 
-export default { MAP_ICONS_FOLDER, MAP_KINDS_FILE, MAP_KINDS_TAG, createMapKindsCatalog, parseMapKinds, readMapIcon };
+export default { MAP_ICONS_FOLDER, MAP_KINDS_FILE, MAP_KINDS_TAG, createMapKindsCatalog, parseMapKinds, readMapIcon, readMapImageIcon };

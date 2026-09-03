@@ -1,9 +1,10 @@
-// Figures: a Map Block whose kind has an icon renders as one large hand-drawn
-// icon with a caption beside it. This module owns the shared vocabulary of the
-// Map kinds definition (states, verbs, built-in ids) and the pure geometry that
-// turns one icon drawing into locked ephemeral scene elements. It performs no
-// I/O, imports nothing, and is read by both the server parser and the browser
-// projection.
+// Figures: a Map Block whose kind has an icon renders as one large icon with a
+// caption beside it. An icon is either an Excalidraw drawing or an image file
+// (PNG, SVG, WebP, JPEG); both end as locked ephemeral scene elements. This
+// module owns the shared vocabulary of the Map kinds definition (states, verbs,
+// built-in ids, icon file types) and the pure geometry that turns one icon into
+// those elements. It performs no I/O, imports nothing, and is read by both the
+// server parser and the browser projection.
 // Design: docs/design/map-resource-icons/code.md
 
 /** The inset between the Block edge and the icon square. */
@@ -16,6 +17,22 @@ const CAPTION_GAP = 10;
 export const ICON_ELEMENT_WARNING = 200;
 /** The most icon elements one drawing may hold at all. */
 export const ICON_ELEMENT_LIMIT = 1_000;
+
+/** The Excalidraw file types one icon name can resolve to. */
+export const MAP_ICON_DRAWING_EXTENSIONS = Object.freeze([".excalidraw", ".excalidrawlib"]);
+
+/**
+ * The image file types one icon name can resolve to, with the media type each
+ * one carries into Excalidraw. Julian draws icons where he likes and drops the
+ * picture in, so a name resolves to whichever of these files carries it.
+ */
+export const MAP_ICON_IMAGE_TYPES = Object.freeze({
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+});
 
 /** The target types one kind entry can declare. */
 export const MAP_KIND_TARGETS = Object.freeze(["path", "url", "vault"]);
@@ -163,11 +180,97 @@ export function iconBounds(elements) {
 }
 
 /**
+ * Returns the Excalidraw file id one image icon's bytes are registered under.
+ * Excalidraw draws an image element by looking its `fileId` up in the files it
+ * holds, so the id has to be the same on every frame the icon is drawn, and it
+ * has to change when the bytes change. The name and the content hash give both.
+ */
+export function figureIconFileId(iconName, contentHash) {
+  return `tangent-icon-${String(iconName ?? "icon")}-${String(contentHash ?? "0")}`;
+}
+
+/** Returns the customData every element of one figure icon carries. */
+function figureIconCustomData({ block, iconName, owner, sourceId, index }) {
+  return {
+    tangentWorldEphemeral: { kind: "resource-figure-icon", sourceId: block.id, icon: String(iconName ?? "") },
+    ...(owner ? { tangentWorld: { owner, sourceId: `${sourceId ?? block.id}-icon-${index}` } } : {}),
+  };
+}
+
+/**
+ * Creates the one locked image element that draws an image icon. The picture
+ * keeps its aspect ratio inside the Block's icon square, and the square is the
+ * same square a drawing fills, so an image icon and a drawn icon sit alike.
+ */
+function createImageFigureElement({ block, icon, iconName, opacity, owner, sourceId }) {
+  const iconBox = figureIconBox(block);
+  const width = Math.max(1, Number(icon.width));
+  const height = Math.max(1, Number(icon.height));
+  const scale = Math.min(iconBox / width, iconBox / height);
+  const drawnWidth = width * scale;
+  const drawnHeight = height * scale;
+  return [{
+    id: `${block.id}-tangent-icon-0`,
+    type: "image",
+    x: Number(block.x) + FIGURE_INSET + (iconBox - drawnWidth) / 2,
+    y: Number(block.y) + (Number(block.height) - drawnHeight) / 2,
+    width: drawnWidth,
+    height: drawnHeight,
+    angle: 0,
+    strokeColor: "transparent",
+    backgroundColor: "transparent",
+    fillStyle: "solid",
+    strokeWidth: 1,
+    strokeStyle: "solid",
+    roughness: 0,
+    roundness: null,
+    opacity,
+    groupIds: [],
+    frameId: null,
+    boundElements: null,
+    link: null,
+    locked: true,
+    isDeleted: false,
+    seed: 1,
+    version: 1,
+    versionNonce: 1,
+    updated: 1,
+    index: null,
+    fileId: figureIconFileId(iconName, icon.contentHash),
+    status: "saved",
+    scale: [1, 1],
+    crop: null,
+    customData: figureIconCustomData({ block, iconName, owner, sourceId, index: 0 }),
+  }];
+}
+
+/**
+ * Returns the Excalidraw `files` entries the image icons in one projection
+ * need. Excalidraw draws an image element only once its file id is registered,
+ * so the Map registers these before it hands the elements to the canvas.
+ */
+export function figureIconFiles(elements, icons = {}, created = 0) {
+  const files = new Map();
+  for (const element of elements ?? []) {
+    if (element?.type !== "image" || element.isDeleted || !element.fileId) continue;
+    const ephemeral = element.customData?.tangentWorldEphemeral;
+    if (ephemeral?.kind !== "resource-figure-icon") continue;
+    const icon = icons?.[ephemeral.icon] ?? null;
+    if (icon?.kind !== "image" || !icon.dataURL || files.has(element.fileId)) continue;
+    files.set(element.fileId, { id: element.fileId, mimeType: icon.mimeType, dataURL: icon.dataURL, created });
+  }
+  return [...files.values()];
+}
+
+/**
  * Creates the locked ephemeral elements that draw one icon inside a Block.
  * They carry the same customData shape as the success rail, so every consumer
  * that already drops, hides, or ignores an ephemeral element handles them.
  */
 export function createFigureElements({ block, icon, iconName, opacity = 100, owner = null, sourceId = null }) {
+  if (icon?.kind === "image") {
+    return icon.dataURL ? createImageFigureElement({ block, icon, iconName, opacity, owner, sourceId }) : [];
+  }
   const elements = icon?.elements ?? [];
   if (!elements.length) return [];
   const iconBox = figureIconBox(block);
@@ -205,10 +308,7 @@ export function createFigureElements({ block, icon, iconName, opacity = 100, own
     next.opacity = opacity;
     next.version = 1;
     next.versionNonce = Number(element.versionNonce ?? element.seed ?? 1) || 1;
-    next.customData = {
-      tangentWorldEphemeral: { kind: "resource-figure-icon", sourceId: block.id, icon: String(iconName ?? "") },
-      ...(owner ? { tangentWorld: { owner, sourceId: `${sourceId ?? block.id}-icon-${index}` } } : {}),
-    };
+    next.customData = figureIconCustomData({ block, iconName, owner, sourceId, index });
     return next;
   });
 }
@@ -255,11 +355,15 @@ export default {
   BUILT_IN_MAP_KINDS,
   ICON_ELEMENT_LIMIT,
   ICON_ELEMENT_WARNING,
+  MAP_ICON_DRAWING_EXTENSIONS,
+  MAP_ICON_IMAGE_TYPES,
   MAP_KIND_STATES,
   MAP_KIND_TARGETS,
   MAP_KIND_VERBS,
   createFigureElements,
   figureCacheKey,
+  figureIconFileId,
+  figureIconFiles,
   figureCaptionGeometry,
   figureForFact,
   figureIconBox,

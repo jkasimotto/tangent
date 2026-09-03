@@ -15,10 +15,20 @@ const MIN_REGION_HEIGHT = AREA_MAP_LAYOUT.minimumHeight;
 const PLACEMENT_SCHEMA = AREA_MAP_LAYOUT.placementSchema;
 const ROOT_OWNER = "@root";
 const CACHE_LIMIT = 256;
-const OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+export const OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
-/** Returns a compact revision digest. */
-const digest = (value) => createHash("sha256").update(String(value)).digest("base64url").slice(0, 16);
+/**
+ * Returns a compact revision digest that always satisfies OPAQUE_ID.
+ *
+ * The base64url alphabet includes "-" and "_", so about one digest in thirty-two
+ * began with a character OPAQUE_ID rejects. The world revision round-trips
+ * through the browser and back into applyGesture, so those digests made the
+ * server reject its own value with 400 "a safe world revision is required",
+ * which failed the save, queued every later edit behind it, and left the next
+ * reload asking whether to restore or discard. The leading letter keeps every
+ * minted identifier inside the alphabet this module validates.
+ */
+export const digest = (value) => `r${createHash("sha256").update(String(value)).digest("base64url").slice(0, 16)}`;
 /** Returns the structural parent for one canonical Area path. */
 const parentFor = (area) => area.includes("/") ? area.slice(0, area.lastIndexOf("/")) : ROOT_OWNER;
 /** Copies one element rectangle. */

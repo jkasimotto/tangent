@@ -1,11 +1,14 @@
-import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { areaCanvasPath, canvasHash, parseAreaCanvas, serializeAreaCanvas, validateAreaCanvas } from "./area-canvas.mjs";
 import { areaForBlock, isAreaBoundary, isAreaRegion, tangentOf } from "./public/area-board-core.js";
-import { isSafeResourceId } from "./public/area-map-entities.js";
+import { OPAQUE_ID, digest, isSafeResourceId, shardRevision } from "./public/area-map-wire-values.js";
 import { AREA_MAP_LAYOUT, nearestFreeRectangle, rectanglesOverlap, regionId, regionKey, shardHulls } from "./public/area-map-world-core.js";
 import { validateAreaResourceSceneTransition } from "./area-map-resource-invariant.mjs";
+
+// OPAQUE_ID and digest live in the wire registry beside every other minted
+// value and its guard. They are re-exported here so existing importers keep working.
+export { OPAQUE_ID, digest };
 
 const CONTENT_MARGIN = AREA_MAP_LAYOUT.spacing;
 const SLOT_WIDTH = 460;
@@ -15,20 +18,6 @@ const MIN_REGION_HEIGHT = AREA_MAP_LAYOUT.minimumHeight;
 const PLACEMENT_SCHEMA = AREA_MAP_LAYOUT.placementSchema;
 const ROOT_OWNER = "@root";
 const CACHE_LIMIT = 256;
-export const OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-
-/**
- * Returns a compact revision digest that always satisfies OPAQUE_ID.
- *
- * The base64url alphabet includes "-" and "_", so about one digest in thirty-two
- * began with a character OPAQUE_ID rejects. The world revision round-trips
- * through the browser and back into applyGesture, so those digests made the
- * server reject its own value with 400 "a safe world revision is required",
- * which failed the save, queued every later edit behind it, and left the next
- * reload asking whether to restore or discard. The leading letter keeps every
- * minted identifier inside the alphabet this module validates.
- */
-export const digest = (value) => `r${createHash("sha256").update(String(value)).digest("base64url").slice(0, 16)}`;
 /** Returns the structural parent for one canonical Area path. */
 const parentFor = (area) => area.includes("/") ? area.slice(0, area.lastIndexOf("/")) : ROOT_OWNER;
 /** Copies one element rectangle. */
@@ -45,8 +34,6 @@ function storedLayout(element) {
 const legacyLayout = () => ({ schema: PLACEMENT_SCHEMA, priority: 0, overlapWith: [] });
 /** Returns one bound text source ID, with a stable fallback. */
 const labelId = (element) => element.boundElements?.find((entry) => entry.type === "text")?.id ?? `${element.id}-tangent-label`;
-/** Returns one Area scene's revision token, including legacy in-memory reads. */
-const shardRevision = (shard) => shard.hash ?? (shard.legacy?.text ? `legacy:${digest(shard.legacy.text)}` : shard.ok === false ? `unreadable:${digest(shard.errors?.join("\n"))}` : "missing");
 
 /** Computes the exact post-gesture world revision without rereading later authority. */
 function gestureAcknowledgement(state, writes) {

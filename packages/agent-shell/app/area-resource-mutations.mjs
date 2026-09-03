@@ -24,10 +24,9 @@ import {
 } from "./area-resource-catalog.mjs";
 import { sanitizeAreaResourceRecovery } from "./area-resource-recovery.mjs";
 import { tangentOf } from "./public/area-board-core.js";
-import { isSafeResourceId } from "./public/area-map-entities.js";
+import { WIRE_VALUES, isSafeResourceId } from "./public/area-map-wire-values.js";
 
 const MUTATION_SCHEMA = "area-map-resource-mutation.v1";
-const OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const MAX_OPERATION_RECEIPTS = 256;
 const CATALOG_ONLY_KINDS = new Set(["add", "add-suggestion", "edit", "remove", "import-legacy", "dismiss-suggestion"]);
 const SCENE_COUPLED_KINDS = new Set(["associate-generic-link", "add-back-gone"]);
@@ -739,7 +738,7 @@ export function createAreaResourceMutationCoordinator({
 
   /** Applies one closed catalog mutation and returns current projection evidence. */
   async function applyCurrent(request) {
-    if (!request || request.schema !== MUTATION_SCHEMA || !OPERATION_ID.test(String(request.operationId ?? "")) || !safeAreaResourceOwner(request.viewedFrom)) {
+    if (!request || request.schema !== MUTATION_SCHEMA || !WIRE_VALUES.operationId.accepts(String(request.operationId ?? "")) || !safeAreaResourceOwner(request.viewedFrom)) {
       fail(400, "invalid-resource-request", "A valid resource mutation schema, operation ID, and viewed Area are required.");
     }
     if (!await areaExists(request.viewedFrom)) fail(404, "area-not-found", `No Area ${request.viewedFrom}.`);

@@ -5,6 +5,7 @@ import { rebaseAreaMapOwners } from "./area-map-world-conflict.js";
 import { createAreaMapWorldDraftStore } from "./area-map-world-draft-store.js";
 import { areaInRestriction } from "./area-map-find-core.js";
 import { resolveMapEntity, resourceLocatorKey } from "./area-map-entities.js";
+import { WIRE_VALUES } from "./area-map-wire-values.js";
 
 const VIEW_SCHEMA = "area-map-view.v2";
 const DRAFT_SCHEMA = "area-map-draft.v1";
@@ -40,9 +41,9 @@ function failureSaveState(result = {}) {
 
 /** Keeps only opaque correlation tokens that cannot contain paths or authored text. */
 function safeCorrelationFields({ operationId = null, gestureId = null } = {}) {
-  /** Accepts one bounded opaque machine correlation value. */
-  const safe = (value) => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(String(value ?? "")) ? String(value) : null;
-  return Object.fromEntries([["operationId", safe(operationId)], ["gestureId", safe(gestureId)]].filter(([, value]) => value));
+  /** Accepts one bounded opaque machine correlation value through the guard registered beside its minter. */
+  const safe = (wire, value) => wire.accepts(String(value ?? "")) ? String(value) : null;
+  return Object.fromEntries([["operationId", safe(WIRE_VALUES.operationId, operationId)], ["gestureId", safe(WIRE_VALUES.gestureId, gestureId)]].filter(([, value]) => value));
 }
 
 /** Recovers save correlation from one private draft without exposing its authored payload. */

@@ -4,9 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { attemptsInWindow, brainAttempts, jobAttempts, priceAttempts, repairAttempts } from "./job-cost.mjs";
+import { brainAttempts, jobAttempts, priceAttempts, recordedAttempts, repairAttempts } from "./job-cost.mjs";
 import { claudeProjectKey } from "./harness-transcripts.mjs";
-import { inWindow, summarizeCost, summarizeWorkers } from "./cost-service.mjs";
+import { summarizeWorkers } from "./cost-service.mjs";
 
 const CWD = "/Users/fixture/Projects/thing";
 const AREA = "otto/tangent";
@@ -113,7 +113,7 @@ test("an attempt that cannot be reached is named with its reason, not silently d
   ]);
 });
 
-test("only the attempts inside the window are read", async () => {
+test("every attempt a record kept is read, and one that never started is not", async () => {
   const root = await scratchRoot();
   const pipelines = path.join(root, "pipelines", AREA);
   const brains = path.join(root, "brains");
@@ -130,12 +130,11 @@ test("only the attempts inside the window are read", async () => {
   await writeFile(path.join(brains, "otto-tangent.json"), JSON.stringify({
     area: AREA, generations: [attempt({ id: "gen", conversation: { harness: "claude-otto", id: "c" }, startedAt: "2026-09-03T05:00:00.000Z" })],
   }), "utf8");
-  const attempts = await attemptsInWindow({
-    pipelinesRoot: path.join(root, "pipelines"),
-    brainsRoot: brains,
-    since: "2026-09-03T00:00:00.000Z",
-  });
-  assert.deepEqual(attempts.map((entry) => entry.scope).sort(), ["brain", "job"]);
+  const attempts = await recordedAttempts({ pipelinesRoot: path.join(root, "pipelines"), brainsRoot: brains });
+  // Both Job attempts are read, months apart, because a worker's figure
+  // covers its whole life. The attempt with no start time never ran.
+  assert.deepEqual(attempts.map((entry) => entry.scope).sort(), ["brain", "job", "job"]);
+  assert.equal(attempts.every((entry) => entry.startedAt), true, "an attempt that never started is not a worker");
 });
 
 test("the provider a launch ran on travels with the attempt", () => {
@@ -145,50 +144,6 @@ test("the provider a launch ran on travels with the attempt", () => {
   }, AREA, "p");
   assert.equal(attempts[0].provider, "resetdata-glm");
   assert.equal(attempts[0].ref.harness, "pi-code");
-});
-
-/** One priced conversation, in the shape {@link priceAttempts} returns. */
-function pricedConversation({ harness, amount, provider, model, priced = true, usage = {}, scope = "job", name = "goal-thing.md" }) {
-  return {
-    harness,
-    cost: {
-      amount,
-      parts: [{ provider, model, priced, amount: priced ? amount : null, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, reasoning: 0, ...usage } }],
-    },
-    attempts: [{ scope, area: AREA, name }],
-  };
-}
-
-test("the summary ranks where the money went and states what the number leaves out", () => {
-  const snapshot = summarizeCost({
-    amount: 40,
-    complete: false,
-    conversations: [
-      pricedConversation({ harness: "claude-otto", amount: 30, provider: "anthropic", model: "claude-opus-5" }),
-      pricedConversation({ harness: "claude", amount: 10, provider: "anthropic", model: "claude-sonnet-5", name: "goal-other.md" }),
-      pricedConversation({ harness: "codex", amount: 0, provider: "openai", model: "gpt-5.6-sol", priced: false, usage: { input: 1_500_000 } }),
-    ],
-    unattributed: [{ reason: "the codex-gw harness declares no transcripts folder" }, { reason: "the codex-gw harness declares no transcripts folder" }],
-  }, { days: 1, since: "2026-09-03T00:00:00.000Z", computedAt: "2026-09-03T06:00:00.000Z" });
-
-  assert.equal(snapshot.display, "$40");
-  assert.equal(snapshot.complete, false);
-  assert.deepEqual(snapshot.byHarness.map((entry) => entry.harness), ["claude-otto", "claude"]);
-  assert.deepEqual(snapshot.byModel.map((entry) => entry.id), ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"]);
-  assert.equal(snapshot.work[0].name, "goal-thing.md");
-  // An unpriced model is named with the tokens behind it and what to do next.
-  assert.equal(snapshot.excluded[0].reason, "no rate for openai/gpt-5.6-sol");
-  assert.match(snapshot.excluded[0].detail, /1\.5M tokens/);
-  assert.equal(snapshot.excluded[1].count, 2);
-});
-
-test("a complete summary says so, and one blocked by a broken price table does not", () => {
-  const window = { days: 1, since: "2026-09-03T00:00:00.000Z", computedAt: "2026-09-03T06:00:00.000Z" };
-  const conversations = [pricedConversation({ harness: "claude", amount: 3, provider: "anthropic", model: "claude-opus-5" })];
-  assert.equal(summarizeCost({ amount: 3, complete: true, conversations, unattributed: [] }, window).complete, true);
-  const broken = summarizeCost({ amount: 3, complete: true, conversations, unattributed: [] }, { ...window, pricingError: "pricing table is not valid JSON" });
-  assert.equal(broken.complete, false);
-  assert.equal(broken.excluded.at(-1).detail, "pricing table is not valid JSON");
 });
 
 test("a repair crew is priced beside Jobs and brains, because it spends while it recovers", async () => {
@@ -208,34 +163,13 @@ test("a repair crew is priced beside Jobs and brains, because it spends while it
     current: attempt({ id: "live", conversation: { harness: "claude-otto", id: "c" }, startedAt: "2026-09-03T05:30:00.000Z" }),
     history: [attempt({ id: "past", conversation: { harness: "claude-otto", id: "b" }, startedAt: "2026-09-03T05:00:00.000Z" })],
   }), "utf8");
-  const attempts = await attemptsInWindow({
+  const attempts = await recordedAttempts({
     pipelinesRoot: path.join(root, "pipelines"),
     brainsRoot: path.join(root, "brains"),
     repairsRoot: repairs,
-    since: "2026-09-03T00:00:00.000Z",
   });
   assert.deepEqual(attempts.map((entry) => entry.scope).sort(), ["job", "repair", "repair"]);
   assert.deepEqual(repairAttempts({ area: AREA, history: [], current: null }), []);
-});
-
-test("a figure that could not use a harness ledger says so and refuses to call itself complete", () => {
-  const window = { days: 1, since: "2026-09-03T00:00:00.000Z", computedAt: "2026-09-03T06:00:00.000Z" };
-  const withGap = pricedConversation({ harness: "claude", amount: 3, provider: "anthropic", model: "claude-opus-5" });
-  withGap.cost.gaps = [{ reason: "priced from tokens, not from Claude Code's own ledger", detail: "a floor" }];
-  const second = pricedConversation({ harness: "claude", amount: 2, provider: "anthropic", model: "claude-opus-5", name: "goal-other.md" });
-  second.cost.gaps = [{ reason: "priced from tokens, not from Claude Code's own ledger", detail: "a floor" }];
-  const snapshot = summarizeCost({ amount: 5, complete: true, conversations: [withGap, second], unattributed: [] }, window);
-  assert.equal(snapshot.complete, false);
-  const gap = snapshot.excluded.find((entry) => entry.reason.startsWith("priced from tokens"));
-  assert.equal(gap.count, 2);
-});
-
-test("a broken harness registry is named in the figure rather than leaving it blank forever", () => {
-  const snapshot = summarizeCost({ amount: 0, complete: false, conversations: [], unattributed: [] },
-    { days: 1, since: "2026-09-03T00:00:00.000Z", computedAt: "2026-09-03T06:00:00.000Z", registryError: "harness registry is invalid: duplicate id" });
-  assert.equal(snapshot.status, "ready");
-  assert.equal(snapshot.complete, false);
-  assert.equal(snapshot.excluded[0].detail, "harness registry is invalid: duplicate id");
 });
 
 /** One priced conversation as the worker index reads it. */
@@ -320,25 +254,6 @@ test("an attempt that could not be reached is named on the worker it belonged to
   assert.equal(index.work["job:goal-thing.md"].floor, true);
 });
 
-test("a window taken out of one full reading keeps only the conversations that started in it", () => {
-  const priced = {
-    conversations: [
-      workerConversation({ key: "old", amount: 5, session: "thing-old", startedAt: "2026-09-01T04:00:00.000Z" }),
-      workerConversation({ key: "new", amount: 7, session: "thing-new", startedAt: "2026-09-03T04:00:00.000Z" }),
-    ],
-    unattributed: [
-      { scope: "job", area: AREA, name: "goal-thing.md", startedAt: "2026-09-01T04:00:00.000Z", reason: "gone" },
-      { scope: "job", area: AREA, name: "goal-thing.md", startedAt: "2026-09-03T04:00:00.000Z", reason: "gone" },
-    ],
-  };
-  const sliced = inWindow(priced, "2026-09-03T00:00:00.000Z");
-  assert.equal(sliced.amount, 7);
-  assert.deepEqual(sliced.conversations.map((entry) => entry.key), ["new"]);
-  assert.equal(sliced.unattributed.length, 1);
-  // Without a window the reading passes through untouched.
-  assert.equal(inWindow(priced, null), priced);
-});
-
 test("a Job's whole life is one key, so its figure does not change with the day", () => {
   const priced = {
     conversations: [
@@ -348,4 +263,28 @@ test("a Job's whole life is one key, so its figure does not change with the day"
     unattributed: [],
   };
   assert.equal(summarizeWorkers(priced).work["job:goal-thing.md"].amount, 12);
+});
+
+test("a conversation priced without its harness ledger marks the worker a floor", () => {
+  const fromTokens = workerConversation({ key: "a", amount: 4, session: "thing-one" });
+  fromTokens.cost.gaps = [{ reason: "priced from tokens, not from Claude Code's own ledger" }];
+  const worker = summarizeWorkers({ conversations: [fromTokens], unattributed: [] }).sessions["thing-one"];
+  assert.equal(worker.floor, true);
+  assert.equal(worker.reasons[0], "priced from tokens, not from Claude Code's own ledger");
+});
+
+test("a reason that holds for the whole machine is named on every figure", () => {
+  // The top bar used to carry a machine-wide gap. With no surface above the
+  // figures, each figure says it itself rather than nothing saying it.
+  const index = summarizeWorkers({
+    conversations: [
+      workerConversation({ key: "a", amount: 4, session: "thing-one" }),
+      workerConversation({ key: "b", amount: 6, session: "thing-two", file: "goal-other.md" }),
+    ],
+    unattributed: [],
+  }, { notes: ["the pricing Document could not be read, so any rate it meant to correct is not in this figure: not valid JSON"] });
+  for (const worker of [index.sessions["thing-one"], index.sessions["thing-two"]]) {
+    assert.equal(worker.floor, true);
+    assert.match(worker.reasons.at(-1), /the pricing Document could not be read/);
+  }
 });

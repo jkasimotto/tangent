@@ -8276,8 +8276,8 @@ const voiceRoutes = createVoiceRoutes({
   /** Sends transcribed text through the durable Area inbox. */
   send(body) { return agentRouteOperations.send(body); },
 });
-// The top bar reads this. It answers from the snapshot it holds and reads the
-// next one behind the request, so the number is simply there without a press.
+// Every worker's own figure. It answers from the index it holds and reads the
+// next one behind the request, so a figure is simply there without a press.
 const costService = createCostService({
   pipelinesRoot: PIPELINES_ROOT,
   brainsRoot: BRAINS_ROOT,
@@ -8287,8 +8287,6 @@ const costService = createCostService({
   registry: () => launchCatalog.registry(),
 });
 const costRoutes = createCostRoutes({
-  /** Answers with the estimated cost of one window. */
-  read(options) { return costService.read(options); },
   /** Answers with what each worker has cost, keyed by Goal and by session. */
   readWorkers(options) { return costService.readWorkers(options); },
 });

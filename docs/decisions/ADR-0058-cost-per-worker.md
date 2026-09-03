@@ -1,6 +1,6 @@
 # ADR-0058: Cost per worker
 
-Status: accepted. Design: `~/.tangent/trees/otto/tangent/design-cost-per-worker.md`. Builds on ADR-0057, whose rules it keeps.
+Status: accepted. Design: `~/.tangent/trees/otto/tangent/design-cost-per-worker.md`. Builds on ADR-0057, whose rules it keeps. The windowed top-bar clauses are superseded by ADR-0059: the top bar carries no figure, no reading is windowed, and a brain shows its live session.
 
 ## Context
 

@@ -71,7 +71,9 @@ that share a conversation are one cost counted once. Brains and repairs are
 priced beside Jobs: they record the same five facts and they spend the same
 money.
 
-**The top bar reads its own `GET /api/cost`.** Not the Work snapshot: that is
+**The top bar reads its own `GET /api/cost`.** Superseded by ADR-0059: the
+top-bar figure and the route behind it are gone, and cost is shown per worker.
+The reasoning below is why it was never read from the Work snapshot. Not the Work snapshot: that is
 validated with `exactKeys`, capped, and suppressed on an unchanged semantic
 hash, so a moving dollar inside it would push an SSE `changed` event and a
 repaint to every client on every publish. The service answers from the

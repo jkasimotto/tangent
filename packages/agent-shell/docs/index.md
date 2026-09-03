@@ -17,7 +17,7 @@ Any replacement harness can recover the current assignment from the tmux session
 
 Agent Shell centers each Area on one logical brain with an active or inactive lifecycle. Exact Area identity selects records and inboxes, not command permission. Area messages enter the durable inbox before live delivery.
 
-The top bar shows an estimated cost for the day, read from its own `GET /api/cost` rather than from the Work snapshot, so a moving dollar never forces a repaint. It prices every conversation of every Job, brain and repair in the window, including subagents, counting a resumed conversation once. What it leaves out travels with it: an unpriced model or an unreachable attempt is named on the same surface (ADR-0057).
+Cost is shown per worker and nowhere else: a column on the Work table, a figure inside a session, and the live session's own figure beside an Area's brain button. `GET /api/cost/workers` reads and prices every conversation of every Job, brain and repair once, including subagents, counting a resumed conversation once, and keys the result by Goal file and by tmux session. A figure covers a worker's whole life and never moves with the day. What it leaves out travels with it: an unpriced model, an unreachable attempt, a running worker, or a pricing Document that could not be read is named on the same surface (ADR-0057, ADR-0058, ADR-0059).
 
 Work shows all open Goals from one bounded `agent-shell-work.v3` snapshot. The gateway serves its last complete revision during controller or source failure. An explicit keyboard context owns each key. Terminal sessions keep native tmux input, except the visible leave shortcut. Work and Document actions expose matching keyboard and pointer paths. See ADR-0038 and ADR-0056.
 

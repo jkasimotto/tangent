@@ -55,7 +55,7 @@ test("browser boot starts Map, reads only v3 Work, and paints every bounded row 
   const paths = gets.map((value) => new URL(value).pathname);
   assert.equal(paths[0], "/api/areas/map-world", "the durable Map starts before the Work projection");
   assert.equal(paths.filter((value) => value === "/api/work").length, 1, "Work has one v3 read path");
-  assert.ok(paths.every((value) => ["/api/areas/map-world", "/api/shell/status", "/api/work", "/api/cost", "/api/cost/workers"].includes(value)), `boot never reads a legacy Work source: ${paths.join(", ")}`);
+  assert.ok(paths.every((value) => ["/api/areas/map-world", "/api/shell/status", "/api/work", "/api/cost/workers"].includes(value)), `boot never reads a legacy Work source: ${paths.join(", ")}`);
   assert.deepEqual([...document.querySelectorAll(".work-table thead th")].map((cell) => cell.textContent.trim()), ["Goal", "Agent", "Status", "Cost", "Controls"]);
   assert.equal(document.querySelector("[data-goal-anchor='otto/tangent/goal-parent.md'] .desk-state").textContent, "Working");
   assert.equal(document.querySelector("[data-subgoal-of='otto/tangent/goal-parent.md']") !== null, true);

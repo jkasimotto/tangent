@@ -196,7 +196,6 @@ export async function bootWorkTable(fixture, { workFilter = "active", width = 14
     if (pathname === "/api/sessions") {
       return jsonResponse({ boot: "boot-1", caffeinate: false, pipelines: fixture.pipelines, sessions: fixture.sessions, brains: fixture.brains });
     }
-    if (pathname === "/api/cost") return jsonResponse({ status: "ready", days: 1, amount: 0, display: "$0", complete: true, conversations: 0, byHarness: [], byModel: [], work: [], excluded: [], computedAt: "2026-09-03T06:00:00.000Z" });
     if (pathname === "/api/cost/workers") return jsonResponse({ status: "ready", computedAt: "2026-09-03T06:00:00.000Z", work: workerCost?.work ?? {}, sessions: workerCost?.sessions ?? {} });
     if (pathname === "/api/operations") return jsonResponse(fixture.programs ?? { operations: [], processes: [], problems: [], areas: [], liveCount: 0 });
     if (pathname === "/api/navigation/search") return jsonResponse(navigationSearch

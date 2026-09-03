@@ -1,17 +1,15 @@
-// What work cost, for the top bar and for each worker, kept fresh behind the
-// request.
+// What each worker cost, kept fresh behind the request.
 //
-// One reading serves both. Every attempt on the machine is read and priced
-// once; the top bar's window is taken out of that result and each worker's
-// own figure is indexed from it. Reading it separately would cost the same
-// transcripts twice and let the two answers disagree about what one
-// conversation cost.
+// Every attempt on the machine is read and priced once and indexed by the two
+// names a surface knows a worker by. A figure covers a worker's whole life,
+// so there is no window to choose: the same conversation reads the same
+// whenever it is asked for, and no figure changes when the day rolls over.
 //
 // The first reading costs seconds, 8.3 measured over 1,493 attempts, and each
 // one after it costs 0.2, because a finished transcript is never read twice.
 // Nothing in the shell may wait seconds for a number, so the service always
-// answers with the snapshot it holds and starts the next reading behind the
-// answer. The snapshot says when it was taken, and the figures move without
+// answers with the index it holds and starts the next reading behind the
+// answer. The index says when it was taken, and the figures move without
 // anyone pressing anything.
 
 import { readFile } from "node:fs/promises";
@@ -20,14 +18,9 @@ import path from "node:path";
 
 import { formatTokens, formatUsd, totalTokens } from "./token-usage.mjs";
 import { mergeRates, parsePricingDocument } from "./pricing-catalog.mjs";
-import { totalCost } from "./token-pricing.mjs";
-import { attemptsInWindow, priceAttempts, workKey } from "./job-cost.mjs";
+import { priceAttempts, recordedAttempts, workKey } from "./job-cost.mjs";
 
-const DEFAULT_WINDOW_DAYS = 1;
 const REFRESH_AFTER_MS = 20_000;
-// An Area path and a Goal name both hold spaces and slashes, so the grouping
-// key is joined on a character neither of them can hold.
-const WORK_KEY_SEPARATOR = "\u001f";
 
 /**
  * Creates the cost service.
@@ -45,71 +38,57 @@ export function createCostService({
   now = () => Date.now(),
 } = {}) {
   const conversationCache = new Map();
-  let snapshot = null;
   let workers = null;
   let reading = null;
 
   /**
-   * The current snapshot, with the next reading started when the one in hand
-   * is old. The very first call has nothing to answer with, so it waits;
-   * every call after that reads memory.
-   */
-  async function read({ days = DEFAULT_WINDOW_DAYS, wait = false } = {}) {
-    const wanted = Number(days) > 0 ? Number(days) : DEFAULT_WINDOW_DAYS;
-    await current({ days: wanted, wait });
-    return snapshot ?? { status: "reading", days: wanted, amount: null, display: "…", computedAt: null };
-  }
-
-  /**
    * What each worker has cost, keyed the way each surface already names one.
    *
-   * The Work table knows a row by its Goal file and the session layer knows a
-   * worker by its tmux session name, so both indexes are built from the same
-   * reading rather than from a second walk of the same transcripts.
+   * The Work table knows a row by its Goal file and a live session is known
+   * by its tmux name, so both indexes are built from the same reading rather
+   * than from two walks of the same transcripts.
    *
-   * A worker's figure covers its whole life, so this asks for no window of
-   * its own. It rides whichever window the bar last asked for, and so cannot
-   * change the bar's answer by reading beside it.
+   * The next reading starts when the one in hand is old. The very first call
+   * has nothing to answer with, so it waits; every call after that reads
+   * memory.
    */
   async function readWorkers({ wait = false } = {}) {
-    await current({ days: snapshot?.days ?? DEFAULT_WINDOW_DAYS, wait });
+    const fresh = workers && now() - Date.parse(workers.computedAt) < REFRESH_AFTER_MS;
+    if (!fresh && !reading) reading = refresh().finally(() => { reading = null; });
+    if (wait || !workers) await reading?.catch(() => {});
     return workers ?? { status: "reading", computedAt: null, work: {}, sessions: {} };
   }
 
-  /** Starts the next reading when the one in hand is old, and waits when asked. */
-  async function current({ days, wait }) {
-    const fresh = snapshot?.days === days && now() - Date.parse(snapshot.computedAt) < REFRESH_AFTER_MS;
-    if (!fresh && !reading) reading = refresh(days).finally(() => { reading = null; });
-    if (wait || !snapshot || !workers) await reading?.catch(() => {});
-  }
-
   /**
-   * Reads and prices the window, and replaces the snapshot with the result.
+   * Reads and prices every recorded attempt, and replaces the index.
    *
-   * A broken harness registry leaves nothing to price against. That publishes
-   * a snapshot saying so rather than none at all: with no snapshot the bar
-   * would show a patient ellipsis forever and never say why.
+   * A broken harness registry leaves nothing to price against. Every attempt
+   * still enters the index, unattributed and carrying the registry as its
+   * reason, because a worker that shows a dash and says why is honest and an
+   * empty index reads as free work.
    */
-  async function refresh(days) {
+  async function refresh() {
     const registryNow = await registry();
-    const since = new Date(now() - days * 86_400_000).toISOString();
     const computedAt = new Date(now()).toISOString();
+    const attempts = await recordedAttempts({ pipelinesRoot, brainsRoot, repairsRoot });
     if (registryNow?.error) {
-      snapshot = summarizeCost({ amount: 0, complete: false, unpriced: [], parts: [], conversations: [], unattributed: [] },
-        { days, since, computedAt, registryError: registryNow.error });
-      workers = { status: "ready", computedAt, work: {}, sessions: {} };
+      const reason = `the harness registry could not be read: ${registryNow.error}`;
+      const unattributed = attempts.map((attempt) => ({ ...attempt, reason }));
+      workers = { status: "ready", computedAt, ...summarizeWorkers({ conversations: [], unattributed }) };
       return;
     }
     /** Finds one registry harness by id. */
     const harnessFor = (id) => (registryNow.harnesses ?? []).find((entry) => entry.id === id) ?? null;
     const table = await pricingTable(pricingFile);
-    const attempts = await attemptsInWindow({ pipelinesRoot, brainsRoot, repairsRoot });
     const priced = await priceAttempts(attempts, { harnessFor, rates: table.rates, cache: conversationCache });
-    snapshot = summarizeCost(inWindow(priced, since), { days, since, computedAt, pricingError: table.error });
-    workers = { status: "ready", computedAt, ...summarizeWorkers(priced) };
+    // A rate the vault Document meant to correct is not in force when the
+    // block cannot be read, so every figure says so rather than passing off
+    // the seeded rate as the one that was asked for.
+    const notes = table.error ? [`the pricing Document could not be read, so any rate it meant to correct is not in this figure: ${table.error}`] : [];
+    workers = { status: "ready", computedAt, ...summarizeWorkers(priced, { notes }) };
   }
 
-  return { read, readWorkers };
+  return { readWorkers };
 }
 
 /**
@@ -128,95 +107,23 @@ export async function pricingTable(pricingFile) {
 }
 
 /**
- * Reduces a priced window to what a person reads at a glance and on hover.
- *
- * Everything that could not be priced or reached folds into `excluded` with a
- * count, so the breakdown states what the number leaves out in one line per
- * reason rather than listing hundreds of attempts nobody will read.
- */
-export function summarizeCost(priced, { days, since, computedAt, pricingError = null, registryError = null }) {
-  const byHarness = new Map();
-  const byModel = new Map();
-  const byWork = new Map();
-  const unpricedTokens = new Map();
-  const gaps = new Map();
-  for (const entry of priced.conversations) {
-    for (const gap of entry.cost.gaps ?? []) {
-      const known = gaps.get(gap.reason);
-      gaps.set(gap.reason, { ...gap, count: (known?.count ?? 0) + 1 });
-    }
-    addAmount(byHarness, entry.harness, entry.cost.amount);
-    for (const part of entry.cost.parts) {
-      const id = `${part.provider}/${part.model}`;
-      if (part.priced) addAmount(byModel, id, part.amount ?? 0);
-      else addAmount(unpricedTokens, id, totalTokens(part.usage));
-    }
-    const attempt = entry.attempts[0];
-    addAmount(byWork, [attempt.scope, attempt.area ?? "", attempt.name ?? ""].join(WORK_KEY_SEPARATOR), entry.cost.amount);
-  }
-  const excluded = [];
-  if (registryError) excluded.push({ reason: "the harness registry could not be read, so nothing was priced", detail: registryError, count: 1 });
-  for (const [id, tokens] of ranked(unpricedTokens)) {
-    excluded.push({ reason: `no rate for ${id}`, detail: `${formatTokens(tokens)} tokens. Add a rate to pricing.md.`, count: 1 });
-  }
-  const reasons = new Map();
-  for (const entry of priced.unattributed) addAmount(reasons, entry.reason, 1);
-  for (const [reason, count] of ranked(reasons)) excluded.push({ reason, detail: null, count });
-  for (const gap of [...gaps.values()].sort((left, right) => right.count - left.count)) excluded.push(gap);
-  if (pricingError) excluded.push({ reason: "the pricing Document could not be read", detail: pricingError, count: 1 });
-  return {
-    status: "ready",
-    days,
-    since,
-    computedAt,
-    amount: priced.amount,
-    display: formatUsd(priced.amount),
-    currency: "USD",
-    complete: priced.complete && priced.unattributed.length === 0 && !pricingError && !registryError && gaps.size === 0,
-    conversations: priced.conversations.length,
-    byHarness: ranked(byHarness).map(([harness, amount]) => ({ harness, amount, display: formatUsd(amount) })),
-    byModel: ranked(byModel).map(([id, amount]) => ({ id, amount, display: formatUsd(amount) })),
-    work: ranked(byWork).slice(0, 6).map(([key, amount]) => {
-      const [scope, area, name] = key.split(WORK_KEY_SEPARATOR);
-      return { scope, area, name, amount, display: formatUsd(amount) };
-    }),
-    excluded,
-  };
-}
-
-/**
- * The slice of one priced reading that started inside a window.
- *
- * Every attempt on the machine is priced once and the window is taken out of
- * the result, rather than the window being read separately, so the Work
- * table's whole-life figures and the top bar's figure for today never
- * disagree about what one conversation cost. A conversation is kept whole
- * when any of its attempts started inside the window, which is the rule the
- * per-day total already used.
- */
-export function inWindow(priced, since) {
-  const started = Date.parse(since ?? "");
-  if (Number.isNaN(started)) return priced;
-  /** True when one attempt started at or after the window opened. */
-  const inside = (attempt) => Date.parse(attempt.startedAt ?? "") >= started;
-  const conversations = priced.conversations.filter((entry) => entry.attempts.some(inside));
-  const unattributed = priced.unattributed.filter(inside);
-  return { ...totalCost(conversations.flatMap((entry) => entry.cost.parts)), conversations, unattributed };
-}
-
-/**
  * What each worker cost, keyed the two ways the shell names one.
  *
  * `work` is keyed by `workKey`: the Work table already knows a row by its
  * Goal file, and an Area brain or repair crew by its Area. `sessions` is
  * keyed by the tmux session name, which is what a person is looking at once
- * they have entered a worker.
+ * they have entered a worker, and is what a brain's figure reads, because a
+ * brain shows what its live session has spent (ADR-0059).
  *
  * A conversation is charged whole to every key it ran under and never split.
  * Two keys are never added together for that reason: a Goal's figure is read
  * off the Goal's own key rather than by summing its workers.
+ *
+ * `notes` are the reasons that hold for every figure on the machine at once,
+ * such as a pricing Document that could not be read. They ride on each figure
+ * because there is no surface above the figures to carry them.
  */
-export function summarizeWorkers(priced) {
+export function summarizeWorkers(priced, { notes = [] } = {}) {
   const work = new Map();
   const sessions = new Map();
   for (const entry of priced.conversations) {
@@ -227,12 +134,12 @@ export function summarizeWorkers(priced) {
     addGap(work, workKey(attempt), attempt.reason);
     if (attempt.session) addGap(sessions, attempt.session, attempt.reason);
   }
-  return { work: presentGroups(work), sessions: presentGroups(sessions) };
+  return { work: presentGroups(work, notes), sessions: presentGroups(sessions, notes) };
 }
 
 /** One index of groups as the plain object a response carries. */
-function presentGroups(groups) {
-  return Object.fromEntries([...groups].map(([key, group]) => [key, presentWorker(group)]));
+function presentGroups(groups, notes) {
+  return Object.fromEntries([...groups].map(([key, group]) => [key, presentWorker(group, notes)]));
 }
 
 /** The distinct tmux session names a set of attempts ran under. */
@@ -296,13 +203,14 @@ const SUBAGENT_NOTES = {
  * rate, and an attempt that could not be reached all mean the same thing to a
  * reader, that the real figure is at least this one. `reasons` says which.
  */
-function presentWorker(group) {
+function presentWorker(group, notes = []) {
   const reasons = [];
   if (group.live) reasons.push("this worker is still running, so this is what it has cost so far");
   for (const [id, tokens] of ranked(group.unpricedTokens)) {
     reasons.push(`no rate for ${id}: ${formatTokens(tokens)} tokens are not in this figure. Add a rate to pricing.md.`);
   }
   for (const [reason, count] of ranked(group.reasons)) reasons.push(count > 1 ? `${reason} (${count})` : reason);
+  reasons.push(...notes);
   const unpricedTokens = [...group.unpricedTokens.values()].reduce((total, tokens) => total + tokens, 0);
   return {
     amount: group.amount,

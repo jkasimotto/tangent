@@ -172,13 +172,12 @@ async function discoverConversation(harness, attempt) {
 
 /**
  * Reads every Job, brain and repair record under the Agent Shell state roots
- * and returns the attempts that started inside a window.
+ * and returns the attempts they recorded.
  *
- * A conversation is charged to the day its attempt started, so a session that
- * ran through midnight lands whole on the day it began rather than split
- * across two totals that neither of them explains.
+ * An attempt with no start time never ran, so it is dropped rather than
+ * counted as a worker that could not be reached.
  */
-export async function attemptsInWindow({ pipelinesRoot, brainsRoot, repairsRoot = null, since = null, until = null } = {}) {
+export async function recordedAttempts({ pipelinesRoot, brainsRoot, repairsRoot = null } = {}) {
   const attempts = [];
   for (const file of await jsonFilesUnder(pipelinesRoot)) {
     const record = await readRecord(file);
@@ -192,16 +191,7 @@ export async function attemptsInWindow({ pipelinesRoot, brainsRoot, repairsRoot 
     const record = await readRecord(file);
     if (record) attempts.push(...repairAttempts(record));
   }
-  return attempts.filter((attempt) => withinWindow(attempt.startedAt, since, until));
-}
-
-/** True when an attempt started inside the requested window. */
-function withinWindow(startedAt, since, until) {
-  const at = Date.parse(startedAt ?? "");
-  if (Number.isNaN(at)) return false;
-  if (since && at < Date.parse(since)) return false;
-  if (until && at > Date.parse(until)) return false;
-  return true;
+  return attempts.filter((attempt) => !Number.isNaN(Date.parse(attempt.startedAt ?? "")));
 }
 
 /** Every `.json` file under one folder, at any depth. */

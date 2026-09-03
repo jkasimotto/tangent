@@ -10,7 +10,6 @@ import { createShellState } from "./shell-state.js";
 import { shellDom } from "./shell-dom.js";
 import { createRefreshCoordinator, startRebuildRefresh, startRefreshLifecycle } from "./refresh-lifecycle.js";
 import { createWorkClient } from "./work-client.js";
-import { renderCostReadout } from "./cost-readout.js";
 import { paintWorkerCosts, workerCostMarkup } from "./worker-cost.js";
 import { workV3DeskModel } from "./work-v3-desk-model.js";
 import { reconcileHtml } from "./dom-reconcile.js";
@@ -78,7 +77,6 @@ const {
   "find-button": findButton, "secondary-action": secondaryAction, "modal-layer": modalLayer,
   "modal-kicker": modalKicker, "modal-title": modalTitle, "modal-copy": modalCopy, "modal-field": modalField,
   "modal-actions": modalActions, toast, "status-pill": statusPill, "awake-button": awakeButton,
-  "cost-readout": costReadout, "cost-amount": costAmount, "cost-breakdown": costBreakdown,
   "shell-menu": shellMenu, "go-to-button": goToButton, "go-to-layer": goToLayer,
   "go-to-input": goToInput, "go-to-list": goToList,
   "work-lens-layer": workLensLayer, "work-lens-content": workLensContent, "work-lens-title": workLensTitle, "work-lens-freshness": workLensFreshness,
@@ -1798,8 +1796,8 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
   }
 }
 
-// The cost snapshot is refreshed behind the request on the server, so reading
-// it often costs one small response and never a transcript walk.
+// The worker figures are refreshed behind the request on the server, so
+// reading them often costs one small response and never a transcript walk.
 const COST_REFRESH_MS = 30_000;
 
 const refreshCoordinator = createRefreshCoordinator(performRefresh);
@@ -2652,41 +2650,40 @@ startRefreshLifecycle(refresh, globalThis, noteEventStream);
 startRebuildRefresh(() => state.rebuilding, refresh);
 
 /**
- * Reads the estimated cost and writes it into the top bar.
+ * Reads what each worker cost and writes the figures into the surfaces that
+ * asked for one.
  *
- * This runs on its own clock rather than inside a Work refresh. The number
+ * This runs on its own clock rather than inside a Work refresh. A figure
  * moves whenever an agent responds, and a Work refresh repaints the screen;
  * tying them together would either delay a repaint behind a cost reading or
- * repaint the screen because a dollar changed. A failure leaves the last
- * figure standing rather than blanking the bar.
+ * repaint the screen because a dollar changed. A failure leaves the figures
+ * in hand standing rather than blanking them.
  */
 async function refreshCost() {
   try {
-    const [snapshot, workers] = await Promise.all([api("/api/cost?days=1"), api("/api/cost/workers")]);
-    if (snapshot) state.cost = snapshot;
+    const workers = await api("/api/cost/workers");
     if (workers) state.workerCost = workers;
   } catch {
     return;
   }
-  renderCostReadout({ readout: costReadout, amount: costAmount, breakdown: costBreakdown }, state.cost);
   paintWorkerCosts(document, state.workerCost);
 }
 
 /**
- * Starts the top bar's own cost clock.
+ * Starts the cost clock the worker figures run on.
  *
  * The timer is unreferenced where the host supports it, so a test that loads
  * this module still exits: a browser's setInterval returns a number and the
  * optional call is a no-op there.
  */
-export function startCostReadout(host = globalThis, everyMs = COST_REFRESH_MS) {
+export function startWorkerCosts(host = globalThis, everyMs = COST_REFRESH_MS) {
   void refreshCost();
   const timer = host.setInterval?.(() => { void refreshCost(); }, everyMs);
   timer?.unref?.();
   return timer;
 }
 
-startCostReadout();
+startWorkerCosts();
 
 // DOM-level exports keep tests on the module boundary instead of rebuilding
 // the old order-dependent browser globals.

@@ -1636,11 +1636,15 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const route = brain?.live
       ? `data-open-brain="${escapeHtml(brain.session ?? "")}"`
       : `data-open-area-brain="${escapeHtml(area.path)}"`;
-    // A brain spends for as long as it is alive and never appears as a row,
-    // so its figure rides beside the button that enters it.
-    const brainCostKey = `brain:${area.path}`;
-    const brainCostFigure = brain
-      ? `<span class="work-group-cost" data-worker-cost="${escapeHtml(brainCostKey)}" data-worker-cost-subject="the ${escapeHtml(areaLabel(area.path))} brain">${workerCostMarkup(state.workerCost?.work?.[brainCostKey] ?? null, `the ${areaLabel(area.path)} brain`)}</span>`
+    // A brain never appears as a row, so its figure rides beside the button
+    // that enters it. The figure is the live session's own spend and nothing
+    // else: a brain that has run for weeks would otherwise print a number
+    // that says nothing about what is running now, and a brain with no
+    // session prints nothing at all.
+    const brainSession = brain?.live ? brain.session ?? "" : "";
+    const brainCostSubject = `the ${areaLabel(area.path)} brain's live session`;
+    const brainCostFigure = brainSession
+      ? `<span class="work-group-cost" data-worker-cost="${escapeHtml(brainSession)}" data-worker-cost-scope="session" data-worker-cost-subject="${escapeHtml(brainCostSubject)}">${workerCostMarkup(state.workerCost?.sessions?.[brainSession] ?? null, brainCostSubject)}</span>`
       : "";
     const name = sub ? descendantPath(area.path, parentPath) : humanName(area.name);
     const cursor = `area:${area.path}`;

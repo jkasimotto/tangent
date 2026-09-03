@@ -26,7 +26,7 @@ async function writeJsonl(file, rows) {
  * and the transcripts themselves. Nothing here touches the real vault, the
  * real transcript roots, or the real Agent Shell state.
  */
-async function buildMachine({ pricingDocument = null, unratedModel = false } = {}) {
+async function buildMachine({ pricingDocument = null, unratedModel = false, brokenRegistry = false } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "cost-http-"));
   const trees = path.join(root, "trees");
   const workspace = path.join(root, "workspace");
@@ -37,7 +37,7 @@ async function buildMachine({ pricingDocument = null, unratedModel = false } = {
   await mkdir(workspace, { recursive: true });
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeFile(path.join(areaDirectory, "costing.md"), `---\ntype: area\n---\n\n# Costing\n\n## Resources\n\n- Repository: ${workspace}\n`, "utf8");
-  await writeFile(path.join(trees, "harnesses.md"), [
+  await writeFile(path.join(trees, "harnesses.md"), brokenRegistry ? "# Harnesses\n\n```tangent.harnesses.v2\n{ not json\n```\n" : [
     "# Harnesses", "",
     "```tangent.harnesses.v2",
     JSON.stringify({
@@ -103,43 +103,25 @@ async function buildMachine({ pricingDocument = null, unratedModel = false } = {
   return { root, trees, workspace };
 }
 
-test("the cost endpoint prices a day of real records, including subagents and brains", async (context) => {
+test("the cost endpoint answers from the index it holds instead of walking transcripts again", async (context) => {
   const machine = await buildMachine();
   const base = await startShellServer(context, { here, ...machine });
   if (!base) return;
 
-  const snapshot = await (await fetch(`${base}/api/cost?days=1&wait=1`)).json();
-  assert.equal(snapshot.status, "ready");
-
-  // 20 from the Job's Claude ledger, charged once across two attempts that
-  // share the conversation; 5 from the brain; 1.58 from pi's million input
-  // tokens at the seeded ResetData rate.
-  assert.equal(Number(snapshot.amount.toFixed(4)), 26.58);
-  assert.equal(snapshot.conversations, 3);
-  assert.deepEqual(snapshot.byHarness.map((entry) => entry.harness), ["claude-otto", "pi-code"]);
-  assert.deepEqual(snapshot.byModel.map((entry) => entry.id).sort(), ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "resetdata-glm/zai/glm-5.2"]);
-
-  // The brain is in the breakdown beside the Job, not folded away.
-  assert.equal(snapshot.work.some((entry) => entry.scope === "brain"), true);
-  assert.equal(snapshot.work.some((entry) => entry.scope === "job"), true);
-
-  // The one attempt that could not be reached is named, and the figure
-  // refuses to call itself complete because of it.
-  assert.equal(snapshot.complete, false);
-  assert.deepEqual(snapshot.excluded, [{ reason: "the codex-gw harness declares no transcripts folder", detail: null, count: 1 }]);
-});
-
-test("the cost endpoint answers from its snapshot instead of walking transcripts again", async (context) => {
-  const machine = await buildMachine();
-  const base = await startShellServer(context, { here, ...machine });
-  if (!base) return;
-
-  const first = await (await fetch(`${base}/api/cost?days=1&wait=1`)).json();
+  const first = await (await fetch(`${base}/api/cost/workers?wait=1`)).json();
   const started = Date.now();
-  const second = await (await fetch(`${base}/api/cost?days=1`)).json();
+  const second = await (await fetch(`${base}/api/cost/workers`)).json();
   const elapsed = Date.now() - started;
   assert.equal(second.computedAt, first.computedAt);
   assert.ok(elapsed < 500, `a warm read took ${elapsed}ms`);
+});
+
+test("the day total the top bar used to read is gone, not left serving a dead route", async (context) => {
+  const machine = await buildMachine();
+  const base = await startShellServer(context, { here, ...machine });
+  if (!base) return;
+
+  assert.equal((await fetch(`${base}/api/cost?days=1`)).status, 404);
 });
 
 test("a rate written into the vault pricing Document overrides the seeded one", async (context) => {
@@ -154,9 +136,9 @@ test("a rate written into the vault pricing Document overrides the seeded one", 
   const base = await startShellServer(context, { here, ...machine });
   if (!base) return;
 
-  const snapshot = await (await fetch(`${base}/api/cost?days=1&wait=1`)).json();
+  const index = await (await fetch(`${base}/api/cost/workers?wait=1`)).json();
   // pi's million input tokens now cost 10 instead of the seeded 1.58.
-  assert.equal(Number(snapshot.amount.toFixed(4)), 35);
+  assert.equal(Number(index.sessions["thing-pi"].amount.toFixed(4)), 10);
 });
 
 test("a broken pricing Document keeps the seeded rates and says what went wrong", async (context) => {
@@ -164,10 +146,26 @@ test("a broken pricing Document keeps the seeded rates and says what went wrong"
   const base = await startShellServer(context, { here, ...machine });
   if (!base) return;
 
-  const snapshot = await (await fetch(`${base}/api/cost?days=1&wait=1`)).json();
-  assert.equal(Number(snapshot.amount.toFixed(4)), 26.58);
-  assert.equal(snapshot.complete, false);
-  assert.equal(snapshot.excluded.some((entry) => entry.reason === "the pricing Document could not be read"), true);
+  const index = await (await fetch(`${base}/api/cost/workers?wait=1`)).json();
+  // The seeded rate still prices pi's million input tokens, and the figure
+  // says on its own hover that the Document it should have used was broken.
+  const worker = index.sessions["thing-pi"];
+  assert.equal(Number(worker.amount.toFixed(4)), 1.58);
+  assert.equal(worker.floor, true);
+  assert.equal(worker.reasons.some((reason) => reason.startsWith("the pricing Document could not be read")), true);
+});
+
+test("a broken harness registry is named on every worker rather than reading as free work", async (context) => {
+  const machine = await buildMachine({ brokenRegistry: true });
+  const base = await startShellServer(context, { here, ...machine });
+  if (!base) return;
+
+  const index = await (await fetch(`${base}/api/cost/workers?wait=1`)).json();
+  const worker = index.sessions["thing-claude"];
+  assert.equal(worker.amount, 0);
+  assert.equal(worker.conversations, 0);
+  assert.equal(worker.floor, true);
+  assert.match(worker.reasons[0], /^the harness registry could not be read/);
 });
 
 test("every worker's own cost is served, keyed by Goal and by session", async (context) => {
@@ -231,20 +229,4 @@ test("a worker whose model has no rate reports tokens, never a guessed dollar", 
   assert.equal(worker.unpricedDisplay, "1.0M tok");
   assert.equal(worker.floor, true);
   assert.match(worker.reasons.join(" "), /no rate for resetdata-glm\/zai\/glm-nine/);
-});
-
-test("the top bar's figure for today is the same reading the worker index came from", async (context) => {
-  const machine = await buildMachine();
-  const base = await startShellServer(context, { here, ...machine });
-  if (!base) return;
-
-  const snapshot = await (await fetch(`${base}/api/cost?days=1&wait=1`)).json();
-  const index = await (await fetch(`${base}/api/cost/workers?wait=1`)).json();
-  assert.equal(index.computedAt, snapshot.computedAt);
-
-  // Every conversation in this fixture started today, so the day's total is
-  // the two work keys added up. They are only added here because this test
-  // owns the fixture and knows the keys do not overlap.
-  const work = Object.values(index.work).reduce((total, entry) => total + entry.amount, 0);
-  assert.equal(Number(work.toFixed(4)), Number(snapshot.amount.toFixed(4)));
 });

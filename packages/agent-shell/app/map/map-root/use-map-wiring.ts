@@ -42,6 +42,9 @@ import type { CanvasDeps } from "./map-root-canvas.ts";
 import { runKeyCommand } from "./map-root-commands.ts";
 import type { CommandDeps } from "./map-root-commands.ts";
 import { publishToWorld } from "./map-publish.ts";
+import { elementRect } from "../input/hit-test.ts";
+import { startCanvasTextEdit } from "../ui/canvas-text-edit.ts";
+import { mapCanvasElement } from "../ui/canvas-focus.ts";
 
 /** Everything one render of the Map root is wired with. */
 export type MapWiring = {
@@ -203,8 +206,8 @@ function buildSurfaceInput(input: WiringInput, reads: RuntimeReads, effects: Res
     placeResource: (row: ResourcePanelRow) => placeRow(surfaceInput, row, null),
     /** Adds one chosen Block to the owning shard through the controller. */
     placeBlock: (choice: BlockChoice, target: PlacementTarget) => { void placeBlock(buildPickerEnvironment(surfaceInput), { ...choice }, { area: target.area, point: target.point }, false); },
-    /** Starts editing a newly placed Block's label on the canvas. */
-    editLabel: (labelId: RuntimeId) => core.projection.project({ selection: [labelId] }, "placed-block-selection"),
+    /** Starts editing a newly placed Block's label on the canvas, once the projection has drawn it. */
+    editLabel: (labelId: RuntimeId) => editPlacedLabel(core, labelId),
     /** Selects one Area's region without moving the camera. */
     selectArea: (area: AreaKey) => selectArea(input, area),
     /** Asks the Resources surface to load one Area's rows. */
@@ -301,6 +304,8 @@ function buildCommandDeps(input: WiringInput, reads: RuntimeReads, publish: Retu
       openFind(buildFindEnvironment(surfaces));
       openSurface("find");
     },
+    /** Opens the keys dialog, with the canvas as the control focus returns to. */
+    openHelp: () => openSurface("help", mapCanvasElement(core.host)),
     /** Opens the picker at the placement spot. */
     openPicker: () => {
       openPicker(buildPickerEnvironment(surfaces));
@@ -371,6 +376,7 @@ function buildEscape(input: WiringInput, surfaces: SurfaceInput, commands: Comma
 function closeTopSurface(input: WiringInput, surfaces: SurfaceInput, commands: CommandDeps, top: SurfaceId): void {
   const { stores, effects } = { ...input, effects: surfaces.resourceEffects };
   if (top === "find") cancelFind(buildFindEnvironment(surfaces), stores.find);
+  else if (top === "picker") stores.dispatchPicker({ kind: "close" });
   else if (top === "resources") stores.dispatchResources({ type: "close" });
   else if (top === "resourceDetails") closeResourceDetails(effects);
   else if (top === "resourceEditor") holdResourceDraft(effects, true);
@@ -395,3 +401,14 @@ export function hideRow(effects: ResourceEffects, row: ResourcePanelRow): void {
   void hideResourceOnMap(effects, row);
 }
 
+/** Opens Excalidraw's text editor on a newly placed Block's label, once the projection has drawn it. */
+function editPlacedLabel(core: MapCore, labelId: RuntimeId): void {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const snapshot = core.controller.snapshot();
+    const label = snapshot.composition.scene.elements.find((element) => element.id === labelId && element.type === "text");
+    const appState = core.session.api?.getAppState();
+    if (label === undefined || appState === undefined) return;
+    core.projection.project({ elements: snapshot.scene.elements, selection: [labelId] }, "placed-block-selection");
+    requestAnimationFrame(() => startCanvasTextEdit(core.host, snapshot.camera, appState, elementRect(label)));
+  }));
+}

@@ -32,8 +32,9 @@ export type CommandDeps = BlockActions & {
   readonly resolveBlock: (element: SceneElement) => MapEntityFacts | null;
   /** Runs the Map's Escape order and reports what it closed. */
   readonly escape: () => { readonly kind: string };
-  /** Opens Find, the picker and the Outline through their own effects. */
+  /** Opens Find, the picker, Help and the Outline through their own effects. */
   readonly openFind: () => void;
+  readonly openHelp: () => void;
   readonly openPicker: () => void;
   readonly toggleOutline: () => void;
   /** Steps Find to the next or previous match. */
@@ -115,7 +116,7 @@ export function runKeyCommand(deps: CommandDeps, command: KeyCommand): void {
   switch (command.kind) {
     case "escape": deps.escape(); return;
     case "open-find": deps.openFind(); return;
-    case "open-help": deps.openSurface("help"); return;
+    case "open-help": deps.openHelp(); return;
     case "open-picker": deps.openPicker(); return;
     case "toggle-outline": deps.toggleOutline(); return;
     case "undo": deps.controller.undo(); return;

@@ -140,9 +140,16 @@ function headingOf(section: HTMLElement): HTMLElement | null {
   return heading;
 }
 
-/** Returns focus to the opener when it is still in the document. */
+/**
+ * Returns focus to the opener when it is still in the document. It waits one frame, because a modal
+ * surface makes the canvas inert while it is open and an inert element refuses focus: the guard is
+ * lifted in the same commit that unmounts the surface, and the frame puts the restore after it.
+ */
 function restoreFocusTo(opener: HTMLElement | null): void {
-  if (opener !== null && opener.isConnected) opener.focus({ preventScroll: true });
+  if (opener === null) return;
+  requestAnimationFrame(() => {
+    if (opener.isConnected) opener.focus({ preventScroll: true });
+  });
 }
 
 /** Wraps Tab and Shift-Tab around the surface's focusable elements. */

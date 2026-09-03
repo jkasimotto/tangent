@@ -24,6 +24,7 @@ import { useMapStores } from "./map-root/use-map-stores.ts";
 import { findRowsOf, useMapWiring } from "./map-root/use-map-wiring.ts";
 import { buildFindEnvironment, buildPickerEnvironment } from "./map-root/map-runtime-surfaces.ts";
 import type { AreaBoardBridge, WorldMountOptions } from "./mount-options.ts";
+import { mapCanvasElement } from "./ui/canvas-focus.ts";
 import { LiveRegion } from "./surfaces/announce/LiveRegion.tsx";
 import { KindsNotice } from "./surfaces/kinds/KindsNotice.tsx";
 import { SaveStatus } from "./surfaces/save/SaveStatus.tsx";
@@ -105,7 +106,7 @@ function MapBody({ core, stores, wiring, snapshot, view, options, controller }: 
         onPlaceBlock={() => wiring.commands.openPicker()}
         onOpenResources={(opener) => wiring.openResources(snapshot.locatedArea, opener)}
         onToggleOutline={() => wiring.commands.toggleOutline()}
-        onOpenHelp={(opener) => wiring.openSurface("help", opener)}
+        onOpenHelp={() => wiring.openSurface("help", mapCanvasElement(core.host))}
         onRunAction={(facts, action, opener) => wiring.reads.runAction(facts, action, opener)}
         onAddToArea={(facts, opener) => runPrimary(wiring, facts, opener)}
         onShowDetails={(_facts, opener) => wiring.openResources(snapshot.locatedArea, opener)}
@@ -149,3 +150,4 @@ function runPrimary(wiring: ReturnType<typeof useMapWiring>, facts: MapEntityFac
   if (action === null || action === undefined) return;
   wiring.reads.runAction(facts, action, opener);
 }
+

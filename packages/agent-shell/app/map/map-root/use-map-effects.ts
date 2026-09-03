@@ -8,6 +8,8 @@
 import { useEffect } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { installKeyboardDispatch } from "../input/keyboard-dispatch.ts";
+import { fitArea } from "./map-root-commands.ts";
+import { focusMapCanvas } from "../ui/canvas-focus.ts";
 import { selectedVisibleArea } from "../input/hit-test.ts";
 import { selectedMapEntityElement } from "../kernel/kernel-boundary.ts";
 import type { Focus, SceneElement, Snapshot } from "../kernel/kernel-types.ts";
@@ -17,7 +19,10 @@ import { installResourceCadence, refreshOpenPanel, resolveSceneResources } from 
 import { hasModalSurface } from "../surfaces/surface-stack.ts";
 import type { AreaKey } from "../units/ids.ts";
 import { placementPreviewElements, placementProjectionKey } from "../surfaces/placement/placement-effects.ts";
-import { installAnnounceClock, installInertGuard, pushProjection, subscribeSnapshots } from "./map-root-effects.ts";
+import { installAnnounceClock, installInertGuard, pushProjection, reconcileSurfaces, settleMount, subscribeSnapshots } from "./map-root-effects.ts";
+import type { OpenSurfaces } from "./map-root-effects.ts";
+import { rowForLocator } from "../surfaces/resources/resources-views.ts";
+import type { SurfaceId } from "../surfaces/surface-registry.ts";
 import type { MapCore } from "./use-map-core.ts";
 import type { MapStores } from "./use-map-stores.ts";
 import type { MapWiring } from "./use-map-wiring.ts";
@@ -35,6 +40,7 @@ export type EffectsInput = {
 
 /** Installs every effect the Map root owns. */
 export function useMapEffects(input: EffectsInput): void {
+  useSurfaceSync(input);
   useCanvasEffects(input);
   useSurfaceEffects(input);
   useHostEffects(input);
@@ -92,6 +98,16 @@ function useCanvasEffects(input: EffectsInput): void {
 function useSurfaceEffects(input: EffectsInput): void {
   const { stores, wiring, snapshot } = input;
   const narrowQuery = `(max-width: ${LAYOUT.narrowBreakpoint}px)`;
+
+  useEffect(
+    /** Lowers the mount flag once Excalidraw has settled the scene it mounted with, and takes the keys. */
+    () => {
+      if (input.api === null) return;
+      settleMount(input.core.session, input.api);
+      focusMapCanvas(input.core.host);
+    },
+    [input.api, input.core.session],
+  );
 
   useEffect(
     /** Advances the announce store's clock so every announcement clears. */
@@ -168,6 +184,33 @@ function useHostEffects(input: EffectsInput): void {
   );
 }
 
+/** The surfaces whose own store says whether they are open, in the order the stack should hold them. */
+function openSurfacesOf(input: EffectsInput): OpenSurfaces {
+  const { stores, snapshot } = input;
+  const draft = snapshot.draft;
+  return new Map<SurfaceId, boolean>([
+    ["resources", stores.resources.open],
+    ["resourceDetails", stores.resources.open && rowForLocator(stores.resources.projection, stores.resources.details ?? undefined) !== null],
+    ["resourceEditor", stores.resources.editor !== null && !stores.resources.editor.hidden],
+    ["transaction", stores.resources.sceneBusy !== null],
+    ["resourceRecovery", stores.resources.recovery !== null],
+    ["sceneRecovery", stores.resources.sceneRecovery !== null],
+    ["placement", stores.placement.placing !== null],
+    ["picker", stores.picker.target !== null],
+    ["find", stores.find.open],
+    ["mapRecovery", draft !== null && draft.restored !== true],
+  ]);
+}
+
+/** Keeps the surface stack in step with the stores that own each surface's own state. */
+function useSurfaceSync(input: EffectsInput): void {
+  const open = openSurfacesOf(input);
+  useEffect(
+    /** Opens or closes each store-owned surface on the stack. */
+    () => reconcileSurfaces(input.stores.stack, open, input.stores.dispatchStack),
+  );
+}
+
 /** The Block that is the whole live selection, or null. */
 function selectedBlockOf(snapshot: Snapshot): SceneElement | null {
   return selectedMapEntityElement(snapshot.composition.scene.elements, snapshot.selection);
@@ -192,8 +235,8 @@ function installBridge(input: EffectsInput): () => void {
   bridge.rendered = () => (core.session.api?.getSceneElements() ?? null) as readonly SceneElement[] | null;
   bridge.appState = () => core.session.api?.getAppState() ?? null;
   bridge.controller = core.controller;
-  bridge.fitArea = (area: AreaKey, settings) => core.controller.fitArea(area, settings);
-  bridge.navigateArea = (area: AreaKey, settings) => core.controller.navigateArea(area, settings);
+  bridge.fitArea = (area: AreaKey, settings) => fitArea(wiring.commands, area, settings?.push ?? true, settings?.select ?? true);
+  bridge.navigateArea = (area: AreaKey, settings) => fitArea(wiring.commands, area, settings?.push ?? true, settings?.select ?? true);
   bridge.selectArea = (area: AreaKey) => core.controller.selectArea(area);
   bridge.openFind = () => wiring.commands.openFind();
   bridge.toggleRestriction = (area?: AreaKey) => wiring.commands.toggleRestriction(area ?? null);
@@ -210,7 +253,7 @@ function installBridge(input: EffectsInput): () => void {
   bridge.keepMine = () => core.controller.keepMine();
   bridge.captureView = () => core.controller.captureView();
   bridge.restoreView = (value) => core.controller.restoreView(value);
-  bridge.moveFocus = () => false;
+  bridge.moveFocus = () => focusMapCanvas(core.host);
   return () => {
     bridge.controller = null;
     bridge.rendered = () => null;

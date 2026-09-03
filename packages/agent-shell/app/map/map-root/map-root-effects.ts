@@ -7,14 +7,16 @@
 // already showing what the controller wants, and the announce clock only advances a pure store.
 
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { selectedIds } from "../canvas/projection.ts";
+import { asSceneElements, selectedIds } from "../canvas/projection.ts";
 import type { Projection } from "../canvas/projection.ts";
 import type { IconFileRegistry } from "../canvas/icon-files.ts";
 import { PointerSession } from "../input/pointer-session.ts";
-import { areaMapProjectionUpdate } from "../kernel/kernel-boundary.ts";
+import { areaMapProjectionUpdate, authoredFingerprint } from "../kernel/kernel-boundary.ts";
 import type { AreaMapController, SceneElement, Snapshot } from "../kernel/kernel-types.ts";
 import { LAYOUT } from "../layout/layout-tokens.ts";
 import type { AnnounceAction } from "../surfaces/announce/announce-store.ts";
+import type { SurfaceId } from "../surfaces/surface-registry.ts";
+import type { SurfaceStack, SurfaceStackAction } from "../surfaces/surface-stack.ts";
 import type { MapSession } from "./map-session.ts";
 
 /** Removes what an installer installed. */
@@ -91,6 +93,18 @@ export function pushProjection(deps: ProjectionPushDeps): void {
   deps.projection.defer({ ...elements, selection: deps.snapshot.selection }, placementChanged ? "resource-placement-preview" : "projection");
 }
 
+/**
+ * Lowers the mount flag once Excalidraw has settled the scene it was given. Until it does, every
+ * change callback is Excalidraw reporting the scene the Map handed it, not a person editing, and
+ * publishing one would rewrite every shard from Excalidraw's own copy.
+ */
+export function settleMount(session: MapSession, api: ExcalidrawImperativeAPI): void {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    session.fingerprint = authoredFingerprint(asSceneElements(api.getSceneElements()));
+    session.initializing = false;
+  }));
+}
+
 /** The shell elements a modal Map surface makes inert, and their state before it did. */
 export type InertGuard = { readonly element: Element; readonly was: boolean };
 
@@ -111,4 +125,21 @@ export function installInertGuard(host: HTMLElement, modal: boolean): Uninstall 
   return () => {
     for (const guard of targets) if (!guard.was) guard.element.removeAttribute("inert");
   };
+}
+
+/** Which surfaces the stores say are open, by registry id. */
+export type OpenSurfaces = ReadonlyMap<SurfaceId, boolean>;
+
+/**
+ * Keeps the surface stack in step with the stores that own each surface's own state. A surface can
+ * open or close from its own effect (the picker closes itself once a Block is placed, the Resources
+ * panel opens from a row's Details), and the stack is what the keyboard, the backdrop and Escape
+ * read, so the two must never disagree.
+ */
+export function reconcileSurfaces(stack: SurfaceStack, open: OpenSurfaces, dispatch: (action: SurfaceStackAction) => void): void {
+  for (const [id, isOpen] of open) {
+    const onStack = stack.includes(id);
+    if (isOpen && !onStack) dispatch({ type: "open", id });
+    else if (!isOpen && onStack) dispatch({ type: "close", id });
+  }
 }

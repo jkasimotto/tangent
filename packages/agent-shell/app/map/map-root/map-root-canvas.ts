@@ -10,7 +10,11 @@ import type { ExcalidrawImperativeAPI, PointerDownState } from "@excalidraw/exca
 import { asSceneElements, selectedIds } from "../canvas/projection.ts";
 import type { Projection, SelectionAppState } from "../canvas/projection.ts";
 import { TextEditBuffer, captureLiveTextEdit, finishTextEdit, staleEditingText } from "../canvas/text-edit.ts";
+import type { TextEditAppState } from "../canvas/text-edit.ts";
 import type { CanvasHandlers } from "../canvas/MapCanvas.tsx";
+import { CANVAS_ANNOUNCEMENTS } from "../copy.ts";
+import { authoredFingerprint } from "../kernel/kernel-boundary.ts";
+import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import { hitTest, selectedVisibleArea, visibleSceneFromSnapshot } from "../input/hit-test.ts";
 import type { VisibleScene } from "../input/hit-test.ts";
 import { applySubordination, regionIdsOf, selectionForMeaning } from "../input/excalidraw-subordination.ts";
@@ -18,6 +22,9 @@ import { meaningOfPress } from "../input/press-meaning.ts";
 import type { PressContext, PressMeaning } from "../input/press-meaning.ts";
 import { PointerSession, resolveClaimedId } from "../input/pointer-session.ts";
 import { areaMapPointerCommand } from "../kernel/kernel-boundary.ts";
+
+/** The app state one change callback carries that the Map reads. */
+type ChangeAppState = SelectionAppState & TextEditAppState;
 import type { SceneElement, Snapshot } from "../kernel/kernel-types.ts";
 import { point } from "../units/frames.ts";
 import type { Camera, Point } from "../units/frames.ts";
@@ -92,6 +99,11 @@ function beginPress(deps: CanvasDeps, tool: { type: string }, state: PressState)
   const context = pressContextOf(deps, tool, state, snapshot, scene);
   if (context.editingText) return;
   const meaning = meaningOfPress(context);
+  if (meaning.kind === "ignore" && meaning.reason === "rotation") {
+    deps.announce(CANVAS_ANNOUNCEMENTS.outlinesCannotRotate);
+    deps.projection.project({ elements: snapshot.scene.elements }, "area-transform-rejected");
+    return;
+  }
   deps.projection.cancel();
   repairStaleEditor(deps, true);
   deps.session.claimedIds = new Map();
@@ -126,10 +138,63 @@ function repairStaleEditor(deps: CanvasDeps, force: boolean): void {
   deps.projection.project({ selection: repair.selection, clearEditingText: true }, "stale-text-repair");
 }
 
-/** Whether the change callback is one the Map itself caused and must swallow. */
-function isEchoedChange(deps: CanvasDeps, elements: readonly SceneElement[], appState: SelectionAppState): boolean {
-  if (deps.projection.consume(elements as never, appState)) return true;
-  return !deps.pointer.isOpen() && deps.session.nonPointer === null && deps.projection.absorbFencedChange(elements as never);
+/** True while a command of the Map's own owns the change callbacks Excalidraw is reporting. */
+function userCommandOpen(deps: CanvasDeps): boolean {
+  return deps.pointer.isOpen() || deps.session.nonPointer !== null || deps.buffer.isActive() || deps.session.actionKind !== null;
+}
+
+/**
+ * Keeps the controller's selection in step with Excalidraw's, and repairs a selection the Map asked
+ * for that Excalidraw dropped. False means the repair owns this callback and nothing is published.
+ */
+function syncSelection(deps: CanvasDeps, appState: SelectionAppState): boolean {
+  const ids = selectedIds(appState);
+  const additive = deps.session.additiveSelection;
+  let selection = ids;
+  if (additive !== null && additive.size > 0 && ![...additive].every((id) => ids.includes(id))) {
+    selection = [...new Set([...ids, ...additive])];
+    requestAnimationFrame(() => deps.projection.project({ selection }, "additive-selection-repair"));
+  }
+  const programmatic = deps.session.programmaticSelection;
+  if (programmatic !== null && programmatic.size > 0 && ![...programmatic].every((id) => selection.includes(id))) {
+    requestAnimationFrame(() => deps.projection.project({ selection: programmatic }, "selection-repair"));
+    return false;
+  }
+  deps.controller.setSelection(selection);
+  if (selection.length > 0) deps.session.stableSelection = new Set(selection);
+  for (const element of deps.controller.snapshot().composition.scene.elements) {
+    const area = element.customData?.tangent?.area;
+    if (area === undefined || element.customData?.tangent?.role !== "area-region" || !selection.includes(element.id)) continue;
+    void deps.controller.prioritizeLoads(area, { includeDescendants: false, requireSelectedDeferred: true });
+  }
+  return true;
+}
+
+/** Normalises one Excalidraw callback into source-owned world authority. */
+function handleChange(deps: CanvasDeps, elements: readonly ExcalidrawElement[], appState: ChangeAppState): void {
+  if (deps.projection.consume(elements, appState)) return;
+  const command = userCommandOpen(deps);
+  if (!command && deps.projection.absorbFencedChange(elements)) return;
+  if (captureLiveTextEdit(deps.buffer, elements, appState)) {
+    deps.projection.cancel();
+    return;
+  }
+  const buffered = deps.buffer.isActive();
+  if (!command && deps.session.initializing) return;
+  if (deps.pointer.isSettling() && !buffered) return;
+  const scene = asSceneElements(elements);
+  const settled = finishTextEdit(deps.buffer, scene) ?? scene;
+  if (buffered) {
+    deps.session.programmaticSelection = null;
+    deps.session.actionKind = "text";
+  }
+  if (deps.session.nonPointer?.kind === "text" && !appState.editingTextElement) deps.settleNonPointer();
+  if (!syncSelection(deps, appState)) return;
+  const fingerprint = authoredFingerprint(settled);
+  if (fingerprint === deps.projection.lastFingerprint()) return;
+  deps.projection.noteFingerprint(fingerprint);
+  publishToWorld(deps, settled, appState);
+  deps.onUserChange();
 }
 
 /** Builds every Excalidraw callback the Map answers. */
@@ -155,21 +220,17 @@ export function createCanvasHandlers(deps: CanvasDeps, setApi: (api: ExcalidrawI
     onCamera: (camera: Camera) => deps.controller.setCamera(camera),
     /** Claims a pasted Tangent reference, or records where an ordinary paste lands. */
     onPaste: (data) => {
-      const text = typeof data.text === "string" ? data.text : "";
-      if (text && deps.claimPaste(text)) return false;
+      if (data.files?.length) return true;
+      deps.session.actionKind = "paste";
       const at = deps.session.lastPointer;
       if (at !== null) deps.session.pastePlacement = { point: at, area: deps.ownerAt(at) };
+      const text = typeof data.text === "string" ? data.text : "";
+      if (!text || !deps.claimPaste(text)) return false;
+      deps.session.pastePlacement = null;
       return true;
     },
     /** Normalises one Excalidraw callback into source-owned world authority. */
-    onChange: (elements, appState) => {
-      const scene = asSceneElements(elements);
-      if (isEchoedChange(deps, scene, appState)) return;
-      if (captureLiveTextEdit(deps.buffer, elements, appState)) return;
-      const settled = finishTextEdit(deps.buffer, scene) ?? scene;
-      publishToWorld(deps, settled, appState);
-      deps.onUserChange();
-    },
+    onChange: (elements, appState) => handleChange(deps, elements, appState),
   };
 }
 

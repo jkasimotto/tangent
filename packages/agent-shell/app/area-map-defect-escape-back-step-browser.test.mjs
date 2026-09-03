@@ -117,6 +117,9 @@ test("Escape steps back from Details to the Resources sheet and never strands th
     const sheetOpen = await surfaceReport(page);
     assert.equal(sheetOpen.panel, 1, "the Resources sheet is open at 800px");
     assert.equal(sheetOpen.canvasInert, true, "the narrow sheet owns the screen, so the canvas behind it is inert");
+    assert.equal(sheetOpen.brainInert, true, "the shell around the Map is inert too while the sheet owns the screen");
+    assert.equal(sheetOpen.dialogs, 1, "the narrow sheet is the one dialog on the screen");
+    assert.equal(sheetOpen.backdrops, 1, "the sheet brings one backdrop with it");
 
     const mainRow = page.locator(".tangent-map-resource-row").filter({ hasText: "Main checkout" });
     await mainRow.getByRole("button", { name: "Details" }).click();
@@ -131,6 +134,8 @@ test("Escape steps back from Details to the Resources sheet and never strands th
     assert.equal(afterDetailsEscape.details, 0, "Escape removes the Details view");
     assert.equal(afterDetailsEscape.panel, 1, "Escape leaves the Resources sheet open, because leaving Details is a back step and not a close");
     assert.ok(afterDetailsEscape.rows >= 2, "the inventory the person came from is under them again");
+    assert.equal(afterDetailsEscape.canvasInert, true, "the sheet still owns the screen, so the back step did not half lift the guard over the canvas");
+    assert.equal(afterDetailsEscape.brainInert, true, "the shell stays inert as well, because a sheet is still open");
     await page.getByRole("heading", { name: "Map resources" }).waitFor();
 
     const goneRow = page.locator(".tangent-map-resource-row").filter({ hasText: "Removed checkout" });
@@ -140,6 +145,8 @@ test("Escape steps back from Details to the Resources sheet and never strands th
     const dialogOpen = await surfaceReport(page);
     assert.equal(dialogOpen.recovery, 1, "the Add-back confirmation is open");
     assert.equal(dialogOpen.panel, 1, "the sheet the dialog was opened from is still behind it");
+    assert.equal(dialogOpen.backdrops, 2, "the dialog lays its own backdrop over the sheet's");
+    assert.equal(dialogOpen.canvasInert, true, "the Map is inert under the dialog, which is the state the person must be able to escape from");
 
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => document.querySelectorAll(".tangent-map-resource-recovery").length === 0);
@@ -148,6 +155,8 @@ test("Escape steps back from Details to the Resources sheet and never strands th
     assert.equal(afterDialogEscape.recovery, 0, "Escape removes the Add-back dialog rather than the sheet under it");
     assert.equal(afterDialogEscape.panel, 1, "the Resources sheet survives the dialog it opened, so no dialog is left stranded over an inert Map");
     assert.ok(afterDialogEscape.rows >= 2, "the person is returned to the inventory row they asked from");
+    assert.equal(afterDialogEscape.backdrops, 1, "only the dialog's backdrop went away, and the sheet keeps its own");
+    assert.equal(afterDialogEscape.canvasInert, true, "the Map is still inert, because the sheet the person is reading still owns the screen");
     await goneRow.getByRole("button", { name: "Add back to Area" }).waitFor();
     assert.equal(await page.evaluate(() => window.apiCalls.some((call) => call.url === "/api/areas/map-resources/apply")), false, "a cancelled confirmation writes nothing");
 
@@ -156,6 +165,7 @@ test("Escape steps back from Details to the Resources sheet and never strands th
     await settled(page);
     const afterSheetEscape = await surfaceReport(page);
     assert.equal(afterSheetEscape.panel, 0, "the third Escape is the one that closes the sheet itself");
+    assert.equal(afterSheetEscape.rows, 0, "the inventory leaves with the sheet it was in");
     assert.equal(afterSheetEscape.dialogs, 0, "no dialog is left over the Map");
     assert.equal(afterSheetEscape.backdrops, 0, "no backdrop is left over the Map");
     assert.equal(afterSheetEscape.canvasInert, false, "the Map takes input again once every modal surface is closed");

@@ -216,8 +216,8 @@ test("Escape reaches the Map through the shell and closes Help, the Outline, the
     // the located Area's again.
     const parentLabel = page.locator('[data-area-map-label="otto"]');
     await parentLabel.waitFor();
-    await parentLabel.evaluate((element) => element.focus());
-    await page.keyboard.press("Enter");
+    const parentBox = await parentLabel.boundingBox();
+    await page.mouse.click(parentBox.x + parentBox.width / 2, parentBox.y + parentBox.height / 2);
     await page.getByRole("button", { name: /^Resources/ }).click();
     await page.getByRole("heading", { name: "Map resources · otto" }).waitFor();
     await page.keyboard.press("Escape");

@@ -2366,7 +2366,9 @@ function areaMapPane(area) {
     focus: () => ({ areas: state.areaFocus, only: state.areaFocusOnly, activeOnly: state.activeOnly }),
     onEvent: actionTelemetry.recordAreaMap,
     onEntityVerb: areaMapEntityVerb,
-    onBack: leaveAreaWorkspace,
+    // The Map's own last Escape step is the Back button's step, so both leave through the one
+    // retained-opener route instead of tearing the workspace down and remounting it.
+    onBack: closeAreaMap,
     /** Keeps workspace chrome aligned with Map-local drill state. */
     onNavigation(navigation) { mapLocatedArea = navigation.area; updateHeader(); },
     /** Keeps workspace chrome aligned with the restored Map location and tools. */

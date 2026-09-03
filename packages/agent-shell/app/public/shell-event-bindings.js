@@ -3358,7 +3358,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (handleGlobalShortcut(event)) return;
     if (handleCommandEnter(event)) return;
+    // Escape typed inside the Map belongs to the Map's own dispatcher, exactly as the Only key two
+    // lines above already yields. Claiming it here, with preventDefault and stopPropagation, kept
+    // the key from ever reaching the Map host listener below document in the capture order, so
+    // Help, the Outline and the Resources panel could not be closed with the keyboard and a
+    // selected Area could not be cleared. Outside the Map the shell still owns the key, because no
+    // Map listener would see it there.
     if (context !== "work" && areaWorkspaceMapOwnsFocus() && event.key === "Escape") {
+      if (event.target.closest?.("[data-tangent-area-map]")) return;
       event.preventDefault(); event.stopPropagation();
       return closeAreaMap();
     }

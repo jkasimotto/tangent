@@ -15,9 +15,6 @@ export function createAreaWorkspaceController({
   const minSizePx = { map: mapPane.minSizePx, brain: brainPane.minSizePx };
   const preference = readSplitLayoutPreference(storage, { minSizePx });
   const layout = createSplitLayout({ paneIds: ["map", "brain"], entryPane, preference, minSizePx });
-  // Julian owns the split. Reaching a surface never opens its sibling: only
-  // this remembered choice does, and it survives navigation and a restart.
-  let companion = preference.companion === true;
   let controller = null;
   controller = createSplitWorkspaceController({
     host,
@@ -30,6 +27,42 @@ export function createAreaWorkspaceController({
     },
   });
 
+  const split = createSplitChoice({ controller, storage, companion: preference.companion === true });
+
+  return {
+    area,
+    entryPane,
+    returnPoint,
+    show: controller.show,
+    enter: split.enter,
+    hide: controller.hide,
+    focus: controller.focus,
+    setOrder: split.setOrder,
+    setPrimary: controller.setPrimary,
+    setSize: split.setSize,
+    update: controller.update,
+    restore: controller.restore,
+    replace: controller.replace,
+    portal: controller.portal,
+    unportal: controller.unportal,
+    measure: controller.measure,
+    snapshot: controller.snapshot,
+    root: controller.root,
+    instance: controller.instance,
+    separator: controller.separator,
+    toggleCompanion: split.toggleCompanion,
+    splitOpen: split.splitOpen,
+    destroy: controller.destroy,
+  };
+}
+
+/**
+ * The split choice Julian owns. Reaching a surface never opens its sibling: only
+ * this remembered choice does, and it survives navigation and a restart. Every
+ * control here persists the reusable layout preference after it changes.
+ */
+function createSplitChoice({ controller, storage, companion: initialCompanion }) {
+  let companion = initialCompanion;
   /** Writes the reusable layout preference with Julian's current split choice. */
   function rememberLayout() {
     writeSplitLayoutPreference(storage, { ...controller.snapshot(), companion });
@@ -64,31 +97,7 @@ export function createAreaWorkspaceController({
     rememberLayout();
   }
 
-  return {
-    area,
-    entryPane,
-    returnPoint,
-    show: controller.show,
-    enter,
-    hide: controller.hide,
-    focus: controller.focus,
-    setOrder,
-    setPrimary: controller.setPrimary,
-    setSize,
-    update: controller.update,
-    restore: controller.restore,
-    replace: controller.replace,
-    portal: controller.portal,
-    unportal: controller.unportal,
-    measure: controller.measure,
-    snapshot: controller.snapshot,
-    root: controller.root,
-    instance: controller.instance,
-    separator: controller.separator,
-    toggleCompanion,
-    splitOpen,
-    destroy: controller.destroy,
-  };
+  return { enter, toggleCompanion, splitOpen, setSize, setOrder };
 }
 
 export default { createAreaWorkspaceController };

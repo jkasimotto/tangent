@@ -185,18 +185,21 @@ function useHostEffects(input: EffectsInput): void {
     [core.host, stores.stack, stores.resources.narrow],
   );
 
+  // The five values the shell is told about, computed in the render so the effect below can depend
+  // on the values themselves. `snapshot` is a new object on every controller notify and
+  // `wiring.reads.scene` is rebuilt on every render, so an effect keyed on those reports the same
+  // view state again on every render, and every report makes the shell rebuild its whole Map context
+  // bar from innerHTML. The Map reports its view state when the view state changes, not when it renders.
+  const { locatedArea, restrictionArea, nextEscape } = snapshot;
+  const selectedArea = selectedVisibleArea(wiring.reads.scene, snapshot.selection) ?? "";
+  const findOpen = stores.stack.includes("find");
+
   useEffect(
     /** Keeps the shell header aligned without moving Map state into the shell. */
     () => {
-      core.options.onViewState?.({
-        locatedArea: snapshot.locatedArea,
-        selectedArea: selectedVisibleArea(wiring.reads.scene, snapshot.selection) ?? "",
-        restrictionArea: snapshot.restrictionArea,
-        findOpen: stores.stack.includes("find"),
-        nextEscape: snapshot.nextEscape,
-      });
+      core.options.onViewState?.({ locatedArea, selectedArea, restrictionArea, findOpen, nextEscape });
     },
-    [core.options, snapshot, stores.stack, wiring.reads.scene],
+    [core.options, locatedArea, selectedArea, restrictionArea, findOpen, nextEscape],
   );
 
   useEffect(

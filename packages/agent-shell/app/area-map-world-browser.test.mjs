@@ -703,6 +703,23 @@ async function moveUnselectedArea(page, area, delta, { clearSelection = true, se
   return { before, after: (await regions(page))[area], samples, priorEvents };
 }
 
+/** Drags from one scene point and samples one watched Area's rendered rectangle on every frame. */
+async function dragSceneFrom(page, origin, delta, watched) {
+  const start = await viewportPoint(page, origin.x, origin.y);
+  const end = await viewportPoint(page, origin.x + delta.x, origin.y + delta.y);
+  const samples = [];
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  for (let step = 1; step <= 6; step += 1) {
+    await page.mouse.move(start.x + (end.x - start.x) * step / 6, start.y + (end.y - start.y) * step / 6);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    samples.push(await renderedRegion(page, watched));
+  }
+  await page.mouse.up();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  return samples;
+}
+
 /** Starts a literal south-east corner resize and leaves the pointer down. */
 async function beginSouthEastResize(page, area, delta, steps = 4) {
   await selectArea(page, area);
@@ -854,6 +871,47 @@ test("the first direct drag of an unselected Area persists without jitter or sna
       `projection telemetry contains no authored content fields: ${JSON.stringify(event)}`,
     );
   }
+});
+
+test("with an Area selected, a press on a Block moves the Block and a press in a sub-Area moves the sub-Area", { timeout: 90_000 }, async (context) => {
+  const page = await openWorld(context);
+  const parent = "neara/delivery/standards";
+  const child = "neara/delivery/standards/clearance";
+  await page.evaluate(() => window.editor.fitArea("neara", { push: false, select: false }));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+  // A press in the sub-Area's open body means move the sub-Area, even where it
+  // passes within the grab padding of a Block that belongs to the parent.
+  await selectArea(page, parent);
+  const block = await authoredBlock(page, parent, { rendered: true });
+  const grazing = { x: block.x + block.width / 2, y: block.y - 10 };
+  const childBefore = await renderedRegion(page, child);
+  const parentBefore = await renderedRegion(page, parent);
+  assert.ok(grazing.x > childBefore.x && grazing.x < childBefore.x + childBefore.width
+    && grazing.y > childBefore.y && grazing.y < childBefore.y + childBefore.height, `the press lands in ${child}: ${JSON.stringify({ grazing, childBefore, block })}`);
+  await page.evaluate(() => { window.worldEvents.length = 0; });
+  const parentDuringChildPress = await dragSceneFrom(page, grazing, { x: 60, y: 60 }, parent);
+  for (const sample of parentDuringChildPress) {
+    assert.deepEqual({ x: sample.x, y: sample.y }, { x: parentBefore.x, y: parentBefore.y }, `the selected Area's outline never follows a press meant for ${child}: ${JSON.stringify(parentDuringChildPress)}`);
+  }
+  const childAfter = await renderedRegion(page, child);
+  assert.ok(childAfter.x > childBefore.x + 45 && childAfter.y > childBefore.y + 45, `the press moves the sub-Area it landed in: ${JSON.stringify({ childBefore, childAfter })}`);
+  assert.deepEqual(await page.evaluate(() => window.worldEvents.map((event) => event.areas)), [[child]], "the sub-Area move is the one thing saved");
+
+  // A press on the Block itself means move the Block, and still never drags the
+  // outline of the Area that happened to be selected.
+  await selectArea(page, parent);
+  const blockBefore = await authoredBlock(page, parent, { rendered: true });
+  const parentBeforeBlockPress = await renderedRegion(page, parent);
+  await page.evaluate(() => { window.worldEvents.length = 0; });
+  const onBlock = { x: blockBefore.x + blockBefore.width / 2, y: blockBefore.y + blockBefore.height / 2 };
+  const parentDuringBlockPress = await dragSceneFrom(page, onBlock, { x: 60, y: 40 }, parent);
+  for (const sample of parentDuringBlockPress) {
+    assert.deepEqual({ x: sample.x, y: sample.y }, { x: parentBeforeBlockPress.x, y: parentBeforeBlockPress.y }, `the selected Area's outline never follows a press meant for its Block: ${JSON.stringify(parentDuringBlockPress)}`);
+  }
+  const blockAfter = await authoredBlock(page, parent, { rendered: true });
+  assert.ok(blockAfter.x > blockBefore.x + 45 && blockAfter.y > blockBefore.y + 30, `the press moves the Block it landed on: ${JSON.stringify({ blockBefore, blockAfter })}`);
+  assert.deepEqual(await page.evaluate(() => window.worldEvents.map((event) => event.owners)), [[parent]], "the Block move is the one thing saved");
 });
 
 test("an unmodified direct drag switches from the selected Area to the hit Area", { timeout: 90_000 }, async (context) => {
@@ -1052,6 +1110,58 @@ test("fold is the only view action that hides descendant structure", { timeout: 
   await page.keyboard.press("Space");
   await page.getByRole("button", { name: labelPattern("neara/delivery/standards") }).waitFor();
   assert.equal(await page.locator(".tangent-map-ancestry > button").count(), count);
+});
+
+test("a drag inside a folded Area moves the Area you see, never one fold has hidden", { timeout: 90_000 }, async (context) => {
+  const page = await openWorld(context);
+  const folded = "neara/delivery/standards";
+  const hiddenAreas = ["neara/delivery/standards/clearance", "neara/delivery/standards/clearance/rules"];
+  await page.evaluate(() => window.editor.fitArea("neara", { push: false, select: false }));
+  await page.evaluate((area) => window.editor.controller().toggleFold(area), folded);
+  await page.getByRole("button", { name: labelPattern(folded, { folded: true }) }).waitFor();
+  await page.evaluate(() => {
+    window.editor.controller().setSelection([]);
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const rendered = await renderedRegions(page);
+  for (const area of hiddenAreas) assert.equal(rendered[area], undefined, `${area} is off the canvas while ${folded} is folded`);
+
+  // The press lands in the folded parent's own body, over the rectangle a hidden
+  // descendant still occupies in the composition, and clear of authored content.
+  const grip = await page.evaluate((area) => {
+    const box = window.editor.controller().snapshot().composition.regionRects.get(area);
+    const authored = (window.editor.rendered?.() ?? []).filter((element) => !element.isDeleted && element.customData?.tangent?.role !== "area-region");
+    /** Reports whether one point starts on authored content instead of open Area body. */
+    const onAuthored = (point) => authored.some((element) => point.x >= element.x - 12 && point.x <= element.x + element.width + 12
+      && point.y >= element.y - 12 && point.y <= element.y + element.height + 12);
+    return [[0.2, 0.2], [0.5, 0.2], [0.8, 0.2], [0.2, 0.5], [0.2, 0.8]]
+      .map(([x, y]) => ({ x: box.x + box.width * x, y: box.y + box.height * y }))
+      .find((point) => !onAuthored(point)) ?? null;
+  }, hiddenAreas[0]);
+  assert.ok(grip, "the hidden Area covers a point with no authored content on it");
+
+  /** Reads one Area's authoritative rectangle straight from world source. */
+  const storedRect = (area) => page.evaluate((target) => structuredClone(window.editor.controller().world().areas.find((node) => node.key === target).region.storedRect), area);
+  const hiddenBefore = Object.fromEntries(await Promise.all(hiddenAreas.map(async (area) => [area, await storedRect(area)])));
+  const foldedBefore = (await regions(page))[folded];
+  await page.evaluate(() => { window.worldEvents.length = 0; });
+  const start = await viewportPoint(page, grip.x, grip.y);
+  const end = await viewportPoint(page, grip.x + 60, grip.y + 60);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForFunction((count) => window.worldEvents.length > count, 0, { timeout: 5_000 });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+  const events = await page.evaluate(() => window.worldEvents.map((event) => event.areas));
+  for (const area of hiddenAreas) {
+    assert.deepEqual(await storedRect(area), hiddenBefore[area], `${area} is hidden by fold, so no pointer may move it: ${JSON.stringify(events)}`);
+    assert.ok(events.every((areas) => !areas.includes(area)), `${area} is never saved by a drag a person cannot see: ${JSON.stringify(events)}`);
+  }
+  const foldedAfter = (await regions(page))[folded];
+  assert.ok(foldedAfter.x > foldedBefore.x + 45 && foldedAfter.y > foldedBefore.y + 45, `the drag moves the folded Area the press landed in: ${JSON.stringify({ foldedBefore, foldedAfter })}`);
+  assert.equal(await selectedArea(page), folded, "the moved Area is the one the pointer selected");
 });
 
 test("fact polling does not remount Excalidraw or clear selection", { timeout: 90_000 }, async (context) => {

@@ -5,7 +5,7 @@ import worldCore from "../public/area-map-world-core.js";
 import pickerModel from "../public/area-board-picker.js";
 import { mapFindMatches } from "../public/area-map-find-core.js";
 import { resolveMapEntity, resourceLocatorKey, runMapEntityAction, selectedMapEntityElement } from "../public/area-map-entities.js";
-import { figureIconFiles, restoreFigurePresentation } from "../public/area-map-figures.js";
+import { figureIconFiles, restoreFigurePresentation, themeInkColor } from "../public/area-map-figures.js";
 import { areaMapPointerCommand, areaMapStructuralHullChanged, createAreaMapWorldController, ownerForNewAreaMapElement, selectedAreaMapRegionChanges } from "../public/area-map-world-controller.js";
 
 const EXCALIDRAW_UI_OPTIONS = Object.freeze({
@@ -14,6 +14,14 @@ const EXCALIDRAW_UI_OPTIONS = Object.freeze({
 });
 /** The Excalidraw theme the Map always runs in. */
 const MAP_THEME = "dark";
+/**
+ * The stroke colour every newly drawn text, shape, arrow and freehand stroke
+ * starts with. The Map's dark theme puts an inverting filter on the canvas, so
+ * Excalidraw's own default ink (#1e1e1e) leaves that filter almost as light as
+ * the Map's ground and cannot be read. Storing the ink pre-inverted, the same
+ * way a figure caption is, makes the filter render the dark ink that was meant.
+ */
+const MAP_DEFAULT_INK = themeInkColor("#1e1e1e");
 /** The long edge one vector icon is rasterized at, so it stays sharp as the Map zooms. */
 const ICON_RASTER_LONG_EDGE = 512;
 /** The theme-ready bytes of every image icon drawn so far, by icon, content, and theme. */
@@ -113,7 +121,7 @@ function emitAreaMapEvent(options, event) {
 const PROJECTION_KINDS = new Set([
   "additive-pointer-selection", "additive-selection-repair", "area-pointer-preview", "area-selection", "area-transform-rejected",
   "camera-selection", "claim", "claimed-nudge", "no-change", "placed-block-selection", "pointer-down-selection",
-  "pointer-release-selection", "projection", "resource-placement-preview", "selection-repair", "stale-text-repair", "view-return",
+  "pointer-release-selection", "projection", "resource-placement-preview", "selection-repair", "stale-region-release", "stale-text-repair", "view-return",
 ]);
 
 /** Keeps Excalidraw mounted while the outer world controller repaints its overlays. */
@@ -324,13 +332,27 @@ function elementHull(elements) {
   return { x, y, width: right - x, height: bottom - y };
 }
 
-/** Reports whether one pointer starts on a selected element's hit rectangle. */
-function pointerHits(element, point, zoom = 1) {
+/** Reports whether one point lies inside one element's rectangle grown by pad. */
+function pointWithin(element, point, pad) {
   if (!element || !point) return false;
-  const pad = 10 / Math.max(0.1, zoom);
   return point.x >= Number(element.x) - pad && point.y >= Number(element.y) - pad
     && point.x <= Number(element.x) + Number(element.width) + pad
     && point.y <= Number(element.y) + Number(element.height) + pad;
+}
+
+/** Reports whether one pointer starts on a selected element's hit rectangle. */
+function pointerHits(element, point, zoom = 1) {
+  return pointWithin(element, point, 10 / Math.max(0.1, zoom));
+}
+
+/**
+ * Reports whether one pointer starts on an element itself. The grab padding
+ * exists so a person can seize an element they already hold, so it must not
+ * decide which element an unheld press belongs to: a press in the open body of
+ * an Area belongs to that Area even when it grazes a Block.
+ */
+function pointerInside(element, point) {
+  return pointWithin(element, point, 0);
 }
 
 /** Converts one canvas mouse event into the scene coordinates used by Tangent Blocks. */
@@ -357,10 +379,25 @@ function restoreMaskedElements(elements, composition, hiddenIds) {
   return order.concat(elements.filter((element) => !known.has(element.id)));
 }
 
-/** Returns the deepest structural Area containing one scene point. */
-function areaAtPoint(composition, point, fallback, scopedAreas = null) {
+/**
+ * Reports whether fold has taken one Area off the canvas. A folded root is
+ * still drawn, so only its descendants are hidden, which is the same test the
+ * projection uses when it deletes their elements.
+ */
+function hiddenByFold(area, foldedRoots) {
+  return Boolean(foldedRoots) && [...foldedRoots].some((root) => area.startsWith(`${root}/`));
+}
+
+/**
+ * Returns the deepest structural Area containing one scene point, among the
+ * Areas a person can actually see. An Area that fold or scope has taken off the
+ * canvas must never win a point: a pointer would otherwise move, or drop new
+ * content into, an Area that is not on screen and cannot be selected.
+ */
+function areaAtPoint(composition, point, fallback, scopedAreas = null, foldedRoots = null) {
   return [...composition.regionRects]
-    .filter(([area, box]) => (!scopedAreas || scopedAreas.has(area)) && point.x >= box.x && point.y >= box.y && point.x <= box.x + box.width && point.y <= box.y + box.height)
+    .filter(([area, box]) => (!scopedAreas || scopedAreas.has(area)) && !hiddenByFold(area, foldedRoots)
+      && point.x >= box.x && point.y >= box.y && point.x <= box.x + box.width && point.y <= box.y + box.height)
     .sort(([left], [right]) => right.split("/").length - left.split("/").length)[0]?.[0] ?? fallback;
 }
 
@@ -408,7 +445,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     ?? "";
   const initialDataRef = useRef({
     ...state.scene,
-    appState: { ...(state.scene.appState ?? {}), scrollX: state.camera.scrollX, scrollY: state.camera.scrollY, zoom: { value: state.camera.zoom } },
+    appState: { ...(state.scene.appState ?? {}), currentItemStrokeColor: MAP_DEFAULT_INK, scrollX: state.camera.scrollX, scrollY: state.camera.scrollY, zoom: { value: state.camera.zoom } },
   });
   const canvasHandlersRef = useRef({});
   const [api, setApi] = useState(null);
@@ -454,6 +491,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   const pointerCurrentRef = useRef(null);
   const lastPointerRef = useRef(null);
   const pointerHandleRef = useRef(null);
+  const shiftPressRef = useRef(false);
   const outlineProtectionAnnouncedRef = useRef(false);
   const pointerSelectedRef = useRef(new Set());
   const additiveSelectionRef = useRef(null);
@@ -1888,7 +1926,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   /** Opens the contextual block picker for the deepest Area under the pointer. */
   function openPicker() {
     const point = placementPoint();
-    const area = areaAtPoint(state.composition, point, state.locatedArea, state.scopedAreas);
+    const area = areaAtPoint(state.composition, point, state.locatedArea, state.scopedAreas, state.folded);
     const center = boardCore.insertionPoint(api?.getAppState?.() ?? {}, null);
     setWidePicker(false); setPickerQuery("");
     setPicker({ area, point, outside: ![...state.composition.regionRects.values()].some((box) => point.x >= box.x && point.y >= box.y && point.x <= box.x + box.width && point.y <= box.y + box.height), dock: point.x < center.x ? "right" : "left" });
@@ -2072,8 +2110,9 @@ export function AreaMapWorld({ host, bridge, options }) {
       controller.setSelection(nextSelection); programmaticSelectionRef.current = nextSelection;
       projectCanvas({ appState: { selectedElementIds: Object.fromEntries([...nextSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" }, "additive-pointer-selection");
     }
-    const deepest = areaAtPoint(pointerCompositionRef.current, origin, null, state.scopedAreas);
-    const hitRegionElement = structuralTool && !additive && !spatialAuthoredHit && deepest
+    const deepest = areaAtPoint(pointerCompositionRef.current, origin, null, state.scopedAreas, state.folded);
+    const authoredOwnsPress = Boolean(spatialAuthoredHit) && pointerInside(spatialAuthoredHit, origin);
+    const hitRegionElement = structuralTool && !additive && !authoredOwnsPress && deepest
       ? pointerCompositionRef.current.scene.elements.find((element) => element.customData?.tangent?.role === "area-region" && element.customData.tangent.area === deepest)
       : null;
     if (hitRegionElement && !stableSelectionRef.current.has(hitRegionElement.id)) {
@@ -2090,6 +2129,19 @@ export function AreaMapWorld({ host, bridge, options }) {
     const hitRegion = Boolean(selectedRegion) && (pointerCommand.kind === "resize"
       || selectedRegion.customData.tangent.area === deepest && pointerHits(selectedRegion, origin, zoom));
     const rejectedAreaTransform = structuralTool && Boolean(selectedRegion) && pointerCommand.kind === "ignore";
+    // Excalidraw drags whatever it holds selected as soon as the pointer moves.
+    // When this press is neither a move nor a resize of the selected Area, the
+    // Map solves nothing and throws the dragged rectangle away on release, so
+    // the person watches an outline follow the cursor and then snap back. The
+    // stale Area is released here, inside the same pointer down and before the
+    // first move frame, which leaves the press to mean what it looks like: grab
+    // the Block under it, or grab the Area whose body it landed in.
+    if (structuralTool && !additive && !shiftPressRef.current && selectedRegion && !rejectedAreaTransform && !hitBlock && !hitRegion) {
+      const nextSelection = new Set([...stableSelectionRef.current].filter((id) => id !== selectedRegion.id));
+      stableSelectionRef.current = nextSelection; additiveSelectionRef.current = null;
+      controller.setSelection(nextSelection); programmaticSelectionRef.current = nextSelection;
+      projectCanvas({ appState: { selectedElementIds: Object.fromEntries([...nextSelection].map((id) => [id, true])) }, captureUpdate: "NEVER" }, "stale-region-release");
+    }
     pointerStateRef.current = { ...pointerStateRef.current, rejectedAreaTransform };
     pointerSelectedRef.current = !rejectedAreaTransform && (hitBlock || hitRegion) ? new Set(stableSelectionRef.current) : new Set();
     pointerHandleRef.current = selectedRegion && pointerCommand.kind === "resize" ? pointerCommand.handle : null;
@@ -2326,7 +2378,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       if (origins.has(element.id)) continue;
       const point = pointer ?? { x: Number(element.x ?? 0) + Number(element.width ?? 0) / 2, y: Number(element.y ?? 0) + Number(element.height ?? 0) / 2 };
       const copiedOwner = element.customData?.tangentWorld?.owner;
-      claim(element, ownerForNewAreaMapElement({ copiedOwner, pasteOwner: pastePlacement?.area, pointOwner: areaAtPoint(baselineComposition, point, state.locatedArea, state.scopedAreas) }));
+      claim(element, ownerForNewAreaMapElement({ copiedOwner, pasteOwner: pastePlacement?.area, pointOwner: areaAtPoint(baselineComposition, point, state.locatedArea, state.scopedAreas, state.folded) }));
     }
     const authoredElementById = new Map(authoredRuntime.map((element) => [element.id, element]));
     /** Resolves one binding through direct, claimed, and source-origin identities. */
@@ -2370,7 +2422,7 @@ export function AreaMapWorld({ host, bridge, options }) {
       if (!origins.has(element.id)) {
         const copiedOwner = element.customData?.tangentWorld?.owner;
         const point = pointer ?? { x: Number(element.x ?? 0), y: Number(element.y ?? 0) };
-        claim(element, ownerForNewAreaMapElement({ copiedOwner, pasteOwner: pastePlacement?.area, startOwner: start?.owner, pointOwner: areaAtPoint(baselineComposition, point, state.locatedArea, state.scopedAreas) }));
+        claim(element, ownerForNewAreaMapElement({ copiedOwner, pasteOwner: pastePlacement?.area, startOwner: start?.owner, pointOwner: areaAtPoint(baselineComposition, point, state.locatedArea, state.scopedAreas, state.folded) }));
       }
       const endpoints = clone(element.customData?.tangentWorldEndpoints ?? {});
       for (const side of ["start", "end"]) {
@@ -2674,6 +2726,18 @@ export function AreaMapWorld({ host, bridge, options }) {
   }, [api, findOpen, findQuery, findIndex, picker, helpOpen, outlineOpen, resourcesOpen, narrowResources, resourceLocate, resourcePlacement, resourceRecovery, resourceResolutions, state.revision]);
 
   useEffect(() => {
+    // Excalidraw's pointer-down state carries cmd or ctrl but never Shift, and
+    // Shift is how a person adds to a selection, so the press event itself is
+    // the only place that knows. Selection stays Excalidraw's to extend on such
+    // a press; the Map only has to take care never to release an Area from
+    // under one.
+    /** Records whether the press Excalidraw is about to read means "add to what I hold". */
+    const recordShift = (event) => { shiftPressRef.current = Boolean(event.shiftKey); };
+    host.addEventListener("pointerdown", recordShift, true);
+    return () => host.removeEventListener("pointerdown", recordShift, true);
+  }, [host]);
+
+  useEffect(() => {
     if (!picker && !helpOpen && !outlineOpen) return undefined;
     /** Dismisses map overlays when the pointer starts outside them. */
     const dismiss = (event) => {
@@ -2754,7 +2818,7 @@ export function AreaMapWorld({ host, bridge, options }) {
     return () => { current = false; request.abort(); };
   }, [picker, widePicker, pickerQuery, options.searchDocuments]);
 
-  const visibleNodes = state.world.areas.filter((node) => state.scopedAreas.has(node.key) && ![...state.folded].some((root) => node.key.startsWith(`${root}/`)));
+  const visibleNodes = state.world.areas.filter((node) => state.scopedAreas.has(node.key) && !hiddenByFold(node.key, state.folded));
   const documents = [...new Map([...pickerEntities, ...options.getDocuments()].filter((item) => item?.file).map((item) => [item.file, item])).values()];
   const areaRecords = new Map(documents.filter((item) => item.kind === "area" && item.area).map((item) => [item.area, item]));
   const areaTitles = new Map([...areaRecords].map(([area, item]) => [area, item.title]));
@@ -2960,7 +3024,7 @@ export function AreaMapWorld({ host, bridge, options }) {
   function handleCanvasPaste(data) {
     if (data.files?.length) return true;
     actionKindRef.current = "paste";
-    const point = placementPoint(); const area = areaAtPoint(state.composition, point, state.locatedArea, state.scopedAreas);
+    const point = placementPoint(); const area = areaAtPoint(state.composition, point, state.locatedArea, state.scopedAreas, state.folded);
     pastePlacementRef.current = { area, point };
     if (pasteTimerRef.current !== null) clearTimeout(pasteTimerRef.current);
     pasteTimerRef.current = setTimeout(() => { pastePlacementRef.current = null; pasteTimerRef.current = null; }, 1_000);

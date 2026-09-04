@@ -1011,6 +1011,23 @@ test("selection starts its deferred shard before spatially nearby shards", async
   controller.destroy();
 });
 
+test("fact polls reload structural authority at most once per interval, and a save reconciles at once", async () => {
+  const world = fixtureWorld(); let reloads = 0;
+  const controller = createAreaMapWorldController({
+    world, storage: memoryStorage(), treePollInterval: 50,
+    /** Counts every whole-world read a poll causes. */
+    reloadWorld: async () => { reloads += 1; return structuredClone(world); },
+  });
+  await controller.refreshFacts(controller.snapshot().focus);
+  await controller.refreshFacts(controller.snapshot().focus);
+  await controller.refreshFacts(controller.snapshot().focus);
+  assert.equal(reloads, 1, "polls inside the interval share the reload that just finished");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  await controller.refreshFacts(controller.snapshot().focus);
+  assert.equal(reloads, 2, "a poll after the interval reloads again");
+  controller.destroy();
+});
+
 test("an unchanged structural poll needs no scene compose or Excal update", async () => {
   const world = fixtureWorld(); let reloads = 0;
   const controller = createAreaMapWorldController({

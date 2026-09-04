@@ -10,6 +10,8 @@ import { WIRE_VALUES } from "./area-map-wire-values.js";
 const VIEW_SCHEMA = "area-map-view.v2";
 const DRAFT_SCHEMA = "area-map-draft.v1";
 const DETAIL_ENTER_PX = 96;
+// The shell polls facts on every server event, and each structural reload reads the whole world, so a poll reloads at most this often.
+const TREE_POLL_INTERVAL_MS = 5_000;
 const DETAIL_LEAVE_PX = 72;
 const AREA_RESIZE_HANDLES = new Set(["n", "s", "e", "w", "nw", "ne", "sw", "se"]);
 
@@ -151,6 +153,7 @@ export function createAreaMapWorldController({
   focus: initialFocus = {},
   loadShard = null,
   reloadWorld = null,
+  treePollInterval = TREE_POLL_INTERVAL_MS,
   persistWorld = null,
   persistView = null,
   draftStore: suppliedDraftStore = null,
@@ -212,6 +215,7 @@ export function createAreaMapWorldController({
   let recoveryStoreClosed = false;
   let treeRefresh = null;
   let treeRefreshRequested = false;
+  let treeReloadFinishedAt = null;
   const inFlightLoads = new Map();
   const recoveryStore = suppliedDraftStore ?? createAreaMapWorldDraftStore();
 
@@ -816,11 +820,17 @@ export function createAreaMapWorldController({
     return Promise.all(plan.map((owner) => materialize(owner)));
   }
 
-  /** Reconciles a changed Area tree after local authored work reaches authority. */
-  async function reconcileTree() {
+  /**
+   * Reconciles a changed Area tree after local authored work reaches authority. A fact poll
+   * reloads at most once per `treePollInterval`, because the shell polls on every server event and
+   * a busy machine polls many times a second; a save or a finished gesture reconciles at once. A
+   * skipped poll leaves the request standing, so the next save or gesture still reconciles.
+   */
+  async function reconcileTree({ polled = false } = {}) {
     treeRefreshRequested = true;
     if (treeRefresh) return treeRefresh;
     if (!reloadWorld || hasPendingAuthoredWork()) return false;
+    if (polled && treeReloadFinishedAt !== null && performance.now() - treeReloadFinishedAt < treePollInterval) return false;
     treeRefreshRequested = false;
     const expectedWorldId = world.worldId;
     treeRefresh = (async () => {
@@ -837,6 +847,7 @@ export function createAreaMapWorldController({
         notify("tree-refresh-failed");
         return false;
       } finally {
+        treeReloadFinishedAt = performance.now();
         treeRefresh = null;
       }
     })();
@@ -846,7 +857,7 @@ export function createAreaMapWorldController({
   /** Repaints current facts and checks structural authority without remounting. */
   function refreshFacts(nextFocus = focus) {
     focus = clone(nextFocus ?? {}); factsRevision += 1; notify("facts");
-    return reconcileTree();
+    return reconcileTree({ polled: true });
   }
 
   /**

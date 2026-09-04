@@ -7,6 +7,7 @@
 // buffered text edit, or a real change that `map-publish.ts` turns into world authority.
 
 import type { ExcalidrawImperativeAPI, PointerDownState } from "@excalidraw/excalidraw/types";
+import { areaOutlineRestyled } from "../canvas/area-outline-style.ts";
 import { asSceneElements, selectedIds } from "../canvas/projection.ts";
 import type { Projection, SelectionAppState } from "../canvas/projection.ts";
 import { TextEditBuffer, captureLiveTextEdit, finishTextEdit, staleEditingText } from "../canvas/text-edit.ts";
@@ -181,9 +182,26 @@ function syncSelection(deps: CanvasDeps, appState: SelectionAppState): boolean {
   return true;
 }
 
+/**
+ * Refuses a change that restyled an Area outline, and puts the composed scene straight back.
+ *
+ * An outline is drawn from the Area tree, so its stroke, fill and opacity are the composition's to
+ * decide. Excalidraw's shape properties write them anyway, and the write is not a change the world
+ * can record, so without this the paint has nothing to undo it: inside the projection fence the
+ * change is absorbed as settling and the Area stays painted. The push is made now rather than
+ * deferred, so Excalidraw redraws the composed outline in the same frame and nothing flashes.
+ */
+function refuseOutlineRestyle(deps: CanvasDeps, elements: readonly ExcalidrawElement[]): boolean {
+  const composed = deps.controller.snapshot().scene.elements;
+  if (!areaOutlineRestyled(composed, asSceneElements(elements))) return false;
+  deps.projection.project({ elements: composed }, "area-style-rejected");
+  return true;
+}
+
 /** Normalises one Excalidraw callback into source-owned world authority. */
 function handleChange(deps: CanvasDeps, elements: readonly ExcalidrawElement[], appState: ChangeAppState): void {
   if (deps.projection.consume(elements, appState)) return;
+  if (refuseOutlineRestyle(deps, elements)) return;
   const command = userCommandOpen(deps);
   if (!command && deps.projection.absorbFencedChange(elements)) return;
   if (captureLiveTextEdit(deps.buffer, elements, appState)) {

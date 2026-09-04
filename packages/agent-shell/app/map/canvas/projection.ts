@@ -27,7 +27,7 @@ import type { Count, Milliseconds } from "../units/units.ts";
 
 /** Every reason a projection is pushed. The diagnostic event names the reason so a trace reads as a story. */
 export const PROJECTION_REASONS = [
-  "additive-pointer-selection", "additive-selection-repair", "area-pointer-preview", "area-selection", "area-transform-rejected",
+  "additive-pointer-selection", "additive-selection-repair", "area-pointer-preview", "area-selection", "area-style-rejected", "area-transform-rejected",
   "camera-selection", "claim", "claimed-nudge", "no-change", "placed-block-selection", "pointer-down-selection",
   "pointer-release-selection", "projection", "resource-placement-preview", "selection-repair", "stale-region-release",
   "stale-text-repair", "view-return",

@@ -9,6 +9,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { onlyAreaOutlinesHeld } from "./canvas/area-outline-style.ts";
 import { AreaLabels } from "./canvas/AreaLabels.tsx";
 import { MapCanvas } from "./canvas/MapCanvas.tsx";
 import { LAYOUT, layoutCssVariables } from "./layout/layout-tokens.ts";
@@ -89,7 +90,10 @@ function MapBody({ core, stores, wiring, snapshot, view, options, controller }: 
   // the person means, not the Area the Map happens to be centred on.
   const resourcesArea = selectedVisibleArea(wiring.reads.scene, snapshot.selection) ?? (block === null ? snapshot.locatedArea : areaOfBlock(wiring.commands, block) || snapshot.locatedArea);
   const panelOpen = stores.resources.open && !stores.resources.narrow;
-  const rootClass = `TangentAreaMap theme--dark${panelOpen ? " resources-panel-open" : ""}`;
+  // Excalidraw's shape properties are hidden while the selection is Area outlines and nothing else;
+  // every control on that island would edit geometry the Area tree owns. `ui/map.css` holds the rule.
+  const outlinesHeld = onlyAreaOutlinesHeld(snapshot.scene.elements, snapshot.selection);
+  const rootClass = `TangentAreaMap theme--dark${panelOpen ? " resources-panel-open" : ""}${outlinesHeld ? " area-outline-selected" : ""}`;
   return (
     <div
       className={rootClass}

@@ -20,6 +20,11 @@
 .TangentAreaMap .excalidraw { font-family: var(--tangent-font-ui); }
 /* Tangent has no drawing library; the trigger would sit under the Outline button. */
 .TangentAreaMap .default-sidebar-trigger { display: none; }
+/* An Area outline is drawn from the Area tree, so nothing on Excalidraw's shape island applies to
+   it: the swatches, the fill, the opacity, Duplicate and Delete would all edit geometry no person
+   authored. The island is hidden while outlines are the whole selection, and returns the moment a
+   Block is held with them. MapRoot.tsx sets the class from onlyAreaOutlinesHeld. */
+.TangentAreaMap.area-outline-selected .App-menu__left { display: none; }
 .TangentAreaMap .layer-ui__wrapper__top-right { gap: 8px; }
 
 .tangent-map-toolbar-extra { display: contents; }

@@ -11,7 +11,8 @@ import { selectedIds } from "../canvas/projection.ts";
 import { installKeyboardDispatch } from "../input/keyboard-dispatch.ts";
 import { fitArea } from "./map-root-commands.ts";
 import { focusMapCanvas } from "../ui/canvas-focus.ts";
-import { selectedVisibleArea } from "../input/hit-test.ts";
+import { viewShowsAnyArea } from "../canvas/restored-view.ts";
+import { selectedVisibleArea, visibleSceneFromSnapshot } from "../input/hit-test.ts";
 import { selectedMapEntityElement } from "../kernel/kernel-boundary.ts";
 import type { Focus, SceneElement, Snapshot } from "../kernel/kernel-types.ts";
 import { LAYOUT } from "../layout/layout-tokens.ts";
@@ -249,16 +250,26 @@ function useSurfaceSync(input: EffectsInput): void {
 }
 
 /**
- * Fits the Area the Map opened on, unless the controller restored a private view. The fit also
- * starts the deferred shard loads around that Area, which is why it runs even when the camera is
- * already where it should be.
+ * Fits the Area the Map opened on, unless the controller restored a private view that still shows
+ * the world. The fit also starts the deferred shard loads around that Area, which is why it runs
+ * even when the camera is already where it should be.
  */
 function openOnLocatedArea(input: EffectsInput): void {
   const snapshot = input.core.controller.snapshot();
-  if (snapshot.viewRestored) return;
+  if (snapshot.viewRestored && restoredViewShowsWorld(input, snapshot)) return;
   const element = input.core.controller.fitArea(snapshot.locatedArea, { push: false, select: false });
   if (element === null) return;
   requestAnimationFrame(() => requestAnimationFrame(() => input.wiring.reads.scrollTo([element], false)));
+}
+
+/**
+ * True when the camera the controller restored still has an Area in it. A wheel pan is unbounded,
+ * so the camera a person leaves behind can be far past every Area; replaying that camera opens the
+ * Map on an empty canvas. When it shows nothing the Map opens on its located Area instead, and the
+ * rest of the restored view, its folds, its Only restriction and its selection, is kept.
+ */
+function restoredViewShowsWorld(input: EffectsInput, snapshot: Snapshot): boolean {
+  return viewShowsAnyArea(visibleSceneFromSnapshot(snapshot), snapshot.camera, input.wiring.reads.viewport());
 }
 
 /** Runs one Block's primary action, when it has one. */
